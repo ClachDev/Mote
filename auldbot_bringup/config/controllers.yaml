@@ -17,7 +17,7 @@ diff_drive_controller:
     wheel_radius: 0.028
 
     odom_frame_id: odom
-    base_frame_id: base_link
+    base_frame_id: base_footprint
 
     # Covariance for a 2D robot — z/roll/pitch are constrained
     pose_covariance_diagonal:  [0.001, 0.001, 1000.0, 1000.0, 1000.0, 0.01]

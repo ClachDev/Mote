@@ -1,6 +1,14 @@
 <?xml version="1.0"?>
 <robot name="auldbot" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+  <!-- ===================== HARDWARE PARAMETERS ===================== -->
+  <xacro:arg name="serial_port"    default="/dev/auldbot_servos"/>
+  <xacro:arg name="baud_rate"      default="1000000"/>
+  <xacro:arg name="left_wheel_id"  default="7"/>
+  <xacro:arg name="right_wheel_id" default="9"/>
+  <xacro:arg name="velocity_scale" default="2744.0"/>
+  <xacro:arg name="acceleration"   default="0"/>
+
   <!-- ===================== MEASUREMENTS ===================== -->
   <!--
     base_link is at wheel axle height above the ground (REP-105 convention).
@@ -180,12 +188,12 @@
   <ros2_control name="auldbot_hardware" type="system">
     <hardware>
       <plugin>auldbot_hardware/AuldbotHardware</plugin>
-      <param name="serial_port">/dev/ttyACM0</param>
-      <param name="baud_rate">1000000</param>
-      <param name="left_wheel_id">7</param>
-      <param name="right_wheel_id">9</param>
-      <param name="velocity_scale">2744.0</param>  <!-- rad/s to servo units, tune on hardware -->
-      <param name="acceleration">0</param>          <!-- 0 = max acceleration -->
+      <param name="serial_port">$(arg serial_port)</param>
+      <param name="baud_rate">$(arg baud_rate)</param>
+      <param name="left_wheel_id">$(arg left_wheel_id)</param>
+      <param name="right_wheel_id">$(arg right_wheel_id)</param>
+      <param name="velocity_scale">$(arg velocity_scale)</param>
+      <param name="acceleration">$(arg acceleration)</param>
     </hardware>
 
     <joint name="left_wheel_joint">

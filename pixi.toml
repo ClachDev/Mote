@@ -9,14 +9,16 @@ version = "0.1.0"
 submodules = "git submodule update --init"
 build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja", depends-on = ["submodules"] }
 launch = "ros2 launch auldbot_bringup auldbot_launch.py"
+clean = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
+slam = "ros2 launch auldbot_bringup slam_launch.py"
+rviz = "ros2 launch auldbot_bringup rviz_launch.py"
 
 [dependencies]
 ros-jazzy-turtlesim = ">=1.8.3,<2"
 colcon-common-extensions = ">=0.3.0,<0.4"
 ros-jazzy-ros2-control = ">=4.43.0,<5"
 ros-jazzy-ros2-controllers = ">=4.37.0,<5"
-ros-jazzy-rplidar-ros = ">=2.1.0,<3"
 ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
 ros-jazzy-nav2-bringup = ">=1.3.11,<2"

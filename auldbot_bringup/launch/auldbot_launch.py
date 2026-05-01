@@ -8,6 +8,15 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    hardware_config = {
+        "serial_port":    "/dev/auldbot_servos",
+        "baud_rate":      "1000000",
+        "left_wheel_id":  "7",
+        "right_wheel_id": "9",
+        "velocity_scale": "2744.0",
+        "acceleration":   "0",
+    }
+
     robot_description_content = Command([
         PathJoinSubstitution([FindExecutable(name="xacro")]),
         " ",
@@ -16,6 +25,8 @@ def generate_launch_description():
             "urdf",
             "auldbot.urdf.xacro",
         ]),
+        " ",
+        " ".join(f"{k}:={v}" for k, v in hardware_config.items()),
     ])
     robot_description = {
         "robot_description": ParameterValue(robot_description_content, value_type=str)
@@ -52,14 +63,15 @@ def generate_launch_description():
     )
 
     rplidar = Node(
-        package="rplidar_ros",
-        executable="rplidar_composition",
+        package="sllidar_ros2",
+        executable="sllidar_node",
         name="rplidar",
         parameters=[{
-            "serial_port": "/dev/ttyUSB0",
+            "serial_port": "/dev/auldbot_lidar",
             "serial_baudrate": 460800,
             "frame_id": "lidar_link",
             "angle_compensate": True,
+            "scan_mode": "Standard",
         }],
     )
 
@@ -68,7 +80,7 @@ def generate_launch_description():
         executable="v4l2_camera_node",
         name="camera",
         parameters=[{
-            "video_device": "/dev/video0",
+            "video_device": "/dev/auldbot_camera",
             "image_size": [640, 480],
             "camera_frame_id": "camera_optical_link",
         }],

@@ -741,7 +741,6 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rosidl-typesupport-interface-4.6.7-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rosidl-typesupport-introspection-c-4.6.7-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rosidl-typesupport-introspection-cpp-4.6.7-np2py312h2ed9cc7_16.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rplidar-ros-2.1.0-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rpyutils-0.4.2-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rsl-1.2.0-np2py312h88103e5_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rti-connext-dds-cmake-module-0.22.3-np2py312h2ed9cc7_16.conda
@@ -1741,7 +1740,6 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rosidl-typesupport-interface-4.6.7-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rosidl-typesupport-introspection-c-4.6.7-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rosidl-typesupport-introspection-cpp-4.6.7-np2py312h2ed9cc7_16.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rplidar-ros-2.1.0-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rpyutils-0.4.2-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rqt-action-2.2.1-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rqt-bag-1.5.6-np2py312h2ed9cc7_16.conda
@@ -17057,26 +17055,6 @@ packages:
   license: Apache-2.0
   size: 48476
   timestamp: 1771183548922
-- conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rplidar-ros-2.1.0-np2py312h2ed9cc7_16.conda
-  sha256: 7ea6c98e77cd8c129a7ff7334f22273bb94b41e3fa5518a4e3db193c7b96ca45
-  md5: 29292eb72dc6862a2bce866037a5695b
-  depends:
-  - python
-  - ros-jazzy-rclcpp
-  - ros-jazzy-rclcpp-components
-  - ros-jazzy-ros-workspace
-  - ros-jazzy-sensor-msgs
-  - ros-jazzy-std-srvs
-  - ros2-distro-mutex 0.14.* jazzy_*
-  - libgcc >=14
-  - __glibc >=2.17,<3.0.a0
-  - libstdcxx >=14
-  - python_abi 3.12.* *_cp312
-  - ros2-distro-mutex >=0.14.0,<0.15.0a0
-  - numpy >=1.23,<3
-  license: BSD-3-Clause
-  size: 182697
-  timestamp: 1776436629356
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-rpyutils-0.4.2-np2py312h2ed9cc7_16.conda
   sha256: 35906624e018708ec023e24dfda8c3027f900778117c84af89a05809ae5fd2bd
   md5: e80926851dc85690c0f18588fe1dd2ff
