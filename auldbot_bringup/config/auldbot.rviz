@@ -1,4 +1,6 @@
 Panels:
+  - Class: slam_toolbox::SlamToolboxPlugin
+    Name: SlamToolbox
   - Class: rviz_common/Displays
     Help Height: 70
     Name: Displays
