@@ -6,3 +6,7 @@
 build/
 install/
 log/
+
+# SCServo SDK — not in source control, see auldbot_hardware/third_party/README.md
+auldbot_hardware/third_party/SCServo/
+auldbot_hardware/third_party/SCServo_Linux/

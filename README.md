@@ -30,13 +30,13 @@ Built with ROS2 Jazzy, managed via [pixi](https://pixi.sh).
 
 ## Getting Started
 
-Install [pixi](https://pixi.prefix.dev/) if you don't have it, then install dependencies:
+Clone the repo with submodules:
 
 ```bash
-pixi install
+git clone --recurse-submodules <url>
 ```
 
-Build:
+Install [pixi](https://pixi.prefix.dev/) if you don't have it, then build:
 
 ```bash
 pixi run build
