@@ -180,7 +180,7 @@
   <ros2_control name="auldbot_hardware" type="system">
     <hardware>
       <plugin>auldbot_hardware/AuldbotHardware</plugin>
-      <param name="serial_port">/dev/ttyUSB0</param>
+      <param name="serial_port">/dev/ttyACM0</param>
       <param name="baud_rate">1000000</param>
       <param name="left_wheel_id">7</param>
       <param name="right_wheel_id">9</param>

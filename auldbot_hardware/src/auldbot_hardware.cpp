@@ -1,6 +1,8 @@
 #include "auldbot_hardware/auldbot_hardware.hpp"
 
+#include <cerrno>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 
@@ -66,7 +68,10 @@ hardware_interface::CallbackReturn AuldbotHardware::on_activate(
 {
   if (!servo_driver_.begin(baud_rate_, serial_port_.c_str())) {
     RCLCPP_ERROR(rclcpp::get_logger("AuldbotHardware"),
-      "Failed to open serial port %s", serial_port_.c_str());
+      "Failed to open serial port %s: %s — "
+      "check the port exists and the user is in the 'dialout' group "
+      "('sudo usermod -a -G dialout $USER', then re-login)",
+      serial_port_.c_str(), std::strerror(errno));
     return hardware_interface::CallbackReturn::ERROR;
   }
 
