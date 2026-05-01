@@ -1,0 +1,88 @@
+from launch import LaunchDescription
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+LIFECYCLE_NODES = [
+    'controller_server',
+    'smoother_server',
+    'planner_server',
+    'behavior_server',
+    'bt_navigator',
+    'waypoint_follower',
+]
+
+
+def generate_launch_description():
+    nav2_params = PathJoinSubstitution([
+        FindPackageShare("auldbot_bringup"),
+        "config",
+        "nav2_params.yaml",
+    ])
+
+    cmd_vel_remap = ('/cmd_vel', '/diff_drive_controller/cmd_vel')
+
+    controller_server = Node(
+        package='nav2_controller',
+        executable='controller_server',
+        parameters=[nav2_params],
+        remappings=[cmd_vel_remap],
+        output='screen',
+    )
+
+    smoother_server = Node(
+        package='nav2_smoother',
+        executable='smoother_server',
+        parameters=[nav2_params],
+        output='screen',
+    )
+
+    planner_server = Node(
+        package='nav2_planner',
+        executable='planner_server',
+        parameters=[nav2_params],
+        output='screen',
+    )
+
+    behavior_server = Node(
+        package='nav2_behaviors',
+        executable='behavior_server',
+        parameters=[nav2_params],
+        remappings=[cmd_vel_remap],
+        output='screen',
+    )
+
+    bt_navigator = Node(
+        package='nav2_bt_navigator',
+        executable='bt_navigator',
+        parameters=[nav2_params],
+        output='screen',
+    )
+
+    waypoint_follower = Node(
+        package='nav2_waypoint_follower',
+        executable='waypoint_follower',
+        parameters=[nav2_params],
+        output='screen',
+    )
+
+    lifecycle_manager = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_navigation',
+        parameters=[{
+            'autostart': True,
+            'node_names': LIFECYCLE_NODES,
+        }],
+        output='screen',
+    )
+
+    return LaunchDescription([
+        controller_server,
+        smoother_server,
+        planner_server,
+        behavior_server,
+        bt_navigator,
+        waypoint_follower,
+        lifecycle_manager,
+    ])

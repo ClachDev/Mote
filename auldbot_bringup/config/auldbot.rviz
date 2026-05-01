@@ -1,4 +1,6 @@
 Panels:
+  - Class: nav2_rviz_plugins/Navigation 2
+    Name: Navigation
   - Class: slam_toolbox::SlamToolboxPlugin
     Name: SlamToolbox
   - Class: rviz_common/Displays
@@ -9,7 +11,7 @@ Panels:
         - /RobotModel1
         - /TF1
       Splitter Ratio: 0.5
-    Tree Height: 724
+    Tree Height: 148
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -132,6 +134,8 @@ Visualization Manager:
           Value: true
         lidar_link:
           Value: true
+        map:
+          Value: true
         odom:
           Value: true
         right_wheel_link:
@@ -144,6 +148,8 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
+        map:
+          {}
         odom:
           base_footprint:
             base_link:
@@ -179,9 +185,9 @@ Visualization Manager:
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 56
+      Max Intensity: 54
       Min Color: 0; 0; 0
-      Min Intensity: 2
+      Min Intensity: 1
       Name: LaserScan
       Position Transformer: XYZ
       Selectable: true
@@ -221,28 +227,6 @@ Visualization Manager:
         Value: /map_updates
       Use Timestamp: false
       Value: true
-    - Class: rviz_default_plugins/Camera
-      Enabled: false
-      Far Plane Distance: 100
-      Image Rendering: background and overlay
-      Name: Camera
-      Overlay Alpha: 0.5
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /image_raw
-      Value: false
-      Visibility:
-        Grid: true
-        Image: true
-        LaserScan: true
-        Map: true
-        RobotModel: true
-        TF: true
-        Value: true
-      Zoom Factor: 1
     - Class: rviz_default_plugins/Image
       Enabled: true
       Max Value: 1
@@ -260,10 +244,36 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: odom
+    Fixed Frame: map
     Frame Rate: 30
   Name: root
-  Tools: ~
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/SetInitialPose
+      Covariance x: 0.25
+      Covariance y: 0.25
+      Covariance yaw: 0.06853891909122467
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /initialpose
+    - Class: nav2_rviz_plugins/GoalTool
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /clicked_point
   Transformation:
     Current:
       Class: rviz_default_plugins/TF
@@ -287,8 +297,6 @@ Visualization Manager:
       Y: 0
     Saved: ~
 Window Geometry:
-  Camera:
-    collapsed: false
   Displays:
     collapsed: false
   Height: 1308
@@ -296,7 +304,11 @@ Window Geometry:
   Hide Right Dock: false
   Image:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd0000000200000000000001a1000004c2fc0200000003fb000000100044006900730070006c006100790073010000003d00000357000000c900fffffffb0000000a00560069006500770073010000039a00000165000000a400fffffffb0000000c00430061006d006500720061020000041f000000c8000001c3000000d6000000010000043f000004c2fc0200000001fb0000000a0049006d006100670065010000003d000004c20000001600ffffff00000414000004c200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Navigation:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd0000000200000000000001ce000004c2fc0200000005fb000000100044006900730070006c006100790073010000003d00000117000000c900fffffffb0000000a00560069006500770073010000015a000000e4000000a400fffffffb0000000c00430061006d006500720061020000041f000000c8000001c3000000d6fb00000014004e0061007600690067006100740069006f006e0100000244000000990000006e00fffffffb000000160053006c0061006d0054006f006f006c0062006f007801000002e30000021c0000018500ffffff000000010000043f000004c2fc0200000001fb0000000a0049006d006100670065010000003d000004c20000001600ffffff000003e7000004c200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  SlamToolbox:
+    collapsed: false
   Views:
     collapsed: false
   Width: 2560

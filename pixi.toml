@@ -12,6 +12,7 @@ launch = "ros2 launch auldbot_bringup auldbot_launch.py"
 clean = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
 slam = "ros2 launch auldbot_bringup slam_launch.py"
+nav = "ros2 launch auldbot_bringup nav2_launch.py"
 rviz = "ros2 launch auldbot_bringup rviz_launch.py"
 
 [dependencies]
