@@ -11,7 +11,7 @@ Panels:
         - /RobotModel1
         - /TF1
       Splitter Ratio: 0.5
-    Tree Height: 148
+    Tree Height: 70
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -149,25 +149,24 @@ Visualization Manager:
       Show Names: true
       Tree:
         map:
-          {}
-        odom:
-          base_footprint:
-            base_link:
-              base_plate_link:
-                {}
-              camera_link:
-                camera_optical_link:
+          odom:
+            base_footprint:
+              base_link:
+                base_plate_link:
                   {}
-              caster_link:
-                {}
-              left_wheel_link:
-                {}
-              lidar_link:
-                {}
-              right_wheel_link:
-                {}
-              top_plate_link:
-                {}
+                camera_link:
+                  camera_optical_link:
+                    {}
+                caster_link:
+                  {}
+                left_wheel_link:
+                  {}
+                lidar_link:
+                  {}
+                right_wheel_link:
+                  {}
+                top_plate_link:
+                  {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -187,7 +186,7 @@ Visualization Manager:
       Max Color: 255; 255; 255
       Max Intensity: 54
       Min Color: 0; 0; 0
-      Min Intensity: 1
+      Min Intensity: 4
       Name: LaserScan
       Position Transformer: XYZ
       Selectable: true
@@ -306,11 +305,11 @@ Window Geometry:
     collapsed: false
   Navigation:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd0000000200000000000001ce000004c2fc0200000005fb000000100044006900730070006c006100790073010000003d00000117000000c900fffffffb0000000a00560069006500770073010000015a000000e4000000a400fffffffb0000000c00430061006d006500720061020000041f000000c8000001c3000000d6fb00000014004e0061007600690067006100740069006f006e0100000244000000990000006e00fffffffb000000160053006c0061006d0054006f006f006c0062006f007801000002e30000021c0000018500ffffff000000010000043f000004c2fc0200000001fb0000000a0049006d006100670065010000003d000004c20000001600ffffff000003e7000004c200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000200000000000001ce000004c2fc0200000005fb000000100044006900730070006c006100790073010000003d000000c9000000c900fffffffb0000000a00560069006500770073010000010c000000a4000000a400fffffffb0000000c00430061006d006500720061020000041f000000c8000001c3000000d6fb00000014004e0061007600690067006100740069006f006e01000001b6000001be000001df00fffffffb000000160053006c0061006d0054006f006f006c0062006f0078010000037a000001850000018500ffffff000000010000043f000004c2fc0200000001fb0000000a0049006d006100670065010000003d000004c20000001600ffffff00000091000004c200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   SlamToolbox:
     collapsed: false
   Views:
     collapsed: false
-  Width: 2560
-  X: 0
+  Width: 1706
+  X: 427
   Y: 68
