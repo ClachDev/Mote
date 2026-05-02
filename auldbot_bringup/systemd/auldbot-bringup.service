@@ -1,0 +1,15 @@
+[Unit]
+Description=AuldBot Hardware Bringup
+After=network.target
+
+[Service]
+Type=simple
+User=michael
+WorkingDirectory=/home/michael/AuldBot
+ExecStart=/home/michael/.pixi/bin/pixi run launch
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/michael
+
+[Install]
+WantedBy=multi-user.target

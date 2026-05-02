@@ -1,0 +1,16 @@
+[Unit]
+Description=AuldBot SLAM
+After=auldbot-bringup.service
+Requires=auldbot-bringup.service
+
+[Service]
+Type=simple
+User=michael
+WorkingDirectory=/home/michael/AuldBot
+ExecStart=/home/michael/.pixi/bin/pixi run slam
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/michael
+
+[Install]
+WantedBy=multi-user.target
