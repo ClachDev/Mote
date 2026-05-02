@@ -15,7 +15,20 @@ find_package(rclcpp_lifecycle REQUIRED)
 
 set(SCSERVO_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SCServo_Linux)
 
-file(GLOB SCSERVO_SOURCES ${SCSERVO_SRC_DIR}/*.cpp)
+set(SCSERVO_SOURCES
+  ${SCSERVO_SRC_DIR}/SCS.cpp
+  ${SCSERVO_SRC_DIR}/SCSerial.cpp
+  ${SCSERVO_SRC_DIR}/SCSCL.cpp
+  ${SCSERVO_SRC_DIR}/SMS_STS.cpp
+  ${SCSERVO_SRC_DIR}/SMSBL.cpp
+  ${SCSERVO_SRC_DIR}/SMSCL.cpp
+)
+
+foreach(src ${SCSERVO_SOURCES})
+  if(NOT EXISTS ${src})
+    message(FATAL_ERROR "SCServo source not found: ${src}\nSee auldbot_hardware/third_party/README.md")
+  endif()
+endforeach()
 
 # Suppress VLA warning from third-party SCServo SDK
 set_source_files_properties(

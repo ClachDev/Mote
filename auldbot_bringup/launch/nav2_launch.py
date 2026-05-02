@@ -73,6 +73,7 @@ def generate_launch_description():
         parameters=[{
             'autostart': True,
             'node_names': LIFECYCLE_NODES,
+            'bond_timeout': 10.0,
         }],
         output='screen',
     )
