@@ -1,10 +1,12 @@
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import RegisterEventHandler
 from launch.event_handlers import OnProcessStart
-from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
+from launch.substitutions import Command
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -17,26 +19,22 @@ def generate_launch_description():
         "acceleration":   "0",
     }
 
-    robot_description_content = Command([
-        FindExecutable(name="xacro"),
-        " ",
-        PathJoinSubstitution([
-            FindPackageShare("auldbot_description"),
-            "urdf",
-            "auldbot.urdf.xacro",
-        ]),
-        " ",
-        " ".join(f"{k}:={v}" for k, v in hardware_config.items()),
-    ])
+    urdf_file = os.path.join(
+        get_package_share_directory("auldbot_description"),
+        "urdf",
+        "auldbot.urdf.xacro",
+    )
+    xacro_args = " ".join(f"{k}:={v}" for k, v in hardware_config.items())
+    robot_description_content = Command(f"xacro {urdf_file} {xacro_args}")
     robot_description = {
         "robot_description": ParameterValue(robot_description_content, value_type=str)
     }
 
-    controller_config = PathJoinSubstitution([
-        FindPackageShare("auldbot_bringup"),
+    controller_config = os.path.join(
+        get_package_share_directory("auldbot_bringup"),
         "config",
         "controllers.yaml",
-    ])
+    )
 
     robot_state_publisher = Node(
         package="robot_state_publisher",
