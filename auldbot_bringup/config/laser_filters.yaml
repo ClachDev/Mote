@@ -5,7 +5,7 @@ scan_to_scan_filter_chain:
       type: laser_filters/LaserScanRangeFilter
       params:
         use_message_range_limits: false
-        lower_threshold: 0.0   # TODO: measure — minimum clear distance (m) from lidar to robot body
+        lower_threshold: 0.0
         upper_threshold: 100.0
         lower_replacement_value: -.inf
         upper_replacement_value: .inf

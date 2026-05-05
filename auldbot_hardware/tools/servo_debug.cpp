@@ -7,7 +7,7 @@
 // sign of ReadPos / ReadSpeed feedback.
 //
 // Build: added as `servo_debug` executable in auldbot_hardware/CMakeLists.txt.
-// Run:   ./servo_debug [serial_port] [baud]
+// Run:   ros2 run auldbot_hardware servo_debug [serial_port] [baud]
 //
 // Commands (type `help` to print this):
 //   mv  <id> <speed>     drive servo <id> at <speed> (wheel mode, -32767..32767)

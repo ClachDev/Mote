@@ -6,7 +6,7 @@
   <xacro:arg name="baud_rate"      default="1000000"/>
   <xacro:arg name="left_wheel_id"  default="7"/>
   <xacro:arg name="right_wheel_id" default="9"/>
-  <xacro:arg name="velocity_scale" default="2744.0"/>
+  <xacro:arg name="velocity_scale" default="674.1"/>
   <xacro:arg name="acceleration"   default="0"/>
 
   <!-- ===================== MEASUREMENTS ===================== -->
@@ -30,7 +30,7 @@
   <xacro:property name="wheel_radius"     value="0.0325"/>
   <xacro:property name="wheel_width"      value="0.006"/>
   <xacro:property name="wheel_mass"       value="0.05"/>  <!-- dummy -->
-  <xacro:property name="wheel_separation" value="0.219"/>
+  <xacro:property name="wheel_separation" value="0.217"/>
   <xacro:property name="axle_z"           value="0.0095"/>
 
   <!-- Caster -->

@@ -60,9 +60,14 @@ ament_target_dependencies(auldbot_hardware
 pluginlib_export_plugin_description_file(hardware_interface auldbot_hardware_plugin.xml)
 
 add_executable(servo_debug
-  ${SCSERVO_SRC_DIR}/servo_debug.cpp
+  tools/servo_debug.cpp
 )
 target_link_libraries(servo_debug auldbot_hardware)
+
+add_executable(velocity_cal
+  tools/velocity_cal.cpp
+)
+target_link_libraries(velocity_cal auldbot_hardware)
 
 install(TARGETS auldbot_hardware
   ARCHIVE DESTINATION lib
@@ -70,7 +75,7 @@ install(TARGETS auldbot_hardware
   RUNTIME DESTINATION bin
 )
 
-install(TARGETS servo_debug
+install(TARGETS servo_debug velocity_cal
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 

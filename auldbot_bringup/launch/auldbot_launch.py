@@ -15,7 +15,7 @@ def generate_launch_description():
         "baud_rate":      "1000000",
         "left_wheel_id":  "7",
         "right_wheel_id": "9",
-        "velocity_scale": "2744.0",
+        "velocity_scale": "674.1",
         "acceleration":   "0",
     }
 
