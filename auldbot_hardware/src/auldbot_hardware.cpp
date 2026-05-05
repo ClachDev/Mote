@@ -34,6 +34,18 @@ hardware_interface::CallbackReturn AuldbotHardware::on_init(
     return hardware_interface::CallbackReturn::ERROR;
   }
 
+  if (
+    info_.joints[LEFT].name != "left_wheel_joint" ||
+    info_.joints[RIGHT].name != "right_wheel_joint")
+  {
+    RCLCPP_WARN(
+      rclcpp::get_logger("AuldbotHardware"),
+      "Unexpected joint order: info_.joints[0]='%s', info_.joints[1]='%s' "
+      "(expected left_wheel_joint, right_wheel_joint)",
+      info_.joints[LEFT].name.c_str(),
+      info_.joints[RIGHT].name.c_str());
+  }
+
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -136,11 +148,13 @@ hardware_interface::return_type AuldbotHardware::read(
 hardware_interface::return_type AuldbotHardware::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
-  // Left wheel is mounted facing the opposite direction
+  // Note(mj): I have no idea why, but the commands here are inverted for the
+  // motors. Everything else is correct. To fix we just swap which motor we send
+  // the commands to...
   const auto left_speed  = static_cast<int16_t>(
-    -wheel_velocity_commands_[LEFT] * velocity_scale_);
-  const auto right_speed = static_cast<int16_t>(
     wheel_velocity_commands_[RIGHT] * velocity_scale_);
+  const auto right_speed = static_cast<int16_t>(
+    -wheel_velocity_commands_[LEFT] * velocity_scale_);
 
   servo_driver_.WriteSpe(left_id_,  left_speed,  acceleration_);
   servo_driver_.WriteSpe(right_id_, right_speed, acceleration_);
