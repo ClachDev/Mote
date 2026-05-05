@@ -13,8 +13,8 @@ def generate_launch_description():
     hardware_config = {
         "serial_port":    "/dev/auldbot_servos",
         "baud_rate":      "1000000",
-        "left_wheel_id":  "7",
-        "right_wheel_id": "9",
+        "left_wheel_id":  "9",
+        "right_wheel_id": "7",
         "velocity_scale": "2744.0",
         "acceleration":   "0",
     }
