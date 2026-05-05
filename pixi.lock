@@ -464,6 +464,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-joint-trajectory-controller-4.37.0-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-kdl-parser-2.11.0-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-kinematics-interface-1.7.0-np2py312h2ed9cc7_16.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-laser-filters-2.0.9-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-laser-geometry-2.7.2-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-launch-3.4.10-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-launch-ros-0.26.11-np2py312h2ed9cc7_16.conda
@@ -1162,6 +1163,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-joint-trajectory-controller-4.37.0-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-kdl-parser-2.11.0-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-kinematics-interface-1.7.0-np2py312h61f2ce4_16.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-laser-filters-2.0.9-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-laser-geometry-2.7.2-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-launch-3.4.10-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-launch-ros-0.26.11-np2py312h61f2ce4_16.conda
@@ -2089,6 +2091,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-kdl-parser-2.11.0-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-keyboard-handler-0.3.2-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-kinematics-interface-1.7.0-np2py312h2ed9cc7_16.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-laser-filters-2.0.9-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-laser-geometry-2.7.2-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-launch-3.4.10-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-launch-ros-0.26.11-np2py312h2ed9cc7_16.conda
@@ -3128,6 +3131,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-kdl-parser-2.11.0-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-keyboard-handler-0.3.2-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-kinematics-interface-1.7.0-np2py312h61f2ce4_16.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-laser-filters-2.0.9-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-laser-geometry-2.7.2-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-launch-3.4.10-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-launch-ros-0.26.11-np2py312h61f2ce4_16.conda
@@ -23555,6 +23559,67 @@ packages:
   license: Apache-2.0
   size: 51812
   timestamp: 1771210422137
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-laser-filters-2.0.9-np2py312h2ed9cc7_16.conda
+  sha256: 45f2914f35f6249c621b1349c2bf23c624142d76e9d2b0a479f65fc855ae02bd
+  md5: b0d4d1da0f3e6ffd6500f64f119830ef
+  depends:
+  - python
+  - ros-jazzy-angles
+  - ros-jazzy-diagnostic-msgs
+  - ros-jazzy-diagnostic-updater
+  - ros-jazzy-filters
+  - ros-jazzy-laser-geometry
+  - ros-jazzy-message-filters
+  - ros-jazzy-pluginlib
+  - ros-jazzy-rclcpp
+  - ros-jazzy-rclcpp-components
+  - ros-jazzy-rclcpp-lifecycle
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros-jazzy-tf2
+  - ros-jazzy-tf2-geometry-msgs
+  - ros-jazzy-tf2-kdl
+  - ros-jazzy-tf2-ros
+  - ros2-distro-mutex 0.14.* jazzy_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.14.0,<0.15.0a0
+  - numpy >=1.23,<3
+  license: BSD-3-Clause
+  size: 782499
+  timestamp: 1771188280325
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-laser-filters-2.0.9-np2py312h61f2ce4_16.conda
+  sha256: 802e4a130bdc003a2613ad8cc0dcadcccc6e48b0f784238569d551f978177c39
+  md5: 364c78410b65f9562fb73e690feca913
+  depends:
+  - python
+  - ros-jazzy-angles
+  - ros-jazzy-diagnostic-msgs
+  - ros-jazzy-diagnostic-updater
+  - ros-jazzy-filters
+  - ros-jazzy-laser-geometry
+  - ros-jazzy-message-filters
+  - ros-jazzy-pluginlib
+  - ros-jazzy-rclcpp
+  - ros-jazzy-rclcpp-components
+  - ros-jazzy-rclcpp-lifecycle
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros-jazzy-tf2
+  - ros-jazzy-tf2-geometry-msgs
+  - ros-jazzy-tf2-kdl
+  - ros-jazzy-tf2-ros
+  - ros2-distro-mutex 0.14.* jazzy_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - python_abi 3.12.* *_cp312
+  - numpy >=1.23,<3
+  - ros2-distro-mutex >=0.14.0,<0.15.0a0
+  license: BSD-3-Clause
+  size: 793976
+  timestamp: 1771211399170
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-laser-geometry-2.7.2-np2py312h2ed9cc7_16.conda
   sha256: 7bcb9aa1c6813f892b76cb697bf5713cfb8d792e2cfcd53276d5a1b3a7dc820f
   md5: c4121fea810c7df08db4d85d792b08e9

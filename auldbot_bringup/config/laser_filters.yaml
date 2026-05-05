@@ -1,26 +1,17 @@
-scan_filter_chain:
-
-  # Drop returns that are closer than the robot body in any direction.
-  # Set lower_threshold to the shortest distance from the lidar to any
-  # part of the robot chassis (measure with a ruler or from the scan in RViz).
-  - name: range_filter
-    type: laser_filters/LaserScanRangeFilter
-    params:
-      use_message_range_limits: false
-      lower_threshold: 0.0   # TODO: measure — minimum clear distance (m)
-      upper_threshold: 100.0
-      lower_replacement_value: -.inf
-      upper_replacement_value: .inf
-
-  # Blank out the angular arc where the robot body is always visible.
-  # Angles are in radians in the lidar frame: 0 = forward, positive = left,
-  # negative = right (standard REP-103).  The filter removes points whose
-  # angle satisfies  lower_angle < angle < upper_angle.
-  #
-  # Measure in RViz: drive the robot into an open area, look at /scan,
-  # and note the angle range of the cluster of returns from the robot body.
-  - name: footprint_angular_filter
-    type: laser_filters/LaserScanAngularBoundsFilterInPlace
-    params:
-      lower_angle: -1.92  # -110 degrees
-      upper_angle: 1.92   # +110 degrees
+scan_to_scan_filter_chain:
+  ros__parameters:
+    filter1:
+      name: range_filter
+      type: laser_filters/LaserScanRangeFilter
+      params:
+        use_message_range_limits: false
+        lower_threshold: 0.0   # TODO: measure — minimum clear distance (m) from lidar to robot body
+        upper_threshold: 100.0
+        lower_replacement_value: -.inf
+        upper_replacement_value: .inf
+    filter2:
+      name: footprint_angular_filter
+      type: laser_filters/LaserScanAngularBoundsFilterInPlace
+      params:
+        lower_angle: -1.92  # -110 degrees
+        upper_angle: 1.92   #  +110 degrees
