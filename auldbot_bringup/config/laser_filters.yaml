@@ -13,6 +13,6 @@ scan_to_scan_filter_chain:
       name: footprint_angular_filter
       type: laser_filters/LaserScanAngularBoundsFilterInPlace
       params:
-        lower_angle: -1.92  # -110 degrees
-        upper_angle: 1.92   #  +110 degrees
+        lower_angle: -3.49  # -200 degrees (-110 - 90)
+        upper_angle: 0.35   #  +20 degrees (+110 - 90)
         replace_with_nan: true
