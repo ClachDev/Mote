@@ -176,6 +176,14 @@
     <origin xyz="${lidar_x} 0 ${lidar_z}" rpy="0 0 ${pi/2}"/>
   </joint>
 
+  <!-- Scan frame can be rotated independently from physical lidar mounting -->
+  <link name="lidar_scan_link"/>
+  <joint name="lidar_scan_joint" type="fixed">
+    <parent link="lidar_link"/>
+    <child  link="lidar_scan_link"/>
+    <origin xyz="0 0 0" rpy="0 0 ${pi}"/>
+  </joint>
+
   <link name="camera_link">
     <visual>
       <geometry><box size="0.025 0.025 0.025"/></geometry>

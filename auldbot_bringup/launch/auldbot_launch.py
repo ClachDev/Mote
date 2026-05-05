@@ -67,7 +67,8 @@ def generate_launch_description():
         parameters=[{
             "serial_port": "/dev/auldbot_lidar",
             "serial_baudrate": 460800,
-            "frame_id": "lidar_link",
+            "frame_id": "lidar_scan_link",
+            "inverted": False,
             "angle_compensate": True,
             "scan_mode": "Standard",
         }],
