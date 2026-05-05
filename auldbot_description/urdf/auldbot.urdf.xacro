@@ -37,6 +37,9 @@
   <xacro:property name="caster_mass"   value="0.01"/>   <!-- dummy -->
   <xacro:property name="caster_x"      value="0.100"/>  <!-- assumed -->
 
+  <!-- Lidar -->
+  <xacro:property name="lidar_x" value="0.080"/>
+
   <!-- Camera -->
   <xacro:property name="cam_x" value="0.110"/>
 
@@ -161,7 +164,7 @@
   <joint name="lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child  link="lidar_link"/>
-    <origin xyz="0 0 ${lidar_z}" rpy="0 0 0"/>
+    <origin xyz="${lidar_x} 0 ${lidar_z}" rpy="0 0 0"/>
   </joint>
 
   <link name="camera_link">

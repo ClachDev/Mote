@@ -73,6 +73,23 @@ def generate_launch_description():
         }],
     )
 
+    laser_filter_config = os.path.join(
+        get_package_share_directory("auldbot_bringup"),
+        "config",
+        "laser_filters.yaml",
+    )
+
+    laser_filter = Node(
+        package="laser_filters",
+        executable="scan_to_scan_filter_chain",
+        name="laser_filter",
+        parameters=[laser_filter_config],
+        remappings=[
+            ("scan", "/scan"),
+            ("scan_filtered", "/scan_filtered"),
+        ],
+    )
+
     camera = Node(
         package="v4l2_camera",
         executable="v4l2_camera_node",
@@ -94,5 +111,6 @@ def generate_launch_description():
             )
         ),
         rplidar,
+        laser_filter,
         camera,
     ])
