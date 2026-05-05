@@ -123,11 +123,10 @@ hardware_interface::return_type AuldbotHardware::read(
     if (delta >  ROLLOVER_THRESHOLD) delta -= static_cast<int16_t>(TICKS_PER_REV);
     if (delta < -ROLLOVER_THRESHOLD) delta += static_cast<int16_t>(TICKS_PER_REV);
 
-    wheel_positions_[i] += (delta / TICKS_PER_REV) * TWO_PI;
+    // Left wheel is mounted facing the opposite direction
+    const double sign = (i == LEFT) ? -1.0 : 1.0;
+    wheel_positions_[i] += sign * (delta / TICKS_PER_REV) * TWO_PI;
     last_raw_positions_[i] = raw_pos;
-
-    // Right wheel is mounted facing the opposite direction
-    const double sign = (i == RIGHT) ? -1.0 : 1.0;
     wheel_velocities_[i] = sign * (raw_speed / velocity_scale_);
   }
 
@@ -137,11 +136,11 @@ hardware_interface::return_type AuldbotHardware::read(
 hardware_interface::return_type AuldbotHardware::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
-  // Right wheel is mounted facing the opposite direction
+  // Left wheel is mounted facing the opposite direction
   const auto left_speed  = static_cast<int16_t>(
-     wheel_velocity_commands_[LEFT]  * velocity_scale_);
+    -wheel_velocity_commands_[LEFT] * velocity_scale_);
   const auto right_speed = static_cast<int16_t>(
-    -wheel_velocity_commands_[RIGHT] * velocity_scale_);
+    wheel_velocity_commands_[RIGHT] * velocity_scale_);
 
   servo_driver_.WriteSpe(left_id_,  left_speed,  acceleration_);
   servo_driver_.WriteSpe(right_id_, right_speed, acceleration_);

@@ -59,10 +59,19 @@ ament_target_dependencies(auldbot_hardware
 
 pluginlib_export_plugin_description_file(hardware_interface auldbot_hardware_plugin.xml)
 
+add_executable(servo_debug
+  ${SCSERVO_SRC_DIR}/servo_debug.cpp
+)
+target_link_libraries(servo_debug auldbot_hardware)
+
 install(TARGETS auldbot_hardware
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
+)
+
+install(TARGETS servo_debug
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY include/ DESTINATION include)
