@@ -148,13 +148,10 @@ hardware_interface::return_type AuldbotHardware::read(
 hardware_interface::return_type AuldbotHardware::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
-  // Note(mj): I have no idea why, but the commands here are inverted for the
-  // motors. Everything else is correct. To fix we just swap which motor we send
-  // the commands to...
   const auto left_speed  = static_cast<int16_t>(
-    wheel_velocity_commands_[RIGHT] * velocity_scale_);
-  const auto right_speed = static_cast<int16_t>(
     -wheel_velocity_commands_[LEFT] * velocity_scale_);
+  const auto right_speed = static_cast<int16_t>(
+    wheel_velocity_commands_[RIGHT] * velocity_scale_);
 
   servo_driver_.WriteSpe(left_id_,  left_speed,  acceleration_);
   servo_driver_.WriteSpe(right_id_, right_speed, acceleration_);

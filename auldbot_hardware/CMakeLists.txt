@@ -69,13 +69,18 @@ add_executable(velocity_cal
 )
 target_link_libraries(velocity_cal auldbot_hardware)
 
+add_executable(swap_ids
+  tools/swap_ids.cpp
+)
+target_link_libraries(swap_ids auldbot_hardware)
+
 install(TARGETS auldbot_hardware
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
 
-install(TARGETS servo_debug velocity_cal
+install(TARGETS servo_debug velocity_cal swap_ids
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
