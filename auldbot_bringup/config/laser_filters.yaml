@@ -10,9 +10,13 @@ scan_to_scan_filter_chain:
         lower_replacement_value: -.inf
         upper_replacement_value: .inf
     filter2:
-      name: footprint_angular_filter
-      type: laser_filters/LaserScanAngularBoundsFilterInPlace
+      name: footprint_box_filter
+      type: laser_filters/LaserScanBoxFilter
       params:
-        lower_angle: -3.49  # -200 degrees (-110 - 90)
-        upper_angle: 0.35   #  +20 degrees (+110 - 90)
-        replace_with_nan: true
+        box_frame: base_link
+        min_x: -0.125
+        max_x:  0.125
+        min_y: -0.125
+        max_y:  0.125
+        min_z: -0.1
+        max_z:  0.2
