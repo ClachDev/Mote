@@ -4,9 +4,12 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-LIFECYCLE_NODES = [
+LOCALIZATION_NODES = [
     'map_server',
     'amcl',
+]
+
+NAVIGATION_NODES = [
     'controller_server',
     'smoother_server',
     'planner_server',
@@ -88,13 +91,25 @@ def generate_launch_description():
         output='screen',
     )
 
-    lifecycle_manager = Node(
+    lifecycle_manager_localization = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_localization',
+        parameters=[{
+            'autostart': True,
+            'node_names': LOCALIZATION_NODES,
+            'bond_timeout': 10.0,
+        }],
+        output='screen',
+    )
+
+    lifecycle_manager_navigation = Node(
         package='nav2_lifecycle_manager',
         executable='lifecycle_manager',
         name='lifecycle_manager_navigation',
         parameters=[{
             'autostart': True,
-            'node_names': LIFECYCLE_NODES,
+            'node_names': NAVIGATION_NODES,
             'bond_timeout': 10.0,
         }],
         output='screen',
@@ -110,5 +125,6 @@ def generate_launch_description():
         behavior_server,
         bt_navigator,
         waypoint_follower,
-        lifecycle_manager,
+        lifecycle_manager_localization,
+        lifecycle_manager_navigation,
     ])
