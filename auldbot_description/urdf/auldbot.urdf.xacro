@@ -30,7 +30,7 @@
   <xacro:property name="wheel_radius"     value="0.0325"/>
   <xacro:property name="wheel_width"      value="0.006"/>
   <xacro:property name="wheel_mass"       value="0.05"/>  <!-- dummy -->
-  <xacro:property name="wheel_separation" value="0.217"/>
+  <xacro:property name="wheel_separation" value="0.22"/>
   <xacro:property name="axle_z"           value="0.0095"/>
 
   <!-- Caster -->

@@ -4,14 +4,13 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /Base1
         - /Base1/RobotModel1
         - /Sensors1
-        - /SLAM1
         - /Navigation1
+        - /Navigation1/Raw Plan1
         - /Navigation1/Global Plan1
-        - /Navigation1/MPPI Trajectories1
-        - /Navigation1/MPPI Trajectories1/Namespaces1
+        - /Navigation1/DWB Trajectories1
+        - /Navigation1/DWB Local Plan1
       Splitter Ratio: 0.5
     Tree Height: 605
   - Class: rviz_common/Views
@@ -123,6 +122,45 @@ Visualization Manager:
           Update Interval: 0
           Value: true
           Visual Enabled: true
+        - Angle Tolerance: 0.10000000149011612
+          Class: rviz_default_plugins/Odometry
+          Covariance:
+            Orientation:
+              Alpha: 0.5
+              Color: 255; 255; 127
+              Color Style: Unique
+              Frame: Local
+              Offset: 1
+              Scale: 1
+              Value: true
+            Position:
+              Alpha: 0.30000001192092896
+              Color: 204; 51; 204
+              Scale: 1
+              Value: true
+            Value: true
+          Enabled: true
+          Keep: 1
+          Name: Odometry
+          Position Tolerance: 0.10000000149011612
+          Shape:
+            Alpha: 0.699999988079071
+            Axes Length: 1
+            Axes Radius: 0.10000000149011612
+            Color: 255; 25; 0
+            Head Length: 0.30000001192092896
+            Head Radius: 0.10000000149011612
+            Shaft Length: 0.5
+            Shaft Radius: 0.05000000074505806
+            Value: Arrow
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /diff_drive_controller/odom
+          Value: true
       Enabled: true
       Name: Base
     - Class: rviz_common/Group
@@ -142,9 +180,9 @@ Visualization Manager:
           Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
-          Max Intensity: 46
+          Max Intensity: 44
           Min Color: 0; 0; 0
-          Min Intensity: 5
+          Min Intensity: 2
           Name: LaserScan
           Position Transformer: XYZ
           Selectable: true
@@ -322,10 +360,38 @@ Visualization Manager:
         - Alpha: 1
           Buffer Length: 1
           Class: rviz_default_plugins/Path
+          Color: 0; 255; 100
+          Enabled: false
+          Head Diameter: 0.03999999910593033
+          Head Length: 0.019999999552965164
+          Length: 0.10000000149011612
+          Line Style: Lines
+          Line Width: 0.029999999329447746
+          Name: Raw Plan
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0
+          Pose Color: 255; 85; 255
+          Pose Style: Arrows
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.029999999329447746
+          Shaft Length: 0.03999999910593033
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /plan
+          Value: false
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
           Color: 25; 255; 0
           Enabled: true
-          Head Diameter: 0.30000001192092896
-          Head Length: 0.20000000298023224
+          Head Diameter: 0.10000000149011612
+          Head Length: 0.029999999329447746
           Length: 0.30000001192092896
           Line Style: Lines
           Line Width: 0.029999999329447746
@@ -349,16 +415,44 @@ Visualization Manager:
           Value: true
         - Class: rviz_default_plugins/MarkerArray
           Enabled: true
-          Name: MPPI Trajectories
+          Name: DWB Trajectories
           Namespaces:
-            Candidate Trajectories: true
-            Optimal Trajectory: true
+            InvalidTrajectories: true
+            ValidTrajectories: true
           Topic:
             Depth: 5
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /trajectories
+            Value: /marker
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 165; 0
+          Enabled: true
+          Head Diameter: 0.03999999910593033
+          Head Length: 0.019999999552965164
+          Length: 0.30000001192092896
+          Line Style: Lines
+          Line Width: 0.10000000149011612
+          Name: DWB Local Plan
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0
+          Pose Color: 255; 85; 255
+          Pose Style: Arrows
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.029999999329447746
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /local_plan
           Value: true
         - Alpha: 0.5
           Arrow Length: 0.10000000149011612
@@ -386,13 +480,13 @@ Visualization Manager:
     - Class: rviz_common/Group
       Displays:
         - Class: rviz_default_plugins/TF
-          Enabled: false
+          Enabled: true
           Filter (blacklist): ""
-          Filter (whitelist): ""
+          Filter (whitelist): base_link base_footprint
           Frame Timeout: 15
           Frames:
-            All Enabled: true
-          Marker Scale: 0.30000001192092896
+            All Enabled: false
+          Marker Scale: 0.5
           Name: TF
           Show Arrows: true
           Show Axes: true
@@ -400,7 +494,7 @@ Visualization Manager:
           Tree:
             {}
           Update Interval: 0
-          Value: false
+          Value: true
         - Class: rviz_default_plugins/Image
           Enabled: false
           Max Value: 1
@@ -456,7 +550,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: 0.029999997466802597
+      Angle: -0.1250002235174179
       Class: rviz_default_plugins/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
@@ -466,7 +560,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 386.2760314941406
+      Scale: 438.72698974609375
       Target Frame: base_link
       Value: TopDownOrtho (rviz_default_plugins)
       X: 0
