@@ -22,9 +22,4 @@ def generate_launch_description():
                 os.path.join(launch_dir, "slam_launch.py")
             )
         ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(launch_dir, "nav2_launch.py")
-            )
-        ),
     ])

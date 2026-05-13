@@ -131,7 +131,7 @@ local_costmap:
     ros__parameters:
       update_frequency: 5.0
       publish_frequency: 2.0
-      global_frame: odom_lidar
+      global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
       width: 3
@@ -229,7 +229,7 @@ behavior_server:
       plugin: "nav2_behaviors::DriveOnHeading"
     wait:
       plugin: "nav2_behaviors::Wait"
-    local_frame: odom_lidar
+    local_frame: odom
     global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.1
@@ -256,3 +256,44 @@ map_saver:
     free_thresh_default: 0.25
     occupied_thresh_default: 0.65
     map_subscribe_transient_local: True
+
+amcl:
+  ros__parameters:
+    global_frame_id: map
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    scan_topic: /scan_filtered
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+    # Odometry noise model
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    # Laser model
+    laser_model_type: likelihood_field
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 12.0
+    laser_min_range: 0.1
+    max_beams: 60
+    # Particle filter
+    min_particles: 500
+    max_particles: 2000
+    pf_err: 0.05
+    pf_z: 0.99
+    resample_interval: 1
+    update_min_d: 0.25
+    update_min_a: 0.2
+    # Pose recovery
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    sigma_hit: 0.2
+    z_hit: 0.5
+    z_rand: 0.5
+    z_max: 0.05
+    z_short: 0.05
+    lambda_short: 0.1
+    do_beamskip: false
+    transform_tolerance: 1.0
+    tf_broadcast: true
+    save_pose_rate: 0.5
+    set_initial_pose: false

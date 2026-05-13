@@ -1,9 +1,12 @@
 from launch import LaunchDescription
-from launch.substitutions import PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 LIFECYCLE_NODES = [
+    'map_server',
+    'amcl',
     'controller_server',
     'smoother_server',
     'planner_server',
@@ -14,6 +17,11 @@ LIFECYCLE_NODES = [
 
 
 def generate_launch_description():
+    map_arg = DeclareLaunchArgument(
+        'map',
+        description='Full path to the map yaml file to load',
+    )
+
     nav2_params = PathJoinSubstitution([
         FindPackageShare("auldbot_bringup"),
         "config",
@@ -21,6 +29,20 @@ def generate_launch_description():
     ])
 
     cmd_vel_remap = ('/cmd_vel', '/diff_drive_controller/cmd_vel')
+
+    map_server = Node(
+        package='nav2_map_server',
+        executable='map_server',
+        parameters=[nav2_params, {'yaml_filename': LaunchConfiguration('map')}],
+        output='screen',
+    )
+
+    amcl = Node(
+        package='nav2_amcl',
+        executable='amcl',
+        parameters=[nav2_params],
+        output='screen',
+    )
 
     controller_server = Node(
         package='nav2_controller',
@@ -79,6 +101,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        map_arg,
+        map_server,
+        amcl,
         controller_server,
         smoother_server,
         planner_server,
