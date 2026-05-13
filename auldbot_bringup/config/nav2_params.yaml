@@ -2,7 +2,7 @@ bt_navigator:
   ros__parameters:
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /diff_drive_controller/odom
+    odom_topic: /kinematic_icp/lidar_odometry
     bt_loop_duration: 10
     default_server_timeout: 20
     wait_for_service_timeout: 1000
@@ -131,7 +131,7 @@ local_costmap:
     ros__parameters:
       update_frequency: 5.0
       publish_frequency: 2.0
-      global_frame: odom
+      global_frame: odom_lidar
       robot_base_frame: base_link
       rolling_window: true
       width: 3
@@ -229,7 +229,7 @@ behavior_server:
       plugin: "nav2_behaviors::DriveOnHeading"
     wait:
       plugin: "nav2_behaviors::Wait"
-    local_frame: odom
+    local_frame: odom_lidar
     global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.1

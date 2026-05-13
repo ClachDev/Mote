@@ -19,6 +19,11 @@ def generate_launch_description():
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
+                os.path.join(launch_dir, "localization_launch.py")
+            )
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
                 os.path.join(launch_dir, "slam_launch.py")
             )
         ),

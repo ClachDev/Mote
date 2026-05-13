@@ -2,7 +2,7 @@ slam_toolbox:
   ros__parameters:
 
     # Frames
-    odom_frame: odom
+    odom_frame: odom_lidar
     map_frame: map
     base_frame: base_link
     scan_topic: /scan_filtered
@@ -65,7 +65,7 @@ slam_toolbox:
     coarse_angle_resolution: 0.0349
     minimum_angle_penalty: 0.9
     minimum_distance_penalty: 0.5
-    use_response_expansion: true
+    use_response_expansion: false
 
     debug_logging: false
     throttle_scans: 1
