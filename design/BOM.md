@@ -45,6 +45,18 @@ The chassis is compatible with the [SO-101 follower arm](https://github.com/TheR
 
 ---
 
+---
+
+## Optional Extras
+
+### Improved Odometry
+
+| Part | Qty | Unit price | Link | Notes |
+|------|-----|-----------|------|-------|
+| BNO085 9-DOF IMU breakout | 1 | ~£15 | [AliExpress](https://www.aliexpress.com/item/1005010674706575.html) | Requires soldering iron to attach header pins. Enables wheel slip detection and improved odometry when fused with wheel encoders via `robot_localization`. Connect via I2C (VCC, GND, SDA, SCL) to the Pi GPIO header. |
+
+---
+
 ## Notes
 
 - Drive wheel spec (hub compatible with STS3215 25-tooth spline horn) is **TBD** — needs confirming before ordering.
