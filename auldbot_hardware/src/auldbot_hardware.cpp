@@ -87,9 +87,14 @@ hardware_interface::CallbackReturn AuldbotHardware::on_activate(
     return hardware_interface::CallbackReturn::ERROR;
   }
 
-  // Set both servos to wheel (continuous rotation) mode
-  servo_driver_.WheelMode(left_id_);
-  servo_driver_.WheelMode(right_id_);
+  // Set wheel (continuous rotation) mode — only writes to EEPROM if not already set
+  for (int id : {left_id_, right_id_}) {
+    if (servo_driver_.readByte(id, SMS_STS_MODE) != 1) {
+      servo_driver_.unLockEprom(id);
+      servo_driver_.WheelMode(id);
+      servo_driver_.LockEprom(id);
+    }
+  }
 
   wheel_velocity_commands_.fill(0.0);
   positions_initialised_.fill(false);

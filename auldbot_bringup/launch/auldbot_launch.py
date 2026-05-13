@@ -2,8 +2,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import RegisterEventHandler
+from launch.actions import IncludeLaunchDescription, RegisterEventHandler
 from launch.event_handlers import OnProcessStart
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -101,6 +102,16 @@ def generate_launch_description():
         }],
     )
 
+    launch_dir = os.path.join(
+        get_package_share_directory("auldbot_bringup"), "launch"
+    )
+
+    localization = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(launch_dir, "localization_launch.py")
+        )
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         controller_manager,
@@ -113,4 +124,5 @@ def generate_launch_description():
         rplidar,
         laser_filter,
         camera,
+        localization,
     ])

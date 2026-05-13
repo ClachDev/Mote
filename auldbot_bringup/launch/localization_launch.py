@@ -17,6 +17,7 @@ def generate_launch_description():
             "base_frame": "base_footprint",
             "publish_odom_tf": True,
             "invert_odom_tf": True,
+            "tf_timeout": 0.05,
         }],
         remappings=[
             ("lidar_odometry", "lidar_odometry"),

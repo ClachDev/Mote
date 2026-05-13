@@ -2,7 +2,7 @@ slam_toolbox:
   ros__parameters:
 
     # Frames
-    odom_frame: odom_lidar
+    odom_frame: odom
     map_frame: map
     base_frame: base_link
     scan_topic: /scan_filtered
