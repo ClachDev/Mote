@@ -26,7 +26,7 @@ Built with ROS2 Jazzy, managed via [pixi](https://pixi.sh).
 |---|---|
 | [`auldbot_bringup`](auldbot_bringup/) | Launch files for bringing up the robot |
 | [`auldbot_description`](auldbot_description/) | URDF robot model and TF tree |
-| [`auldbot_hardware`](auldbot_hardware/) | ros2_control hardware interface for the Feetech servo bus via the Waveshare driver board |
+| [`auldbot_hardware`](auldbot_hardware/) | ros2_control hardware interface for the Feetech servo bus (SDK: **`scservo-linux`** from [`auldbot-forge`](https://prefix.dev/auldbot-forge) via Pixi) |
 
 ## Getting Started
 

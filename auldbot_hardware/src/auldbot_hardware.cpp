@@ -89,10 +89,11 @@ hardware_interface::CallbackReturn AuldbotHardware::on_activate(
 
   // Set wheel (continuous rotation) mode — only writes to EEPROM if not already set
   for (int id : {left_id_, right_id_}) {
-    if (servo_driver_.readByte(id, SMS_STS_MODE) != 1) {
-      servo_driver_.unLockEprom(id);
-      servo_driver_.WheelMode(id);
-      servo_driver_.LockEprom(id);
+    const auto uid = static_cast<u8>(id);
+    if (servo_driver_.readByte(uid, SMS_STS_MODE) != SMS_STS_MODE_WHEEL_CLOSED) {
+      servo_driver_.unLockEeprom(uid);
+      servo_driver_.Mode(uid, SMS_STS_MODE_WHEEL_CLOSED);
+      servo_driver_.LockEeprom(uid);
     }
   }
 

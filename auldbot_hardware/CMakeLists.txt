@@ -13,41 +13,17 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 
-set(SCSERVO_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SCServo_Linux)
-
-set(SCSERVO_SOURCES
-  ${SCSERVO_SRC_DIR}/SCS.cpp
-  ${SCSERVO_SRC_DIR}/SCSerial.cpp
-  ${SCSERVO_SRC_DIR}/SCSCL.cpp
-  ${SCSERVO_SRC_DIR}/SMS_STS.cpp
-  ${SCSERVO_SRC_DIR}/SMSBL.cpp
-  ${SCSERVO_SRC_DIR}/SMSCL.cpp
-)
-
-foreach(src ${SCSERVO_SOURCES})
-  if(NOT EXISTS ${src})
-    message(FATAL_ERROR "SCServo source not found: ${src}\nSee auldbot_hardware/third_party/README.md")
-  endif()
-endforeach()
-
-# Suppress VLA warning from third-party SCServo SDK
-set_source_files_properties(
-  ${SCSERVO_SRC_DIR}/SCSCL.cpp
-  ${SCSERVO_SRC_DIR}/SMS_STS.cpp
-  ${SCSERVO_SRC_DIR}/SMSBL.cpp
-  ${SCSERVO_SRC_DIR}/SMSCL.cpp
-  PROPERTIES COMPILE_OPTIONS "-Wno-vla"
-)
+find_package(SCServo CONFIG REQUIRED)
 
 add_library(auldbot_hardware SHARED
   src/auldbot_hardware.cpp
-  ${SCSERVO_SOURCES}
 )
+
+target_compile_features(auldbot_hardware PUBLIC cxx_std_17)
 
 target_include_directories(auldbot_hardware PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  ${SCSERVO_SRC_DIR}
 )
 
 ament_target_dependencies(auldbot_hardware
@@ -57,22 +33,28 @@ ament_target_dependencies(auldbot_hardware
   rclcpp_lifecycle
 )
 
+# Plain signature required here: ament_target_dependencies uses plain target_link_libraries.
+target_link_libraries(auldbot_hardware SCServo::SCServo)
+
 pluginlib_export_plugin_description_file(hardware_interface auldbot_hardware_plugin.xml)
 
 add_executable(servo_debug
   tools/servo_debug.cpp
 )
-target_link_libraries(servo_debug auldbot_hardware)
+target_link_libraries(servo_debug auldbot_hardware SCServo::SCServo)
+target_compile_features(servo_debug PUBLIC cxx_std_17)
 
 add_executable(velocity_cal
   tools/velocity_cal.cpp
 )
-target_link_libraries(velocity_cal auldbot_hardware)
+target_link_libraries(velocity_cal auldbot_hardware SCServo::SCServo)
+target_compile_features(velocity_cal PUBLIC cxx_std_17)
 
 add_executable(swap_ids
   tools/swap_ids.cpp
 )
-target_link_libraries(swap_ids auldbot_hardware)
+target_link_libraries(swap_ids auldbot_hardware SCServo::SCServo)
+target_compile_features(swap_ids PUBLIC cxx_std_17)
 
 install(TARGETS auldbot_hardware
   ARCHIVE DESTINATION lib

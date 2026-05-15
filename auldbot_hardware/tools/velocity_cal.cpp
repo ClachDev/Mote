@@ -94,7 +94,7 @@ int main(int argc, char* argv[])
     std::getchar();
 
     std::signal(SIGINT, on_sigint);
-    sms.WheelMode(static_cast<u8>(id));
+    sms.Mode(static_cast<u8>(id), SMS_STS_MODE_WHEEL_CLOSED);
 
     const std::vector<int> test_speeds = {500, 1000, 1500, 2000, 2500};
     std::vector<std::pair<int, double>> results;

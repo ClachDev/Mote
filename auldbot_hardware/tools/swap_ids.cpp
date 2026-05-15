@@ -6,8 +6,8 @@ static void set_id(SMS_STS &sms, u8 current_id, u8 new_id)
 {
     // Unlock EEPROM, write new ID, then lock using the new ID.
     // The servo responds to new_id immediately after the write, so
-    // LockEprom must use new_id — otherwise the lock packet is ignored.
-    sms.unLockEprom(current_id);
+    // LockEeprom must use new_id — otherwise the lock packet is ignored.
+    sms.unLockEeprom(current_id);
     usleep(10000);
 
     u8 val = new_id;
@@ -15,7 +15,7 @@ static void set_id(SMS_STS &sms, u8 current_id, u8 new_id)
     usleep(10000);
 
     if (ret) {
-        sms.LockEprom(new_id);
+        sms.LockEeprom(new_id);
         usleep(10000);
         printf("Servo %d -> ID %d: OK (EEPROM saved)\n", current_id, new_id);
     } else {

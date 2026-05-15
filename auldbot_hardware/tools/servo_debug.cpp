@@ -53,7 +53,7 @@ void print_help()
 
 void cmd_mv(SMS_STS &sms, std::set<int> &touched, int id, int speed)
 {
-    sms.WheelMode(static_cast<u8>(id));
+    sms.Mode(static_cast<u8>(id), SMS_STS_MODE_WHEEL_CLOSED);
     int ret = sms.WriteSpe(static_cast<u8>(id), static_cast<s16>(speed), 0);
     if (ret) {
         touched.insert(id);
