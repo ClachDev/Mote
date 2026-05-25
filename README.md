@@ -1,5 +1,7 @@
 # Mote
 
+![Mote with camera](docs/images/mote_camera.webp)
+
 A differential drive robot platform combining the accessibility of
 [LeKiwi](https://github.com/TheRobotStudio/SO-ARM100) with standard ROS2/Nav2
 infrastructure and [ORP](https://openroboticplatform.com/) interoperability.
@@ -17,6 +19,12 @@ of materials.
 - SLAMTEC RPLIDAR C1
 - USB webcam
 - 5V USB-C power bank (slim form factor, ≥85W dual output)
+
+## SO-101 Follower Arm
+
+![Mote with SO-101 arm](docs/images/mote_S0_101.webp)
+
+The chassis is compatible with the [SO-101 follower arm](https://github.com/TheRobotStudio/SO-ARM100) via the ORP mounting grid. See the SO-ARM100 project for the arm's BOM and assembly instructions.
 
 ## Software
 
