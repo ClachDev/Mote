@@ -7,7 +7,7 @@
     </General>
     <Discovery>
       <Peers>
-        <Peer address="auldbot.local"/>
+        <Peer address="mote.local"/>
       </Peers>
     </Discovery>
   </Domain>

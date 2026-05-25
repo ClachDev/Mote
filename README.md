@@ -1,4 +1,4 @@
-# AuldBot
+# Mote
 
 A differential drive robot platform combining the accessibility of
 [LeKiwi](https://github.com/TheRobotStudio/SO-ARM100) with standard ROS2/Nav2
@@ -24,16 +24,16 @@ Built with ROS2 Jazzy, managed via [pixi](https://pixi.sh).
 
 | Package | Purpose |
 |---|---|
-| [`auldbot_bringup`](auldbot_bringup/) | Launch files for bringing up the robot |
-| [`auldbot_description`](auldbot_description/) | URDF robot model and TF tree |
-| [`auldbot_hardware`](auldbot_hardware/) | ros2_control hardware interface for the Feetech servo bus (SDK: **`scservo-linux`** from [`auldbot-forge`](https://prefix.dev/auldbot-forge) via Pixi) |
+| [`mote_bringup`](mote_bringup/) | Launch files for bringing up the robot |
+| [`mote_description`](mote_description/) | URDF robot model and TF tree |
+| [`mote_hardware`](mote_hardware/) | ros2_control hardware interface for the Feetech servo bus (SDK: **`scservo-linux`** from [`mote`](https://prefix.dev/mote) via Pixi) |
 
 ## Getting Started
 
 Clone the repo with submodules:
 
 ```bash
-git clone --recurse-submodules <url>
+git clone --recurse-submodules https://github.com/ClachDev/Mote
 ```
 
 Install [pixi](https://pixi.prefix.dev/) if you don't have it, then build:

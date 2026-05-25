@@ -1,0 +1,16 @@
+[Unit]
+Description=Mote Navigation
+After=mote-slam.service
+Requires=mote-slam.service
+
+[Service]
+Type=simple
+User=michael
+WorkingDirectory=/home/michael/Mote
+ExecStart=/home/michael/.pixi/bin/pixi run nav
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/michael
+
+[Install]
+WantedBy=multi-user.target

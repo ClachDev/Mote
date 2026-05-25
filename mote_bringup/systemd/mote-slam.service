@@ -1,0 +1,16 @@
+[Unit]
+Description=Mote SLAM
+After=mote-bringup.service
+Requires=mote-bringup.service
+
+[Service]
+Type=simple
+User=michael
+WorkingDirectory=/home/michael/Mote
+ExecStart=/home/michael/.pixi/bin/pixi run slam
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/michael
+
+[Install]
+WantedBy=multi-user.target

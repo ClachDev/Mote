@@ -1,0 +1,11 @@
+<library path="mote_hardware">
+  <class name="mote_hardware/MoteHardware"
+         type="mote_hardware::MoteHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control hardware interface for Mote differential drive.
+      Communicates with two Feetech STS3215 servos via the Waveshare
+      Serial Bus Servo Driver Board.
+    </description>
+  </class>
+</library>

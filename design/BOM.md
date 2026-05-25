@@ -4,7 +4,7 @@ Prices in GBP. Sensor configuration add-ons are listed separately — the base b
 
 ## Power: 5V only
 
-AuldBot standardises on 5V. See the README for the full rationale.
+Mote standardises on 5V. See the README for the full rationale.
 
 ## Base Build
 

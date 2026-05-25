@@ -1,6 +1,6 @@
 # 2D Lidar Odometry Research
 
-*Researched May 2026. Context: auldbot needs scan-to-scan lidar odometry for wheel slip detection and improved odom fusion.*
+*Researched May 2026. Context: mote needs scan-to-scan lidar odometry for wheel slip detection and improved odom fusion.*
 
 ---
 
@@ -20,7 +20,7 @@ Avoids explicit point correspondences by treating scan-to-scan matching like den
 
 **Status:** Essentially abandoned. The ROS2 port exists but has unmerged bug-fix PRs open for 9+ years. Missing `nav_msgs` dependency in `package.xml`. No covariance published in the odometry message (breaks robot_localization without patching).
 
-**Verdict:** Not recommended. Used as an interim submodule in auldbot pending a better solution.
+**Verdict:** Not recommended. Used as an interim submodule in mote pending a better solution.
 
 ---
 
@@ -90,7 +90,7 @@ Runs at **100 Hz** vs robot_localization/fuse at ~10 Hz.
 - Does not handle wheel slip on strongly sloped surfaces
 - Requires wheel odometry (not purely lidar-only)
 
-**Verdict:** The right choice for auldbot. Replaces both rf2o AND robot_localization with a single tighter system.
+**Verdict:** The right choice for mote. Replaces both rf2o AND robot_localization with a single tighter system.
 
 ---
 
@@ -105,7 +105,7 @@ A modular C++ framework for SLAM. Has both a lidar odometry node and a full 2D S
 
 ---
 
-## Recommendation for auldbot
+## Recommendation for mote
 
 Replace the current rf2o submodule + robot_localization stack with **Kinematic-ICP** as a single submodule. Configuration changes needed:
 

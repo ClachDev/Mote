@@ -1,4 +1,4 @@
-# AuldBot Design
+# Mote Design
 
 ## Design Decisions
 
@@ -13,7 +13,7 @@ the bed. All components fit within the 230mm footprint, and the power bank
 
 ### Power: 5V only
 
-AuldBot standardises on 5V (USB-C power bank) and does not offer a 12V variant.
+Mote standardises on 5V (USB-C power bank) and does not offer a 12V variant.
 The 12V config requires a DC-DC converter to power the Pi, adding cost and
 complexity. A 20000mAh power bank outperforms a typical 12V Li-ion pack on
 capacity (~100Wh vs ~60Wh), charges via standard USB-C, and has a built-in BMS.
@@ -47,7 +47,7 @@ total output across two simultaneous ports (Pi + MCB).
   - Combinations of the above
 - It should use "standard" parts, i.e. either Dynamixel or Feetech servos.
 - The chassis should be compatible with the SO-101 arm from TheRobotStudio.
-- AuldBot is intended as a comparison platform between the classical ROS/Nav2
+- Mote is intended as a comparison platform between the classical ROS/Nav2
   navigation approach and the LeRobot learned policy approach.
 
 ## Bill of Materials
