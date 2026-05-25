@@ -18,7 +18,7 @@ setup(
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="Michael Johnson",
-    maintainer_email="mjohnson@augereai.com",
+    maintainer_email="michael@clach.dev",
     description="Launch files for the mote",
     license="MIT",
     entry_points={

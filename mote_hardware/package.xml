@@ -3,9 +3,9 @@
 <package format="3">
   <name>mote_hardware</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="mjohnson459@gmail.com">michael</maintainer>
-  <license>TODO: License declaration</license>
+  <description>ROS2 hardware interface for Mote differential-drive robot (motors and servo control)</description>
+  <maintainer email="michael@clach.dev">Michael Johnson</maintainer>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

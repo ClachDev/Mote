@@ -1,5 +1,5 @@
 [workspace]
-authors = ["Michael Johnson <mjohnson459@gmail.com>"]
+authors = ["Michael Johnson <michael@clach.dev>"]
 channels = ["https://prefix.dev/mote", "robostack-jazzy", "conda-forge"]
 name = "mote"
 platforms = ["linux-64", "linux-aarch64"]
