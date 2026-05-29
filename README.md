@@ -9,10 +9,10 @@ them out on. There are some existing platforms but they are either too expensive
 (turtlebot 3), or much too expensive (turtlebot 4). Some are cheap but lack
 sensors (LeKiwi).
 
-When I started out in roboticss there was a [$50
+When I started out in robotics there was a [$50
 robot](https://www.societyofrobots.com/step_by_step_robot.shtml) project I
 followed. That was made for a different age but I figured why not see how
-cheaply I can make a fully functioning robotics platform for todays enthusiasts.
+cheaply I can make a fully functioning robotics platform for today's enthusiasts.
 
 The main factors I've engineered for are:
 
@@ -131,16 +131,23 @@ sudo usermod -aG dialout $USER
 
 The drive wheels are expected at servo IDs **7** (left) and **9** (right) at
 1 Mbaud. Fresh Feetech STS3215 servos ship as ID 1, so you'll need to assign
-IDs before first use. The IDs, baud rate and `velocity_scale` (the rad/s → raw
-servo-unit conversion) live in both
+IDs before first use. Run the guided setup and connect one servo at a time when
+prompted:
+
+```bash
+pixi run setup-ids
+```
+
+The IDs, baud rate and `velocity_scale` (the rad/s → raw servo-unit conversion)
+live in both
 [`mote_bringup/launch/mote_launch.py`](mote_bringup/launch/mote_launch.py) and
 [`mote_description/urdf/mote.urdf.xacro`](mote_description/urdf/mote.urdf.xacro)
 — keep them in sync if you change them.
 
-The helper tools in [`mote_hardware/tools/`](mote_hardware/tools/) cover this:
-`servo_debug` to inspect and drive individual servos, `velocity_cal` to measure
-`velocity_scale` on your hardware, and `swap_ids` to flip the left/right IDs if
-the wheels turn the wrong way. See
+The other helper tools in [`mote_hardware/tools/`](mote_hardware/tools/) round
+this out: `servo_debug` to inspect and drive individual servos, `velocity_cal`
+to measure `velocity_scale` on your hardware, and `swap_ids` to flip the
+left/right IDs if the wheels turn the wrong way. See
 [`mote_hardware/tools/README.md`](mote_hardware/tools/README.md).
 
 ### 5. Launch
