@@ -40,11 +40,9 @@ Out1 to stop them stalling. The Pi runs fine on the 45W port.
 - The wheels should be centered and inset so the footprint is circular.
 - The chassis should follow the [ORP](https://openroboticplatform.com/) standard
   for interoperable parts.
-- Standard layouts for sensor configurations
-  - Two cameras
+- Standard sensor configurations
+  - Camera
   - Lidar
-  - 3D camera
-  - Combinations of the above
 - It should use "standard" parts, i.e. either Dynamixel or Feetech servos.
 - The chassis should be compatible with the SO-101 arm from TheRobotStudio.
 - Mote is intended as a comparison platform between the classical ROS/Nav2

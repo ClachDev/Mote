@@ -1,7 +1,7 @@
 # Bill of Materials
 
 Prices in GBP. Sensor configuration add-ons are listed separately — the base
-build uses two USB cameras matching LeKiwi.
+build uses a single USB camera.
 
 ## Power: 5V only
 
@@ -14,7 +14,6 @@ Mote standardises on 5V. See the README for the full rationale.
 | Part                                                                 | Qty | Unit price      | Link                                                |
 | -------------------------------------------------------------------- | --- | --------------- | --------------------------------------------------- |
 | Chassis plates (3D printed)                                          | —   | (filament only) | —                                                   |
-| Passive front caster                                                 | 1   | ~£6             | TBD                                                 |
 | M3 button head hex socket screw set (751pcs, M3×6–35, nuts, washers) | 1   | ~£6             | [Amazon UK](https://www.amazon.co.uk/dp/B0DSDJCRNB) |
 
 ### Electronics
@@ -33,10 +32,10 @@ Mote standardises on 5V. See the README for the full rationale.
 
 | Part                                    | Qty | Unit price | Link                                                                |
 | --------------------------------------- | --- | ---------- | ------------------------------------------------------------------- |
-| UGREEN 1080p/30fps USB Webcam 85° FOV   | 2   | ~£15       | [Amazon UK](https://www.amazon.co.uk/dp/B0C76ZD7KV)                 |
+| UGREEN 1080p/30fps USB Webcam 85° FOV   | 1   | ~£15       | [Amazon UK](https://www.amazon.co.uk/dp/B0C76ZD7KV)                 |
 | SLAMTEC RPLIDAR C1 360° DTOF, 10Hz, 12m | 1   | ~£56       | [AliExpress](https://www.aliexpress.com/item/1005006641728089.html) |
 
-**Base total (excluding print cost): ~£313**
+**Base total (excluding print cost): ~£292**
 
 ---
 

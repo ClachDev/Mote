@@ -20,7 +20,7 @@ setup(
     maintainer="Michael Johnson",
     maintainer_email="michael@clach.dev",
     description="Launch files for the mote",
-    license="MIT",
+    license="Apache-2.0",
     entry_points={
         "console_scripts": [],
     },
