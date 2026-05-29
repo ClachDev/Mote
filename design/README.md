@@ -2,13 +2,13 @@
 
 ## Design Decisions
 
-### Chassis diameter: 230mm
+### Chassis diameter: 235mm
 
-The chassis uses a 230mm circular plate, adapted from the [ORP 360mm circular
-plate](https://openroboticplatform.com/part:12). 230mm fits comfortably on a
+The chassis uses a 235mm circular plate, adapted from the [ORP 360mm circular
+plate](https://openroboticplatform.com/part:12). 235mm fits comfortably on a
 standard 256mm 3D printer bed and gives a good outer hole layout from the ORP
 grid — 240mm places holes right at the plate edge, and 250mm+ would be tight on
-the bed. All components fit within the 230mm footprint, and the power bank
+the bed. All components fit within the 235mm footprint, and the power bank
 (152mm longest dimension) fits comfortably within the circle.
 
 ### Power: 5V only
