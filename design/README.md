@@ -15,22 +15,22 @@ the bed. All components fit within the 230mm footprint, and the power bank
 
 Mote standardises on 5V (USB-C power bank) and does not offer a 12V variant.
 The 12V config requires a DC-DC converter to power the Pi, adding cost and
-complexity. A 20000mAh power bank outperforms a typical 12V Li-ion pack on
+complexity. A power bank outperforms a typical 12V Li-ion pack on
 capacity (~100Wh vs ~60Wh), charges via standard USB-C, and has a built-in BMS.
-When the SO-101 arm is added, it runs on 5V in its standard config, so one power
-bank powers the whole robot.
 
-The power chain is: **power bank → Pi (USB-C) → MCB (USB-C to DC barrel jack)**.
-The MCB does not draw power directly from the power bank.
+The power bank directly connects to the Pi (USB-C to C) and the MCB (USB-C to C
+to DC).
 
 ### Power bank form factor
 
 The power bank is sandwiched between the two lower chassis layers to keep the
-centre of mass low. The inter-layer gap is set by the servo height of
-**45.2mm**, so the power bank's smallest cross-sectional dimension must be
-≤45.2mm. Standard square power banks measure ~50mm on each side and do not fit —
-a slim/flat form factor is required. The bank must also provide at least 85W
-total output across two simultaneous ports (Pi + MCB).
+centre of mass low. The servo height is 45.2mm and the lidar is 41.3mm. For some
+extra space and nice numbers I've buffered the standoffs to 50mm. This is then
+the limiting factor in choosing a power bank. I've found that availability
+changes depending on country so the most important thing to look for is a height
+less than 50mm, and two USB-C ports. I found that with the UGREEN 140W bank
+which advertises 100W on In/Out1 and 45W on Out2, I need to connect the MCB to
+Out1 to stop them stalling. The Pi runs fine on the 45W port.
 
 ## Requirements
 
