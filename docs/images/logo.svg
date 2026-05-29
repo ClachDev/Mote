@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+
+  <!-- Cutout regions (blue = negative space / cut) -->
+  <!-- Upper-left wing -->
+  <polygon points="20,120 70,33.4 84,33.4 84,126 23.5,126" fill="#2196F3"/>
+  <!-- Upper-centre rectangle -->
+  <polygon points="96,33.4 144,33.4 144,100 96,100" fill="#2196F3"/>
+  <!-- Upper-right wing -->
+  <polygon points="220,120 170,33.4 156,33.4 156,126 216.5,126" fill="#2196F3"/>
+  <!-- Lower-left wing -->
+  <polygon points="30.4,138 84,138 84,206.6 70,206.6" fill="#2196F3"/>
+  <!-- Lower-centre rectangle -->
+  <polygon points="96,112 144,112 144,206.6 96,206.6" fill="#2196F3"/>
+  <!-- Lower-right wing -->
+  <polygon points="209.6,138 156,138 156,206.6 170,206.6" fill="#2196F3"/>
+</svg>
