@@ -3,10 +3,6 @@
 Prices in GBP. Sensor configuration add-ons are listed separately — the base
 build uses a single USB camera.
 
-## Power: 5V only
-
-Mote standardises on 5V. See the README for the full rationale.
-
 ## Base Build
 
 ### Structure
@@ -19,7 +15,7 @@ Mote standardises on 5V. See the README for the full rationale.
 ### Electronics
 
 | Part                                                           | Qty | Unit price | Link                                                                                                  |
-| -------------------------------------------------------------- | --- | ---------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| -------------------------------------------------------------- | --- | ---------- | ----------------------------------------------------------------------------------------------------- |
 | Raspberry Pi 5 (4GB)                                           | 1   | ~£99       | [CPC Farnell](https://cpc.farnell.com/raspberry-pi/rpi5-4gb-single/raspberry-pi-5-4gb/dp/SC20210)     |
 | Waveshare Serial Bus Servo Driver Board                        | 1   | ~£15       | [Amazon UK](https://www.amazon.co.uk/dp/B0CJ6TP3TP)                                                   |
 | Feetech STS3215 7.4V servo — 1/191 gear (C044)                 | 2   | ~£12       | [Alibaba](https://www.alibaba.com/product-detail/Low-Cost-Feetech-STS3215-Servo-7_1601611431055.html) |
