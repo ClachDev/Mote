@@ -18,6 +18,13 @@ servos:
 lidar:
   port: /dev/mote_lidar
   baud_rate: 460800
+  # Simulated lidar parameters (RPLIDAR C1 datasheet values) — used only by
+  # the use_sim branch of the URDF; the real driver gets these from the device
+  sim:
+    update_rate: 10.0
+    samples: 720
+    range_min: 0.05
+    range_max: 12.0
 
 camera:
   device: /dev/mote_camera

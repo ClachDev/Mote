@@ -3,6 +3,13 @@
 
   <xacro:property name="cfg" value="${xacro.load_yaml('$(find mote_description)/config/robot.yaml')}"/>
 
+  <!-- Simulation: swaps MoteHardware for gz_ros2_control and adds gz sensors.
+       sim_controllers_file is the controller params file gz_ros2_control loads
+       (sim_launch.py generates it, injecting wheel geometry from this yaml). -->
+  <xacro:arg name="use_sim" default="false"/>
+  <xacro:arg name="sim_controllers_file" default=""/>
+  <xacro:property name="use_sim" value="$(arg use_sim)"/>
+
 
   <!-- ===================== MEASUREMENTS ===================== -->
   <!--
@@ -202,6 +209,7 @@
   <!-- ===================== ROS2 CONTROL ===================== -->
 
   <ros2_control name="mote_hardware" type="system">
+    <xacro:unless value="${use_sim}">
     <hardware>
       <plugin>mote_hardware/MoteHardware</plugin>
       <param name="serial_port">${cfg['servos']['port']}</param>
@@ -211,6 +219,12 @@
       <param name="velocity_scale">${cfg['servos']['velocity_scale']}</param>
       <param name="acceleration">${cfg['servos']['acceleration']}</param>
     </hardware>
+    </xacro:unless>
+    <xacro:if value="${use_sim}">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+    </xacro:if>
 
     <joint name="left_wheel_joint">
       <command_interface name="velocity"/>
@@ -224,5 +238,49 @@
       <state_interface   name="position"/>
     </joint>
   </ros2_control>
+
+  <xacro:if value="${use_sim}">
+    <!-- ===================== SIMULATION (Gazebo) ===================== -->
+    <gazebo>
+      <plugin filename="gz_ros2_control-system"
+              name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(arg sim_controllers_file)</parameters>
+      </plugin>
+    </gazebo>
+
+    <!-- Caster is a fixed sphere: frictionless so it slides instead of dragging -->
+    <gazebo reference="caster_link">
+      <mu1>0.0</mu1>
+      <mu2>0.0</mu2>
+    </gazebo>
+
+    <xacro:property name="lidar_sim" value="${cfg['lidar']['sim']}"/>
+    <gazebo reference="lidar_link">
+      <sensor name="lidar" type="gpu_lidar">
+        <!-- Rotated to match lidar_scan_link so data agrees with the frame_id -->
+        <pose>0 0 0 0 0 ${pi}</pose>
+        <topic>scan</topic>
+        <gz_frame_id>lidar_scan_link</gz_frame_id>
+        <update_rate>${lidar_sim['update_rate']}</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>${lidar_sim['samples']}</samples>
+              <resolution>1</resolution>
+              <min_angle>${-pi}</min_angle>
+              <max_angle>${pi}</max_angle>
+            </horizontal>
+          </scan>
+          <range>
+            <min>${lidar_sim['range_min']}</min>
+            <max>${lidar_sim['range_max']}</max>
+            <resolution>0.01</resolution>
+          </range>
+        </lidar>
+      </sensor>
+    </gazebo>
+  </xacro:if>
 
 </robot>
