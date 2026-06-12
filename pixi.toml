@@ -77,9 +77,16 @@ ros-jazzy-nav2-bringup = ">=1.3.11,<2"
 [feature.dev.tasks]
 rviz = "ros2 launch mote_bringup rviz_launch.py"
 
+[feature.sim.dependencies]
+ros-jazzy-ros-gz-sim = "*"
+ros-jazzy-ros-gz-bridge = "*"
+ros-jazzy-gz-ros2-control = "*"
+
 [activation]
 scripts = ["install/setup.sh"]
 env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
 
 [environments]
 dev = { features = ["dev"], solve-group = "default" }
+# Own solve (no solve-group) so sim deps can never shift the robot/Pi env
+sim = { features = ["sim"] }
