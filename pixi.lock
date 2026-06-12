@@ -716,7 +716,6 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-transmission-interface-4.43.0-np2py312h2c89a96_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-tricycle-controller-4.37.0-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-tricycle-steering-controller-4.37.0-np2py312h2ed9cc7_16.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-turtlesim-1.8.3-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-type-description-interfaces-2.0.3-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-uncrustify-vendor-3.0.1-np2py312h2ed9cc7_17.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-unique-identifier-msgs-2.5.0-np2py312h2ed9cc7_16.conda
@@ -1429,7 +1428,6 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-transmission-interface-4.43.0-np2py312h8b5252a_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-tricycle-controller-4.37.0-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-tricycle-steering-controller-4.37.0-np2py312h61f2ce4_16.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-turtlesim-1.8.3-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-type-description-interfaces-2.0.3-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-uncrustify-vendor-3.0.1-np2py312h61f2ce4_17.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-unique-identifier-msgs-2.5.0-np2py312h61f2ce4_16.conda

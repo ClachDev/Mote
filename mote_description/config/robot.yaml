@@ -1,0 +1,24 @@
+# Single source of truth for robot configuration.
+# Consumed by mote.urdf.xacro (via xacro.load_yaml) and mote_launch.py (via yaml.safe_load).
+
+# Physical geometry — used by the URDF for visualization and by diff_drive_controller for odometry
+wheel_radius: 0.0325
+wheel_separation: 0.22
+
+# Drive servo bus
+servos:
+  port: /dev/mote_servos
+  baud_rate: 1000000
+  left_id: 7
+  right_id: 9
+  velocity_scale: 674.1  # rad/s to servo speed units; measure with `ros2 run mote_hardware velocity_cal`
+  acceleration: 0        # 0 = maximum acceleration
+
+# Sensors
+lidar:
+  port: /dev/mote_lidar
+  baud_rate: 460800
+
+camera:
+  device: /dev/mote_camera
+  image_size: [640, 480]

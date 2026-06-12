@@ -1,5 +1,7 @@
 import os
+import tempfile
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, RegisterEventHandler
@@ -11,31 +13,37 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
-    hardware_config = {
-        "serial_port":    "/dev/mote_servos",
-        "baud_rate":      "1000000",
-        "left_wheel_id":  "7",
-        "right_wheel_id": "9",
-        "velocity_scale": "674.1",
-        "acceleration":   "0",
-    }
+    description_share = get_package_share_directory("mote_description")
+    bringup_share = get_package_share_directory("mote_bringup")
 
-    urdf_file = os.path.join(
-        get_package_share_directory("mote_description"),
-        "urdf",
-        "mote.urdf.xacro",
-    )
-    xacro_args = " ".join(f"{k}:={v}" for k, v in hardware_config.items())
-    robot_description_content = Command(f"xacro {urdf_file} {xacro_args}")
+    with open(os.path.join(description_share, "config", "robot.yaml")) as f:
+        cfg = yaml.safe_load(f)
+
+    urdf_file = os.path.join(description_share, "urdf", "mote.urdf.xacro")
+    robot_description_content = Command(f"xacro {urdf_file}")
     robot_description = {
         "robot_description": ParameterValue(robot_description_content, value_type=str)
     }
 
-    controller_config = os.path.join(
-        get_package_share_directory("mote_bringup"),
-        "config",
-        "controllers.yaml",
+    controller_config = os.path.join(bringup_share, "config", "controllers.yaml")
+    # Must be a params *file* keyed by node name: a plain dict gets flattened to
+    # "diff_drive_controller.ros__parameters.wheel_separation" on the
+    # controller_manager node and never reaches the diff_drive_controller node.
+    wheel_params_file = tempfile.NamedTemporaryFile(
+        mode="w", prefix="mote_wheel_params_", suffix=".yaml", delete=False
     )
+    yaml.safe_dump(
+        {
+            "diff_drive_controller": {
+                "ros__parameters": {
+                    "wheel_separation": cfg["wheel_separation"],
+                    "wheel_radius": cfg["wheel_radius"],
+                }
+            }
+        },
+        wheel_params_file,
+    )
+    wheel_params_file.close()
 
     robot_state_publisher = Node(
         package="robot_state_publisher",
@@ -46,7 +54,7 @@ def generate_launch_description():
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, controller_config],
+        parameters=[robot_description, controller_config, wheel_params_file.name],
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -61,13 +69,14 @@ def generate_launch_description():
         arguments=["diff_drive_controller"],
     )
 
+    lidar = cfg["lidar"]
     rplidar = Node(
         package="sllidar_ros2",
         executable="sllidar_node",
         name="rplidar",
         parameters=[{
-            "serial_port": "/dev/mote_lidar",
-            "serial_baudrate": 460800,
+            "serial_port": lidar["port"],
+            "serial_baudrate": lidar["baud_rate"],
             "frame_id": "lidar_scan_link",
             "inverted": False,
             "angle_compensate": True,
@@ -75,40 +84,31 @@ def generate_launch_description():
         }],
     )
 
-    laser_filter_config = os.path.join(
-        get_package_share_directory("mote_bringup"),
-        "config",
-        "laser_filters.yaml",
-    )
-
     laser_filter = Node(
         package="laser_filters",
         executable="scan_to_scan_filter_chain",
-        parameters=[laser_filter_config],
+        parameters=[os.path.join(bringup_share, "config", "laser_filters.yaml")],
         remappings=[
             ("scan", "/scan"),
             ("scan_filtered", "/scan_filtered"),
         ],
     )
 
+    cam = cfg["camera"]
     camera = Node(
         package="v4l2_camera",
         executable="v4l2_camera_node",
         name="camera",
         parameters=[{
-            "video_device": "/dev/mote_camera",
-            "image_size": [640, 480],
+            "video_device": cam["device"],
+            "image_size": cam["image_size"],
             "camera_frame_id": "camera_optical_link",
         }],
     )
 
-    launch_dir = os.path.join(
-        get_package_share_directory("mote_bringup"), "launch"
-    )
-
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(launch_dir, "localization_launch.py")
+            os.path.join(bringup_share, "launch", "localization_launch.py")
         )
     )
 

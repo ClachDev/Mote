@@ -1,13 +1,8 @@
 <?xml version="1.0"?>
 <robot name="mote" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- ===================== HARDWARE PARAMETERS ===================== -->
-  <xacro:arg name="serial_port"    default="/dev/mote_servos"/>
-  <xacro:arg name="baud_rate"      default="1000000"/>
-  <xacro:arg name="left_wheel_id"  default="7"/>
-  <xacro:arg name="right_wheel_id" default="9"/>
-  <xacro:arg name="velocity_scale" default="674.1"/>
-  <xacro:arg name="acceleration"   default="0"/>
+  <xacro:property name="cfg" value="${xacro.load_yaml('$(find mote_description)/config/robot.yaml')}"/>
+
 
   <!-- ===================== MEASUREMENTS ===================== -->
   <!--
@@ -27,10 +22,10 @@
   <xacro:property name="plate_mass"      value="0.01"/>  <!-- dummy -->
 
   <!-- Drive wheels (STS3215) -->
-  <xacro:property name="wheel_radius"     value="0.0325"/>
+  <xacro:property name="wheel_radius"     value="${cfg['wheel_radius']}"/>
   <xacro:property name="wheel_width"      value="0.006"/>
   <xacro:property name="wheel_mass"       value="0.05"/>  <!-- dummy -->
-  <xacro:property name="wheel_separation" value="0.22"/>
+  <xacro:property name="wheel_separation" value="${cfg['wheel_separation']}"/>
   <xacro:property name="axle_z"           value="0.0095"/>
 
   <!-- Caster -->
@@ -209,12 +204,12 @@
   <ros2_control name="mote_hardware" type="system">
     <hardware>
       <plugin>mote_hardware/MoteHardware</plugin>
-      <param name="serial_port">$(arg serial_port)</param>
-      <param name="baud_rate">$(arg baud_rate)</param>
-      <param name="left_wheel_id">$(arg left_wheel_id)</param>
-      <param name="right_wheel_id">$(arg right_wheel_id)</param>
-      <param name="velocity_scale">$(arg velocity_scale)</param>
-      <param name="acceleration">$(arg acceleration)</param>
+      <param name="serial_port">${cfg['servos']['port']}</param>
+      <param name="baud_rate">${cfg['servos']['baud_rate']}</param>
+      <param name="left_wheel_id">${cfg['servos']['left_id']}</param>
+      <param name="right_wheel_id">${cfg['servos']['right_id']}</param>
+      <param name="velocity_scale">${cfg['servos']['velocity_scale']}</param>
+      <param name="acceleration">${cfg['servos']['acceleration']}</param>
     </hardware>
 
     <joint name="left_wheel_joint">

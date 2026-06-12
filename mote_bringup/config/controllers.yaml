@@ -13,9 +13,6 @@ diff_drive_controller:
     left_wheel_names: ["left_wheel_joint"]
     right_wheel_names: ["right_wheel_joint"]
 
-    wheel_separation: 0.22
-    wheel_radius: 0.0325
-
     linear:
       x:
         max_velocity: 0.3

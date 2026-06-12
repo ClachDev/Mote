@@ -139,10 +139,9 @@ pixi run setup-ids
 ```
 
 The IDs, baud rate and `velocity_scale` (the rad/s → raw servo-unit conversion)
-live in both
-[`mote_bringup/launch/mote_launch.py`](mote_bringup/launch/mote_launch.py) and
-[`mote_description/urdf/mote.urdf.xacro`](mote_description/urdf/mote.urdf.xacro)
-— keep them in sync if you change them.
+live in [`mote_description/config/robot.yaml`](mote_description/config/robot.yaml),
+which is the single source of truth for all robot configuration. Both the URDF
+and the launch file read from it.
 
 The other helper tools in [`mote_hardware/tools/`](mote_hardware/tools/) round
 this out: `servo_debug` to inspect and drive individual servos, `velocity_cal`
