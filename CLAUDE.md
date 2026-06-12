@@ -22,6 +22,13 @@ pixi run clean          # Kill stale ROS processes and reset daemon
 
 # Dev environment only (installs ros-jazzy-desktop)
 pixi run rviz           # RViz2 with mote config
+
+# Sim environment only (gz-sim Harmonic + ros_gz + gz_ros2_control; own solve,
+# never affects the robot/Pi env)
+pixi run -e sim sim     # Headless Gazebo sim: world + robot + controllers
+# Run slam/nav against it with use_sim_time, e.g.:
+#   pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
+pixi run test           # colcon test for mote_hardware (gtest)
 ```
 
 Build artifacts go into `build/`, `install/`, and `log/` — all ignored by git. If you see CMakeCache.txt errors about a wrong source directory (e.g. from a path rename), delete the stale `build/` directory and rebuild.
@@ -61,7 +68,8 @@ Launch files, config, udev rules, and systemd services.
 - `robot_launch.py` — combines `mote_launch.py` + `slam_launch.py`
 - `mote_launch.py` — main bringup: robot_state_publisher, ros2_control_node, controller spawners, sllidar, laser_filter, v4l2_camera, and `localization_launch.py`. Reads `robot.yaml` for wheel geometry (injected into DiffDriveController params) and sensor config.
 - `localization_launch.py` — AMCL-based localization
-- `slam_launch.py` — slam_toolbox
+- `slam_launch.py` — slam_toolbox (accepts `use_sim_time:=true` for the sim)
+- `sim_launch.py` — Gazebo sim (sim environment only): headless gz server with `worlds/mote_world.sdf`, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter. The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF).
 - `nav2_launch.py` — Nav2 stack
 - `rviz_launch.py` — RViz2 (dev environment only)
 

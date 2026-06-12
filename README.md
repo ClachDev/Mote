@@ -162,6 +162,24 @@ pixi run slam   # Runs the SLAM stack to create a map
 pixi run nav    # Runs the nav stack
 ```
 
+### Simulation (no hardware required)
+
+A Gazebo (gz-sim) simulation of Mote runs entirely on a workstation — same
+controllers, same scan pipeline, so the SLAM and Nav2 stacks work against it
+unmodified. The sim dependencies live in a separate pixi environment so the
+robot install stays lean:
+
+```bash
+pixi run -e sim sim                                              # headless gz + robot + controllers
+pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
+pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
+pixi run teleop                                                  # drive it around
+```
+
+The world (`mote_bringup/worlds/mote_world.sdf`) is a simple walled room with
+a few obstacles. The simulated lidar uses RPLIDAR C1 datasheet values from
+[`robot.yaml`](mote_description/config/robot.yaml).
+
 ### Deploying to the Pi
 
 The above section assumes you are developing entirely on the Pi which is
