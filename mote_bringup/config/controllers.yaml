@@ -10,6 +10,8 @@ controller_manager:
 
 diff_drive_controller:
   ros__parameters:
+    # wheel_separation and wheel_radius come from mote_description/config/robot.yaml,
+    # injected at launch by mote_launch.py
     left_wheel_names: ["left_wheel_joint"]
     right_wheel_names: ["right_wheel_joint"]
 
