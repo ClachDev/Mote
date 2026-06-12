@@ -1,5 +1,7 @@
 # Mote
 
+[![build](https://github.com/ClachDev/Mote/actions/workflows/build.yml/badge.svg)](https://github.com/ClachDev/Mote/actions/workflows/build.yml)
+
 ![Mote with camera](docs/images/mote_camera.webp)
 
 ## *Mote*vation (I'm sorry I had to!)
