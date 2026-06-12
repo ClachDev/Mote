@@ -11,7 +11,7 @@ build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_PO
     "submodules",
 ] }
 clean = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
-install-systemd = "sudo cp mote_bringup/systemd/*.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable mote-bringup mote-slam mote-nav"
+install-systemd = "bash mote_bringup/systemd/install.sh"
 launch = "ros2 launch mote_bringup mote_launch.py"
 nav = "ros2 launch mote_bringup nav2_launch.py map:=$HOME/.mote/map.yaml"
 robot = "ros2 launch mote_bringup robot_launch.py"

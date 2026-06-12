@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=michael
-WorkingDirectory=/home/michael/Mote
-ExecStart=/home/michael/.pixi/bin/pixi run launch
+User=@USER@
+WorkingDirectory=@HOME@/Mote
+ExecStart=@HOME@/.pixi/bin/pixi run launch
 Restart=on-failure
 RestartSec=5
-Environment=HOME=/home/michael
+Environment=HOME=@HOME@
 
 [Install]
 WantedBy=multi-user.target
