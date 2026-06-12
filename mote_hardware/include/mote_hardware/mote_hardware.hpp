@@ -15,6 +15,8 @@
 // SCServo SDK — path set by CMake include_directories
 #include "SMS_STS.h"
 
+#include "mote_hardware/encoder.hpp"
+
 namespace mote_hardware
 {
 
@@ -66,13 +68,6 @@ private:
   // Previous raw position for rollover tracking (12-bit, 0–4095)
   std::array<int16_t, 2> last_raw_positions_{0, 0};
   std::array<bool, 2> positions_initialised_{false, false};
-
-  static constexpr int LEFT = 0;
-  static constexpr int RIGHT = 1;
-
-  static constexpr double TICKS_PER_REV = 4096.0;
-  static constexpr double TWO_PI = 2.0 * M_PI;
-  static constexpr int16_t ROLLOVER_THRESHOLD = 2048;  // half of 4096
 };
 
 }  // namespace mote_hardware
