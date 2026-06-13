@@ -170,12 +170,17 @@ unmodified. The sim dependencies live in a separate pixi environment so the
 robot install stays lean:
 
 ```bash
-pixi run -e sim sim                                              # headless gz + robot + controllers
+pixi run sim                                                     # headless gz + robot + controllers
+pixi run sim-test                                                # ~20 s headless smoke test (drive + odom + scan + map)
+pixi run teleop                                                  # drive it around
+# Ad-hoc commands need the sim environment named explicitly:
 pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
-pixi run teleop                                                  # drive it around
-pixi run -e sim sim-test                                         # ~20 s headless smoke test (drive + odom + scan + map)
 ```
+
+The `sim` and `sim-test` tasks select the sim environment automatically (they're
+defined only there); the bare `pixi run -- …` form defaults to the robot
+environment, so those need `-e sim`.
 
 `sim-test` is a fast end-to-end check: it brings up the sim and SLAM, drives the
 robot, and asserts odometry integrates the motion, the lidar publishes sane
