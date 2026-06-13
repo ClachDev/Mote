@@ -33,8 +33,8 @@ the large flat plates to prevent corner lift.
 | SO Base ORP (1, optional) | PLA | flat | none |
 
 Notes:
-- **Wheels are two-part**: a rigid `Wheel Inner` hub plus a `Wheel Tyre` —
-  printing the tyre in TPU gives traction. ⚠️ Confirm the intended tyre material.
+- **Wheels are two-part**: a rigid `Wheel Inner` hub plus a `Wheel Tyre` printed
+  in **TPU** for traction.
 - **Caster is unresolved** — printed and several off-the-shelf options have all
   been unsatisfactory so far; treat this part as provisional. A bought ball
   caster of the right height may be preferable (see Assembly step 6).
@@ -44,9 +44,11 @@ Notes:
 ## Assembly
 
 **Hardware:** the M3 button-head hex set from the [BOM](BOM.md) (screws, nuts,
-washers) covers all fasteners. Standoffs are buffered to **50 mm** (set by servo
-height 45.2 mm / lidar 41.3 mm). ⚠️ Exact screw lengths and standoff count per
-joint aren't captured here yet — fill in as you build.
+washers) covers all fasteners — its M3×6–35 range means you can match each joint
+exactly. Most joints take **M3×12**: the screw passes through a ~6 mm plate into
+a part with a ~6 mm captive-nut pocket. Use **M3×10** for thinner stacks.
+Standoffs are buffered to **50 mm** (set by servo height 45.2 mm / lidar
+41.3 mm).
 
 Suggested order:
 

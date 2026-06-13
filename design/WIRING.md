@@ -5,8 +5,9 @@ bank at **5 V** (see [the 5 V-only rationale](README.md#power-5v-only)). Device
 names in the launch stack (`/dev/mote_*`) are created by the udev rules in
 [`mote_bringup/udev/`](../mote_bringup/udev/).
 
-> ⚠️ Items marked **Verify** depend on the exact connectors on your units —
-> confirm against your hardware before ordering cables.
+Every data link is plain USB (standard male plugs into the device ports), so
+there's no special connector wiring — just the cables in the [BOM](BOM.md).
+A few electrical details still want bench confirmation; those are marked **Verify**.
 
 ## Diagram
 
@@ -46,8 +47,8 @@ the Pi over their data connection (USB / GPIO), not from the bank directly.
 
 | From | Cable | To | Device node | Notes |
 | --- | --- | --- | --- | --- |
-| Servo board (USB data) | USB-A ↔ USB-C, 0.3 m | Pi USB-A | `/dev/mote_servos` | CH343 USB-serial, 1 Mbaud. **Verify** board-side connector |
-| RPLIDAR C1 | USB (incl. SLAMTEC adapter) | Pi USB-A | `/dev/mote_lidar` | 460800 baud; powered over USB. **Verify** cable supplied with unit |
+| Servo board (USB-C data) | USB-A ↔ USB-C, 0.3 m | Pi USB-A | `/dev/mote_servos` | CH343 USB-serial, 1 Mbaud |
+| RPLIDAR C1 | USB (cable supplied with unit) | Pi USB-A | `/dev/mote_lidar` | 460800 baud; powered over USB |
 | USB webcam | USB-A (captive) | Pi USB-A | `/dev/mote_camera` | UVC; powered over USB |
 | BNO085 (testing) | 4× jumper to GPIO header | Pi GPIO | `/dev/i2c-1` | See IMU section |
 
