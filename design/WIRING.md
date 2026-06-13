@@ -59,13 +59,12 @@ dropouts under load.
 
 Three things make the 5 V budget non-obvious:
 
-1. **Servos are run below their rated voltage.** The STS3215's spec operating
-   range is **7.4–12.6 V**, but Mote feeds the servo board **5 V**. This is the
-   deliberate 5 V-only design tradeoff: it works in practice (the `velocity_scale`
-   in [`robot.yaml`](../mote_description/config/robot.yaml) is calibrated on real
-   hardware with `velocity_cal`), but you get less torque/speed headroom than the
-   datasheet figures, which are quoted at the higher voltage. If you ever find
-   the drive underpowered, this is why.
+1. **Servos run at 5 V and that's fine.** The STS3215's datasheet operating
+   range starts at **7.4 V**, but Mote feeds the servo board **5 V** and the
+   drive works fine in practice — this is confirmed on real hardware, with
+   `velocity_scale` in [`robot.yaml`](../mote_description/config/robot.yaml)
+   calibrated at 5 V via `velocity_cal`. Just don't expect the datasheet torque
+   numbers, since those are quoted at the higher voltage.
 
 2. **A "100 W" USB-C port is not 100 W at 5 V.** USB-C PD advertises its top
    wattage at high voltage (≈20 V); at 5 V each port is limited by its 5 V
