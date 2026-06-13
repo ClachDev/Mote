@@ -79,6 +79,9 @@ rviz = "ros2 launch mote_bringup rviz_launch.py"
 
 [feature.sim.tasks]
 sim = "ros2 launch mote_bringup sim_launch.py"
+sim-test = { cmd = "bash mote_bringup/test/sim_smoke/run_sim_smoke.sh", depends-on = [
+    "build",
+] }
 
 [feature.sim.dependencies]
 ros-jazzy-ros-gz-sim = "*"
