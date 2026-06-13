@@ -31,6 +31,10 @@ pixi run sim-test       # ~20 s headless smoke test (local pre-PR gate, needs a 
 # Ad-hoc (non-task) commands still need the env named:
 #   pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 pixi run test           # colcon test for mote_hardware (gtest)
+
+# Lint environment only (pre-commit; minimal env, no ROS — auto-selected)
+pixi run lint           # run all pre-commit hooks across the tree (~1 s cached)
+pixi run lint-install   # wire pre-commit into .git/hooks (one time per clone)
 ```
 
 Build artifacts go into `build/`, `install/`, and `log/` — all ignored by git. If you see CMakeCache.txt errors about a wrong source directory (e.g. from a path rename), delete the stale `build/` directory and rebuild.
