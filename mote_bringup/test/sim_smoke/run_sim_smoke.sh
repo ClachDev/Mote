@@ -7,6 +7,12 @@
 # are on PATH:  pixi run -e sim sim-test
 #
 # Exits 0 only if every stage passes; prints "FAIL: ..." and exits 1 otherwise.
+#
+# Needs a real render backend. On a GPU-less GitHub-hosted runner, llvmpipe
+# software rendering is too slow: rasterising the gpu_lidar starves the gz
+# process, so gz_ros2_control's in-process controller_manager can't service
+# the controller spawners in time and they die. This is therefore a local
+# pre-PR gate, not a hosted-CI job. A GPU/self-hosted runner could run it.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
