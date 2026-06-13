@@ -205,11 +205,23 @@ For now, I currently develop on a workstation and push to the Pi with rsync. The
 [`pixi.toml`](pixi.toml) `[tasks]` `sync` entry to match your Pi, then:
 
 ```bash
-pixi run sync
+pixi run sync             # one-shot push
+pixi run sync-watch       # keep pushing on every save (needs the dev env)
 ```
 
-I want to try [pixi pack](https://pixi.prefix.dev/latest/deployment/pixi_pack/)
-for this eventually but haven't had a chance yet.
+**Fast inner loop:** the build uses `colcon build --symlink-install`, so once
+you've built once on the Pi, edits to existing launch files, `robot.yaml`,
+controller params, or Python launch logic take effect the next time you launch —
+**no rebuild needed**. Only changes to the `mote_hardware` C++ (or brand-new
+files that need installing) require another `pixi run build`. So the usual loop
+is: `sync-watch` running in one terminal, edit on the laptop, re-run `pixi run
+launch` on the Pi.
+
+For pushing a finished build to one or more robots, the direction is to publish
+the first-party packages to the `prefix.dev/mote` channel (built with
+[`pixi-build-ros`](https://pixi.prefix.dev/latest/build/ros/)) so a robot just
+needs `pixi install` — no source checkout or compile on the bot. That work is in
+progress.
 
 ## SO-101 Follower Arm
 

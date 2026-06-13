@@ -1908,6 +1908,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/vtk-9.5.2-py312h244374b_7.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/vtk-base-9.5.2-py312h6fba518_7.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/vtk-io-ffmpeg-9.5.2-py312hcdbd8b1_7.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/watchexec-2.5.1-hb17b654_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/wayland-1.25.0-hd6090a7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/wrapt-2.2.1-py312h4c3975b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/x264-1!164.3095-h166bdaf_2.tar.bz2
@@ -2952,6 +2953,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/vtk-9.5.2-py312h4954c87_7.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/vtk-base-9.5.2-py312h90a26f6_7.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/vtk-io-ffmpeg-9.5.2-py312haba1314_7.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/watchexec-2.5.1-h069e38c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/wayland-1.25.0-h4f8a99f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/wrapt-2.2.1-py312hcd1a082_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/x264-1!164.3095-h4e544f5_2.tar.bz2
@@ -12562,6 +12564,18 @@ packages:
   license_family: BSD
   size: 108379
   timestamp: 1768718074243
+- conda: https://conda.anaconda.org/conda-forge/linux-64/watchexec-2.5.1-hb17b654_0.conda
+  sha256: 5f2140f7b6a18138cad7a305b4185bea8499a4e044afb91e3fad72a130255d3b
+  md5: e5b552a8e3cc6084bce363770ae18c46
+  depends:
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  constrains:
+  - __glibc >=2.17
+  license: Apache-2.0
+  license_family: APACHE
+  size: 3311519
+  timestamp: 1774855010015
 - conda: https://conda.anaconda.org/conda-forge/linux-64/wayland-1.25.0-hd6090a7_0.conda
   sha256: ea374d57a8fcda281a0a89af0ee49a2c2e99cc4ac97cf2e2db7064e74e764bdb
   md5: 996583ea9c796e5b915f7d7580b51ea6
@@ -19973,6 +19987,17 @@ packages:
   license_family: BSD
   size: 106747
   timestamp: 1768718080474
+- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/watchexec-2.5.1-h069e38c_0.conda
+  sha256: 597470409a6cb80d85a2c433d30b91fbc542ccb8096a3aadcf084955e5a883ac
+  md5: 7e089d2d3ac6cc22b9ee91563116a028
+  depends:
+  - libgcc >=14
+  constrains:
+  - __glibc >=2.17
+  license: Apache-2.0
+  license_family: APACHE
+  size: 3164356
+  timestamp: 1774855038268
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/wayland-1.25.0-h4f8a99f_0.conda
   sha256: 3cc479df517b0ce110835a1256f91ca568581cb6dfe1c53a0786f0a226039a45
   md5: 0a7a9548726f98d5869fd4c43e110f0f
