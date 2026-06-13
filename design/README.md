@@ -51,3 +51,8 @@ Out1 to stop them stalling. The Pi runs fine on the 45W port.
 ## Bill of Materials
 
 See [BOM.md](BOM.md).
+
+## Build guides
+
+- [WIRING.md](WIRING.md) — connections, power topology and budget, IMU pinout.
+- [ASSEMBLY.md](ASSEMBLY.md) — print settings per part and assembly steps.
