@@ -48,15 +48,26 @@ class Verifier(Node):
     def on_map(self, msg):
         self.map = msg
 
+    def sim_now(self):
+        # node has use_sim_time=True, so this is /clock (sim) time in seconds
+        return self.get_clock().now().nanoseconds / 1e9
+
     def drive(self, vx, wz, seconds):
-        end = time.monotonic() + seconds
-        while time.monotonic() < end:
+        # Gate on sim time, not wall time: the sim does not run at realtime
+        # (RTF varies with machine load), so a wall-clock duration would
+        # translate to a variable, unpredictable distance. wall_cap is a
+        # safety net so a stalled /clock can never hang the test.
+        start = self.sim_now()
+        wall_cap = time.monotonic() + seconds * 60 + 10
+        while self.sim_now() - start < seconds:
             msg = TwistStamped()
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.twist.linear.x = vx
             msg.twist.angular.z = wz
             self.cmd_pub.publish(msg)
             rclpy.spin_once(self, timeout_sec=0.05)
+            if time.monotonic() > wall_cap:
+                raise AssertionError("FAIL: sim clock not advancing (drive stalled)")
 
     def spin_for(self, seconds):
         end = time.monotonic() + seconds
@@ -99,9 +110,15 @@ def main():
     print(f"spin: rotated {dyaw:.3f} rad (expected ~2.0, wrapped)")
     assert 1.0 < dyaw, f"FAIL: yaw change {dyaw:.3f} too small"
 
-    # scan rate + content over the ~6 s drive window above
+    # scan rate + content over the drive window above. Rate is computed from
+    # message header stamps (sim time) so it reflects the configured sensor
+    # rate regardless of how fast the sim runs relative to wall time.
     n = len(node.scans)
-    span = node.scans[-1][0] - node.scans[0][0]
+
+    def stamp_s(msg):
+        return msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
+
+    span = stamp_s(node.scans[-1][1]) - stamp_s(node.scans[0][1])
     rate = (n - 1) / span if span > 0 else 0.0
     scan = node.scans[-1][1]
     finite = [r for r in scan.ranges if scan.range_min < r < scan.range_max]
