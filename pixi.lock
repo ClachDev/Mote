@@ -2501,6 +2501,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-zstd-image-transport-4.0.6-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-zstd-vendor-0.26.9-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros2-distro-mutex-0.14.0-jazzy_16.conda
+      - conda: https://prefix.dev/mote/linux-64/ros-jazzy-rviz-teleop-panel-0.1.0-hb0f4dca_0.conda
       - conda: https://prefix.dev/mote/linux-64/scservo-linux-1.0.0-hb0f4dca_0.conda
       linux-aarch64:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/_openmp_mutex-4.5-20_gnu.conda
@@ -42031,6 +42032,24 @@ packages:
   license: BSD-3-Clause
   size: 2334
   timestamp: 1771181488082
+- conda: https://prefix.dev/mote/linux-64/ros-jazzy-rviz-teleop-panel-0.1.0-hb0f4dca_0.conda
+  sha256: f83fa6d9e78886fa894a64ce35901df1b50dc79d69fff00298b7e932b8a42e25
+  md5: 692eef38135c5ad6a9abbcf8ae7195c9
+  depends:
+  - ros-jazzy-rclcpp
+  - ros-jazzy-geometry-msgs
+  - ros-jazzy-rviz-common
+  - ros-jazzy-pluginlib
+  - ros2-distro-mutex
+  - ros2-distro-mutex >=0.14.0,<0.15.0a0
+  - libgcc >=15
+  - libstdcxx >=15
+  - python_abi 3.12.* *_cp312
+  - numpy >=1.23,<3
+  license: LicenseRef-Apache-2.0
+  run_exports: {}
+  size: 93707
+  timestamp: 1781629205399
 - conda: https://prefix.dev/mote/linux-64/scservo-linux-1.0.0-hb0f4dca_0.conda
   sha256: 21bee3478d5174e004954697d36e71b82378ef4cbe8855796db4e302b0dfa288
   md5: 733d747fde0549b423883cd7b3c79ba2
