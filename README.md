@@ -171,19 +171,11 @@ robot install stays lean:
 
 ```bash
 pixi run sim                                                     # headless gz + robot + controllers
-pixi run sim-test                                                # ~20 s headless smoke test (drive + odom + scan + map)
 pixi run teleop                                                  # drive it around
 # Ad-hoc commands need the sim environment named explicitly:
 pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
 ```
-
-`sim-test` is a fast end-to-end check: it brings up the sim and SLAM, drives the
-robot, and asserts odometry integrates the motion, the lidar publishes sane
-scans, and slam_toolbox produces a map. It needs a working render backend
-(a GPU or fast software GL), so it's a local pre-PR gate rather than a
-hosted-CI job — see the comment in
-[`run_sim_smoke.sh`](mote_bringup/test/sim_smoke/run_sim_smoke.sh).
 
 The world (`mote_bringup/worlds/mote_world.sdf`) is a simple walled room with
 a few obstacles. The simulated lidar uses RPLIDAR C1 datasheet values from
