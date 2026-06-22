@@ -17,20 +17,20 @@ All parts fit a 256 mm bed (the chassis is 235 mm — see
 Suggested defaults: **PLA**, 0.2 mm layer height, 3 walls, 15–20% infill, brim on
 the large flat plates to prevent corner lift.
 
-| Part (qty)                  | Material       | Orientation | Supports        |
-| --------------------------- | -------------- | ----------- | --------------- |
-| Chassis Base (1)            | PLA            | flat        | none            |
-| Chassis Top (1)             | PLA            | flat        | none            |
-| Motor Support (1–2)         | PLA            | as exported | likely none     |
-| Pi Bottom + Pi Top (1 each) | PLA            | flat        | none            |
-| Waveshare Mount (1)         | PLA            | flat        | none            |
-| C1 Lidar Mount (1)          | PLA            | flat        | check overhangs |
-| Camera Mount (1)            | PLA            | flat        | check overhangs |
-| Battery Mount (1)           | PLA            | flat        | none            |
-| Wheel Inner (2)             | PLA            | hub down    | none            |
-| Wheel Tyre (2)              | **TPU** (grip) | flat        | none            |
-| Caster (1)                  | PLA            | —           | —               |
-| SO Base ORP (1, optional)   | PLA            | flat        | none            |
+| Part (qty)                  | Material       |
+| --------------------------- | -------------- |
+| Chassis Base (1)            | PLA            |
+| Chassis Top (1)             | PLA            |
+| Motor Support (2)           | PLA            |
+| Pi Bottom + Pi Top (1 each) | PLA            |
+| Waveshare Mount (1)         | PLA            |
+| C1 Lidar Mount (1)          | PLA            |
+| Camera Mount (1)            | PLA            |
+| Battery Mount (1)           | PLA            |
+| Wheel Inner (2)             | PLA            |
+| Wheel Tyre (2)              | **TPU** (grip) |
+| Caster (1)                  | PLA            |
+| SO Base ORP (1, optional)   | PLA            |
 
 Notes:
 
@@ -39,37 +39,36 @@ Notes:
 - **Caster is unresolved** — printed and several off-the-shelf options have all
   been unsatisfactory so far; treat this part as provisional. A bought ball
   caster of the right height may be preferable (see Assembly step 6).
-- Drive wheels and hubs are intentionally printed (removed from the
-  [BOM](BOM.md) for that reason).
 
 ## Assembly
 
-**Hardware:** the M3 button-head hex set from the [BOM](BOM.md) (screws, nuts,
-washers) covers all fasteners — its M3×6–35 range means you can match each joint
-exactly. Most joints take **M3×12**: the screw passes through a ~6 mm plate into
-a part with a ~6 mm captive-nut pocket. Use **M3×10** for thinner stacks.
-Standoffs are buffered to **50 mm** (set by servo height 45.2 mm / lidar
-41.3 mm).
+**Hardware:** the M3 button-head hex set from the [BOM](BOM.md) (screws, nuts)
+covers all fasteners. Most joints take **M3×12**: the screw passes through a ~6
+mm plate into a part with a ~6 mm captive-nut pocket. Use **M3×10** for thinner
+stacks.
+
+> **Note:** I am not convinced yet that screws and nuts are the optimal choice
+> here. Nuts have a tendency to loosen up due to vibrations while driving around
+> so we may want something more reliable.
 
 Suggested order:
 
-1. **Drive train.** Mount each STS3215 to the `Motor Support`, then press a
-   `Wheel Inner` onto the servo horn and fit the `Wheel Tyre` over it. Wheels are
-   centred and inset so the footprint stays circular. Left servo is **ID 7**,
-   right is **ID 9** (assign with `pixi run setup-ids` — see the
+1. **Servos.** Mount each STS3215 to the `Motor Support`, then press a
+   `Wheel Inner` onto the servo horn and fit the `Wheel Tyre` over it. Wheels
+   are centred and inset so the footprint stays circular. It's easiest to set
+   the servo ID's before going further. Left servo is **ID 7**, right is **ID
+   9** (assign with `pixi run setup-ids` — see the
    [README](../README.md#4-configure-the-servos)).
-2. **Lower plate.** Fasten the `Motor Support`/servos and the `Battery Mount` to
-   the `Chassis Base`.
-3. **Power bank sandwich.** Seat the power bank in the `Battery Mount` between the
-   plates to keep the centre of mass low, then stand the **50 mm** standoffs up
-   from the base.
-4. **Electronics deck.** Mount the Pi in the `Pi Bottom`/`Pi Top` holder and the
-   servo board on the `Waveshare Mount`, then attach both to the `Chassis Top`.
-5. **Close it up.** Fix the `Chassis Top` onto the standoffs.
-6. **Caster.** Fit the front `Caster` to the underside of the base for the third
+2. **Lower plate.** Fasten the `Motor Support`/servos, the `Battery Mount`, the
+   `Waveshare Mount`, and the `C1 Lidar Mount`, to the `Chassis Base`.
+3. **Caster.** Fit the front `Caster` to the underside of the base for the third
    contact point (provisional — see Printing notes).
-7. **Sensors.** Mount the `C1 Lidar Mount` and `Camera Mount` to the sensor slots
-   — these follow the ORP **3.5 mm / 20 mm grid**, so they relocate on the grid.
+4. **Sensors.** Mount the camera in the `Camera Mount`.
+5. **Top plate.** Attach the `Pi Bottom` holder and the `Camera/Camera Mount` to
+   the `Chassis Top`.
+6. **Close it up.** Fix the `Chassis Top` onto the standoffs.
+7. **Power bank.** Seat the power bank in the `Battery Mount` between the
+   plates.
 8. **Wire it.** Follow [WIRING.md](WIRING.md): bank Out1 → servo board (barrel),
    bank Out2 → Pi, servo board USB → Pi, lidar/camera USB → Pi. Route cables
    through the standoff gap and keep the lidar's 360° view clear.
