@@ -17,22 +17,23 @@ All parts fit a 256 mm bed (the chassis is 235 mm — see
 Suggested defaults: **PLA**, 0.2 mm layer height, 3 walls, 15–20% infill, brim on
 the large flat plates to prevent corner lift.
 
-| Part (qty) | Material | Orientation | Supports |
-| --- | --- | --- | --- |
-| Chassis Base (1) | PLA | flat | none |
-| Chassis Top (1) | PLA | flat | none |
-| Motor Support (1–2) | PLA | as exported | likely none |
-| Pi Bottom + Pi Top (1 each) | PLA | flat | none |
-| Waveshare Mount (1) | PLA | flat | none |
-| C1 Lidar Mount (1) | PLA | flat | check overhangs |
-| Camera Mount (1) | PLA | flat | check overhangs |
-| Battery Mount (1) | PLA | flat | none |
-| Wheel Inner (2) | PLA | hub down | none |
-| Wheel Tyre (2) | **TPU** (grip) | flat | none |
-| Caster (1) | PLA | — | — |
-| SO Base ORP (1, optional) | PLA | flat | none |
+| Part (qty)                  | Material       | Orientation | Supports        |
+| --------------------------- | -------------- | ----------- | --------------- |
+| Chassis Base (1)            | PLA            | flat        | none            |
+| Chassis Top (1)             | PLA            | flat        | none            |
+| Motor Support (1–2)         | PLA            | as exported | likely none     |
+| Pi Bottom + Pi Top (1 each) | PLA            | flat        | none            |
+| Waveshare Mount (1)         | PLA            | flat        | none            |
+| C1 Lidar Mount (1)          | PLA            | flat        | check overhangs |
+| Camera Mount (1)            | PLA            | flat        | check overhangs |
+| Battery Mount (1)           | PLA            | flat        | none            |
+| Wheel Inner (2)             | PLA            | hub down    | none            |
+| Wheel Tyre (2)              | **TPU** (grip) | flat        | none            |
+| Caster (1)                  | PLA            | —           | —               |
+| SO Base ORP (1, optional)   | PLA            | flat        | none            |
 
 Notes:
+
 - **Wheels are two-part**: a rigid `Wheel Inner` hub plus a `Wheel Tyre` printed
   in **TPU** for traction.
 - **Caster is unresolved** — printed and several off-the-shelf options have all
