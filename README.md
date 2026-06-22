@@ -170,10 +170,11 @@ unmodified. The sim dependencies live in a separate pixi environment so the
 robot install stays lean:
 
 ```bash
-pixi run -e sim sim                                              # headless gz + robot + controllers
+pixi run sim                                                     # headless gz + robot + controllers
+pixi run teleop                                                  # drive it around
+# Ad-hoc commands need the sim environment named explicitly:
 pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
-pixi run teleop                                                  # drive it around
 ```
 
 The world (`mote_bringup/worlds/mote_world.sdf`) is a simple walled room with
@@ -192,11 +193,9 @@ For now, I currently develop on a workstation and push to the Pi with rsync. The
 [`pixi.toml`](pixi.toml) `[tasks]` `sync` entry to match your Pi, then:
 
 ```bash
-pixi run sync
+pixi run sync             # one-shot push
+pixi run sync-watch       # keep pushing on every save (needs the dev env)
 ```
-
-I want to try [pixi pack](https://pixi.prefix.dev/latest/deployment/pixi_pack/)
-for this eventually but haven't had a chance yet.
 
 ## SO-101 Follower Arm
 

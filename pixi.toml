@@ -73,9 +73,14 @@ ros-jazzy-ament-cmake-gtest = ">=2.5"
 [feature.dev.dependencies]
 ros-jazzy-desktop = ">=0.11.0"
 ros-jazzy-nav2-bringup = ">=1.3.11,<2"
+watchexec = ">=2.5,<3"
 
 [feature.dev.tasks]
 rviz = "ros2 launch mote_bringup rviz_launch.py"
+# Continuously rsync to the Pi on save (watchexec honours .gitignore, so
+# build/install/log/.pixi are skipped). Edits to launch/config/Python go live
+# without a rebuild thanks to colcon --symlink-install; only C++ needs `build`.
+sync-watch = "watchexec --debounce 1s -- pixi run sync"
 
 [feature.sim.tasks]
 sim = "ros2 launch mote_bringup sim_launch.py"
