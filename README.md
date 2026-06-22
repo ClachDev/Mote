@@ -178,10 +178,6 @@ pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
 ```
 
-The `sim` and `sim-test` tasks select the sim environment automatically (they're
-defined only there); the bare `pixi run -- …` form defaults to the robot
-environment, so those need `-e sim`.
-
 `sim-test` is a fast end-to-end check: it brings up the sim and SLAM, drives the
 robot, and asserts odometry integrates the motion, the lidar publishes sane
 scans, and slam_toolbox produces a map. It needs a working render backend
@@ -208,14 +204,6 @@ For now, I currently develop on a workstation and push to the Pi with rsync. The
 pixi run sync             # one-shot push
 pixi run sync-watch       # keep pushing on every save (needs the dev env)
 ```
-
-**Fast inner loop:** the build uses `colcon build --symlink-install`, so once
-you've built once on the Pi, edits to existing launch files, `robot.yaml`,
-controller params, or Python launch logic take effect the next time you launch —
-**no rebuild needed**. Only changes to the `mote_hardware` C++ (or brand-new
-files that need installing) require another `pixi run build`. So the usual loop
-is: `sync-watch` running in one terminal, edit on the laptop, re-run `pixi run
-launch` on the Pi.
 
 For pushing a finished build to one or more robots, the direction is to publish
 the first-party packages to the `prefix.dev/mote` channel (built with
