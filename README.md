@@ -197,12 +197,6 @@ pixi run sync             # one-shot push
 pixi run sync-watch       # keep pushing on every save (needs the dev env)
 ```
 
-For pushing a finished build to one or more robots, the direction is to publish
-the first-party packages to the `prefix.dev/mote` channel (built with
-[`pixi-build-ros`](https://pixi.prefix.dev/latest/build/ros/)) so a robot just
-needs `pixi install` — no source checkout or compile on the bot. That work is in
-progress.
-
 ## SO-101 Follower Arm
 
 ![Mote with SO-101 arm](docs/images/mote_SO_101.webp)
