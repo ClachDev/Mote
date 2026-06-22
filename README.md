@@ -229,15 +229,6 @@ This project is still in its early stages and I'm happy to accept contributions
 of any kind. AI _aided_ contributions are also welcome but only if you can explain
 and vouch for every change!
 
-A [pre-commit](https://pre-commit.com/) config handles quick hygiene checks,
-shell linting (shellcheck) and Python error checking (ruff). Enable it once per
-clone, and it runs automatically on commit:
-
-```bash
-pixi run lint-install   # wire it into .git/hooks (one time)
-pixi run lint           # or run across the whole tree manually (~1 s)
-```
-
 ## Sponsorship
 
 If you want to help me test new sensors or components to lower the cost even

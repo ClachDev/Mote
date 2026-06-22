@@ -24,17 +24,11 @@ pixi run clean          # Kill stale ROS processes and reset daemon
 pixi run rviz           # RViz2 with mote config
 
 # Sim environment only (gz-sim Harmonic + ros_gz + gz_ros2_control; own solve,
-# never affects the robot/Pi env). The sim/sim-test tasks auto-select the sim
-# environment (defined only there), so no `-e sim` is needed for them.
-pixi run sim            # Headless Gazebo sim: world + robot + controllers
-pixi run sim-test       # ~20 s headless smoke test (local pre-PR gate, needs a GPU)
-# Ad-hoc (non-task) commands still need the env named:
+# never affects the robot/Pi env)
+pixi run -e sim sim     # Headless Gazebo sim: world + robot + controllers
+# Run slam/nav against it with use_sim_time, e.g.:
 #   pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 pixi run test           # colcon test for mote_hardware (gtest)
-
-# Lint environment only (pre-commit; minimal env, no ROS — auto-selected)
-pixi run lint           # run all pre-commit hooks across the tree (~1 s cached)
-pixi run lint-install   # wire pre-commit into .git/hooks (one time per clone)
 ```
 
 Build artifacts go into `build/`, `install/`, and `log/` — all ignored by git. If you see CMakeCache.txt errors about a wrong source directory (e.g. from a path rename), delete the stale `build/` directory and rebuild.
