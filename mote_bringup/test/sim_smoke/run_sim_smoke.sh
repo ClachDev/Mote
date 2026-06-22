@@ -4,15 +4,12 @@
 # slam_launch.py, runs verify_sim.py, and tears everything down.
 #
 # Must run inside the 'sim' pixi environment, where gz, ros2 and the sim deps
-# are on PATH:  pixi run -e sim sim-test
+# are on PATH:  pixi run sim-test
 #
 # Exits 0 only if every stage passes; prints "FAIL: ..." and exits 1 otherwise.
 #
-# Needs a real render backend. On a GPU-less GitHub-hosted runner, llvmpipe
-# software rendering is too slow: rasterising the gpu_lidar starves the gz
-# process, so gz_ros2_control's in-process controller_manager can't service
-# the controller spawners in time and they die. This is therefore a local
-# pre-PR gate, not a hosted-CI job. A GPU/self-hosted runner could run it.
+# Needs a real GPU render backend; llvmpipe is too slow. Local pre-PR gate,
+# not hosted CI.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +24,7 @@ cleanup() {
     [ -n "$SIM_PID" ] && kill -- -"$SIM_PID" 2>/dev/null
     [ -n "$SLAM_PID" ] && kill -- -"$SLAM_PID" 2>/dev/null
     sleep 2
-    # belt-and-braces: these match the sim's own processes, not this script
+    # pkill matches the sim's processes, not this script
     pkill -9 -f 'mote_world' 2>/dev/null
     pkill -9 -f 'async_slam_toolbox_node' 2>/dev/null
     ros2 daemon stop >/dev/null 2>&1

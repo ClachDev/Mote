@@ -1,9 +1,8 @@
 # Fast pre-commit checks. Run on commit after `pixi run lint-install`, or
-# manually across the tree with `pixi run lint`. Kept deliberately quick:
-# hygiene fixes, shell linting, and Python error-checking only — no slow
-# builds or tests (those live in CI / `pixi run test` / `pixi run sim-test`).
+# manually across the tree with `pixi run lint`. Hygiene fixes, shell linting,
+# and Python error-checking only.
 # Skip submodules and the binary/CAD/image assets (text hooks must not rewrite
-# ASCII STEP files or churn research notes).
+# ASCII STEP files).
 exclude: |
   (?x)^(
     third_party/|
@@ -25,17 +24,15 @@ repos:
         args: [--fix=lf]
       - id: check-shebang-scripts-are-executable
       - id: check-added-large-files
-        args: [--maxkb=2048]  # above pixi.lock (~1.7 MB) and the CAD files
+        args: [--maxkb=2048]  # above pixi.lock (~1.7 MB)
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.10.0.1
+    rev: v0.11.0.1
     hooks:
       - id: shellcheck
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.0
+    rev: v0.15.18
     hooks:
-      # Pyflakes only (real errors: undefined names, unused imports) — no style
-      # reformatting, so it won't churn the existing launch files.
-      - id: ruff
-        args: [--select=F, --fix]
+      - id: ruff-check
+      - id: ruff-format
