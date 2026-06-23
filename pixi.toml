@@ -84,11 +84,22 @@ sync-watch = "watchexec --debounce 1s -- pixi run sync"
 
 [feature.sim.tasks]
 sim = "ros2 launch mote_bringup sim_launch.py"
+sim-test = { cmd = "bash mote_bringup/test/sim_smoke/run_sim_smoke.sh", depends-on = [
+    "build",
+] }
 
 [feature.sim.dependencies]
 ros-jazzy-ros-gz-sim = "*"
 ros-jazzy-ros-gz-bridge = "*"
 ros-jazzy-gz-ros2-control = "*"
+
+[feature.lint.dependencies]
+pre-commit = ">=4,<5"
+
+[feature.lint.tasks]
+lint = "pre-commit run --all-files"
+# One-time per clone: wire pre-commit into .git/hooks so it runs on commit
+lint-install = "pre-commit install"
 
 [activation]
 scripts = ["install/setup.sh"]
@@ -98,3 +109,5 @@ env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
 dev = { features = ["dev"], solve-group = "default" }
 # Own solve (no solve-group) so sim deps can never shift the robot/Pi env
 sim = { features = ["sim"] }
+# Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
+lint = { features = ["lint"], no-default-feature = true }

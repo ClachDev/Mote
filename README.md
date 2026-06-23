@@ -171,11 +171,19 @@ robot install stays lean:
 
 ```bash
 pixi run sim                                                     # headless gz + robot + controllers
+pixi run sim-test                                                # ~20 s headless smoke test (drive + odom + scan + map)
 pixi run teleop                                                  # drive it around
 # Ad-hoc commands need the sim environment named explicitly:
 pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
 ```
+
+`sim-test` is a fast end-to-end check: it brings up the sim and SLAM, drives the
+robot, and asserts odometry integrates the motion, the lidar publishes sane
+scans, and slam_toolbox produces a map. It needs a working render backend
+(a GPU or fast software GL), so it's a local pre-PR gate rather than a
+hosted-CI job — see the comment in
+[`run_sim_smoke.sh`](mote_bringup/test/sim_smoke/run_sim_smoke.sh).
 
 The world (`mote_bringup/worlds/mote_world.sdf`) is a simple walled room with
 a few obstacles. The simulated lidar uses RPLIDAR C1 datasheet values from
@@ -197,6 +205,12 @@ pixi run sync             # one-shot push
 pixi run sync-watch       # keep pushing on every save (needs the dev env)
 ```
 
+For pushing a finished build to one or more robots, the direction is to publish
+the first-party packages to the `prefix.dev/mote` channel (built with
+[`pixi-build-ros`](https://pixi.prefix.dev/latest/build/ros/)) so a robot just
+needs `pixi install` — no source checkout or compile on the bot. That work is in
+progress.
+
 ## SO-101 Follower Arm
 
 ![Mote with SO-101 arm](docs/images/mote_SO_101.webp)
@@ -214,6 +228,15 @@ things up off the floor [obligatory xkcd](https://xkcd.com/1425/).
 This project is still in its early stages and I'm happy to accept contributions
 of any kind. AI _aided_ contributions are also welcome but only if you can explain
 and vouch for every change!
+
+A [pre-commit](https://pre-commit.com/) config handles quick hygiene checks,
+shell linting (shellcheck) and Python error checking (ruff). Enable it once per
+clone, and it runs automatically on commit:
+
+```bash
+pixi run lint-install   # wire it into .git/hooks (one time)
+pixi run lint           # or run across the whole tree manually (~1 s)
+```
 
 ## Sponsorship
 

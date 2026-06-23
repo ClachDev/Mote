@@ -1,0 +1,38 @@
+# Fast pre-commit checks. Run on commit after `pixi run lint-install`, or
+# manually across the tree with `pixi run lint`. Hygiene fixes, shell linting,
+# and Python error-checking only.
+# Skip submodules and the binary/CAD/image assets (text hooks must not rewrite
+# ASCII STEP files).
+exclude: |
+  (?x)^(
+    third_party/|
+    design/|
+    docs/images/
+  )
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-shebang-scripts-are-executable
+      - id: check-added-large-files
+        args: [--maxkb=2048]  # above pixi.lock (~1.7 MB)
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
