@@ -2,9 +2,8 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
@@ -12,14 +11,7 @@ def generate_launch_description():
         get_package_share_directory("mote_bringup"), "launch"
     )
 
-    default_map = os.path.join(os.path.expanduser("~"), ".mote", "map.yaml")
-
     return LaunchDescription([
-        DeclareLaunchArgument(
-            "map",
-            default_value=default_map,
-            description="Full path to the map yaml file Nav2 should load",
-        ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(launch_dir, "mote_launch.py")
@@ -27,8 +19,7 @@ def generate_launch_description():
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(launch_dir, "nav2_launch.py")
-            ),
-            launch_arguments={"map": LaunchConfiguration("map")}.items(),
+                os.path.join(launch_dir, "slam_launch.py")
+            )
         ),
     ])

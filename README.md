@@ -160,6 +160,10 @@ pixi run rviz   # Runs rviz to view the map and navigate
 pixi run slam   # Runs the SLAM stack to create a map
 # or
 pixi run nav    # Runs the nav stack
+
+# Convenience combos (base + the relevant stack in one command):
+pixi run mapping # = launch + slam  (build/extend a map)
+pixi run robot   # = launch + nav   (drive a saved map at ~/.mote/map.yaml)
 ```
 
 ### Simulation (no hardware required)

@@ -12,7 +12,8 @@ pixi run submodules     # Fetch git submodules (sllidar_ros2, kinematic_icp)
 pixi run launch         # Full robot bringup (hardware + lidar + camera + localization)
 pixi run slam           # SLAM stack only (run alongside launch)
 pixi run nav            # Nav2 stack (requires a saved map at ~/.mote/map.yaml)
-pixi run robot          # mote_launch + slam together
+pixi run mapping        # bringup + SLAM together (build/extend a map)
+pixi run robot          # bringup + Nav2 together (drive a saved map; needs ~/.mote/map.yaml)
 pixi run save-map       # Save current map to ~/.mote/map
 pixi run teleop         # Keyboard teleoperation
 pixi run sync           # rsync project to Pi at SSH host 'mote'
@@ -71,9 +72,10 @@ Contains `urdf/mote.urdf.xacro` and `config/robot.yaml`. The xacro loads robot.y
 Launch files, config, udev rules, and systemd services.
 
 **Launch hierarchy:**
-- `robot_launch.py` — combines `mote_launch.py` + `slam_launch.py`
+- `robot_launch.py` — combines `mote_launch.py` + `nav2_launch.py` (everyday operation: drive a saved map). Forwards a `map` arg, defaulting to `~/.mote/map.yaml`.
+- `mapping_launch.py` — combines `mote_launch.py` + `slam_launch.py` (build/extend a map with SLAM)
 - `mote_launch.py` — main bringup: robot_state_publisher, ros2_control_node, controller spawners, sllidar, laser_filter, v4l2_camera, and `localization_launch.py`. Reads `robot.yaml` for wheel geometry (injected into DiffDriveController params) and sensor config.
-- `localization_launch.py` — AMCL-based localization
+- `localization_launch.py` — kinematic_icp LIDAR odometry (publishes `odom`→`base`; the map→odom corrector is slam_toolbox when mapping or AMCL when navigating). Despite the name, it does *not* run AMCL — AMCL lives in `nav2_launch.py`.
 - `slam_launch.py` — slam_toolbox (accepts `use_sim_time:=true` for the sim)
 - `sim_launch.py` — Gazebo sim (sim environment only): headless gz server with `worlds/mote_world.sdf`, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter. The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF).
 - `nav2_launch.py` — Nav2 stack
