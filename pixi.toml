@@ -75,6 +75,11 @@ ros-jazzy-desktop = ">=0.11.0"
 ros-jazzy-nav2-bringup = ">=1.3.11,<2"
 watchexec = ">=2.5,<3"
 
+# Desktop-only GUI teleop panel (ClachDev/rviz_teleop_panel), published to the
+# mote channel for linux-64 only — the aarch64 robot never runs RViz.
+[feature.dev.target.linux-64.dependencies]
+ros-jazzy-rviz-teleop-panel = ">=0.1.0"
+
 [feature.dev.tasks]
 rviz = "ros2 launch mote_bringup rviz_launch.py"
 # Continuously rsync to the Pi on save (watchexec honours .gitignore, so

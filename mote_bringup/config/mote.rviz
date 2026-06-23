@@ -22,6 +22,12 @@ Panels:
     Name: Navigation
   - Class: slam_toolbox::SlamToolboxPlugin
     Name: SlamToolbox
+  - Class: rviz_teleop_panel/TeleopPanel
+    Name: Teleop
+    Topic: /diff_drive_controller/cmd_vel
+    Stamped: true
+    LinearSpeed: 0.3
+    AngularSpeed: 0.5
 Visualization Manager:
   Class: ""
   Displays:
