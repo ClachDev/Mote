@@ -39,7 +39,7 @@
   <xacro:property name="caster_radius" value="0.016"/>  <!-- assumed -->
   <xacro:property name="caster_mass"   value="0.01"/>   <!-- dummy -->
   <xacro:property name="caster_x"      value="0.100"/>  <!-- assumed -->
-  <xacro:property name="caster_z"      value="${-caster_radius/2}"/>  <!-- assumed -->
+  <xacro:property name="caster_z"      value="${caster_radius - (wheel_radius - axle_z)}"/>
 
   <!-- Lidar -->
   <xacro:property name="lidar_x" value="0.080"/>
