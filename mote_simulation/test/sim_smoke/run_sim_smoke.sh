@@ -39,7 +39,7 @@ ros2 daemon stop >/dev/null 2>&1
 sleep 1
 
 echo ">> launching sim..."
-setsid ros2 launch mote_bringup sim_launch.py > "$SIM_LOG" 2>&1 &
+setsid ros2 launch mote_simulation sim_launch.py > "$SIM_LOG" 2>&1 &
 SIM_PID=$!
 for _ in $(seq 90); do
     grep -q "Configured and activated diff_drive_controller" "$SIM_LOG" && break

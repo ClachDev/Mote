@@ -12,9 +12,15 @@ import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, RegisterEventHandler
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import Command
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -22,6 +28,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     description_share = get_package_share_directory("mote_description")
     bringup_share = get_package_share_directory("mote_bringup")
+    sim_share = get_package_share_directory("mote_simulation")
 
     with open(os.path.join(description_share, "config", "robot.yaml")) as f:
         cfg = yaml.safe_load(f)
@@ -33,11 +40,13 @@ def generate_launch_description():
     with open(os.path.join(bringup_share, "config", "controllers.yaml")) as f:
         controller_params = yaml.safe_load(f)
     controller_params["controller_manager"]["ros__parameters"]["use_sim_time"] = True
-    controller_params["diff_drive_controller"]["ros__parameters"].update({
-        "wheel_separation": cfg["wheel_separation"],
-        "wheel_radius": cfg["wheel_radius"],
-        "use_sim_time": True,
-    })
+    controller_params["diff_drive_controller"]["ros__parameters"].update(
+        {
+            "wheel_separation": cfg["wheel_separation"],
+            "wheel_radius": cfg["wheel_radius"],
+            "use_sim_time": True,
+        }
+    )
     sim_controllers_file = tempfile.NamedTemporaryFile(
         mode="w", prefix="mote_sim_controllers_", suffix=".yaml", delete=False
     )
@@ -54,14 +63,22 @@ def generate_launch_description():
         "use_sim_time": True,
     }
 
-    world = os.path.join(bringup_share, "worlds", "mote_world.sdf")
+    # The world is selectable so the same launch can drive the simple
+    # smoke-test room (default) or a larger stress-test layout, e.g.
+    #   ros2 launch mote_simulation sim_launch.py world:=office_world.sdf
+    world = PathJoinSubstitution([sim_share, "worlds", LaunchConfiguration("world")])
     # gz only searches its own plugin dirs; libgz_ros2_control-system.so lives
     # in the conda env's lib dir
     gz_env = dict(os.environ)
-    gz_env["GZ_SIM_SYSTEM_PLUGIN_PATH"] = os.pathsep.join(filter(None, [
-        os.path.join(os.environ.get("CONDA_PREFIX", ""), "lib"),
-        os.environ.get("GZ_SIM_SYSTEM_PLUGIN_PATH", ""),
-    ]))
+    gz_env["GZ_SIM_SYSTEM_PLUGIN_PATH"] = os.pathsep.join(
+        filter(
+            None,
+            [
+                os.path.join(os.environ.get("CONDA_PREFIX", ""), "lib"),
+                os.environ.get("GZ_SIM_SYSTEM_PLUGIN_PATH", ""),
+            ],
+        )
+    )
     gz_server = ExecuteProcess(
         cmd=["gz", "sim", "-r", "-s", "-v", "1", world],
         env=gz_env,
@@ -118,16 +135,33 @@ def generate_launch_description():
         ],
     )
 
-    return LaunchDescription([
-        gz_server,
-        robot_state_publisher,
-        spawn_robot,
-        bridge,
-        RegisterEventHandler(
-            event_handler=OnProcessExit(
-                target_action=spawn_robot,
-                on_exit=[joint_state_broadcaster_spawner, diff_drive_spawner],
-            )
+    # Lidar odometry (kinematic_icp) + wheel-odom relay — the same localization
+    # stack the real robot runs, so the two can't drift out of sync.
+    localization = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(bringup_share, "launch", "localization_launch.py")
         ),
-        laser_filter,
-    ])
+        launch_arguments={"use_sim_time": "true"}.items(),
+    )
+
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                "world",
+                default_value="mote_world.sdf",
+                description="World file in mote_simulation/worlds to load",
+            ),
+            gz_server,
+            robot_state_publisher,
+            spawn_robot,
+            bridge,
+            RegisterEventHandler(
+                event_handler=OnProcessExit(
+                    target_action=spawn_robot,
+                    on_exit=[joint_state_broadcaster_spawner, diff_drive_spawner],
+                )
+            ),
+            laser_filter,
+            localization,
+        ]
+    )

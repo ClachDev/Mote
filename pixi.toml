@@ -18,7 +18,7 @@ nav = "ros2 launch mote_bringup nav2_launch.py map:=$HOME/.mote/map.yaml"
 robot = "ros2 launch mote_bringup robot_launch.py"
 save-map = "mkdir -p $HOME/.mote && ros2 run nav2_map_saver map_saver_cli -f $HOME/.mote/map"
 slam = "ros2 launch mote_bringup slam_launch.py"
-sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' . michael@auldbot:~/Mote/"
+sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' . michael@auldbot:~/Mote/"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
 udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger"
 setup-ids = "ros2 run mote_hardware setup_ids"
@@ -89,8 +89,8 @@ rviz = "ros2 launch mote_bringup rviz_launch.py"
 sync-watch = "watchexec --debounce 1s -- pixi run sync"
 
 [feature.sim.tasks]
-sim = "ros2 launch mote_bringup sim_launch.py"
-sim-test = { cmd = "bash mote_bringup/test/sim_smoke/run_sim_smoke.sh", depends-on = [
+sim = "ros2 launch mote_simulation sim_launch.py"
+sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
     "build",
 ] }
 

@@ -66,6 +66,7 @@ way to package everything up without worrying about ecosystem concerns.
 | [`mote_bringup`](mote_bringup/)         | Launch files for bringing up the robot                    |
 | [`mote_description`](mote_description/) | URDF robot model and TF tree                              |
 | [`mote_hardware`](mote_hardware/)       | ros2_control hardware interface for the Feetech servo bus |
+| [`mote_simulation`](mote_simulation/)   | Gazebo sim, worlds, and smoke test (workstation only)     |
 
 I'm trying to keep all dependencies from
 [Robostack](https://robostack.github.io/index.html) or `conda-forge`. Anything
@@ -187,9 +188,9 @@ robot, and asserts odometry integrates the motion, the lidar publishes sane
 scans, and slam_toolbox produces a map. It needs a working render backend
 (a GPU or fast software GL), so it's a local pre-PR gate rather than a
 hosted-CI job — see the comment in
-[`run_sim_smoke.sh`](mote_bringup/test/sim_smoke/run_sim_smoke.sh).
+[`run_sim_smoke.sh`](mote_simulation/test/sim_smoke/run_sim_smoke.sh).
 
-The world (`mote_bringup/worlds/mote_world.sdf`) is a simple walled room with
+The world (`mote_simulation/worlds/mote_world.sdf`) is a simple walled room with
 a few obstacles. The simulated lidar uses RPLIDAR C1 datasheet values from
 [`robot.yaml`](mote_description/config/robot.yaml).
 
