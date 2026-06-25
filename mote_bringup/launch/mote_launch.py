@@ -4,17 +4,23 @@ import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, RegisterEventHandler
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
 from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command
-from launch_ros.actions import Node
+from launch.substitutions import Command, LaunchConfiguration
+from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     description_share = get_package_share_directory("mote_description")
     bringup_share = get_package_share_directory("mote_bringup")
+
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     with open(os.path.join(description_share, "config", "robot.yaml")) as f:
         cfg = yaml.safe_load(f)
@@ -74,14 +80,16 @@ def generate_launch_description():
         package="sllidar_ros2",
         executable="sllidar_node",
         name="rplidar",
-        parameters=[{
-            "serial_port": lidar["port"],
-            "serial_baudrate": lidar["baud_rate"],
-            "frame_id": "lidar_scan_link",
-            "inverted": False,
-            "angle_compensate": True,
-            "scan_mode": "Standard",
-        }],
+        parameters=[
+            {
+                "serial_port": lidar["port"],
+                "serial_baudrate": lidar["baud_rate"],
+                "frame_id": "lidar_scan_link",
+                "inverted": False,
+                "angle_compensate": True,
+                "scan_mode": "Standard",
+            }
+        ],
     )
 
     laser_filter = Node(
@@ -99,30 +107,37 @@ def generate_launch_description():
         package="v4l2_camera",
         executable="v4l2_camera_node",
         name="camera",
-        parameters=[{
-            "video_device": cam["device"],
-            "image_size": cam["image_size"],
-            "camera_frame_id": "camera_optical_link",
-        }],
+        parameters=[
+            {
+                "video_device": cam["device"],
+                "image_size": cam["image_size"],
+                "camera_frame_id": "camera_optical_link",
+            }
+        ],
     )
 
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(bringup_share, "launch", "localization_launch.py")
-        )
+        ),
+        launch_arguments={"use_sim_time": use_sim_time}.items(),
     )
 
-    return LaunchDescription([
-        robot_state_publisher,
-        controller_manager,
-        RegisterEventHandler(
-            event_handler=OnProcessStart(
-                target_action=controller_manager,
-                on_start=[joint_state_broadcaster_spawner, diff_drive_spawner],
-            )
-        ),
-        rplidar,
-        laser_filter,
-        camera,
-        localization,
-    ])
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument("use_sim_time", default_value="false"),
+            SetParameter(name="use_sim_time", value=use_sim_time),
+            robot_state_publisher,
+            controller_manager,
+            RegisterEventHandler(
+                event_handler=OnProcessStart(
+                    target_action=controller_manager,
+                    on_start=[joint_state_broadcaster_spawner, diff_drive_spawner],
+                )
+            ),
+            rplidar,
+            laser_filter,
+            camera,
+            localization,
+        ]
+    )

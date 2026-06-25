@@ -27,9 +27,12 @@ pixi run rviz           # RViz2 with mote config
 # Sim environment only (gz-sim Harmonic + ros_gz + gz_ros2_control; own solve,
 # never affects the robot/Pi env). The sim/sim-test tasks auto-select the sim
 # environment (defined only there), so no `-e sim` is needed for them.
-pixi run sim            # Headless Gazebo sim: world + robot + controllers
+pixi run sim            # Headless Gazebo sim: world + robot + controllers (no mission)
+pixi run sim-mapping    # Sim running the real mapping mission (mapping_launch.py)
+pixi run sim-nav        # Sim running the real nav mission (robot_launch.py + saved map)
 #   Trailing args pass through to the launch, so pick a world with:
 #     pixi run sim world:=office_world.sdf   (default: mote_world.sdf)
+#   sim-mapping/sim-nav are just `sim mode:=mapping` / `sim mode:=nav`.
 pixi run sim-test       # ~20 s headless smoke test (local pre-PR gate, needs a GPU)
 # Ad-hoc (non-task) commands still need the env named:
 #   pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
@@ -73,13 +76,13 @@ Contains `urdf/mote.urdf.xacro` and `config/robot.yaml`. The xacro loads robot.y
 ### `mote_bringup` (Python/ament)
 Launch files, config, udev rules, and systemd services.
 
-**Launch hierarchy:**
-- `robot_launch.py` — combines `mote_launch.py` + `nav2_launch.py` (everyday operation: drive a saved map). Forwards a `map` arg, defaulting to `~/.mote/map.yaml`.
-- `mapping_launch.py` — combines `mote_launch.py` + `slam_launch.py` (build/extend a map with SLAM)
-- `mote_launch.py` — main bringup: robot_state_publisher, ros2_control_node, controller spawners, sllidar, laser_filter, v4l2_camera, and `localization_launch.py`. Reads `robot.yaml` for wheel geometry (injected into DiffDriveController params) and sensor config.
+**Launch hierarchy:** the two mission launches (`mapping_launch.py`, `robot_launch.py`) each take a `base` arg (default true) that includes the hardware base, and a `use_sim_time` arg they forward to everything they include. The sim runs these *same* files with `base:=false`, supplying a Gazebo base in place of the drivers — so the missions are defined once and the sim exercises the real launch files.
+- `robot_launch.py` — nav mission: `mote_launch.py` (if `base`) + `nav2_launch.py` (drive a saved map). Forwards a `map` arg, defaulting to `~/.mote/map.yaml`.
+- `mapping_launch.py` — mapping mission: `mote_launch.py` (if `base`) + `slam_launch.py` + `nav2_launch.py` (`localisation:=false`): build/extend a map with SLAM *and* drive to goals autonomously while doing so.
+- `mote_launch.py` — the hardware base: robot_state_publisher, ros2_control_node, controller spawners, sllidar, laser_filter, v4l2_camera, and `localization_launch.py`. Reads `robot.yaml` for wheel geometry (injected into DiffDriveController params) and sensor config. Asserts `use_sim_time` (default false) for the whole tree via `SetParameter`.
 - `localization_launch.py` — kinematic_icp LIDAR odometry (publishes `odom`→`base`; the map→odom corrector is slam_toolbox when mapping or AMCL when navigating). Despite the name, it does *not* run AMCL — AMCL lives in `nav2_launch.py`.
 - `slam_launch.py` — slam_toolbox (accepts `use_sim_time:=true` for the sim)
-- `nav2_launch.py` — Nav2 stack
+- `nav2_launch.py` — Nav2 stack. A `localisation` arg (default true) toggles the `map_server` + `amcl` half: true localises against a saved map; false drops them so the navigation servers run against a live slam_toolbox map and `map→odom` instead (used by `mapping_launch.py`)
 - `rviz_launch.py` — RViz2 (dev environment only)
 
 **Config files** (`mote_bringup/config/`):
@@ -91,7 +94,7 @@ Launch files, config, udev rules, and systemd services.
 
 ### `mote_simulation` (Python/ament)
 Workstation-only Gazebo simulation, kept separate from `mote_bringup` so it can be excluded from the robot sync (`pixi run sync` skips `mote_simulation/`). Built only in the `sim` pixi environment. Contains:
-- `launch/sim_launch.py` — Gazebo sim: headless gz server, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter, and the shared `localization_launch.py`. Takes a `world:=` arg (file in `mote_simulation/worlds/`, default `mote_world.sdf` — the simple smoke-test room; `office_world.sdf` is a larger hospital-ward layout for stress-testing localisation). The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF). It pulls `controllers.yaml`, `laser_filters.yaml`, and `localization_launch.py` from `mote_bringup`'s share so the sim and the real robot can't drift apart.
+- `launch/sim_launch.py` — Gazebo sim: headless gz server, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter, and the shared `localization_launch.py`. Takes a `world:=` arg (file in `mote_simulation/worlds/`, default `mote_world.sdf` — the simple smoke-test room; `office_world.sdf` is a larger hospital-ward layout for stress-testing localisation). The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF). It pulls `controllers.yaml`, `laser_filters.yaml`, and `localization_launch.py` from `mote_bringup`'s share so the sim and the real robot can't drift apart. It asserts `use_sim_time:=true` for the whole process tree via `SetParameter`. A `mode:=mapping|nav` arg includes the real `mapping_launch.py` / `robot_launch.py` with `base:=false` (default `none` = sim only): the sim provides the base and *delegates* the mission to the actual launch files, so it can't re-encode or drift from them, and `pixi run sim-mapping` / `sim-nav` put those mission launches under test. (`pixi run mapping`/`robot` are the hardware entry points — same files, `base` defaulting true, wall-clock time.) The dependency direction stays one-way: `mote_simulation` includes from `mote_bringup`, never the reverse.
 - `worlds/` — `mote_world.sdf` (smoke-test room) and `office_world.sdf` (hospital-ward stress layout).
 - `test/sim_smoke/` — `run_sim_smoke.sh` + `verify_sim.py`, the `pixi run sim-test` gate.
 
