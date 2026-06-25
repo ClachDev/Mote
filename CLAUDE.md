@@ -19,7 +19,7 @@ pixi run teleop         # Keyboard teleoperation
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run udev           # Install udev rules (needs sudo)
 pixi run setup-ids      # Guided servo ID assignment tool
-pixi run clean          # Kill stale ROS processes and reset daemon
+pixi run kill           # Kill stale ROS processes and reset daemon
 
 # Dev environment only (installs ros-jazzy-desktop)
 pixi run rviz           # RViz2 with mote config

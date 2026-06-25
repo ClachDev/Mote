@@ -4,15 +4,15 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /Base1/RobotModel1
+        - /Base1
         - /Sensors1
-        - /Navigation1
+        - /SLAM1
         - /Navigation1/Raw Plan1
         - /Navigation1/Global Plan1
         - /Navigation1/DWB Trajectories1
         - /Navigation1/DWB Local Plan1
       Splitter Ratio: 0.5
-    Tree Height: 605
+    Tree Height: 238
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -22,12 +22,12 @@ Panels:
     Name: Navigation
   - Class: slam_toolbox::SlamToolboxPlugin
     Name: SlamToolbox
-  - Class: rviz_teleop_panel/TeleopPanel
+  - AngularSpeed: 0.5
+    Class: rviz_teleop_panel/TeleopPanel
+    LinearSpeed: 0.30000001192092896
     Name: Teleop
-    Topic: /diff_drive_controller/cmd_vel
     Stamped: true
-    LinearSpeed: 0.3
-    AngularSpeed: 0.5
+    Topic: /diff_drive_controller/cmd_vel
 Visualization Manager:
   Class: ""
   Displays:
@@ -165,7 +165,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /diff_drive_controller/odom
+            Value: /kinematic_icp/lidar_odometry
           Value: true
       Enabled: true
       Name: Base
@@ -186,7 +186,7 @@ Visualization Manager:
           Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
-          Max Intensity: 44
+          Max Intensity: 49
           Min Color: 0; 0; 0
           Min Intensity: 2
           Name: LaserScan
@@ -233,17 +233,18 @@ Visualization Manager:
           Use Timestamp: false
           Value: true
         - Class: rviz_default_plugins/MarkerArray
-          Enabled: false
+          Enabled: true
           Name: Pose Graph
           Namespaces:
-            {}
+            slam_toolbox: true
+            slam_toolbox_edges: true
           Topic:
             Depth: 5
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Reliable
             Value: /slam_toolbox/graph_visualization
-          Value: false
+          Value: true
         - Alpha: 1
           Axes Length: 1
           Axes Radius: 0.10000000149011612
@@ -423,8 +424,7 @@ Visualization Manager:
           Enabled: true
           Name: DWB Trajectories
           Namespaces:
-            InvalidTrajectories: true
-            ValidTrajectories: true
+            {}
           Topic:
             Depth: 5
             Durability Policy: Volatile
@@ -566,7 +566,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 438.72698974609375
+      Scale: 205.4888916015625
       Target Frame: base_link
       Value: TopDownOrtho (rviz_default_plugins)
       X: 0
@@ -577,16 +577,18 @@ Window Geometry:
     collapsed: false
   Displays:
     collapsed: false
-  Height: 1308
+  Height: 964
   Hide Left Dock: false
   Hide Right Dock: false
   Navigation:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd00000002000000000000015d000004c2fc0200000003fb000000100044006900730070006c006100790073010000003d0000029a000000c900fffffffb0000000a0056006900650077007301000002dd00000222000000a400fffffffb0000000c00430061006d006500720061020000041f000000c8000001c3000000d600000001000001ce000004c2fc0200000003fb00000014004e0061007600690067006100740069006f006e010000003d0000029d000001cc00fffffffb000000160053006c0061006d0054006f006f006c0062006f007801000002e00000021f0000018500fffffffb0000000a0049006d006100670065000000003d000004c20000000000000000000006c9000004c200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000002000000000000015d0000036afc0200000004fb000000100044006900730070006c006100790073010000003d0000012b000000c900fffffffb0000000a00560069006500770073010000016e000000f5000000a400fffffffb0000000c00430061006d006500720061020000041f000000c8000001c3000000d6fb0000000c00540065006c0065006f007001000002690000013e0000013e00ffffff00000001000001ce0000036afc0200000003fb00000014004e0061007600690067006100740069006f006e010000003d000001df000001df00fffffffb000000160053006c0061006d0054006f006f006c0062006f00780100000222000001850000018500fffffffb0000000a0049006d006100670065000000003d000004c20000000000000000000003730000036a00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   SlamToolbox:
+    collapsed: false
+  Teleop:
     collapsed: false
   Views:
     collapsed: false
-  Width: 2560
-  X: 0
-  Y: 68
+  Width: 1706
+  X: 134
+  Y: 116
