@@ -28,6 +28,8 @@ pixi run rviz           # RViz2 with mote config
 # never affects the robot/Pi env). The sim/sim-test tasks auto-select the sim
 # environment (defined only there), so no `-e sim` is needed for them.
 pixi run sim            # Headless Gazebo sim: world + robot + controllers
+#   Trailing args pass through to the launch, so pick a world with:
+#     pixi run sim world:=office_world.sdf   (default: mote_world.sdf)
 pixi run sim-test       # ~20 s headless smoke test (local pre-PR gate, needs a GPU)
 # Ad-hoc (non-task) commands still need the env named:
 #   pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
@@ -55,7 +57,7 @@ The URDF reads it via `xacro.load_yaml('$(find mote_description)/config/robot.ya
 
 ## Architecture
 
-Mote is a differential-drive robot built on **ROS 2 Jazzy**, managed entirely through pixi (no system ROS install required). Three first-party packages:
+Mote is a differential-drive robot built on **ROS 2 Jazzy**, managed entirely through pixi (no system ROS install required). Four first-party packages:
 
 ### `mote_hardware` (C++)
 A `ros2_control` `SystemInterface` plugin (`MoteHardware`) that drives two Feetech STS3215 servos via the SCServo SDK over a serial bus. Key implementation details:
@@ -77,7 +79,6 @@ Launch files, config, udev rules, and systemd services.
 - `mote_launch.py` — main bringup: robot_state_publisher, ros2_control_node, controller spawners, sllidar, laser_filter, v4l2_camera, and `localization_launch.py`. Reads `robot.yaml` for wheel geometry (injected into DiffDriveController params) and sensor config.
 - `localization_launch.py` — kinematic_icp LIDAR odometry (publishes `odom`→`base`; the map→odom corrector is slam_toolbox when mapping or AMCL when navigating). Despite the name, it does *not* run AMCL — AMCL lives in `nav2_launch.py`.
 - `slam_launch.py` — slam_toolbox (accepts `use_sim_time:=true` for the sim)
-- `sim_launch.py` — Gazebo sim (sim environment only): headless gz server with `worlds/mote_world.sdf`, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter. The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF).
 - `nav2_launch.py` — Nav2 stack
 - `rviz_launch.py` — RViz2 (dev environment only)
 
@@ -87,6 +88,12 @@ Launch files, config, udev rules, and systemd services.
 - `nav2_params.yaml` — Nav2 parameters
 - `slam_toolbox_params.yaml` — SLAM toolbox parameters
 - `mote.rviz` — RViz2 display config
+
+### `mote_simulation` (Python/ament)
+Workstation-only Gazebo simulation, kept separate from `mote_bringup` so it can be excluded from the robot sync (`pixi run sync` skips `mote_simulation/`). Built only in the `sim` pixi environment. Contains:
+- `launch/sim_launch.py` — Gazebo sim: headless gz server, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter, and the shared `localization_launch.py`. Takes a `world:=` arg (file in `mote_simulation/worlds/`, default `mote_world.sdf` — the simple smoke-test room; `office_world.sdf` is a larger hospital-ward layout for stress-testing localisation). The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF). It pulls `controllers.yaml`, `laser_filters.yaml`, and `localization_launch.py` from `mote_bringup`'s share so the sim and the real robot can't drift apart.
+- `worlds/` — `mote_world.sdf` (smoke-test room) and `office_world.sdf` (hospital-ward stress layout).
+- `test/sim_smoke/` — `run_sim_smoke.sh` + `verify_sim.py`, the `pixi run sim-test` gate.
 
 ### Third-party submodules (`third_party/`)
 - `sllidar_ros2` — SLAMTEC RPLIDAR C1 ROS 2 driver

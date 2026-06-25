@@ -28,7 +28,8 @@ diff_drive_controller:
 
     odom_frame_id: odom
     base_frame_id: base_footprint
-    enable_odom_tf: true        # kinematic-icp reads this raw wheel odom TF
+    enable_odom_tf: false       # odom->base is owned by kinematic_icp; wheel
+                                # odom reaches it via the odom_tf_relay leaf
 
     # Covariance for a 2D robot — z/roll/pitch are constrained
     pose_covariance_diagonal:  [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
