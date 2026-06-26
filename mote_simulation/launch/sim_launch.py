@@ -18,10 +18,16 @@ from launch.actions import (
     IncludeLaunchDescription,
     RegisterEventHandler,
 )
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import Node
+from launch.substitutions import (
+    Command,
+    EqualsSubstitution,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+)
+from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
 
@@ -60,7 +66,6 @@ def generate_launch_description():
     )
     robot_description = {
         "robot_description": ParameterValue(robot_description_content, value_type=str),
-        "use_sim_time": True,
     }
 
     # The world is selectable so the same launch can drive the simple
@@ -107,7 +112,6 @@ def generate_launch_description():
             "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
             "/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
         ],
-        parameters=[{"use_sim_time": True}],
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -127,7 +131,6 @@ def generate_launch_description():
         executable="scan_to_scan_filter_chain",
         parameters=[
             os.path.join(bringup_share, "config", "laser_filters.yaml"),
-            {"use_sim_time": True},
         ],
         remappings=[
             ("scan", "/scan"),
@@ -144,6 +147,21 @@ def generate_launch_description():
         launch_arguments={"use_sim_time": "true"}.items(),
     )
 
+    # mode:=mapping|nav runs the *real* mission launch headless on top of the sim,
+    # with base:=false so it skips the hardware drivers this sim stands in for.
+    # The launch files themselves define what each mode means, so the sim and the
+    # robot can't drift apart — this is how the mission launches get tested.
+    mode = LaunchConfiguration("mode")
+
+    def mission(launch_file, mode_value):
+        return IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(bringup_share, "launch", launch_file)
+            ),
+            launch_arguments={"base": "false", "use_sim_time": "true"}.items(),
+            condition=IfCondition(EqualsSubstitution(mode, mode_value)),
+        )
+
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -151,6 +169,13 @@ def generate_launch_description():
                 default_value="mote_world.sdf",
                 description="World file in mote_simulation/worlds to load",
             ),
+            DeclareLaunchArgument(
+                "mode",
+                default_value="none",
+                description="Mission to run on top of the sim: 'mapping' (SLAM + "
+                "Nav2), 'nav' (Nav2 against a saved map), or 'none' (sim only)",
+            ),
+            SetParameter(name="use_sim_time", value=True),
             gz_server,
             robot_state_publisher,
             spawn_robot,
@@ -163,5 +188,7 @@ def generate_launch_description():
             ),
             laser_filter,
             localization,
+            mission("mapping_launch.py", "mapping"),
+            mission("robot_launch.py", "nav"),
         ]
     )

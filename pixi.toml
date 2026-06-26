@@ -90,6 +90,8 @@ sync-watch = "watchexec --debounce 1s -- pixi run sync"
 
 [feature.sim.tasks]
 sim = "ros2 launch mote_simulation sim_launch.py"
+sim-mapping = "ros2 launch mote_simulation sim_launch.py mode:=mapping"
+sim-nav = "ros2 launch mote_simulation sim_launch.py mode:=nav"
 sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
     "build",
 ] }

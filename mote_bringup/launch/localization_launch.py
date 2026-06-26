@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetParameter
 
 
 def generate_launch_description():
@@ -13,7 +13,7 @@ def generate_launch_description():
     odom_relay = Node(
         package="mote_bringup",
         executable="odom_tf_relay",
-        parameters=[{"use_sim_time": use_sim_time, "child_frame": "odom_wheel"}],
+        parameters=[{"child_frame": "odom_wheel"}],
         remappings=[("odom_in", "/diff_drive_controller/odom")],
     )
 
@@ -35,13 +35,13 @@ def generate_launch_description():
                 "publish_odom_tf": True,
                 "invert_odom_tf": False,
                 "tf_timeout": 0.05,
-                "use_sim_time": use_sim_time,
             }
         ],
     )
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
+            SetParameter(name="use_sim_time", value=use_sim_time),
             odom_relay,
             kinematic_icp,
         ]
