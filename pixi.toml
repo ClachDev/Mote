@@ -11,20 +11,24 @@ build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_PO
     "submodules",
 ] }
 kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
+udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger"
+setup-ids = "ros2 run mote_hardware setup_ids"
 install-systemd = "bash mote_bringup/systemd/install.sh"
+sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
+save-map = "mkdir -p $HOME/.mote && ros2 run nav2_map_saver map_saver_cli -f $HOME/.mote/map"
+test = { cmd = "colcon test --packages-select mote_hardware --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+    "build",
+] }
+
+# Quick launch commands
 launch = "ros2 launch mote_bringup mote_launch.py"
 mapping = "ros2 launch mote_bringup mapping_launch.py"
 nav = "ros2 launch mote_bringup nav2_launch.py map:=$HOME/.mote/map.yaml"
 robot = "ros2 launch mote_bringup robot_launch.py"
-save-map = "mkdir -p $HOME/.mote && ros2 run nav2_map_saver map_saver_cli -f $HOME/.mote/map"
 slam = "ros2 launch mote_bringup slam_launch.py"
-sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' . michael@auldbot:~/Mote/"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
-udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger"
-setup-ids = "ros2 run mote_hardware setup_ids"
-test = { cmd = "colcon test --packages-select mote_hardware --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
-    "build",
-] }
+perception = "ros2 launch mote_perception perception_launch.py"
+
 
 [dependencies]
 cmake = ">=4.3.2,<5"
@@ -74,6 +78,11 @@ ros-jazzy-ament-cmake-gtest = ">=2.5"
 [feature.dev.dependencies]
 ros-jazzy-desktop = ">=0.11.0"
 ros-jazzy-nav2-bringup = ">=1.3.11,<2"
+# Interactive camera calibration GUI — run on the workstation against the Pi's
+# camera topics; the robot env stays lean. semver is an undeclared runtime
+# dependency of the conda camera_calibration package, so it is pinned here.
+ros-jazzy-camera-calibration = "*"
+semver = ">=3,<4"
 watchexec = ">=2.5,<3"
 
 # Desktop-only GUI teleop panel (ClachDev/rviz_teleop_panel), published to the
@@ -83,6 +92,8 @@ ros-jazzy-rviz-teleop-panel = ">=0.1.0"
 
 [feature.dev.tasks]
 rviz = "ros2 launch mote_bringup rviz_launch.py"
+camera_calibration = "ros2 run camera_calibration cameracalibrator --size 6x9 --square 0.025 --ros-args -r image:=/image_raw -p camera:=/camera -p image_transport:=compressed"
+
 # Continuously rsync to the Pi on save (watchexec honours .gitignore, so
 # build/install/log/.pixi are skipped). Edits to launch/config/Python go live
 # without a rebuild thanks to colcon --symlink-install; only C++ needs `build`.

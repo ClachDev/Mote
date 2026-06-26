@@ -2047,6 +2047,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.12-8_cp312.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/rosdistro-1.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/rospkg-1.6.1-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/semver-3.0.4-pyhcf101f3_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/setuptools-79.0.1-pyhff2d567_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/six-1.17.0-pyhe01879c_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/snowballstemmer-3.1.0-pyhd8ed1ab_0.conda
@@ -2118,6 +2119,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-bond-4.1.2-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-bondcpp-4.1.2-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-builtin-interfaces-2.0.3-np2py312h2ed9cc7_16.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-camera-calibration-5.0.11-np2py312hedab9cf_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-camera-calibration-parsers-5.1.7-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-camera-info-manager-5.1.7-np2py312h2ed9cc7_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-chained-filter-controller-4.37.0-np2py312h2ed9cc7_16.conda
@@ -3093,6 +3095,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.12-8_cp312.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/rosdistro-1.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/rospkg-1.6.1-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/semver-3.0.4-pyhcf101f3_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/setuptools-79.0.1-pyhff2d567_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/six-1.17.0-pyhe01879c_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/snowballstemmer-3.1.0-pyhd8ed1ab_0.conda
@@ -3163,6 +3166,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-bond-4.1.2-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-bondcpp-4.1.2-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-builtin-interfaces-2.0.3-np2py312h61f2ce4_16.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-calibration-5.0.11-np2py312h6b1b059_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-calibration-parsers-5.1.7-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-info-manager-5.1.7-np2py312h61f2ce4_16.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-chained-filter-controller-4.37.0-np2py312h61f2ce4_16.conda
@@ -21626,6 +21630,17 @@ packages:
   license_family: BSD
   size: 31852
   timestamp: 1766125246079
+- conda: https://conda.anaconda.org/conda-forge/noarch/semver-3.0.4-pyhcf101f3_1.conda
+  sha256: bea67173ed67c73cf16691ef72e58059492ac1ed1c880cfbeb6f1295c5add7d6
+  md5: 8e7be844ccb9706a999a337e056606ab
+  depends:
+  - python >=3.10
+  - python
+  license: BSD-3-Clause
+  license_family: BSD
+  run_exports: {}
+  size: 22532
+  timestamp: 1767294175877
 - conda: https://conda.anaconda.org/conda-forge/noarch/setuptools-79.0.1-pyhff2d567_0.conda
   sha256: 5ebc4bb71fbdc8048b08848519150c8d44b8eb18445711d3258c9d402ba87a2c
   md5: fa6669cc21abd4b7b6c5393b7bc71914
@@ -22954,6 +22969,34 @@ packages:
   license: Apache-2.0
   size: 80256
   timestamp: 1771184213652
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-camera-calibration-5.0.11-np2py312hedab9cf_16.conda
+  sha256: b521598ef138261ccc9a5826eabdc4c4c1aa29e74c1e30a52927c5ca6eef40ff
+  md5: f85c1f0001d413ff554dc2b8bc91926f
+  depends:
+  - libopencv
+  - libopencv * *qt6*
+  - py-opencv
+  - python
+  - ros-jazzy-cv-bridge
+  - ros-jazzy-image-geometry
+  - ros-jazzy-message-filters
+  - ros-jazzy-rclpy
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros-jazzy-std-srvs
+  - ros2-distro-mutex 0.14.* jazzy_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - ros2-distro-mutex >=0.14.0,<0.15.0a0
+  - numpy >=1.23,<3
+  - py-opencv >=4.12.0,<5.0a0
+  - libopencv >=4.12.0,<4.12.1.0a0
+  - python_abi 3.12.* *_cp312
+  license: BSD-3-Clause
+  size: 130912
+  timestamp: 1771187480406
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-camera-calibration-parsers-5.1.7-np2py312h2ed9cc7_16.conda
   sha256: 40b64c4a5c34628f1f6fe41acfed5621204aa764c5e3ac6eb3a9575b521366bb
   md5: 048689916624eeb4cc08ebfbceafbc9f
@@ -33256,6 +33299,33 @@ packages:
   license: Apache-2.0
   size: 84350
   timestamp: 1771184230712
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-calibration-5.0.11-np2py312h6b1b059_16.conda
+  sha256: 0c4190211776279a796ac7d902419293f999e1db1e9ef9df80e82dff656b7d7f
+  md5: 9fa265554988ee60eaa1ccbe81317cb6
+  depends:
+  - libopencv
+  - libopencv * *qt6*
+  - py-opencv
+  - python
+  - ros-jazzy-cv-bridge
+  - ros-jazzy-image-geometry
+  - ros-jazzy-message-filters
+  - ros-jazzy-rclpy
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros-jazzy-std-srvs
+  - ros2-distro-mutex 0.14.* jazzy_*
+  - libgcc >=14
+  - libstdcxx >=14
+  - libgcc >=14
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.14.0,<0.15.0a0
+  - py-opencv >=4.12.0,<5.0a0
+  - numpy >=1.23,<3
+  - libopencv >=4.12.0,<4.12.1.0a0
+  license: BSD-3-Clause
+  size: 129528
+  timestamp: 1771210736491
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-calibration-parsers-5.1.7-np2py312h61f2ce4_16.conda
   sha256: df94247660727341ba5cae8989c09659419e25959df6ba2a0908ee7f3676eab4
   md5: 385d43ed1cc87c055df8a692d7ed0bb1

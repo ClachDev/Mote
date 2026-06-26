@@ -29,3 +29,5 @@ lidar:
 camera:
   device: /dev/mote_camera
   image_size: [640, 480]
+  # Default fallback intrinsics; a per-robot ~/.mote/camera_calibration.yaml overrides it.
+  default_info_url: package://mote_perception/config/camera_info.default.yaml
