@@ -25,24 +25,34 @@ settings**. Just print it on A4 and the board is centred with a white border.
   size only affects metric scale, which this calibration does not rely on. So
   just print and use the `--square 0.025` printed on the board.
 
-## Generating `camera_info.yaml` on the robot
+## Generating `camera_info.yaml`
+
+`cameracalibrator` is an interactive GUI tool, so run it on the **workstation**
+(it is a `dev` dependency, not installed on the robot) against the Pi's live
+camera over the ROS 2 network. Both machines must be on the same LAN and
+`ROS_DOMAIN_ID`.
 
 1. Print and mount the target above.
-2. Start the camera on the robot (`pixi run launch`, or just the camera node).
-3. Run the interactive calibrator against the live stream:
+2. On the **Pi**, start the camera so it publishes `/image_raw` and
+   `/camera_info` (`pixi run launch`, or just the `v4l2_camera` node).
+3. On the **workstation**, confirm the topics are visible across the network
+   (`pixi run -e dev -- ros2 topic list` should list `/image_raw`), then run the
+   calibrator:
 
    ```bash
-   pixi run -- ros2 run camera_calibration cameracalibrator \
+   pixi run -e dev -- ros2 run camera_calibration cameracalibrator \
      --size 6x9 --square 0.025 \
      --ros-args -r image:=/image_raw -p camera:=/camera
    ```
 
-   (`--size` is **inner corners**, not squares — the 7x10-square board is `6x9`.)
+   (`--size` is **inner corners**, not squares — the 7x10-square board is `6x9`.
+   If the stream is laggy over WiFi, add `-p image_transport:=compressed`.)
 
 4. Move the board through the frame until the X/Y/Size/Skew bars are full, press
-   **CALIBRATE**, then **SAVE**. The tool writes a tarball to `/tmp`; extract its
-   `ost.yaml`, rename it to `camera_info.yaml`, and drop it into this `config/`
-   directory, then `pixi run build` so it is installed to the package share.
+   **CALIBRATE**, then **SAVE**. The tool writes `calibrationdata.tar.gz` to
+   `/tmp` on the workstation; extract its `ost.yaml`, rename it to
+   `camera_info.yaml`, and drop it into this `config/` directory, then
+   `pixi run build` so it is installed to the package share.
 
 ## Wiring it in
 
