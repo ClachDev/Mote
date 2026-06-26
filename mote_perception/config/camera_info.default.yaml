@@ -1,3 +1,5 @@
+# Default fallback intrinsics for the UGREEN webcam. A per-robot calibration at
+# ~/.mote/camera_calibration.yaml overrides this at launch (see config/README.md).
 image_width: 640
 image_height: 480
 camera_name: mote_camera

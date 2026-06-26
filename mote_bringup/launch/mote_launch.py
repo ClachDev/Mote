@@ -108,8 +108,12 @@ def generate_launch_description():
         "image_size": cam["image_size"],
         "camera_frame_id": "camera_optical_link",
     }
-    if "info_url" in cam:
-        camera_params["camera_info_url"] = cam["info_url"]
+    # A per-robot calibration in ~/.mote overrides the packaged default fallback.
+    user_calibration = os.path.expanduser("~/.mote/camera_calibration.yaml")
+    if os.path.exists(user_calibration):
+        camera_params["camera_info_url"] = f"file://{user_calibration}"
+    elif "default_info_url" in cam:
+        camera_params["camera_info_url"] = cam["default_info_url"]
     camera = Node(
         package="v4l2_camera",
         executable="v4l2_camera_node",

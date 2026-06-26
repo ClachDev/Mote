@@ -20,10 +20,11 @@ pixi run -- ros2 launch mote_perception perception_launch.py
 
 ## Camera calibration
 
-Real camera intrinsics must be captured on hardware with a checkerboard — see
-[`config/README.md`](config/README.md) for the `camera_calibration
-cameracalibrator` procedure and how to wire the result into `robot.yaml`'s
-`camera.info_url`. Until that is done the camera runs uncalibrated.
+A committed default calibration (`config/camera_info.default.yaml`) ships as a
+fallback, and a per-robot `~/.mote/camera_calibration.yaml` overrides it when
+present. Most robots need no calibration of their own — see
+[`config/README.md`](config/README.md) for when it's worth doing and the
+`camera_calibration cameracalibrator` procedure.
 
 ## Compressed transport
 
