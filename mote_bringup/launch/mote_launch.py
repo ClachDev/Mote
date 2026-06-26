@@ -103,17 +103,18 @@ def generate_launch_description():
     )
 
     cam = cfg["camera"]
+    camera_params = {
+        "video_device": cam["device"],
+        "image_size": cam["image_size"],
+        "camera_frame_id": "camera_optical_link",
+    }
+    if "info_url" in cam:
+        camera_params["camera_info_url"] = cam["info_url"]
     camera = Node(
         package="v4l2_camera",
         executable="v4l2_camera_node",
         name="camera",
-        parameters=[
-            {
-                "video_device": cam["device"],
-                "image_size": cam["image_size"],
-                "camera_frame_id": "camera_optical_link",
-            }
-        ],
+        parameters=[camera_params],
     )
 
     localization = IncludeLaunchDescription(

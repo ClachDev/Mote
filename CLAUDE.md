@@ -98,6 +98,13 @@ Workstation-only Gazebo simulation, kept separate from `mote_bringup` so it can 
 - `worlds/` — `mote_world.sdf` (smoke-test room) and `office_world.sdf` (hospital-ward stress layout).
 - `test/sim_smoke/` — `run_sim_smoke.sh` + `verify_sim.py`, the `pixi run sim-test` gate.
 
+### `mote_perception` (Python/ament)
+Home for camera-derived perception nodes — **L0 (Foundation)** of the vision pipeline. Runs on the robot (it will eventually feed Nav2), so unlike `mote_simulation` it is synced to the Pi. Contains:
+- `mote_perception/camera_monitor.py` — a dependency-light camera health monitor (rclpy + sensor_msgs only, no OpenCV). Subscribes to `image` and logs measured frame rate, resolution, and encoding on a timer, warning on dropouts. Registered as the `camera_monitor` console_script; it is the template later perception nodes follow.
+- `launch/perception_launch.py` — declares `use_sim_time` (applied via `SetParameter`) and starts `camera_monitor` with `image` remapped to `/image_raw`. Marked as the extension point where L1 nodes (rectify, depth, detection) attach.
+- `config/` — camera-calibration home. The real `camera_info.yaml` intrinsics can only be captured on hardware (checkerboard + `camera_calibration cameracalibrator`); `config/README.md` documents the procedure. Wiring is opt-in: add an `info_url` key to `robot.yaml`'s `camera:` section and `mote_launch.py` passes it to `v4l2_camera_node` as `camera_info_url` (absent ⇒ unchanged behaviour).
+- Compressed transport is already provided by the `image-transport-plugins` dep, so the camera publishes `/image_raw/compressed`; off-board/RViz consumers should prefer it. See `mote_perception/README.md`.
+
 ### Third-party submodules (`third_party/`)
 - `sllidar_ros2` — SLAMTEC RPLIDAR C1 ROS 2 driver
 - `kinematic_icp` — kinematic-ICP LIDAR odometry (reads raw wheel odom TF)
