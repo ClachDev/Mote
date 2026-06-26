@@ -3,7 +3,7 @@ from glob import glob
 
 from setuptools import find_packages, setup
 
-package_name = "mote_bringup"
+package_name = "mote_perception"
 
 setup(
     name=package_name,
@@ -19,11 +19,11 @@ setup(
     zip_safe=True,
     maintainer="Michael Johnson",
     maintainer_email="michael@clach.dev",
-    description="Launch files for the mote",
+    description="Camera-derived perception nodes for the mote",
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "odom_tf_relay = mote_bringup.odom_tf_relay:main",
+            "camera_monitor = mote_perception.camera_monitor:main",
         ],
     },
 )
