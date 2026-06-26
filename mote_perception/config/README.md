@@ -32,16 +32,16 @@ is **7x10 squares of 25 mm** (so **6x9 inner corners**), with the calibrator
 parameters printed along the bottom edge.
 
 The page is deliberately a little smaller than A4 so it fits inside the printable
-area of any A4 printer: a "shrink to printable area" setting then has nothing to
-shrink, and the squares come out true-size **without changing any print
-settings**. Just print it on A4 and the board is centred with a white border.
+area of any A4 printer: most printers should print it unscaled, and the squares
+come out true-size **without changing any print settings**. Just print it on A4
+and the board is centred with a white border.
 
 - **Mount it dead flat** on a clipboard, foamboard, or glass. A floppy sheet
   warps and wrecks the result.
-- You do **not** need to measure the squares. If your printer scales it slightly
-  anyway, it still calibrates correctly: the **intrinsics** are independent of the
-  absolute square size — square size only affects metric scale, which this
-  calibration does not rely on. Just use the `--square 0.025` printed on the board.
+- The squares should measure 25 mm on each side however if they do not match
+  exactly it should still calibrate correctly. The **intrinsics** are
+  independent of the absolute square size — square size only affects metric
+  scale, which this calibration does not rely on.
 
 ## Running the calibration
 
@@ -53,33 +53,17 @@ camera over the ROS 2 network. Both machines must be on the same LAN and
 1. Print and mount the target above.
 2. On the **Pi**, start the camera so it publishes `/image_raw` (`pixi run
    launch`, or just the `v4l2_camera` node).
-3. On the **workstation**, confirm the topics are visible across the network
-   (`pixi run -e dev -- ros2 topic list` should list `/image_raw`), then run the
-   calibrator:
+3. On the **workstation** run the calibrator:
 
    ```bash
-   pixi run -e dev -- ros2 run camera_calibration cameracalibrator \
-     --size 6x9 --square 0.025 \
-     --ros-args -r image:=/image_raw -p camera:=/camera
+   pixi run camera_calibration
    ```
-
-   (`--size` is **inner corners**, not squares — the 7x10-square board is `6x9`.
-   If the stream is laggy over WiFi, add `-p image_transport:=compressed`.)
 
 4. Move the board through the frame until the X/Y/Size/Skew bars are full, then
    press **CALIBRATE**. It prints the result (`camera matrix`, `distortion`,
    `rectification`, `projection`) to the console in oST format.
 
-   > The **SAVE**/**COMMIT** buttons crash in this package version
-   > (`camera_calibration` 5.0.11 calls `numpy.ndarray.tostring()`, removed in
-   > NumPy 2.0). Ignore it — copy the printed parameters by hand instead (next step).
+   Copy the printed parameters into a `camera_calibration.yaml` file.
 
-5. **Install it.** Copy `camera_info.default.yaml` to
-   `~/.mote/camera_calibration.yaml` **on the Pi** and replace the matrices with
-   the printed values (camera_matrix → `camera_matrix.data`, distortion →
-   `distortion_coefficients.data`, projection → `projection_matrix.data`). No
-   rebuild needed — it is read directly at launch. Relaunch and check
-   `/camera_info` carries the new `k`/`d`.
-
-To change the committed **default** instead (e.g. for a new camera model), edit
-`camera_info.default.yaml` here, `pixi run build`, and commit.
+5. **Install it.** Copy calibration file to `~/.mote/camera_calibration.yaml`
+  **on the Pi**.

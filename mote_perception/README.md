@@ -15,7 +15,7 @@ Nav2), so unlike `mote_simulation` it is synced to the Pi.
 Run the launch:
 
 ```bash
-pixi run -- ros2 launch mote_perception perception_launch.py
+pixi run perception
 ```
 
 ## Camera calibration
