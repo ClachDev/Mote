@@ -31,3 +31,14 @@ camera:
   image_size: [640, 480]
   # Default fallback intrinsics; a per-robot ~/.mote/camera_calibration.yaml overrides it.
   default_info_url: package://mote_perception/config/camera_info.default.yaml
+  # Simulated camera parameters — used only by the use_sim branch of the URDF;
+  # the real driver gets its intrinsics from default_info_url instead. The FOV
+  # matches the calibrated real lens (fx ~469.6 over 640 px -> ~68.6deg) so sim
+  # and real geometry stay consistent.
+  sim:
+    update_rate: 30.0
+    horizontal_fov: 1.20
+    width: 640
+    height: 480
+    near: 0.05
+    far: 20.0

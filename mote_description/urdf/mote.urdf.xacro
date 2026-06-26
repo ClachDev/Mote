@@ -281,6 +281,32 @@
         </lidar>
       </sensor>
     </gazebo>
+
+    <xacro:property name="camera_sim" value="${cfg['camera']['sim']}"/>
+    <gazebo reference="camera_link">
+      <sensor name="camera" type="camera">
+        <!-- gz_frame_id is the optical frame so the published image/camera_info
+             frame_id follows the ROS optical convention (z-forward). The sensor
+             body is camera_link (+X-forward), which gz uses as the view axis. -->
+        <topic>image_raw</topic>
+        <gz_frame_id>camera_optical_link</gz_frame_id>
+        <update_rate>${camera_sim['update_rate']}</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <camera>
+          <horizontal_fov>${camera_sim['horizontal_fov']}</horizontal_fov>
+          <image>
+            <width>${camera_sim['width']}</width>
+            <height>${camera_sim['height']}</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>${camera_sim['near']}</near>
+            <far>${camera_sim['far']}</far>
+          </clip>
+        </camera>
+      </sensor>
+    </gazebo>
   </xacro:if>
 
 </robot>
