@@ -1,10 +1,9 @@
 # Camera calibration
 
 This directory holds the camera intrinsics (`camera_info.yaml`) for the robot's
-USB webcam. The real file can only be produced on hardware with the physical
-camera and a printed checkerboard — it is **not** checked in, and `robot.yaml`'s
-`camera.info_url` is left unset by default so the camera runs uncalibrated until
-you generate one.
+USB webcam, produced by the calibration below and committed so it deploys to the
+Pi via `pixi run sync`. `robot.yaml`'s `camera.info_url` points at it. Regenerate
+it (and re-commit) if the camera is swapped.
 
 ## Print the target
 
@@ -48,11 +47,16 @@ camera over the ROS 2 network. Both machines must be on the same LAN and
    (`--size` is **inner corners**, not squares — the 7x10-square board is `6x9`.
    If the stream is laggy over WiFi, add `-p image_transport:=compressed`.)
 
-4. Move the board through the frame until the X/Y/Size/Skew bars are full, press
-   **CALIBRATE**, then **SAVE**. The tool writes `calibrationdata.tar.gz` to
-   `/tmp` on the workstation; extract its `ost.yaml`, rename it to
-   `camera_info.yaml`, and drop it into this `config/` directory, then
-   `pixi run build` so it is installed to the package share.
+4. Move the board through the frame until the X/Y/Size/Skew bars are full, then
+   press **CALIBRATE**. It prints the result (`camera matrix`, `distortion`,
+   `rectification`, `projection`) to the console in oST format.
+
+   > The **SAVE**/**COMMIT** buttons crash in this package version
+   > (`camera_calibration` 5.0.11 calls `numpy.ndarray.tostring()`, removed in
+   > NumPy 2.0). Ignore it — copy the printed parameters straight into
+   > `camera_info.yaml` instead, using the existing file as the template
+   > (camera_matrix → `camera_matrix.data`, distortion → `distortion_coefficients.data`,
+   > projection → `projection_matrix.data`). Then `pixi run build`.
 
 ## Wiring it in
 

@@ -29,3 +29,4 @@ lidar:
 camera:
   device: /dev/mote_camera
   image_size: [640, 480]
+  info_url: package://mote_perception/config/camera_info.yaml
