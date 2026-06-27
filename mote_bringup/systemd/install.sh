@@ -13,4 +13,4 @@ for unit in "$SRC_DIR"/*.service; do
 done
 
 sudo systemctl daemon-reload
-sudo systemctl enable mote-bringup mote-slam mote-nav
+sudo systemctl enable mote-bringup mote-slam mote-nav mote-record
