@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import CameraInfo, CompressedImage, PointCloud2
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from sensor_msgs_py import point_cloud2
 import tf2_ros
 
@@ -50,6 +50,7 @@ class DepthObstacleNode(Node):
         self.declare_parameter("range_max", 3.0)
         self.declare_parameter("pixel_stride", 3)
         self.declare_parameter("socket_timeout", 2.0)
+        self.declare_parameter("publish_debug", True)
 
         self.base_frame = self.get_parameter("base_frame").value
         self.optical_frame = self.get_parameter("optical_frame").value
@@ -71,7 +72,24 @@ class DepthObstacleNode(Node):
         self.create_subscription(CameraInfo, "camera_info", self._on_info, 10)
         self.create_subscription(CompressedImage, "image/compressed", self._on_image, 5)
         self.pub = self.create_publisher(PointCloud2, "camera_obstacles", 5)
+        self.debug = self.get_parameter("publish_debug").value
+        if self.debug:
+            self.depth_pub = self.create_publisher(Image, "camera_depth", 5)
+            self.full_cloud_pub = self.create_publisher(
+                PointCloud2, "camera_cloud_full", 5
+            )
         self.get_logger().info("depth_obstacle_node up; waiting for camera_info + tf")
+
+    def _publish_depth_image(self, depth, stamp):
+        img = Image()
+        img.header.stamp = stamp
+        img.header.frame_id = self.optical_frame
+        img.height, img.width = depth.shape
+        img.encoding = "32FC1"
+        img.is_bigendian = 0
+        img.step = img.width * 4
+        img.data = np.ascontiguousarray(depth, dtype=np.float32).tobytes()
+        self.depth_pub.publish(img)
 
     def _on_info(self, msg):
         self.cam_info = msg
@@ -152,6 +170,8 @@ class DepthObstacleNode(Node):
         if depth is None:
             return
         depth_corr, (a, b, frac) = self.rescaler.rescale(depth)
+        if self.debug:
+            self._publish_depth_image(depth_corr, msg.header.stamp)
         if frac < 0.4:
             self.get_logger().warn(
                 f"low floor-fit inliers ({frac:.0%}); skipping frame"
@@ -162,6 +182,20 @@ class DepthObstacleNode(Node):
         pts = (self.rays_opt * d[:, None]) @ self.proj.R.T + self.proj.C
         bx, by, bz = pts[:, 0], pts[:, 1], pts[:, 2]
         rng = np.hypot(bx, by)
+
+        header = msg.header
+        header.frame_id = (
+            self.base_frame
+        )  # cloud is in the base frame, stamped at capture
+
+        if self.debug:
+            shown = np.isfinite(rng) & (rng < self.rmax) & (bz < self.z_ceil)
+            self.full_cloud_pub.publish(
+                point_cloud2.create_cloud_xyz32(
+                    header, pts[shown][:: self.stride].astype(np.float32)
+                )
+            )
+
         keep = (
             (bz > self.z_obs)
             & (bz < self.z_ceil)
@@ -169,11 +203,6 @@ class DepthObstacleNode(Node):
             & (rng < self.rmax)
         )
         cloud = pts[keep][:: self.stride].astype(np.float32)
-
-        header = msg.header
-        header.frame_id = (
-            self.base_frame
-        )  # cloud is in the base frame, stamped at capture
         self.pub.publish(point_cloud2.create_cloud_xyz32(header, cloud))
 
         latency_ms = (
