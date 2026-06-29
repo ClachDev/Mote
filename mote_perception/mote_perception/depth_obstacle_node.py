@@ -15,6 +15,7 @@ supplementary marker for the low/thin things the 2D scan misses.
 import socket
 import struct
 
+import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -48,6 +49,7 @@ class DepthObstacleNode(Node):
         self.declare_parameter("range_min", 0.25)
         self.declare_parameter("range_max", 3.0)
         self.declare_parameter("pixel_stride", 3)
+        self.declare_parameter("socket_timeout", 2.0)
 
         self.base_frame = self.get_parameter("base_frame").value
         self.optical_frame = self.get_parameter("optical_frame").value
@@ -63,6 +65,7 @@ class DepthObstacleNode(Node):
         self.proj = None
         self.rescaler = None
         self.grid = None
+        self.rays_opt = None
         self.sock = None
 
         self.create_subscription(CameraInfo, "camera_info", self._on_info, 10)
@@ -89,18 +92,31 @@ class DepthObstacleNode(Node):
         self.rescaler = DepthFloorRescaler(self.proj)
         u, v = np.meshgrid(np.arange(self.proj.width), np.arange(self.proj.height))
         self.grid = (u.ravel(), v.ravel())
+        uv = np.column_stack(self.grid).astype(np.float64).reshape(-1, 1, 2)
+        norm = cv2.undistortPoints(uv, self.proj.K, self.proj.D).reshape(-1, 2)
+        self.rays_opt = np.column_stack([norm[:, 0], norm[:, 1], np.ones(len(norm))])
         self.get_logger().info(
             f"setup done: camera at {self.proj.camera_height:.3f} m; publishing obstacles"
         )
         return True
+
+    def _drop_connection(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
 
     def _connect(self):
         if self.sock is not None:
             return self.sock
         host = self.get_parameter("server_host").value
         port = self.get_parameter("server_port").value
+        timeout = float(self.get_parameter("socket_timeout").value)
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
             s.connect((host, port))
             self.sock = s
             self.get_logger().info(f"connected to depth server {host}:{port}")
@@ -119,11 +135,14 @@ class DepthObstacleNode(Node):
             if hdr is None:
                 raise ConnectionError("server closed")
             h, w = struct.unpack(">II", hdr)
-            depth = np.frombuffer(recvall(s, h * w * 4), np.float32).reshape(h, w)
+            body = recvall(s, h * w * 4)
+            if body is None:
+                raise ConnectionError("server closed mid-depth")
+            depth = np.frombuffer(body, np.float32).reshape(h, w)
             return depth
         except (OSError, ConnectionError) as e:
             self.get_logger().warn(f"inference failed ({e}); will reconnect")
-            self.sock = None
+            self._drop_connection()
             return None
 
     def _on_image(self, msg):
@@ -139,12 +158,8 @@ class DepthObstacleNode(Node):
             )
             return
 
-        u, v = self.grid
         d = depth_corr.ravel()
-        K = self.proj.K
-        X = (u - K[0, 2]) / K[0, 0] * d
-        Y = (v - K[1, 2]) / K[1, 1] * d
-        pts = np.column_stack([X, Y, d]) @ self.proj.R.T + self.proj.C
+        pts = (self.rays_opt * d[:, None]) @ self.proj.R.T + self.proj.C
         bx, by, bz = pts[:, 0], pts[:, 1], pts[:, 2]
         rng = np.hypot(bx, by)
         keep = (
