@@ -37,3 +37,43 @@ saturates Wi-Fi.
 Note: a `ros2 topic pub` of a fake `sensor_msgs/msg/Image` will **not** produce a
 `/image_raw/compressed` topic. Only a real `image_transport` publisher (the
 camera) or an `image_transport republish` node emits the compressed variant.
+
+## L1 — Obstacle perception (off-board monocular depth)
+
+Turns the single RGB camera into a `PointCloud2` of obstacles (`/camera_obstacles`)
+for a Nav2 voxel/obstacle layer — catching the low/thin things the 2D lidar plane
+misses (cables, thresholds, table & chair legs, a robot vacuum). The lidar stays
+the primary, low-latency obstacle and clearing source; this is a slower
+supplementary **marker**.
+
+Pipeline: Depth Anything V2 (metric, indoor) gives a dense depth map; its raw
+metres are not accurate for our lens, so every frame is **metrically rescaled
+against the known floor plane** (`depth_rescale.py`, RANSAC affine-in-disparity —
+the camera's fixed height/pose is dense per-frame ground truth). The rescaled depth
+is back-projected to 3D; points more than `z_obstacle` (default 0.02 m) above the
+floor become the cloud, stamped at **image-capture time** so Nav2 places it via tf
+at the moment it was seen (this is how the off-board latency is absorbed).
+
+Depth inference is too heavy for the Pi CPU (~0.5 s/frame), so it runs **off-board**
+as two processes:
+
+- `tools/depth_server.py` — keeps the model resident and serves depth over a
+  socket. Runs in a torch venv (kept out of the ROS/robot env on purpose):
+  ```bash
+  python -m venv da_venv && da_venv/bin/pip install torch transformers pillow numpy
+  da_venv/bin/python mote_perception/tools/depth_server.py        # workstation
+  ```
+- `depth_obstacle_node` — light rclpy node (no torch); forwards each compressed
+  frame to the server, rescales, and publishes the cloud. Runs anywhere (robot or
+  workstation):
+  ```bash
+  pixi run -- ros2 run mote_perception depth_obstacle_node \
+    --ros-args -r image/compressed:=/image_raw/compressed -p server_host:=<workstation>
+  ```
+
+Key params: `z_obstacle` (height deadband, default 0.02 m — below ~1.5 cm floor
+noise false-positives), `range_min`/`range_max`, `server_host`/`server_port`.
+
+Everything is developed and validated offline against recorded bags (`pixi run
+record`): `tools/depth_obstacles.py` overlays the obstacle decision and compares
+the cloud to lidar; other `tools/*.py` are the spike harnesses behind the design.

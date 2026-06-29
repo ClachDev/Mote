@@ -167,9 +167,16 @@ def main():
                 if dimg is not None
                 else np.zeros_like(frame)
             )
+            # tint pixels the node marks as obstacle (above floor, in range) red
+            tint = frame.copy()
+            obs_img = obs.reshape(proj.height, proj.width)
+            tint[obs_img] = (0.35 * frame[obs_img] + np.array([0, 0, 165])).astype(
+                np.uint8
+            )
+
             b = bev(cam_xy, lidar_xy)
             h = frame.shape[0]
-            panel = np.hstack([frame, dcol, cv2.resize(b, (h, h))])
+            panel = np.hstack([frame, tint, dcol, cv2.resize(b, (h, h))])
             cv2.imwrite(f"{OUT}/depth_{saved:02d}.png", panel)
             print(f"depth_{saved:02d}: obstacle pts={obs.sum()}")
             saved += 1
