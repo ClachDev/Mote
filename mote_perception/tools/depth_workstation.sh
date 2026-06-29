@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-pixi run depth-server &
+# This script runs in the default/ROS env, so PYTHONPATH points at the ROS
+# Python 3.12 site-packages. Drop it for the depth-server child only, or its
+# Python 3.14 loads those incompatible numpy/torch C-extensions. The ROS node
+# below keeps PYTHONPATH — it needs it.
+env -u PYTHONPATH pixi run depth-server &
 server_pid=$!
 
 cleanup() {
