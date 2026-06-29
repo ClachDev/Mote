@@ -20,6 +20,8 @@ from collections import deque
 import cv2
 import numpy as np
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
@@ -88,17 +90,27 @@ class DepthObstacleNode(Node):
         self.create_subscription(CompressedImage, "image/compressed", self._on_image, 5)
         if self.source != "floor":
             scan_topic = self.get_parameter("scan_topic").value
-            self.create_subscription(LaserScan, scan_topic, self._on_scan, 10)
+            # Own callback group so scans keep buffering on another thread while the
+            # ~0.5 s blocking inference runs in _on_image (else the buffer goes stale
+            # and no scan lands near an image's capture stamp).
+            self.create_subscription(
+                LaserScan,
+                scan_topic,
+                self._on_scan,
+                10,
+                callback_group=MutuallyExclusiveCallbackGroup(),
+            )
         self.pub = self.create_publisher(PointCloud2, "camera_obstacles", 5)
         self.debug = self.get_parameter("publish_debug").value
         if self.debug:
             self.depth_pub = self.create_publisher(Image, "camera_depth", 5)
+            self.depth_raw_pub = self.create_publisher(Image, "camera_depth_raw", 5)
             self.full_cloud_pub = self.create_publisher(
                 PointCloud2, "camera_cloud_full", 5
             )
         self.get_logger().info("depth_obstacle_node up; waiting for camera_info + tf")
 
-    def _publish_depth_image(self, depth, stamp):
+    def _publish_depth_image(self, depth, stamp, pub):
         img = Image()
         img.header.stamp = stamp
         img.header.frame_id = self.optical_frame
@@ -107,7 +119,7 @@ class DepthObstacleNode(Node):
         img.is_bigendian = 0
         img.step = img.width * 4
         img.data = np.ascontiguousarray(depth, dtype=np.float32).tobytes()
-        self.depth_pub.publish(img)
+        pub.publish(img)
 
     def _on_info(self, msg):
         self.cam_info = msg
@@ -117,15 +129,13 @@ class DepthObstacleNode(Node):
         self.scans.append((stamp, msg))
 
     def _nearest_scan(self, stamp):
-        """Buffered scan closest to the capture stamp + its dt (ms), or (None, None)."""
-        if not self.scans:
+        """Buffered scan nearest the capture stamp and its |dt| in ms (no cutoff)."""
+        scans = list(self.scans)  # snapshot: _on_scan appends from another thread
+        if not scans:
             return None, None
         target = rclpy.time.Time.from_msg(stamp).nanoseconds
-        best_stamp, best = min(self.scans, key=lambda s: abs(s[0] - target))
-        dt_ns = abs(best_stamp - target)
-        if dt_ns > self.scan_max_dt * 1e9:
-            return None, None
-        return best, dt_ns / 1e6
+        best_stamp, best = min(scans, key=lambda s: abs(s[0] - target))
+        return best, abs(best_stamp - target) / 1e6
 
     def _ensure_lidar(self):
         """Build the lidar rescaler once the scan frame and intrinsics are known."""
@@ -159,14 +169,17 @@ class DepthObstacleNode(Node):
         self.diag = ""
         if self.source != "floor" and self._ensure_lidar():
             scan, dt_ms = self._nearest_scan(stamp)
-            if scan is not None:
+            if scan is not None and dt_ms <= self.scan_max_dt * 1e3:
                 out = self.lidar_rescaler.rescale(depth, scan)
                 self.diag = (
-                    f"  pairs {self.lidar_rescaler.last_npairs} dt {dt_ms:.0f}ms"
+                    f"  scans {len(self.scans)} dt {dt_ms:.0f}ms "
+                    f"pairs {self.lidar_rescaler.last_npairs}"
                 )
                 if out is not None:
                     self.last_ab = out[1][:2]
                     return (*out, "lidar")
+            else:
+                self.diag = f"  scans {len(self.scans)} dt {dt_ms:.0f}ms (no match)"
             if self.last_ab is not None:
                 a, b = self.last_ab
                 return apply_affine_disparity(depth, a, b), (a, b, float("nan")), "hold"
@@ -249,6 +262,8 @@ class DepthObstacleNode(Node):
         depth = self._infer(bytes(msg.data))
         if depth is None:
             return
+        if self.debug:
+            self._publish_depth_image(depth, msg.header.stamp, self.depth_raw_pub)
         depth_corr, ab, source = self._rescale(depth, msg.header.stamp)
         if depth_corr is None:
             self.get_logger().warn(
@@ -257,7 +272,7 @@ class DepthObstacleNode(Node):
             return
         frac = ab[2]
         if self.debug:
-            self._publish_depth_image(depth_corr, msg.header.stamp)
+            self._publish_depth_image(depth_corr, msg.header.stamp, self.depth_pub)
         if frac < 0.4:
             self.get_logger().warn(
                 f"low {source}-fit inliers ({frac:.0%}); skipping frame"
@@ -295,7 +310,8 @@ class DepthObstacleNode(Node):
             self.get_clock().now() - rclpy.time.Time.from_msg(msg.header.stamp)
         ).nanoseconds / 1e6
         self.get_logger().info(
-            f"obstacles: {len(cloud)} pts  scale:{source} {frac:.0%}{self.diag}  "
+            f"obstacles: {len(cloud)} pts  scale:{source} {frac:.0%} "
+            f"a={ab[0]:.3f} b={ab[1]:.3f}{self.diag}  "
             f"stamp-to-publish {latency_ms:.0f} ms",
             throttle_duration_sec=2.0,
         )
@@ -304,8 +320,11 @@ class DepthObstacleNode(Node):
 def main():
     rclpy.init()
     node = DepthObstacleNode()
+    # MultiThreaded so the scan callback group runs while _on_image blocks on inference.
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
