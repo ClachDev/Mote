@@ -1,12 +1,12 @@
 """Off-board depth -> obstacle PointCloud2 node (no torch; runs anywhere).
 
 Subscribes the compressed camera stream, forwards each frame to the depth server
-(tools/depth_server.py, in the torch venv) over a socket, metrically rescales the
-returned depth against the known floor plane, back-projects to 3D, keeps points
-standing above the floor, and publishes them as a PointCloud2 for a Nav2 obstacle
-layer. The cloud is stamped with the IMAGE capture time so Nav2 places it via tf
-at the moment it was seen — which is how the (off-board, ~0.6 s) latency is
-absorbed without inflation or a speed cap.
+(tools/depth_server.py, in the pixi depth environment) over a socket, metrically
+rescales the returned depth against the known floor plane, back-projects to 3D,
+keeps points standing above the floor, and publishes them as a PointCloud2 for a
+Nav2 obstacle layer. The cloud is stamped with the IMAGE capture time so Nav2
+places it via tf at the moment it was seen — which is how the (off-board, ~0.6 s)
+latency is absorbed without inflation or a speed cap.
 
 Lidar stays the primary, low-latency obstacle/clearing source; this is a slow
 supplementary marker for the low/thin things the 2D scan misses.

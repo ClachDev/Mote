@@ -29,6 +29,7 @@ slam = "ros2 launch mote_bringup slam_launch.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
 perception = "ros2 launch mote_perception perception_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
+depth = "bash mote_perception/tools/depth_workstation.sh"
 
 
 [dependencies]
@@ -117,6 +118,15 @@ ros-jazzy-ros-gz-sim = "*"
 ros-jazzy-ros-gz-bridge = "*"
 ros-jazzy-gz-ros2-control = "*"
 
+[feature.depth.dependencies]
+numpy = ">=1.26,<3"
+pillow = ">=10,<13"
+pytorch = ">=2,<3"
+transformers = ">=4,<5"
+
+[feature.depth.tasks]
+depth-server = "python mote_perception/tools/depth_server.py"
+
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
 
@@ -133,5 +143,6 @@ env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
 dev = { features = ["dev"], solve-group = "default" }
 # Own solve (no solve-group) so sim deps can never shift the robot/Pi env
 sim = { features = ["sim"] }
+depth = { features = ["depth"], no-default-feature = true }
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
 lint = { features = ["lint"], no-default-feature = true }

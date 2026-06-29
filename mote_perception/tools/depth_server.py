@@ -1,4 +1,4 @@
-"""Off-board monocular-depth inference server (runs in the torch venv).
+"""Off-board monocular-depth inference server (runs in the pixi depth environment).
 
 Keeps Depth Anything V2 resident and serves depth over a local socket so the ROS
 node (which has no torch) can stay light and run anywhere — on the workstation
@@ -8,9 +8,6 @@ deliberate two-process split that keeps torch out of the ROS/robot environment.
 Protocol (length-prefixed, big-endian):
   request : uint32 nbytes, then `nbytes` of JPEG/PNG-compressed image
   reply   : uint32 H, uint32 W, then H*W float32 metric depth (row-major, metres)
-
-Run (in the venv):
-    da_venv/bin/python mote_perception/tools/depth_server.py [--host 0.0.0.0] [--port 5601]
 """
 
 import argparse

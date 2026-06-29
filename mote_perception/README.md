@@ -58,22 +58,20 @@ Depth inference is too heavy for the Pi CPU (~0.5 s/frame), so it runs **off-boa
 as two processes:
 
 - `tools/depth_server.py` — keeps the model resident and serves depth over a
-  socket. Runs in a torch venv (kept out of the ROS/robot env on purpose):
-  ```bash
-  python -m venv da_venv && da_venv/bin/pip install torch transformers pillow numpy
-  da_venv/bin/python mote_perception/tools/depth_server.py        # workstation
-  ```
+  socket. Runs in a dedicated pixi environment (kept out of the ROS/robot env on
+  purpose):
 - `depth_obstacle_node` — light rclpy node (no torch); forwards each compressed
   frame to the server, rescales, and publishes the cloud. Runs anywhere (robot or
   workstation):
+- Workstation all-in-one command: starts the depth server and the ROS obstacle
+  node together, using the workstation's ROS graph:
   ```bash
-  pixi run -- ros2 run mote_perception depth_obstacle_node \
-    --ros-args -r image/compressed:=/image_raw/compressed -p server_host:=<workstation>
+  pixi run depth
   ```
 
 Key params: `z_obstacle` (height deadband, default 0.02 m — below ~1.5 cm floor
 noise false-positives), `range_min`/`range_max`, `server_host`/`server_port`.
 
-Everything is developed and validated offline against recorded bags (`pixi run
-record`): `tools/depth_obstacles.py` overlays the obstacle decision and compares
-the cloud to lidar; other `tools/*.py` are the spike harnesses behind the design.
+Everything is developed and validated offline against recorded bags:
+`tools/depth_obstacles.py` overlays the obstacle decision and compares the cloud
+to lidar; other `tools/*.py` are the spike harnesses behind the design.
