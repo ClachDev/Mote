@@ -1,0 +1,105 @@
+"""Metric rescaling of monocular depth against lidar range returns.
+
+The floor-plane rescale (depth_rescale.py) anchors scale on a narrow near-floor
+band and extrapolates out to far walls, and it depends on the camera->floor angle
+-- which varies with the floor slope and how the robot rests (measured ~1.5 deg
+across rest positions). The lidar instead gives metric range on the surfaces the
+depth must get right (walls), referenced through the lidar->camera transform. Both
+sensors are bolted to the chassis, so that transform is invariant to chassis tilt:
+the scale it yields is independent of how the body or floor is pitched.
+
+A 2D scan samples a single height -- a thin curved band in the image -- but the
+correction is a global affine in disparity (the same model the floor fit uses), so
+fitting on that band and applying everywhere is valid as long as the band spans a
+range of depths. When it doesn't (too few returns in view, or all at one range),
+`rescale` returns None and the caller falls back to the floor fit.
+"""
+
+import cv2
+import numpy as np
+
+from mote_perception.depth_rescale import apply_affine_disparity, fit_affine_disparity
+
+
+def scan_to_points(ranges, angle_min, angle_increment, range_min, range_max):
+    """LaserScan ranges -> (N, 3) points in the lidar frame (z=0)."""
+    r = np.asarray(ranges, dtype=np.float64)
+    ang = angle_min + np.arange(len(r)) * angle_increment
+    ok = np.isfinite(r) & (r > range_min) & (r < range_max)
+    r, ang = r[ok], ang[ok]
+    return np.column_stack([r * np.cos(ang), r * np.sin(ang), np.zeros(len(r))])
+
+
+def lidar_depth_pairs(pts_lidar, T_opt_lidar, depth, K, D):
+    """Pair model depth with true range where lidar points land in the image.
+
+    Transforms lidar points into the optical frame, projects them through the
+    intrinsics, and for those falling in front of the camera and inside the image
+    returns (pred, true) optical-Z depths -- model prediction vs. metric truth.
+    """
+    R = np.asarray(T_opt_lidar)[:3, :3]
+    t = np.asarray(T_opt_lidar)[:3, 3]
+    pts_opt = pts_lidar @ R.T + t
+    z = pts_opt[:, 2]
+    front = z > 0.05
+    pts_opt, z = pts_opt[front], z[front]
+    if len(pts_opt) == 0:
+        return np.empty(0), np.empty(0)
+
+    px, _ = cv2.projectPoints(pts_opt.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), K, D)
+    px = px.reshape(-1, 2)
+    h, w = depth.shape
+    u = np.round(px[:, 0]).astype(int)
+    v = np.round(px[:, 1]).astype(int)
+    inb = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+    u, v, z = u[inb], v[inb], z[inb]
+    pred = depth[v, u]
+    valid = np.isfinite(pred) & (pred > 1e-3)
+    return pred[valid], z[valid]
+
+
+class LidarDepthRescaler:
+    """Per-frame metric rescaling of a depth map via lidar range returns.
+
+    Holds the intrinsics and the static lidar->optical transform. `rescale` builds
+    the (pred, true) pairs from one scan, fits the affine-in-disparity correction
+    (RANSAC, shared with the floor rescaler), and applies it. Returns None when the
+    scan gives too few pairs or too little depth spread to constrain the fit.
+    """
+
+    def __init__(
+        self,
+        K,
+        D,
+        T_opt_lidar,
+        range_min=0.1,
+        range_max=8.0,
+        min_pairs=8,
+        min_spread=0.3,
+    ):
+        self.K = np.asarray(K, np.float64).reshape(3, 3)
+        self.D = np.asarray(D, np.float64).reshape(-1)
+        self.T = np.asarray(T_opt_lidar, np.float64)
+        self.range_min = range_min
+        self.range_max = range_max
+        self.min_pairs = min_pairs
+        self.min_spread = min_spread
+        self.last_npairs = 0
+
+    def pairs(self, scan, depth):
+        pts = scan_to_points(
+            scan.ranges,
+            scan.angle_min,
+            scan.angle_increment,
+            max(scan.range_min, self.range_min),
+            min(scan.range_max, self.range_max),
+        )
+        return lidar_depth_pairs(pts, self.T, depth, self.K, self.D)
+
+    def rescale(self, depth, scan):
+        pred, true = self.pairs(scan, depth)
+        self.last_npairs = len(pred)
+        if len(pred) < self.min_pairs or np.ptp(true) < self.min_spread:
+            return None
+        a, b, frac = fit_affine_disparity(pred, true)
+        return apply_affine_disparity(depth, a, b), (a, b, frac)

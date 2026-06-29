@@ -2,9 +2,10 @@
 
 Subscribes the compressed camera stream, forwards each frame to the depth server
 (tools/depth_server.py, in the pixi depth environment) over a socket, metrically
-rescales the returned depth against the known floor plane, back-projects to 3D,
-keeps points standing above the floor, and publishes them as a PointCloud2 for a
-Nav2 obstacle layer. The cloud is stamped with the IMAGE capture time so Nav2
+rescales the returned depth (against time-synced lidar range returns, falling back
+to the floor plane), back-projects to 3D, keeps points standing above the floor,
+and publishes them as a PointCloud2 for a Nav2 obstacle layer. The cloud is
+stamped with the IMAGE capture time so Nav2
 places it via tf at the moment it was seen — which is how the (off-board, ~0.6 s)
 latency is absorbed without inflation or a speed cap.
 
@@ -14,17 +15,19 @@ supplementary marker for the low/thin things the 2D scan misses.
 
 import socket
 import struct
+from collections import deque
 
 import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 import tf2_ros
 
 from mote_perception.ground_projection import GroundProjector, transform_to_matrix
-from mote_perception.depth_rescale import DepthFloorRescaler
+from mote_perception.depth_rescale import DepthFloorRescaler, apply_affine_disparity
+from mote_perception.lidar_rescale import LidarDepthRescaler
 
 
 def recvall(sock, n):
@@ -51,6 +54,12 @@ class DepthObstacleNode(Node):
         self.declare_parameter("pixel_stride", 3)
         self.declare_parameter("socket_timeout", 2.0)
         self.declare_parameter("publish_debug", True)
+        # "auto" = lidar-anchored scale, holding the last good fit when a scan can't
+        # constrain it (floor fit only until the first lidar fit, or when forced);
+        # "lidar" / "floor" force one source.
+        self.declare_parameter("rescale_source", "auto")
+        self.declare_parameter("scan_topic", "/scan_filtered")
+        self.declare_parameter("scan_max_dt", 0.2)
 
         self.base_frame = self.get_parameter("base_frame").value
         self.optical_frame = self.get_parameter("optical_frame").value
@@ -59,18 +68,27 @@ class DepthObstacleNode(Node):
         self.rmin = self.get_parameter("range_min").value
         self.rmax = self.get_parameter("range_max").value
         self.stride = self.get_parameter("pixel_stride").value
+        self.source = self.get_parameter("rescale_source").value
+        self.scan_max_dt = float(self.get_parameter("scan_max_dt").value)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.cam_info = None
         self.proj = None
         self.rescaler = None
+        self.lidar_rescaler = None
+        self.scans = deque(maxlen=50)
+        self.last_ab = None
+        self.diag = ""
         self.grid = None
         self.rays_opt = None
         self.sock = None
 
         self.create_subscription(CameraInfo, "camera_info", self._on_info, 10)
         self.create_subscription(CompressedImage, "image/compressed", self._on_image, 5)
+        if self.source != "floor":
+            scan_topic = self.get_parameter("scan_topic").value
+            self.create_subscription(LaserScan, scan_topic, self._on_scan, 10)
         self.pub = self.create_publisher(PointCloud2, "camera_obstacles", 5)
         self.debug = self.get_parameter("publish_debug").value
         if self.debug:
@@ -93,6 +111,68 @@ class DepthObstacleNode(Node):
 
     def _on_info(self, msg):
         self.cam_info = msg
+
+    def _on_scan(self, msg):
+        stamp = rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds
+        self.scans.append((stamp, msg))
+
+    def _nearest_scan(self, stamp):
+        """Buffered scan closest to the capture stamp + its dt (ms), or (None, None)."""
+        if not self.scans:
+            return None, None
+        target = rclpy.time.Time.from_msg(stamp).nanoseconds
+        best_stamp, best = min(self.scans, key=lambda s: abs(s[0] - target))
+        dt_ns = abs(best_stamp - target)
+        if dt_ns > self.scan_max_dt * 1e9:
+            return None, None
+        return best, dt_ns / 1e6
+
+    def _ensure_lidar(self):
+        """Build the lidar rescaler once the scan frame and intrinsics are known."""
+        if self.lidar_rescaler is not None:
+            return True
+        if not self.scans or self.cam_info is None:
+            return False
+        frame = self.scans[-1][1].header.frame_id
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.optical_frame, frame, rclpy.time.Time()
+            )
+        except tf2_ros.TransformException:
+            return False
+        T = transform_to_matrix(tf.transform.translation, tf.transform.rotation)
+        self.lidar_rescaler = LidarDepthRescaler(self.cam_info.k, self.cam_info.d, T)
+        self.get_logger().info(f"lidar rescaler ready (scan frame {frame})")
+        return True
+
+    def _rescale(self, depth, stamp):
+        """Metric-rescale the depth map, preferring lidar.
+
+        Lidar scale when this scan constrains it; otherwise hold the last good lidar
+        (a, b) rather than fall back to the floor fit, which is the very method the
+        lidar replaces — falling back to it would reintroduce the over-range exactly
+        when lidar can't help (e.g. facing a flat wall, no depth spread). The floor
+        fit is used only before any lidar fit has succeeded, or when forced.
+
+        Returns (corrected_depth, (a, b, frac), source) or (None, None, source).
+        """
+        self.diag = ""
+        if self.source != "floor" and self._ensure_lidar():
+            scan, dt_ms = self._nearest_scan(stamp)
+            if scan is not None:
+                out = self.lidar_rescaler.rescale(depth, scan)
+                self.diag = (
+                    f"  pairs {self.lidar_rescaler.last_npairs} dt {dt_ms:.0f}ms"
+                )
+                if out is not None:
+                    self.last_ab = out[1][:2]
+                    return (*out, "lidar")
+            if self.last_ab is not None:
+                a, b = self.last_ab
+                return apply_affine_disparity(depth, a, b), (a, b, float("nan")), "hold"
+            if self.source == "lidar":
+                return None, None, "lidar"
+        return (*self.rescaler.rescale(depth), "floor")
 
     def _ensure_setup(self):
         if self.proj is not None:
@@ -169,12 +249,18 @@ class DepthObstacleNode(Node):
         depth = self._infer(bytes(msg.data))
         if depth is None:
             return
-        depth_corr, (a, b, frac) = self.rescaler.rescale(depth)
+        depth_corr, ab, source = self._rescale(depth, msg.header.stamp)
+        if depth_corr is None:
+            self.get_logger().warn(
+                "no lidar scale this frame; skipping", throttle_duration_sec=2.0
+            )
+            return
+        frac = ab[2]
         if self.debug:
             self._publish_depth_image(depth_corr, msg.header.stamp)
         if frac < 0.4:
             self.get_logger().warn(
-                f"low floor-fit inliers ({frac:.0%}); skipping frame"
+                f"low {source}-fit inliers ({frac:.0%}); skipping frame"
             )
             return
 
@@ -209,7 +295,7 @@ class DepthObstacleNode(Node):
             self.get_clock().now() - rclpy.time.Time.from_msg(msg.header.stamp)
         ).nanoseconds / 1e6
         self.get_logger().info(
-            f"obstacles: {len(cloud)} pts  fit_inliers {frac:.0%}  "
+            f"obstacles: {len(cloud)} pts  scale:{source} {frac:.0%}{self.diag}  "
             f"stamp-to-publish {latency_ms:.0f} ms",
             throttle_duration_sec=2.0,
         )
