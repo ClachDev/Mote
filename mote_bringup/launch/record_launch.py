@@ -1,29 +1,29 @@
 """Record rosbags for perception development, split by purpose with disk caps.
 
-Two streams are recorded in parallel under ~/.mote/bags (per-robot, outside the
-repo), each in its own kind/<timestamp> run directory:
+Streams are defined in config/record.yaml. Each enabled stream is recorded in
+parallel under ~/.mote/bags/<name>/<timestamp> with its own segment length and
+rolling disk cap (bag_pruner deletes the oldest segments once a stream exceeds
+its cap so continuous recording never fills the disk).
 
-- min/         lidar + TF/odometry only, in long 10-minute segments. The
-               lightweight stream, enough to replay localisation and SLAM.
-- perception/  the camera stream (compressed) plus the same lidar + TF, in short
-               1-minute segments so a single clip is cheap to copy off the robot.
-
-bag_pruner gives each stream its own rolling disk budget, deleting the oldest
-segments once a stream exceeds its cap so continuous recording never fills the
-disk. The compressed image stream is recorded rather than raw; republish it to
+The compressed image stream is recorded rather than raw; republish it to
 /image_raw on playback with image_transport.
 """
 
 import os
 from datetime import datetime
 
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.actions import ExecuteProcess
 
-MIN_TOPICS = ["/tf", "/tf_static", "/scan_filtered"]
-PERCEPTION_TOPICS = MIN_TOPICS + ["/image_raw/compressed", "/camera_info"]
+
+def _load_streams():
+    config_path = os.path.join(
+        get_package_share_directory("mote_bringup"), "config", "record.yaml"
+    )
+    with open(config_path) as f:
+        return yaml.safe_load(f)["streams"]
 
 
 def _bags_dir(kind):
@@ -32,7 +32,7 @@ def _bags_dir(kind):
     return base
 
 
-def _record(kind, topics, split, condition=None):
+def _record(kind, topics, split):
     output = os.path.join(_bags_dir(kind), datetime.now().strftime("%Y%m%d_%H%M%S"))
     return ExecuteProcess(
         cmd=[
@@ -40,17 +40,16 @@ def _record(kind, topics, split, condition=None):
             "bag",
             "record",
             "--max-bag-duration",
-            split,
+            str(split),
             "-o",
             output,
             *topics,
         ],
         output="screen",
-        condition=condition,
     )
 
 
-def _pruner(kind, max_gb, condition=None):
+def _pruner(kind, max_gb, interval):
     return ExecuteProcess(
         cmd=[
             "ros2",
@@ -60,55 +59,18 @@ def _pruner(kind, max_gb, condition=None):
             "--dir",
             _bags_dir(kind),
             "--max-gb",
-            max_gb,
+            str(max_gb),
+            "--interval",
+            str(interval),
         ],
         output="screen",
-        condition=condition,
     )
 
 
 def generate_launch_description():
-    perception_enabled = IfCondition(LaunchConfiguration("perception"))
-
-    return LaunchDescription(
-        [
-            DeclareLaunchArgument(
-                "min_split",
-                default_value="600",
-                description="Seconds per minimal (lidar+TF) bag segment",
-            ),
-            DeclareLaunchArgument(
-                "perception_split",
-                default_value="60",
-                description="Seconds per perception (camera) bag segment",
-            ),
-            DeclareLaunchArgument(
-                "min_max_gb",
-                default_value="2.0",
-                description="Rolling disk cap for the minimal stream, in GB",
-            ),
-            DeclareLaunchArgument(
-                "perception_max_gb",
-                default_value="10.0",
-                description="Rolling disk cap for the perception stream, in GB",
-            ),
-            DeclareLaunchArgument(
-                "perception",
-                default_value="true",
-                description="Also record the camera (perception) stream",
-            ),
-            _record("min", MIN_TOPICS, LaunchConfiguration("min_split")),
-            _pruner("min", LaunchConfiguration("min_max_gb")),
-            _record(
-                "perception",
-                PERCEPTION_TOPICS,
-                LaunchConfiguration("perception_split"),
-                condition=perception_enabled,
-            ),
-            _pruner(
-                "perception",
-                LaunchConfiguration("perception_max_gb"),
-                condition=perception_enabled,
-            ),
-        ]
-    )
+    actions = []
+    for name, stream in _load_streams().items():
+        split = stream["split"]
+        actions.append(_record(name, stream["topics"], split))
+        actions.append(_pruner(name, stream["max_gb"], split))
+    return LaunchDescription(actions)

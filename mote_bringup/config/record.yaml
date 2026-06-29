@@ -1,0 +1,22 @@
+# Rosbag recording streams — consumed by record_launch.py.
+# Each stream writes to ~/.mote/bags/<name>/<timestamp>/ with its own segment
+# length and rolling disk cap (enforced by bag_pruner).
+
+streams:
+  lite:
+    topics:
+      - /tf
+      - /tf_static
+      - /scan_filtered
+    split: 600 # seconds per bag segment
+    max_gb: 2.0 # rolling disk cap
+
+  perception:
+    topics:
+      - /tf
+      - /tf_static
+      - /scan_filtered
+      - /image_raw/compressed
+      - /camera_info
+    split: 60
+    max_gb: 10.0

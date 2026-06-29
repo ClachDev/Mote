@@ -16,6 +16,9 @@ import shutil
 import time
 
 
+EMPTY_RUN_MIN_AGE_SECONDS = 120.0
+
+
 def _segments(root):
     files = []
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -33,8 +36,15 @@ def _segments(root):
 
 
 def _remove_empty_runs(root):
+    now = time.time()
     for entry in os.scandir(root):
         if not entry.is_dir():
+            continue
+        try:
+            age = now - entry.stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if age < EMPTY_RUN_MIN_AGE_SECONDS:
             continue
         has_mcap = any(
             name.endswith(".mcap")

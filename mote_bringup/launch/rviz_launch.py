@@ -5,17 +5,21 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    rviz_config = PathJoinSubstitution([
-        FindPackageShare("mote_bringup"),
-        "config",
-        "mote.rviz",
-    ])
+    rviz_config = PathJoinSubstitution(
+        [
+            FindPackageShare("mote_bringup"),
+            "config",
+            "mote.rviz",
+        ]
+    )
 
-    return LaunchDescription([
-        Node(
-            package="rviz2",
-            executable="rviz2",
-            arguments=["-d", rviz_config],
-            output="screen",
-        )
-    ])
+    return LaunchDescription(
+        [
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                arguments=["-d", rviz_config],
+                output="screen",
+            )
+        ]
+    )
