@@ -1,0 +1,16 @@
+[Unit]
+Description=Mote Data Recording
+After=mote-bringup.service
+Wants=mote-bringup.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@HOME@/Mote
+ExecStart=@HOME@/.pixi/bin/pixi run record
+Restart=on-failure
+RestartSec=5
+Environment=HOME=@HOME@
+
+[Install]
+WantedBy=multi-user.target

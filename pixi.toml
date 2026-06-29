@@ -28,6 +28,7 @@ robot = "ros2 launch mote_bringup robot_launch.py"
 slam = "ros2 launch mote_bringup slam_launch.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
 perception = "ros2 launch mote_perception perception_launch.py"
+record = "ros2 launch mote_bringup record_launch.py"
 
 
 [dependencies]
@@ -68,6 +69,10 @@ ros-jazzy-ros2lifecycle = ">=0.18.0"
 ros-jazzy-ros2run = ">=0.18.0"
 ros-jazzy-rosbag2-cpp = ">=0.26.0"
 ros-jazzy-rosbag2-storage = ">=0.26.0"
+# `ros2 bag record` CLI verb, recorder, and storage plugins (pixi run record)
+ros-jazzy-ros2bag = ">=0.26.0"
+ros-jazzy-rosbag2-transport = ">=0.26.0"
+ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
 ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
 ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
