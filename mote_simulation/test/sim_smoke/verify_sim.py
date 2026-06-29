@@ -17,7 +17,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry, OccupancyGrid
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Image, LaserScan
 
 
 class Verifier(Node):
@@ -26,11 +26,17 @@ class Verifier(Node):
         self.set_parameters([rclpy.parameter.Parameter("use_sim_time", value=True)])
         self.odom = None
         self.scans = []
+        # Keep only running stats for images: full 640x480 RGB frames at 30 Hz
+        # would balloon memory if every message were retained.
+        self.image_count = 0
+        self.image_first_stamp = None
+        self.image_last = None
         self.map = None
         self.create_subscription(
             Odometry, "/diff_drive_controller/odom", self.on_odom, 10
         )
         self.create_subscription(LaserScan, "/scan", self.on_scan, 10)
+        self.create_subscription(Image, "/image_raw", self.on_image, 10)
         # slam_toolbox latches /map with transient-local reliable QoS
         map_qos = QoSProfile(
             depth=1,
@@ -47,6 +53,12 @@ class Verifier(Node):
 
     def on_scan(self, msg):
         self.scans.append((time.monotonic(), msg))
+
+    def on_image(self, msg):
+        if self.image_first_stamp is None:
+            self.image_first_stamp = msg.header.stamp
+        self.image_count += 1
+        self.image_last = msg
 
     def on_map(self, msg):
         self.map = msg
@@ -132,6 +144,28 @@ def main():
     assert rate > 5.0, f"FAIL: scan rate {rate:.1f} Hz too low"
     assert len(finite) > len(scan.ranges) * 0.5, "FAIL: too few finite ranges"
     assert max(finite) < 12.0 and min(finite) > 0.05, "FAIL: ranges outside lidar spec"
+
+    # camera: the sim should be publishing /image_raw at its configured rate
+    # over the same drive window. Rate is computed from header stamps (sim time).
+    assert node.image_count > 0, "FAIL: no /image_raw received"
+    img = node.image_last
+
+    def stamp_to_s(stamp):
+        return stamp.sec + stamp.nanosec / 1e9
+
+    img_span = stamp_to_s(img.header.stamp) - stamp_to_s(node.image_first_stamp)
+    img_rate = (node.image_count - 1) / img_span if img_span > 0 else 0.0
+    print(
+        f"image: {node.image_count} msgs, {img_rate:.1f} Hz, "
+        f"{img.width}x{img.height} {img.encoding}, frame_id {img.header.frame_id}"
+    )
+    assert img_rate > 5.0, f"FAIL: image rate {img_rate:.1f} Hz too low"
+    assert img.width == 640 and img.height == 480, (
+        f"FAIL: image size {img.width}x{img.height} != 640x480"
+    )
+    assert img.header.frame_id == "camera_optical_link", (
+        f"FAIL: image frame_id {img.header.frame_id} != camera_optical_link"
+    )
 
     # slam_toolbox should have built a map by now; give it a few seconds to
     # process the scans accumulated during the drive
