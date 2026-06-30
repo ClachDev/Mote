@@ -44,17 +44,28 @@ from mote_perception.lidar_rescale import LidarDepthRescaler, scan_to_points
 import depth_bag_replay as rep
 
 
+def _err(pred, true):
+    return (
+        float(np.mean(np.abs(pred - true) / true)),
+        float(np.mean(np.maximum(pred / true, true / pred) < 1.25)),
+    )
+
+
 def _accuracy(pred, true):
-    """AbsRel / RMSE / delta1 after best affine align; fit on half, score on half."""
+    """(raw AbsRel, raw d1, aligned AbsRel, aligned d1) vs lidar.
+
+    raw = model depth as-is (absolute accuracy; only meaningful for a metric model,
+    answers 'does it need rescaling'). aligned = after the best affine in disparity,
+    fit on half the pairs and scored on the other (relative shape, model-agnostic).
+    """
     if len(pred) < 12:
         return None
-    # interleave so train/test span the same field of view (pairs are angle-ordered)
-    a, b, _ = fit_affine_disparity_theilsen(pred[::2], true[::2])
-    pa, tt = apply_affine_disparity(pred[1::2], a, b), true[1::2]
-    absrel = float(np.mean(np.abs(pa - tt) / tt))
-    rmse = float(np.sqrt(np.mean((pa - tt) ** 2)))
-    d1 = float(np.mean(np.maximum(pa / tt, tt / pa) < 1.25))
-    return absrel, rmse, d1
+    raw_ar, raw_d1 = _err(pred, true)
+    a, b, _ = fit_affine_disparity_theilsen(
+        pred[::2], true[::2]
+    )  # interleave train/test
+    al_ar, al_d1 = _err(apply_affine_disparity(pred[1::2], a, b), true[1::2])
+    return raw_ar, raw_d1, al_ar, al_d1
 
 
 def _cloud(depth, proj, rays_opt, stride=4):
@@ -161,8 +172,12 @@ def main():
     if acc:
         a = np.array(acc)
         print(
-            f"accuracy vs lidar (held-out): AbsRel {a[:, 0].mean():.3f}  "
-            f"RMSE {a[:, 1].mean():.3f} m  delta<1.25 {100 * a[:, 2].mean():.1f}%"
+            f"accuracy vs lidar:  raw   AbsRel {a[:, 0].mean():.3f}  "
+            f"delta1 {100 * a[:, 1].mean():.1f}%   (does it need rescaling?)"
+        )
+        print(
+            f"                    align AbsRel {a[:, 2].mean():.3f}  "
+            f"delta1 {100 * a[:, 3].mean():.1f}%   (relative shape, held-out)"
         )
 
 
