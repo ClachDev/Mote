@@ -39,28 +39,18 @@ def floor_seed_truth(proj, seed_rows=(0.80, 0.98), seed_cols=(0.30, 0.70), step=
     return np.column_stack([uu[ok], vv[ok]]), t[ok]
 
 
-def fit_affine_disparity(
-    pred, true, iters=200, inlier_thresh=0.08, seed=0, a_min=None, disp_floor=0.1
-):
+def fit_affine_disparity(pred, true, iters=200, inlier_thresh=0.08, seed=0):
     """RANSAC fit of 1/true = a*(1/pred) + b. Returns (a, b, inlier_fraction).
 
     inlier_thresh is in disparity units (1/m). Robust to a minority of the seed
-    pixels actually being on an obstacle (outliers in the up direction).
-
-    When `a_min` is set, only physically valid models are scored: slope a >= a_min
-    (disparity scale is positive and O(1)) and a*disp_floor + b > 0 so corrected
-    disparity stays positive out to depth 1/disp_floor (no blow-up). This breaks a
-    bistability where the lidar pairs support a near-flat degenerate line (a~0) with
-    inlier support equal to the true line, so the unconstrained fit flips between
-    them frame to frame. The default (a_min=None) is unconstrained -- the floor path.
+    pixels actually being on an obstacle (outliers in the up direction). Maximizing
+    inlier count tolerates a large outlier fraction in one direction, which is what
+    the floor seed needs; for the lidar pairs (scatter in both directions) it is
+    multimodal -- use fit_affine_disparity_theilsen there instead.
     """
     p = 1.0 / np.maximum(pred, 1e-3)
     q = 1.0 / np.maximum(true, 1e-3)
     n = len(p)
-
-    def valid(a, b):
-        return a_min is None or (a >= a_min and a * disp_floor + b > 0)
-
     if n < 10:
         A = np.column_stack([p, np.ones(n)])
         sol, *_ = np.linalg.lstsq(A, q, rcond=None)
@@ -69,32 +59,46 @@ def fit_affine_disparity(
     rng = np.random.default_rng(seed)
     best_inliers = None
     best_count = -1
-    best_ab = None
     for _ in range(iters):
         i, j = rng.integers(0, n, size=2)
         if p[i] == p[j]:
             continue
         a = (q[i] - q[j]) / (p[i] - p[j])
         b = q[i] - a * p[i]
-        if not valid(a, b):
-            continue
         resid = np.abs(q - (a * p + b))
         inl = resid < inlier_thresh
         c = int(inl.sum())
         if c > best_count:
-            best_count, best_inliers, best_ab = c, inl, (a, b)
-
-    if best_inliers is None:  # constrained: no valid model sampled; let caller reject
-        A = np.column_stack([p, np.ones(n)])
-        sol, *_ = np.linalg.lstsq(A, q, rcond=None)
-        return float(sol[0]), float(sol[1]), 0.0
+            best_count, best_inliers = c, inl
 
     A = np.column_stack([p[best_inliers], np.ones(best_count)])
     sol, *_ = np.linalg.lstsq(A, q[best_inliers], rcond=None)
-    a, b = float(sol[0]), float(sol[1])
-    if not valid(a, b):  # least-squares refit drifted off the valid line; keep the seed
-        a, b = best_ab
-    return a, b, best_count / n
+    return float(sol[0]), float(sol[1]), best_count / n
+
+
+def fit_affine_disparity_theilsen(pred, true, inlier_thresh=0.08):
+    """Robust regression of 1/true = a*(1/pred) + b via Theil-Sen.
+
+    The median of all pairwise slopes, then the median intercept -- a unique, stable
+    central estimate. Maximizing inlier *count* (fit_affine_disparity) is multimodal
+    on the lidar pairs: their two-sided scatter lets a steeper or a shallower line
+    catch nearly the same count, so a count-RANSAC flips between them frame to frame
+    even on a static scene (the depth flickers). The median-of-slopes has no such
+    ambiguity. Deterministic (full pairwise, no sampling) and robust to ~29% outliers.
+    Returns (a, b, inlier_fraction).
+    """
+    p = 1.0 / np.maximum(pred, 1e-3)
+    q = 1.0 / np.maximum(true, 1e-3)
+    n = len(p)
+    if n < 3:
+        return 1.0, 0.0, 0.0
+    i, j = np.triu_indices(n, 1)
+    dp = p[j] - p[i]
+    nz = dp != 0
+    a = float(np.median((q[j] - q[i])[nz] / dp[nz]))
+    b = float(np.median(q - a * p))
+    frac = float(np.mean(np.abs(q - (a * p + b)) < inlier_thresh))
+    return a, b, frac
 
 
 def apply_affine_disparity(depth, a, b):
