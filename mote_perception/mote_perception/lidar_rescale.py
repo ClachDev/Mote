@@ -12,7 +12,14 @@ A 2D scan samples a single height -- a thin curved band in the image -- but the
 correction is a global affine in disparity (the same model the floor fit uses), so
 fitting on that band and applying everywhere is valid as long as the band spans a
 range of depths. When it doesn't (too few returns in view, or all at one range),
-`rescale` returns None and the caller falls back to the floor fit.
+`rescale` returns None and the caller holds the last good fit.
+
+The affine is fit with the physical-validity constraint (`a_min`, `disp_floor`):
+the scan's returns often include a large cluster at one range (a wall filling the
+view), which supports a near-flat degenerate line (slope ~0, depth inverted) with
+inlier support equal to the true line -- so an unconstrained RANSAC flips between
+them frame to frame and the depth flickers to noise. Requiring a positive O(1)
+slope and no disparity blow-up excludes the degenerate line.
 """
 
 import cv2
@@ -76,6 +83,8 @@ class LidarDepthRescaler:
         range_max=8.0,
         min_pairs=8,
         min_spread=0.3,
+        a_min=0.5,
+        disp_floor=0.1,
     ):
         self.K = np.asarray(K, np.float64).reshape(3, 3)
         self.D = np.asarray(D, np.float64).reshape(-1)
@@ -84,6 +93,8 @@ class LidarDepthRescaler:
         self.range_max = range_max
         self.min_pairs = min_pairs
         self.min_spread = min_spread
+        self.a_min = a_min
+        self.disp_floor = disp_floor
         self.last_npairs = 0
 
     def pairs(self, scan, depth):
@@ -101,5 +112,9 @@ class LidarDepthRescaler:
         self.last_npairs = len(pred)
         if len(pred) < self.min_pairs or np.ptp(true) < self.min_spread:
             return None
-        a, b, frac = fit_affine_disparity(pred, true)
+        a, b, frac = fit_affine_disparity(
+            pred, true, a_min=self.a_min, disp_floor=self.disp_floor
+        )
+        if a < self.a_min:  # no valid fit this scan; let the caller hold last-good
+            return None
         return apply_affine_disparity(depth, a, b), (a, b, frac)
