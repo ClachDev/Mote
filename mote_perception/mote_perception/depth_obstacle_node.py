@@ -23,13 +23,59 @@ import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from sensor_msgs.msg import CameraInfo, CompressedImage, Image, LaserScan, PointCloud2
-from sensor_msgs_py import point_cloud2
+from sensor_msgs.msg import (
+    CameraInfo,
+    CompressedImage,
+    Image,
+    LaserScan,
+    PointCloud2,
+    PointField,
+)
 import tf2_ros
 
 from mote_perception.ground_projection import GroundProjector, transform_to_matrix
 from mote_perception.depth_rescale import DepthFloorRescaler, apply_affine_disparity
 from mote_perception.lidar_rescale import LidarDepthRescaler
+
+
+def make_xyzrgb_cloud(header, xyz, bgr):
+    """Pack an Nx3 float xyz array and Nx3 uint8 BGR array into an XYZRGB PointCloud2.
+
+    The colour is the per-point camera pixel, packed into a FLOAT32 `rgb` field (the
+    PCL convention RViz's RGB8 transformer reads): the uint32 0x00RRGGBB bit pattern is
+    stored verbatim, not numerically cast, so RViz shows the cloud in true camera colour.
+    """
+    n = len(xyz)
+    data = np.zeros(
+        n,
+        dtype=[
+            ("x", np.float32),
+            ("y", np.float32),
+            ("z", np.float32),
+            ("rgb", np.uint32),
+        ],
+    )
+    data["x"], data["y"], data["z"] = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    data["rgb"] = (
+        bgr[:, 2].astype(np.uint32) << 16
+        | bgr[:, 1].astype(np.uint32) << 8
+        | bgr[:, 0].astype(np.uint32)
+    )
+    msg = PointCloud2()
+    msg.header = header
+    msg.height, msg.width = 1, n
+    msg.fields = [
+        PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+        PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+        PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        PointField(name="rgb", offset=12, datatype=PointField.FLOAT32, count=1),
+    ]
+    msg.is_bigendian = False
+    msg.point_step = 16
+    msg.row_step = 16 * n
+    msg.is_dense = True
+    msg.data = data.tobytes()
+    return msg
 
 
 def recvall(sock, n):
@@ -256,14 +302,31 @@ class DepthObstacleNode(Node):
             self._drop_connection()
             return None
 
+    def _subscribed(self, pub):
+        return pub is not None and pub.get_subscription_count() > 0
+
     def _on_image(self, msg):
         if not self._ensure_setup():
             return
-        depth = self._infer(bytes(msg.data))
+        # Lazy publishing: skip everything — including the ~0.6 s inference — unless an
+        # output is actually subscribed, and gate each stage on its own consumer, so a
+        # view only costs work while it is open in RViz (or Nav2 is driving the cloud).
+        obs = self._subscribed(self.pub)
+        raw = self.debug and self._subscribed(self.depth_raw_pub)
+        cor = self.debug and self._subscribed(self.depth_pub)
+        full = self.debug and self._subscribed(self.full_cloud_pub)
+        if not (obs or raw or cor or full):
+            return
+
+        jpeg = bytes(msg.data)
+        depth = self._infer(jpeg)
         if depth is None:
             return
-        if self.debug:
+        if raw:
             self._publish_depth_image(depth, msg.header.stamp, self.depth_raw_pub)
+        if not (obs or cor or full):  # only the raw map was wanted
+            return
+
         depth_corr, ab, source = self._rescale(depth, msg.header.stamp)
         if depth_corr is None:
             self.get_logger().warn(
@@ -271,12 +334,14 @@ class DepthObstacleNode(Node):
             )
             return
         frac = ab[2]
-        if self.debug:
+        if cor:
             self._publish_depth_image(depth_corr, msg.header.stamp, self.depth_pub)
         if frac < 0.4:
             self.get_logger().warn(
                 f"low {source}-fit inliers ({frac:.0%}); skipping frame"
             )
+            return
+        if not (obs or full):  # only the corrected map was wanted
             return
 
         d = depth_corr.ravel()
@@ -289,32 +354,40 @@ class DepthObstacleNode(Node):
             self.base_frame
         )  # cloud is in the base frame, stamped at capture
 
-        if self.debug:
+        img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        if img.shape[:2] != (self.proj.height, self.proj.width):
+            img = cv2.resize(img, (self.proj.width, self.proj.height))
+        colors = img.reshape(-1, 3)  # row-major BGR, aligned with the pixel grid
+
+        if full:
             shown = np.isfinite(rng) & (rng < self.rmax) & (bz < self.z_ceil)
+            s = self.stride
             self.full_cloud_pub.publish(
-                point_cloud2.create_cloud_xyz32(
-                    header, pts[shown][:: self.stride].astype(np.float32)
+                make_xyzrgb_cloud(
+                    header, pts[shown][::s].astype(np.float32), colors[shown][::s]
                 )
             )
 
-        keep = (
-            (bz > self.z_obs)
-            & (bz < self.z_ceil)
-            & (rng > self.rmin)
-            & (rng < self.rmax)
-        )
-        cloud = pts[keep][:: self.stride].astype(np.float32)
-        self.pub.publish(point_cloud2.create_cloud_xyz32(header, cloud))
-
-        latency_ms = (
-            self.get_clock().now() - rclpy.time.Time.from_msg(msg.header.stamp)
-        ).nanoseconds / 1e6
-        self.get_logger().info(
-            f"obstacles: {len(cloud)} pts  scale:{source} {frac:.0%} "
-            f"a={ab[0]:.3f} b={ab[1]:.3f}{self.diag}  "
-            f"stamp-to-publish {latency_ms:.0f} ms",
-            throttle_duration_sec=2.0,
-        )
+        if obs:
+            keep = (
+                (bz > self.z_obs)
+                & (bz < self.z_ceil)
+                & (rng > self.rmin)
+                & (rng < self.rmax)
+            )
+            cloud = pts[keep][:: self.stride].astype(np.float32)
+            self.pub.publish(
+                make_xyzrgb_cloud(header, cloud, colors[keep][:: self.stride])
+            )
+            latency_ms = (
+                self.get_clock().now() - rclpy.time.Time.from_msg(msg.header.stamp)
+            ).nanoseconds / 1e6
+            self.get_logger().info(
+                f"obstacles: {len(cloud)} pts  scale:{source} {frac:.0%} "
+                f"a={ab[0]:.3f} b={ab[1]:.3f}{self.diag}  "
+                f"stamp-to-publish {latency_ms:.0f} ms",
+                throttle_duration_sec=2.0,
+            )
 
 
 def main():
