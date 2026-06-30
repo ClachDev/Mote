@@ -35,10 +35,10 @@ from sensor_msgs.msg import CameraInfo, CompressedImage, LaserScan
 from tf2_msgs.msg import TFMessage
 
 from mote_perception.ground_projection import chain_static_transforms
-from mote_perception.depth_rescale import fit_affine_disparity
+from mote_perception.depth_rescale import fit_affine_disparity_theilsen
 from mote_perception.lidar_rescale import LidarDepthRescaler
 
-A_MIN = 0.5  # below this the lidar fit has collapsed to the degenerate line
+A_MIN = 0.5  # below this the lidar fit has collapsed to a degenerate/inverted line
 
 
 def recvall(s, n):
@@ -138,7 +138,7 @@ def main():
         )
         corr = None
         if len(pred) >= 8:
-            a, b, frac = fit_affine_disparity(pred, true, a_min=A_MIN)
+            a, b, frac = fit_affine_disparity_theilsen(pred, true)
             tag = "  DEGENERATE" if a < A_MIN else ""
             line += (
                 f" spread {np.ptp(true):.2f}m  a={a:.3f} b={b:.3f} inl {frac:.0%}{tag}"

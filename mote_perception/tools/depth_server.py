@@ -40,11 +40,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5601)
+    ap.add_argument("--model", default=MODEL)
+    # Relative models output disparity (near=large), not metric depth; invert so the
+    # rest of the pipeline (which expects depth in metres, then refits scale) is happy.
+    ap.add_argument("--disparity", action="store_true")
     args = ap.parse_args()
 
-    print("loading", MODEL)
-    proc = AutoImageProcessor.from_pretrained(MODEL)
-    model = AutoModelForDepthEstimation.from_pretrained(MODEL).eval()
+    print("loading", args.model, "(disparity)" if args.disparity else "(metric)")
+    proc = AutoImageProcessor.from_pretrained(args.model)
+    model = AutoModelForDepthEstimation.from_pretrained(args.model).eval()
     torch.set_num_threads(os.cpu_count())
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -78,6 +82,8 @@ def main():
                     .numpy()
                     .astype(np.float32)
                 )
+                if args.disparity:  # disparity -> depth; clamp far (disp~0) to ~1 km
+                    depth = (1.0 / np.maximum(depth, 1e-3)).astype(np.float32)
                 dt = (time.perf_counter() - t0) * 1000
                 conn.sendall(struct.pack(">II", H, W) + depth.tobytes())
                 print(f"served {W}x{H} in {dt:.0f} ms")
