@@ -5,9 +5,15 @@ node (which has no torch) can stay light and run anywhere — on the workstation
 next to this server, or on the robot talking to it over the network. This is the
 deliberate two-process split that keeps torch out of the ROS/robot environment.
 
+Default is the *relative* (SSI) V2-Small model: since the node refits a full affine
+in disparity against lidar every frame, the absolute scale of a metric model is
+discarded anyway, and the relative model measured both more accurate and faster (see
+tools/depth_bag_eval.py). Relative models output disparity, so it's inverted to depth
+here; pass --metric for a metric model (depth already in metres, no inversion).
+
 Protocol (length-prefixed, big-endian):
   request : uint32 nbytes, then `nbytes` of JPEG/PNG-compressed image
-  reply   : uint32 H, uint32 W, then H*W float32 metric depth (row-major, metres)
+  reply   : uint32 H, uint32 W, then H*W float32 depth (row-major, metres)
 """
 
 import argparse
@@ -23,7 +29,9 @@ import torch.nn.functional as F
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
-MODEL = "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf"
+MODEL = (
+    "depth-anything/Depth-Anything-V2-Small-hf"  # relative (SSI); see module docstring
+)
 
 
 def recvall(conn, n):
@@ -41,12 +49,13 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5601)
     ap.add_argument("--model", default=MODEL)
-    # Relative models output disparity (near=large), not metric depth; invert so the
-    # rest of the pipeline (which expects depth in metres, then refits scale) is happy.
-    ap.add_argument("--disparity", action="store_true")
+    # Default model is relative (outputs disparity, near=large) -> invert to depth so
+    # the node (which expects depth, then refits scale) works. --metric: the model
+    # already outputs metric depth, so pass it through unchanged.
+    ap.add_argument("--metric", action="store_true")
     args = ap.parse_args()
 
-    print("loading", args.model, "(disparity)" if args.disparity else "(metric)")
+    print("loading", args.model, "(metric)" if args.metric else "(relative)")
     proc = AutoImageProcessor.from_pretrained(args.model)
     model = AutoModelForDepthEstimation.from_pretrained(args.model).eval()
     torch.set_num_threads(os.cpu_count())
@@ -82,7 +91,7 @@ def main():
                     .numpy()
                     .astype(np.float32)
                 )
-                if args.disparity:  # disparity -> depth; clamp far (disp~0) to ~1 km
+                if not args.metric:  # disparity -> depth; clamp far (disp~0) to ~1 km
                     depth = (1.0 / np.maximum(depth, 1e-3)).astype(np.float32)
                 dt = (time.perf_counter() - t0) * 1000
                 conn.sendall(struct.pack(">II", H, W) + depth.tobytes())
