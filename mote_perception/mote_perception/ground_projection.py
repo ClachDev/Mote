@@ -67,6 +67,74 @@ def chain_static_transforms(transforms, source, target):
     return m
 
 
+def fit_ground_plane(
+    xyz,
+    band=0.15,
+    max_range=2.0,
+    thresh=0.04,
+    min_inliers=60,
+    min_xspread=0.5,
+    max_pts=4000,
+    iters=100,
+    seed=0,
+):
+    """RANSAC fit of the floor plane ``z = a*x + b*y + c`` to near-floor points.
+
+    Candidates are points near z=0 (|z| < band) and within max_range, i.e. close
+    enough that a residual camera tilt has not yet lifted the floor out of the band.
+    RANSAC rejects the obstacle bases that fall in that band. Returns
+    (a, b, c, inlier_fraction), or None when the floor is too sparse or too narrow
+    in x (forward) to constrain the pitch — the caller then holds its last good fit.
+    """
+    xyz = np.asarray(xyz, dtype=np.float64)
+    x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    cand = np.isfinite(z) & (np.hypot(x, y) < max_range) & (np.abs(z) < band)
+    if cand.sum() < min_inliers:
+        return None
+    x, y, z = x[cand], y[cand], z[cand]
+    if np.ptp(x) < min_xspread:
+        return None
+    rng = np.random.default_rng(seed)
+    if len(x) > max_pts:
+        sel = rng.choice(len(x), max_pts, replace=False)
+        x, y, z = x[sel], y[sel], z[sel]
+    A = np.column_stack([x, y, np.ones(len(x))])
+    best_inl, best_count = None, -1
+    for _ in range(iters):
+        idx = rng.integers(0, len(x), size=3)
+        try:
+            coef = np.linalg.solve(A[idx], z[idx])
+        except np.linalg.LinAlgError:
+            continue
+        inl = np.abs(z - A @ coef) < thresh
+        c = int(inl.sum())
+        if c > best_count:
+            best_count, best_inl = c, inl
+    if best_count < min_inliers:
+        return None
+    coef, *_ = np.linalg.lstsq(A[best_inl], z[best_inl], rcond=None)
+    return float(coef[0]), float(coef[1]), float(coef[2]), best_count / len(x)
+
+
+def level_rotation(a, b):
+    """Rotation (3x3) mapping the floor-plane normal ``(-a, -b, 1)`` onto +z.
+
+    Applied as ``(pts - C) @ R.T + C`` it removes the residual camera tilt the plane
+    reveals — the minimal rotation about ``normal x z``, so verticals stand up and the
+    floor flattens together (the exact inverse of the tilt, not a z-only shear, which
+    would leave the lean in x). Pitch and roll only; a floor cannot reveal yaw.
+    """
+    n = np.array([-a, -b, 1.0])
+    n /= np.linalg.norm(n)
+    v = np.cross(n, [0.0, 0.0, 1.0])
+    s = float(np.linalg.norm(v))
+    if s < 1e-9:
+        return np.eye(3)
+    angle = np.arctan2(s, n[2])
+    R, _ = cv2.Rodrigues(v / s * angle)
+    return R
+
+
 class GroundProjector:
     """Fixed pixel<->floor mapping for a rigidly mounted camera.
 

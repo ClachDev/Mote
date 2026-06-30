@@ -33,7 +33,12 @@ from sensor_msgs.msg import (
 )
 import tf2_ros
 
-from mote_perception.ground_projection import GroundProjector, transform_to_matrix
+from mote_perception.ground_projection import (
+    GroundProjector,
+    fit_ground_plane,
+    level_rotation,
+    transform_to_matrix,
+)
 from mote_perception.depth_rescale import DepthFloorRescaler, apply_affine_disparity
 from mote_perception.lidar_rescale import LidarDepthRescaler
 
@@ -108,6 +113,10 @@ class DepthObstacleNode(Node):
         self.declare_parameter("rescale_source", "auto")
         self.declare_parameter("scan_topic", "/scan_filtered")
         self.declare_parameter("scan_max_dt", 0.2)
+        # Fit the floor plane each frame and rotate the cloud level, removing residual
+        # camera tilt: stands verticals up and flattens the floor for z-classification.
+        self.declare_parameter("plane_fit", True)
+        self.declare_parameter("plane_max_tilt_deg", 5.0)
 
         self.base_frame = self.get_parameter("base_frame").value
         self.optical_frame = self.get_parameter("optical_frame").value
@@ -118,6 +127,8 @@ class DepthObstacleNode(Node):
         self.stride = self.get_parameter("pixel_stride").value
         self.source = self.get_parameter("rescale_source").value
         self.scan_max_dt = float(self.get_parameter("scan_max_dt").value)
+        self.plane_fit = self.get_parameter("plane_fit").value
+        self.plane_max_tilt = float(self.get_parameter("plane_max_tilt_deg").value)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -127,7 +138,11 @@ class DepthObstacleNode(Node):
         self.lidar_rescaler = None
         self.scans = deque(maxlen=50)
         self.last_ab = None
+        self.last_R = (
+            None  # last good ground-level rotation; held when a frame can't fit
+        )
         self.diag = ""
+        self.plane_diag = ""
         self.grid = None
         self.rays_opt = None
         self.sock = None
@@ -232,6 +247,31 @@ class DepthObstacleNode(Node):
             if self.source == "lidar":
                 return None, None, "lidar"
         return (*self.rescaler.rescale(depth), "floor")
+
+    def _ground_correct(self, pts):
+        """Rotate the cloud so the fitted floor plane is level.
+
+        Removes the residual camera tilt (dynamic pitch/floor slope) the level URDF
+        transform misses: stands verticals up and flattens the floor so a point's z
+        is its true height above the floor. Rejects an over-large or unconstrained fit
+        and holds the last good rotation (identity until the first one), so the whole
+        cloud can't snap flat<->tilted frame to frame.
+        """
+        self.plane_diag = ""
+        if not self.plane_fit:
+            return pts
+        fit = fit_ground_plane(pts)
+        if fit is not None:
+            a, b, _, frac = fit
+            tilt = float(np.degrees(np.arctan(np.hypot(a, b))))
+            if tilt <= self.plane_max_tilt:
+                self.last_R = level_rotation(a, b)
+                self.plane_diag = f" tilt {tilt:.1f}d {frac:.0%}"
+            else:
+                self.plane_diag = f" tilt {tilt:.1f}d(rej)"
+        if self.last_R is not None:
+            return (pts - self.proj.C) @ self.last_R.T + self.proj.C
+        return pts
 
     def _ensure_setup(self):
         if self.proj is not None:
@@ -346,6 +386,7 @@ class DepthObstacleNode(Node):
 
         d = depth_corr.ravel()
         pts = (self.rays_opt * d[:, None]) @ self.proj.R.T + self.proj.C
+        pts = self._ground_correct(pts)
         bx, by, bz = pts[:, 0], pts[:, 1], pts[:, 2]
         rng = np.hypot(bx, by)
 
@@ -384,7 +425,7 @@ class DepthObstacleNode(Node):
             ).nanoseconds / 1e6
             self.get_logger().info(
                 f"obstacles: {len(cloud)} pts  scale:{source} {frac:.0%} "
-                f"a={ab[0]:.3f} b={ab[1]:.3f}{self.diag}  "
+                f"a={ab[0]:.3f} b={ab[1]:.3f}{self.diag}{self.plane_diag}  "
                 f"stamp-to-publish {latency_ms:.0f} ms",
                 throttle_duration_sec=2.0,
             )

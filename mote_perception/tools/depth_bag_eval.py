@@ -37,7 +37,12 @@ from mote_perception.depth_rescale import (
     apply_affine_disparity,
     fit_affine_disparity_theilsen,
 )
-from mote_perception.ground_projection import GroundProjector, chain_static_transforms
+from mote_perception.ground_projection import (
+    GroundProjector,
+    chain_static_transforms,
+    fit_ground_plane,
+    level_rotation,
+)
 from mote_perception.lidar_rescale import LidarDepthRescaler, scan_to_points
 
 # sibling tool (same dir is on sys.path when run as a script): bag loader + server client
@@ -158,6 +163,14 @@ def main():
             f"{out}/{args.label}_f{k:02d}_side.png",
             _scatter(cloud[:, 0], cloud[:, 2], (0, 4), (-0.1, 1.6)),
         )
+        # plane-levelled side view: a real vertical should now stand vertical
+        fitp = fit_ground_plane(cloud)
+        if fitp is not None:
+            lvl = (cloud - proj.C) @ level_rotation(fitp[0], fitp[1]).T + proj.C
+            cv2.imwrite(
+                f"{out}/{args.label}_f{k:02d}_side_lvl.png",
+                _scatter(lvl[:, 0], lvl[:, 2], (0, 4), (-0.1, 1.6)),
+            )
         cv2.imwrite(
             f"{out}/{args.label}_f{k:02d}_bev.png",
             _scatter(cloud[:, 1], cloud[:, 0], (-2, 2), (0, 4)),
