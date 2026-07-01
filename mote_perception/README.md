@@ -70,7 +70,28 @@ as two processes:
   ```
 
 Key params: `z_obstacle` (height deadband, default 0.02 m — below ~1.5 cm floor
-noise false-positives), `range_min`/`range_max`, `server_host`/`server_port`.
+noise false-positives), `range_min`/`range_max` (default 0.25–1.2 m: the mount's
+usable floor band, past which monocular depth compresses into false positives),
+`server_host`/`server_port`.
+
+### Nav2 costmap layer
+
+`camera_obstacles` feeds a dedicated `VoxelLayer` (`camera_layer`) on the **local**
+costmap only (`mote_bringup/config/nav2_params.yaml`) — near-band and reactive, so
+it can stop the robot at a low obstacle without the phantom risk a slow, laggy
+source would add to the global plan. It is a separate layer from the lidar
+`obstacle_layer`: the lidar stays the primary marking/clearing source and the
+camera can never clear a lidar mark. The camera layer marks and clears from its
+own dense observations (a spurious mark is raytraced away on the next frame), and
+`sensor_frame: camera_optical_link` pins the clearing-ray origin to the real camera
+height (the cloud itself carries leveled `base_footprint` coordinates) so rays
+descend onto the floor rather than sweeping up through the low-obstacle band.
+
+Decay caveat: a phantom mark over open floor with nothing above-floor behind it
+within `obstacle_max_range` receives no clearing ray until the 3 m rolling window
+scrolls past it as the robot moves. Near-band false positives measured ≈ 0 on
+clean floor, so this is rare; if it shows up on the robot, swap in
+`spatio_temporal_voxel_layer` (time-decay + frustum clearing).
 
 Everything is developed and validated offline against recorded bags:
 `tools/depth_obstacles.py` overlays the obstacle decision and compares the cloud

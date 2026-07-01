@@ -103,7 +103,11 @@ class DepthObstacleNode(Node):
         self.declare_parameter("z_obstacle", 0.02)
         self.declare_parameter("z_ceiling", 1.6)
         self.declare_parameter("range_min", 0.25)
-        self.declare_parameter("range_max", 3.0)
+        # The 0.10 m camera mount leaves a usable floor band of ~0.25-1.2 m; past that
+        # the monocular depth compresses badly, so obstacles there are a false-positive
+        # source. Clamp the published cloud to the near band this layer is trusted for
+        # (the goal is the low, near things the lidar plane misses, not far detection).
+        self.declare_parameter("range_max", 1.2)
         self.declare_parameter("pixel_stride", 3)
         self.declare_parameter("socket_timeout", 2.0)
         self.declare_parameter("publish_debug", True)
