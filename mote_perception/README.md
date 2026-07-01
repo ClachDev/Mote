@@ -90,8 +90,24 @@ descend onto the floor rather than sweeping up through the low-obstacle band.
 Decay caveat: a phantom mark over open floor with nothing above-floor behind it
 within `obstacle_max_range` receives no clearing ray until the 3 m rolling window
 scrolls past it as the robot moves. Near-band false positives measured ≈ 0 on
-clean floor, so this is rare; if it shows up on the robot, swap in
+clean floor (including bright/specular sun-glare floor, the case that defeated the
+classical spike), so this is rare; if it shows up on the robot, swap in
 `spatio_temporal_voxel_layer` (time-decay + frustum clearing).
+
+Live bring-up (the remaining gate — all validation so far is offline against
+recorded bags): run `pixi run depth` on the workstation **alongside** `pixi run
+robot`/`nav` on the Pi — the two share one DDS graph, and nothing launches the
+depth node in-mission by design (it is off-board). Then check, in order:
+1. `/camera_obstacles` is publishing (~2 Hz) and the `camera_layer` actually marks
+   in the local costmap. If it doesn't, the off-board ~0.6 s latency is the first
+   suspect — raise the local costmap `transform_tolerance` (the cloud is stamped at
+   capture, so tf must still hold that stamp).
+2. Drive slowly past a low obstacle (cable / threshold / the clothes-horse
+   cross-bar) and confirm it marks and the controller avoids it.
+3. Watch for motion-only false positives: `_ground_correct` holds the last good
+   level rotation when a frame's floor fit fails, and a stale rotation applied at a
+   new pose can tilt the floor above the 0.02 m gate. Static-frame evals can't
+   surface this; if it appears, tighten `plane_max_tilt_deg` or the fit gates.
 
 Everything is developed and validated offline against recorded bags:
 `tools/depth_obstacles.py` overlays the obstacle decision and compares the cloud
