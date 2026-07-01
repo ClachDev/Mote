@@ -20,7 +20,13 @@ The pairs scatter to both sides of the true line, so a count objective is multim
 flips between those solutions frame to frame, so the depth flickers even on a static
 scene. The median-of-slopes is a unique central estimate with no such ambiguity, and
 is naturally positive (no inverted line) with intercept ~0 (no blow-up); `a_min` is
-only a defensive reject for a pathological scan.
+only a defensive reject for a pathological (inverted or near-flat) scan.
+
+`a` is the slope mapping model disparity onto true disparity, so its magnitude
+absorbs the model's arbitrary disparity units -- the relative (SSI) model outputs
+disparity on a scale where a valid fit lands near 0.25-0.5, an order of magnitude
+below the metric model it replaced. `a_min` therefore guards only the sign/near-flat
+degeneracy (a <= ~0), not an absolute scale.
 """
 
 import cv2
@@ -87,7 +93,7 @@ class LidarDepthRescaler:
         range_max=8.0,
         min_pairs=8,
         min_spread=0.3,
-        a_min=0.5,
+        a_min=0.05,
     ):
         self.K = np.asarray(K, np.float64).reshape(3, 3)
         self.D = np.asarray(D, np.float64).reshape(-1)
