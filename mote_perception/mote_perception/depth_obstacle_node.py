@@ -162,7 +162,10 @@ class DepthObstacleNode(Node):
         self.sock = None
 
         self.create_subscription(CameraInfo, "camera_info", self._on_info, 10)
-        self.create_subscription(CompressedImage, "image/compressed", self._on_image, 5)
+        # Depth 1: inference is slower than the frame rate, so only ever process the
+        # freshest frame and let the rest drop -- a deeper queue would just feed stale
+        # frames that publish an obstacle cloud already behind the robot.
+        self.create_subscription(CompressedImage, "image/compressed", self._on_image, 1)
         if self.source != "floor":
             scan_topic = self.get_parameter("scan_topic").value
             # Own callback group so scans keep buffering on another thread while the
