@@ -46,13 +46,33 @@ misses (cables, thresholds, table & chair legs, a robot vacuum). The lidar stays
 the primary, low-latency obstacle and clearing source; this is a slower
 supplementary **marker**.
 
-Pipeline: Depth Anything V2 (metric, indoor) gives a dense depth map; its raw
-metres are not accurate for our lens, so every frame is **metrically rescaled
-against the known floor plane** (`depth_rescale.py`, RANSAC affine-in-disparity —
-the camera's fixed height/pose is dense per-frame ground truth). The rescaled depth
-is back-projected to 3D; points more than `z_obstacle` (default 0.02 m) above the
-floor become the cloud, stamped at **image-capture time** so Nav2 places it via tf
-at the moment it was seen (this is how the off-board latency is absorbed).
+### Live output
+
+On the robot, facing a cluttered floor:
+
+![Obstacle detection vs. a clean floor: stool legs, bin and a transparent box mark; the open floor stays clear.](../docs/images/perception_detection_vs_floor.webp)
+
+*Detection (right) vs. raw camera (left): the stool legs, bin, and a **transparent** box mark — while the open floor produces no false positives.*
+
+![Go-under height gate: green marks so Nav2 avoids; red is above the gate, passable overhead.](../docs/images/perception_go_under_gate.webp)
+
+*Go-under gate: green (≤ 0.18 m) marks so Nav2 avoids the legs; red is above the robot's height and passable — it paths through the gap beneath a seat or tabletop.*
+
+![Camera obstacles (cyan) filling in where the 2D lidar (magenta) is blind.](../docs/images/perception_camera_vs_lidar_bev.webp)
+
+*Bird's-eye view: camera points (cyan) catch the low stool the single lidar plane (magenta) barely grazes.*
+
+Pipeline: **Depth Anything V2-Small (relative)** gives a dense disparity map,
+inverted to depth. Its scale is arbitrary, so every frame is **metrically rescaled
+by an affine-in-disparity fit (Theil-Sen) anchored to lidar range returns**
+(`lidar_rescale.py`) — the lidar gives metric truth through a chassis-fixed
+transform that's invariant to body/floor tilt; the floor-plane fit
+(`depth_rescale.py`) is only a fallback before the first lidar fit. The floor plane
+is then fit per frame and the cloud rotated level (`ground_projection.py`) to remove
+residual camera tilt, so a point's z is its true height above the floor. Points
+above `z_obstacle` (default 0.02 m) become the cloud, stamped at **image-capture
+time** so Nav2 places it via tf at the moment it was seen (this is how the off-board
+latency is absorbed).
 
 Depth inference is too heavy for the Pi CPU (~0.5 s/frame), so it runs **off-board**
 as two processes:
