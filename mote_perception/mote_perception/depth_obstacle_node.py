@@ -101,6 +101,15 @@ class DepthObstacleNode(Node):
         self.declare_parameter("base_frame", "base_footprint")
         self.declare_parameter("optical_frame", "camera_optical_link")
         self.declare_parameter("z_obstacle", 0.02)
+        # Upper bound of the obstacle band: anything taller is overhead the robot
+        # drives under (a chair seat, a tabletop), so it must NOT be marked -- only
+        # what falls in the robot's vertical envelope is an obstacle. The legs of
+        # such furniture reach the floor and still mark, so the robot avoids the legs
+        # but paths through the clear space beneath. Nav2's camera_layer
+        # max_obstacle_height is the authoritative go-under gate; this is a generous
+        # publish ceiling above it, kept low to trim the cloud streamed over Wi-Fi.
+        self.declare_parameter("z_obstacle_max", 0.5)
+        # Upper bound of the full debug cloud only (lets RViz show the whole scene).
         self.declare_parameter("z_ceiling", 1.6)
         self.declare_parameter("range_min", 0.25)
         # The 0.10 m camera mount leaves a usable floor band of ~0.25-1.2 m; past that
@@ -125,6 +134,7 @@ class DepthObstacleNode(Node):
         self.base_frame = self.get_parameter("base_frame").value
         self.optical_frame = self.get_parameter("optical_frame").value
         self.z_obs = self.get_parameter("z_obstacle").value
+        self.z_obs_max = self.get_parameter("z_obstacle_max").value
         self.z_ceil = self.get_parameter("z_ceiling").value
         self.rmin = self.get_parameter("range_min").value
         self.rmax = self.get_parameter("range_max").value
@@ -416,7 +426,7 @@ class DepthObstacleNode(Node):
         if obs:
             keep = (
                 (bz > self.z_obs)
-                & (bz < self.z_ceil)
+                & (bz < self.z_obs_max)
                 & (rng > self.rmin)
                 & (rng < self.rmax)
             )

@@ -87,6 +87,18 @@ own dense observations (a spurious mark is raytraced away on the next frame), an
 height (the cloud itself carries leveled `base_footprint` coordinates) so rays
 descend onto the floor rather than sweeping up through the low-obstacle band.
 
+**Go-under clearance.** The obstacle band has an upper bound so the robot isn't
+blocked by things it fits beneath. The camera layer's `max_obstacle_height` is the
+robot's height plus a margin: **0.18 m for the current ~0.13 m chassis (no arm)**.
+A chair seat or tabletop above that is passable overhead and does not mark;
+because it is a 3D voxel layer, the *legs* (which reach the floor) still mark, so
+the robot avoids the legs and paths through the clear gap between them. **With the
+planned arm the robot is ~0.30 m** — raise the gate to ~0.35 m *and* the voxel-grid
+top (`z_voxels * z_resolution`); note the go-under benefit largely disappears at
+that height. The node mirrors the gate with a generous `z_obstacle_max` publish
+ceiling (0.5 m — Nav2 is the authoritative gate) so it doesn't stream points Nav2
+discards; the node's `z_ceiling` bounds only the full debug cloud.
+
 Decay caveat: a phantom mark over open floor with nothing above-floor behind it
 within `obstacle_max_range` receives no clearing ray until the 3 m rolling window
 scrolls past it as the robot moves. Near-band false positives measured ≈ 0 on
