@@ -16,6 +16,7 @@ pixi run mapping        # bringup + SLAM together (build/extend a map)
 pixi run robot          # bringup + Nav2 together (drive a saved map; needs ~/.mote/map.yaml)
 pixi run save-map       # Save current map to ~/.mote/map
 pixi run teleop         # Keyboard teleoperation
+pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run udev           # Install udev rules (needs sudo)
 pixi run setup-ids      # Guided servo ID assignment tool
@@ -108,6 +109,13 @@ Home for camera-derived perception. Runs on the robot (feeds Nav2), so unlike `m
 - `launch/perception_launch.py` — declares `use_sim_time` (applied via `SetParameter`) and starts `camera_monitor` with `image` remapped to `/image_raw`.
 - `config/` — camera-calibration home. `camera_info.default.yaml` is a committed fallback calibration for the UGREEN webcam; a per-robot `~/.mote/camera_calibration.yaml` (outside the repo) overrides it. `mote_launch.py` prefers the `~/.mote` file when present, else `robot.yaml`'s `camera.default_info_url`, passing the result to `v4l2_camera_node` as `camera_info_url`. `config/README.md` documents when/how to calibrate (with the printable checkerboard).
 - Compressed transport is already provided by the `image-transport-plugins` dep, so the camera publishes `/image_raw/compressed`; off-board/RViz consumers should prefer it. See `mote_perception/README.md`.
+
+### `mote_tasks` (Python/ament)
+The task layer: py_trees behaviour trees on top of Nav2 (synced to the Pi). py_trees is a pixi *PyPI* dependency (not packaged on robostack/conda-forge); the ROS glue is first-party and small — no py_trees_ros. Contains:
+- `task_server.py` — node hosting the fetch tree: subscribes `task/command` (String, `fetch <object_zone> <drop_zone>`), publishes `task/status`, ticks the tree on a timer. Zone names → map poses come from a zones YAML: `~/.mote/zones.yaml` when present (launch-time check, same pattern as the camera calibration), else the committed `config/zones.default.yaml` (poses match `mote_world.sdf`).
+- `behaviours/` — `DriveTo` (Nav2 NavigateToPose action client as a behaviour; cancels in-flight goals on preemption) and `TimedStub` (placeholder pick/place until the SO-101 arm is actuated).
+- `trees/fetch.py` — the fetch mission: wait → drive to object → pick (stub) → drive to drop → place (stub). Blackboard keys `task`/`object_pose`/`drop_pose` are the extension seam: later perception writes a detected pose instead of a named zone.
+- `test/test_fetch_tree.py` — full tree tick against a mock `navigate_to_pose` server (no Gazebo/Nav2), run by `pixi run test`.
 
 ### Third-party submodules (`third_party/`)
 - `sllidar_ros2` — SLAMTEC RPLIDAR C1 ROS 2 driver

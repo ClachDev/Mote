@@ -1,0 +1,9 @@
+# Default named navigation targets, placed for mote_world.sdf (the 6x6 m sim
+# room; obstacles sit at (1.5, 1.0) and (-1.2, -1.5)). On a real robot, map
+# zones live outside the repo in ~/.mote/zones.yaml, which tasks_launch.py
+# prefers when present.
+frame_id: map
+zones:
+  pickup: {x: 1.8, y: -1.5, yaw: 0.0}
+  dropoff: {x: -1.8, y: 1.5, yaw: 3.14}
+  home: {x: 0.0, y: 0.0, yaw: 0.0}

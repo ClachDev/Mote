@@ -16,7 +16,7 @@ setup-ids = "ros2 run mote_hardware setup_ids"
 install-systemd = "bash mote_bringup/systemd/install.sh"
 sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
 save-map = "mkdir -p $HOME/.mote && ros2 run nav2_map_saver map_saver_cli -f $HOME/.mote/map"
-test = { cmd = "colcon test --packages-select mote_hardware --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+test = { cmd = "colcon test --packages-select mote_hardware mote_tasks --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
 
@@ -30,6 +30,7 @@ teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p sta
 perception = "ros2 launch mote_perception perception_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
 depth = "bash mote_perception/tools/depth_workstation.sh"
+tasks = "ros2 launch mote_tasks tasks_launch.py"
 
 
 [dependencies]
@@ -80,6 +81,11 @@ ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
 ros-jazzy-xacro = ">=2.0.0"
 scservo-linux = "==1.0.0"
 ros-jazzy-ament-cmake-gtest = ">=2.5"
+
+# Pure-Python behaviour-tree library for mote_tasks; not packaged on
+# robostack/conda-forge, so it comes from PyPI.
+[pypi-dependencies]
+py-trees = ">=2.2,<3"
 
 [feature.dev.dependencies]
 ros-jazzy-desktop = ">=0.11.0"
