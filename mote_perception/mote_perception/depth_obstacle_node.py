@@ -155,6 +155,7 @@ class DepthObstacleNode(Node):
         self.last_R = (
             None  # last good ground-level rotation; held when a frame can't fit
         )
+        self.last_c = 0.0  # floor-plane offset held with last_R
         self.diag = ""
         self.plane_diag = ""
         self.grid = None
@@ -245,24 +246,33 @@ class DepthObstacleNode(Node):
         Returns (corrected_depth, (a, b, frac), source) or (None, None, source).
         """
         self.diag = ""
-        if self.source != "floor" and self._ensure_lidar():
-            scan, dt_ms = self._nearest_scan(stamp)
-            if scan is not None and dt_ms <= self.scan_max_dt * 1e3:
-                out = self.lidar_rescaler.rescale(depth, scan)
-                self.diag = (
-                    f"  scans {len(self.scans)} dt {dt_ms:.0f}ms "
-                    f"pairs {self.lidar_rescaler.last_npairs}"
-                )
-                if out is not None:
-                    self.last_ab = out[1][:2]
-                    return (*out, "lidar")
+        if self.source != "floor":
+            if not self._ensure_lidar():
+                if self.source == "lidar":
+                    return None, None, "lidar"
             else:
-                self.diag = f"  scans {len(self.scans)} dt {dt_ms:.0f}ms (no match)"
-            if self.last_ab is not None:
-                a, b = self.last_ab
-                return apply_affine_disparity(depth, a, b), (a, b, float("nan")), "hold"
-            if self.source == "lidar":
-                return None, None, "lidar"
+                scan, dt_ms = self._nearest_scan(stamp)
+                if scan is not None and dt_ms <= self.scan_max_dt * 1e3:
+                    out = self.lidar_rescaler.rescale(depth, scan)
+                    self.diag = (
+                        f"  scans {len(self.scans)} dt {dt_ms:.0f}ms "
+                        f"pairs {self.lidar_rescaler.last_npairs}"
+                    )
+                    if out is not None:
+                        self.last_ab = out[1][:2]
+                        return (*out, "lidar")
+                else:
+                    dt = f"{dt_ms:.0f}ms" if dt_ms is not None else "n/a"
+                    self.diag = f"  scans {len(self.scans)} dt {dt} (no match)"
+                if self.last_ab is not None:
+                    a, b = self.last_ab
+                    return (
+                        apply_affine_disparity(depth, a, b),
+                        (a, b, float("nan")),
+                        "hold",
+                    )
+                if self.source == "lidar":
+                    return None, None, "lidar"
         return (*self.rescaler.rescale(depth), "floor")
 
     def _ground_correct(self, pts):
@@ -279,15 +289,17 @@ class DepthObstacleNode(Node):
             return pts
         fit = fit_ground_plane(pts)
         if fit is not None:
-            a, b, _, frac = fit
+            a, b, c, frac = fit
             tilt = float(np.degrees(np.arctan(np.hypot(a, b))))
             if tilt <= self.plane_max_tilt:
                 self.last_R = level_rotation(a, b)
+                self.last_c = c
                 self.plane_diag = f" tilt {tilt:.1f}d {frac:.0%}"
             else:
                 self.plane_diag = f" tilt {tilt:.1f}d(rej)"
         if self.last_R is not None:
-            return (pts - self.proj.C) @ self.last_R.T + self.proj.C
+            pts = (pts - self.proj.C) @ self.last_R.T + self.proj.C
+            pts[:, 2] -= self.last_c
         return pts
 
     def _ensure_setup(self):
@@ -349,6 +361,11 @@ class DepthObstacleNode(Node):
             if hdr is None:
                 raise ConnectionError("server closed")
             h, w = struct.unpack(">II", hdr)
+            if h == 0 or w == 0:
+                self.get_logger().warn(
+                    "depth server rejected frame; skipping", throttle_duration_sec=2.0
+                )
+                return None
             body = recvall(s, h * w * 4)
             if body is None:
                 raise ConnectionError("server closed mid-depth")
@@ -375,10 +392,20 @@ class DepthObstacleNode(Node):
         if not (obs or raw or cor or full):
             return
 
-        jpeg = bytes(msg.data)
-        depth = self._infer(jpeg)
+        blob = bytes(msg.data)
+        # image_transport sets format to e.g. "rgb8; jpeg compressed bgr8"
+        fmt = (msg.format or "").lower()
+        if fmt and not any(c in fmt for c in ("jpeg", "jpg", "png")):
+            self.get_logger().warn(
+                f"unsupported compressed format {fmt!r}; skipping",
+                throttle_duration_sec=2.0,
+            )
+            return
+        depth = self._infer(blob)
         if depth is None:
             return
+        if depth.shape != (self.proj.height, self.proj.width):
+            depth = cv2.resize(depth, (self.proj.width, self.proj.height))
         if raw:
             self._publish_depth_image(depth, msg.header.stamp, self.depth_raw_pub)
         if not (obs or cor or full):  # only the raw map was wanted
@@ -412,7 +439,10 @@ class DepthObstacleNode(Node):
             self.base_frame
         )  # cloud is in the base frame, stamped at capture
 
-        img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        img = cv2.imdecode(np.frombuffer(blob, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            self.get_logger().warn("corrupt compressed frame; skipping")
+            return
         if img.shape[:2] != (self.proj.height, self.proj.width):
             img = cv2.resize(img, (self.proj.width, self.proj.height))
         colors = img.reshape(-1, 3)  # row-major BGR, aligned with the pixel grid

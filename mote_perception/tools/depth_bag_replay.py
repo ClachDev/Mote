@@ -66,6 +66,9 @@ def infer(jpeg, host, port):
     if hdr is None:
         sys.exit("depth server closed without replying (check its log for a traceback)")
     h, w = struct.unpack(">II", hdr)
+    if h == 0 or w == 0:
+        s.close()
+        return None
     body = recvall(s, h * w * 4)
     s.close()
     return np.frombuffer(body, np.float32).reshape(h, w)
@@ -129,6 +132,9 @@ def main():
     for k, i in enumerate(np.linspace(0, len(imgs) - 1, args.frames).astype(int)):
         ts, jpeg = imgs[i]
         depth = infer(jpeg, args.host, args.port)
+        if depth is None:
+            print(f"[f{k:>2}] server rejected frame")
+            continue
         _, scan = min(scans, key=lambda s: abs(s[0] - ts))
         pred, true = resc.pairs(scan, depth)
         rd = depth[np.isfinite(depth)]

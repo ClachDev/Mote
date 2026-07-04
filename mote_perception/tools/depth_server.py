@@ -14,6 +14,7 @@ here; pass --metric for a metric model (depth already in metres, no inversion).
 Protocol (length-prefixed, big-endian):
   request : uint32 nbytes, then `nbytes` of JPEG/PNG-compressed image
   reply   : uint32 H, uint32 W, then H*W float32 depth (row-major, metres)
+            H=0 or W=0 means the frame was rejected (no payload follows)
 """
 
 import argparse
@@ -32,6 +33,7 @@ from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 MODEL = (
     "depth-anything/Depth-Anything-V2-Small-hf"  # relative (SSI); see module docstring
 )
+ERROR_REPLY = struct.pack(">II", 0, 0)
 
 
 def recvall(conn, n):
@@ -78,25 +80,34 @@ def main():
                 blob = recvall(conn, n)
                 if blob is None:
                     break
-                img = Image.open(io.BytesIO(blob)).convert("RGB")
-                W, H = img.size
-                t0 = time.perf_counter()
-                inputs = proc(images=img, return_tensors="pt")
-                with torch.no_grad():
-                    pred = model(**inputs).predicted_depth
-                depth = (
-                    F.interpolate(
-                        pred[None], size=(H, W), mode="bicubic", align_corners=False
-                    )[0, 0]
-                    .numpy()
-                    .astype(np.float32)
-                )
-                if not args.metric:  # disparity -> depth; clamp far (disp~0) to ~1 km
-                    depth = (1.0 / np.maximum(depth, 1e-3)).astype(np.float32)
-                dt = (time.perf_counter() - t0) * 1000
-                conn.sendall(struct.pack(">II", H, W) + depth.tobytes())
-                print(f"served {W}x{H} in {dt:.0f} ms")
-        except (ConnectionResetError, BrokenPipeError):
+                try:
+                    img = Image.open(io.BytesIO(blob)).convert("RGB")
+                    W, H = img.size
+                    t0 = time.perf_counter()
+                    inputs = proc(images=img, return_tensors="pt")
+                    with torch.no_grad():
+                        pred = model(**inputs).predicted_depth
+                    depth = (
+                        F.interpolate(
+                            pred[None], size=(H, W), mode="bicubic", align_corners=False
+                        )[0, 0]
+                        .numpy()
+                        .astype(np.float32)
+                    )
+                    if (
+                        not args.metric
+                    ):  # disparity -> depth; clamp far (disp~0) to ~1 km
+                        depth = (1.0 / np.maximum(depth, 1e-3)).astype(np.float32)
+                    dt = (time.perf_counter() - t0) * 1000
+                    reply = struct.pack(">II", H, W) + depth.tobytes()
+                    log = f"served {W}x{H} in {dt:.0f} ms"
+                except OSError as e:
+                    reply, log = ERROR_REPLY, f"bad frame ({e}); skipping"
+                except Exception as e:
+                    reply, log = ERROR_REPLY, f"inference failed ({e}); skipping"
+                conn.sendall(reply)
+                print(log)
+        except OSError:
             pass
         finally:
             conn.close()

@@ -52,9 +52,11 @@ def fit_affine_disparity(pred, true, iters=200, inlier_thresh=0.08, seed=0):
     q = 1.0 / np.maximum(true, 1e-3)
     n = len(p)
     if n < 10:
+        if n == 0:
+            return 1.0, 0.0, 0.0
         A = np.column_stack([p, np.ones(n)])
         sol, *_ = np.linalg.lstsq(A, q, rcond=None)
-        return float(sol[0]), float(sol[1]), 1.0
+        return float(sol[0]), float(sol[1]), 0.0
 
     rng = np.random.default_rng(seed)
     best_inliers = None
@@ -70,6 +72,11 @@ def fit_affine_disparity(pred, true, iters=200, inlier_thresh=0.08, seed=0):
         c = int(inl.sum())
         if c > best_count:
             best_count, best_inliers = c, inl
+
+    if best_inliers is None:  # every sample pair was degenerate (constant disparity)
+        A = np.column_stack([p, np.ones(n)])
+        sol, *_ = np.linalg.lstsq(A, q, rcond=None)
+        return float(sol[0]), float(sol[1]), 0.0
 
     A = np.column_stack([p[best_inliers], np.ones(best_count)])
     sol, *_ = np.linalg.lstsq(A, q[best_inliers], rcond=None)
@@ -121,8 +128,11 @@ class DepthFloorRescaler:
         self.uv, self.true = floor_seed_truth(proj, **seed_kw)
         self.ema = ema
         self._ab = None
+        self._empty_seed = len(self.uv) == 0
 
     def rescale(self, depth):
+        if self._empty_seed:
+            return depth, (1.0, 0.0, 0.0)
         pred = depth[self.uv[:, 1], self.uv[:, 0]]
         a, b, frac = fit_affine_disparity(pred, self.true)
         if self.ema and self._ab is not None:

@@ -63,9 +63,21 @@ def lidar_depth_pairs(pts_lidar, T_opt_lidar, depth, K, D):
     if len(pts_opt) == 0:
         return np.empty(0), np.empty(0)
 
+    # Reject off-axis returns before distortion can fold them back into bounds.
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+    h, w = depth.shape
+    xn = pts_opt[:, 0] / z
+    yn = pts_opt[:, 1] / z
+    u_und = fx * xn + cx
+    v_und = fy * yn + cy
+    in_fov = (u_und >= 0) & (u_und < w) & (v_und >= 0) & (v_und < h)
+    pts_opt, z = pts_opt[in_fov], z[in_fov]
+    if len(pts_opt) == 0:
+        return np.empty(0), np.empty(0)
+
     px, _ = cv2.projectPoints(pts_opt.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), K, D)
     px = px.reshape(-1, 2)
-    h, w = depth.shape
     u = np.round(px[:, 0]).astype(int)
     v = np.round(px[:, 1]).astype(int)
     inb = (u >= 0) & (u < w) & (v >= 0) & (v < h)
@@ -80,7 +92,7 @@ class LidarDepthRescaler:
 
     Holds the intrinsics and the static lidar->optical transform. `rescale` builds
     the (pred, true) pairs from one scan, fits the affine-in-disparity correction
-    (RANSAC, shared with the floor rescaler), and applies it. Returns None when the
+    (Theil-Sen), and applies it. Returns None when the
     scan gives too few pairs or too little depth spread to constrain the fit.
     """
 
