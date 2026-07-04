@@ -1,0 +1,111 @@
+"""Off-board monocular-depth inference server (runs in the pixi depth environment).
+
+Keeps Depth Anything V2 resident and serves depth over a local socket so the ROS
+node (which has no torch) can stay light and run anywhere — on the workstation
+next to this server, or on the robot talking to it over the network. This is the
+deliberate two-process split that keeps torch out of the ROS/robot environment.
+
+Default is the *relative* (SSI) V2-Small model: since the node refits a full affine
+in disparity against lidar every frame, the absolute scale of a metric model is
+discarded anyway, and the relative model measured both more accurate and faster (see
+tools/depth_bag_eval.py). Relative models output disparity, so it's inverted to depth
+here; pass --metric for a metric model (depth already in metres, no inversion).
+
+The wire protocol lives in mote_perception/depth_wire.py (shared with the node and
+the offline tools). This file runs uninstalled in the torch env, so the package is
+imported straight from the source tree.
+"""
+
+import argparse
+import io
+import os
+import socket
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from PIL import Image
+from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mote_perception.depth_wire import (  # noqa: E402
+    DEFAULT_PORT,
+    recv_image,
+    send_depth,
+    send_rejection,
+)
+
+MODEL = (
+    "depth-anything/Depth-Anything-V2-Small-hf"  # relative (SSI); see module docstring
+)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--model", default=MODEL)
+    # Default model is relative (outputs disparity, near=large) -> invert to depth so
+    # the node (which expects depth, then refits scale) works. --metric: the model
+    # already outputs metric depth, so pass it through unchanged.
+    ap.add_argument("--metric", action="store_true")
+    args = ap.parse_args()
+
+    print("loading", args.model, "(metric)" if args.metric else "(relative)")
+    proc = AutoImageProcessor.from_pretrained(args.model)
+    model = AutoModelForDepthEstimation.from_pretrained(args.model).eval()
+    torch.set_num_threads(os.cpu_count())
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((args.host, args.port))
+    srv.listen(1)
+    print(f"depth server listening on {args.host}:{args.port}")
+
+    while True:
+        conn, addr = srv.accept()
+        print("client", addr)
+        try:
+            while True:
+                blob = recv_image(conn)
+                if blob is None:
+                    break
+                depth = None
+                try:
+                    img = Image.open(io.BytesIO(blob)).convert("RGB")
+                    W, H = img.size
+                    t0 = time.perf_counter()
+                    inputs = proc(images=img, return_tensors="pt")
+                    with torch.no_grad():
+                        pred = model(**inputs).predicted_depth
+                    out = (
+                        F.interpolate(
+                            pred[None], size=(H, W), mode="bicubic", align_corners=False
+                        )[0, 0]
+                        .numpy()
+                        .astype(np.float32)
+                    )
+                    if not args.metric:  # disparity -> depth; clamp far (disp~0)
+                        out = (1.0 / np.maximum(out, 1e-3)).astype(np.float32)
+                    dt = (time.perf_counter() - t0) * 1000
+                    depth, log = out, f"served {W}x{H} in {dt:.0f} ms"
+                except OSError as e:
+                    log = f"bad frame ({e}); skipping"
+                except Exception as e:
+                    log = f"inference failed ({e}); skipping"
+                if depth is None:
+                    send_rejection(conn)
+                else:
+                    send_depth(conn, depth)
+                print(log)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+
+
+if __name__ == "__main__":
+    main()
