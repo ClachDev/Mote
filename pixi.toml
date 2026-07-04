@@ -10,15 +10,21 @@ submodules = "git submodule update --init"
 build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5", depends-on = [
     "submodules",
 ] }
-kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
-udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger"
-setup-ids = "ros2 run mote_hardware setup_ids"
-install-systemd = "bash mote_bringup/systemd/install.sh"
-sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
-save-map = "mkdir -p $HOME/.mote && ros2 run nav2_map_saver map_saver_cli -f $HOME/.mote/map"
 test = { cmd = "colcon test --packages-select mote_hardware --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
+
+# Pi Setup tasks
+setup-ids = "ros2 run mote_hardware setup_ids"
+udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
+wifi-powersave = "bash mote_bringup/networkmanager/install.sh"
+install-systemd = "bash mote_bringup/systemd/install.sh"
+setup = { depends-on = ["udev", "wifi-powersave", "install-systemd"] }
+
+# Dev tasks
+kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
+sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
+save-map = "mkdir -p $HOME/.mote && ros2 run nav2_map_saver map_saver_cli -f $HOME/.mote/map"
 
 # Quick launch commands
 launch = "ros2 launch mote_bringup mote_launch.py"
@@ -30,6 +36,30 @@ teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p sta
 perception = "ros2 launch mote_perception perception_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
 
+#### The below tasks are tied to specific features and environments however they
+#### can be run like any other task.
+
+[feature.dev.tasks]
+rviz = "ros2 launch mote_bringup rviz_launch.py"
+camera_calibration = "ros2 run camera_calibration cameracalibrator --size 6x9 --square 0.025 --ros-args -r image:=/image_raw -p camera:=/camera -p image_transport:=compressed"
+
+# Continuously rsync to the Pi on save (watchexec honours .gitignore, so
+# build/install/log/.pixi are skipped). Edits to launch/config/Python go live
+# without a rebuild thanks to colcon --symlink-install; only C++ needs `build`.
+sync-watch = "watchexec --debounce 1s -- pixi run sync"
+
+[feature.sim.tasks]
+sim = "ros2 launch mote_simulation sim_launch.py"
+sim-mapping = "ros2 launch mote_simulation sim_launch.py mode:=mapping"
+sim-nav = "ros2 launch mote_simulation sim_launch.py mode:=nav"
+sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
+    "build",
+] }
+
+[feature.lint.tasks]
+lint = "pre-commit run --all-files"
+# One-time per clone: wire pre-commit into .git/hooks so it runs on commit
+lint-install = "pre-commit install"
 
 [dependencies]
 cmake = ">=4.3.2,<5"
@@ -95,22 +125,6 @@ watchexec = ">=2.5,<3"
 [feature.dev.target.linux-64.dependencies]
 ros-jazzy-rviz-teleop-panel = ">=0.1.0"
 
-[feature.dev.tasks]
-rviz = "ros2 launch mote_bringup rviz_launch.py"
-camera_calibration = "ros2 run camera_calibration cameracalibrator --size 6x9 --square 0.025 --ros-args -r image:=/image_raw -p camera:=/camera -p image_transport:=compressed"
-
-# Continuously rsync to the Pi on save (watchexec honours .gitignore, so
-# build/install/log/.pixi are skipped). Edits to launch/config/Python go live
-# without a rebuild thanks to colcon --symlink-install; only C++ needs `build`.
-sync-watch = "watchexec --debounce 1s -- pixi run sync"
-
-[feature.sim.tasks]
-sim = "ros2 launch mote_simulation sim_launch.py"
-sim-mapping = "ros2 launch mote_simulation sim_launch.py mode:=mapping"
-sim-nav = "ros2 launch mote_simulation sim_launch.py mode:=nav"
-sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
-    "build",
-] }
 
 [feature.sim.dependencies]
 ros-jazzy-ros-gz-sim = "*"
@@ -119,11 +133,6 @@ ros-jazzy-gz-ros2-control = "*"
 
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
-
-[feature.lint.tasks]
-lint = "pre-commit run --all-files"
-# One-time per clone: wire pre-commit into .git/hooks so it runs on commit
-lint-install = "pre-commit install"
 
 [activation]
 scripts = ["install/setup.sh"]
