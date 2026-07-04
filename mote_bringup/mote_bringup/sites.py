@@ -11,6 +11,10 @@ place, managed as a single versioned unit.
                 map.yaml + map.png     nav2 map_server pair
                 map.posegraph + .data  slam_toolbox graph (lets mapping
                                        continue later in the same frame)
+                meta.yaml              provenance: when it was saved and which
+                                       mapping bag (~/.mote/bags/mapping/<ts>,
+                                       recorded by mapping_launch.py) the
+                                       session was captured in
 
 A map revision is fully staged in its maps/<rev>/ directory before the
 ``map`` symlink is flipped to it (one atomic rename), so a half-written
@@ -60,6 +64,10 @@ def sites_dir() -> Path:
 
 def site_dir(site: str) -> Path:
     return sites_dir() / site
+
+
+def bags_dir(kind: str) -> Path:
+    return mote_dir() / "bags" / kind
 
 
 def floor_dir(site: str, floor: str) -> Path:
@@ -206,7 +214,9 @@ def cmd_info():
         return
     for rev in revisions(fdir):
         marker = " *" if rev == current else ""
-        print(f"  maps/{rev}{marker}")
+        bag = revision_meta(fdir, rev).get("bag")
+        suffix = f"  (bag: {bag})" if bag else ""
+        print(f"  maps/{rev}{marker}{suffix}")
 
 
 def revisions(fdir: Path) -> list[str]:
@@ -238,6 +248,33 @@ def _new_revision_dir(fdir: Path) -> Path:
     rev_dir = fdir / "maps" / time.strftime("%Y%m%dT%H%M%S")
     rev_dir.mkdir(parents=True, exist_ok=True)
     return rev_dir
+
+
+def latest_mapping_bag(max_age_s: float = 900.0) -> Path | None:
+    """The mapping bag the current session is writing, or None.
+
+    The newest bags/mapping/<ts> directory counts only if it has been written
+    recently — a stale directory belongs to some earlier session, not the
+    mapping run being saved.
+    """
+    root = bags_dir("mapping")
+    if not root.is_dir():
+        return None
+    dirs = sorted(p for p in root.iterdir() if p.is_dir())
+    if not dirs:
+        return None
+    newest = dirs[-1]
+    mtimes = [f.stat().st_mtime for f in newest.iterdir()]
+    if time.time() - max(mtimes, default=newest.stat().st_mtime) > max_age_s:
+        return None
+    return newest
+
+
+def revision_meta(fdir: Path, rev: str) -> dict:
+    meta_file = fdir / "maps" / rev / "meta.yaml"
+    if not meta_file.exists():
+        return {}
+    return yaml.safe_load(meta_file.read_text()) or {}
 
 
 def save_map():
@@ -286,6 +323,11 @@ def save_map():
             f"incomplete map revision (missing map{'/map'.join(missing)}) — "
             "discarded; are mapping + slam_toolbox running?"
         )
+    meta = {"schema": SCHEMA, "saved": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    bag = latest_mapping_bag()
+    if bag:
+        meta["bag"] = str(bag.relative_to(mote_dir()))
+    (rev_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False))
     _publish_revision(fdir, rev_dir.name)
     _prune_revisions(fdir)
     print(f"saved map + posegraph revision {rev_dir.name}  ({_active_str()})")

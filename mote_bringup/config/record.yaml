@@ -3,6 +3,17 @@
 # length and rolling disk cap (enforced by bag_pruner).
 
 streams:
+  # Recorded automatically during mapping runs (mapping_launch.py record:=true,
+  # the default) so save-map can stamp the session's bag into the map
+  # revision's meta.yaml. Enough to re-run SLAM offline.
+  mapping:
+    topics:
+      - /tf
+      - /tf_static
+      - /scan_filtered
+    split: 600
+    max_gb: 4.0
+
   lite:
     topics:
       - /tf

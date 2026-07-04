@@ -1,5 +1,7 @@
 """Filesystem-level tests for the site bundle library (no ROS graph needed)."""
 
+import os
+
 import pytest
 import yaml
 
@@ -108,6 +110,31 @@ def test_dangling_active_is_ignored(mote_home):
     sites.set_active("home", "vanished")
     assert sites.active() is None
     assert sites.resolve_map() == ""
+
+
+def test_latest_mapping_bag_wants_recent_activity(mote_home):
+    assert sites.latest_mapping_bag() is None
+    old = sites.bags_dir("mapping") / "20260101_000000"
+    old.mkdir(parents=True)
+    (old / "seg_0.mcap").write_bytes(b"x")
+    os.utime(old / "seg_0.mcap", (0, 0))
+    os.utime(old, (0, 0))
+    assert sites.latest_mapping_bag() is None
+    fresh = sites.bags_dir("mapping") / "20260101_000001"
+    fresh.mkdir()
+    (fresh / "seg_0.mcap").write_bytes(b"x")
+    assert sites.latest_mapping_bag() == fresh
+
+
+def test_revision_meta_round_trip(mote_home):
+    sites.create("home")
+    fdir = sites.floor_dir("home", "ground")
+    rev_dir = make_revision(fdir, "r1")
+    assert sites.revision_meta(fdir, "r1") == {}
+    (rev_dir / "meta.yaml").write_text(
+        yaml.safe_dump({"schema": 1, "bag": "bags/mapping/20260101_000001"})
+    )
+    assert sites.revision_meta(fdir, "r1")["bag"] == "bags/mapping/20260101_000001"
 
 
 def test_cli_round_trip(mote_home, capsys):

@@ -161,7 +161,11 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 os.path.join(bringup_share, "launch", launch_file)
             ),
-            launch_arguments={"base": "false", "use_sim_time": "true"}.items(),
+            launch_arguments={
+                "base": "false",
+                "use_sim_time": "true",
+                "record": "false",
+            }.items(),
             condition=IfCondition(EqualsSubstitution(mode, mode_value)),
         )
 

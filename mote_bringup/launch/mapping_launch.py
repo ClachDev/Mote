@@ -29,10 +29,22 @@ def generate_launch_description():
                 description="Include the hardware base (mote_launch.py). Set false "
                 "when a base is provided externally, e.g. by the sim.",
             ),
+            DeclareLaunchArgument(
+                "record",
+                default_value="true",
+                description="Record the session's 'mapping' rosbag stream so "
+                "save-map can stamp it into the map revision's provenance. The "
+                "sim passes false.",
+            ),
             include(
                 "mote_launch.py", condition=IfCondition(LaunchConfiguration("base"))
             ),
             include("slam_launch.py"),
             include("nav2_launch.py", localisation="false"),
+            include(
+                "record_launch.py",
+                condition=IfCondition(LaunchConfiguration("record")),
+                streams="mapping",
+            ),
         ]
     )
