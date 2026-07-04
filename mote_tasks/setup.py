@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "task_server = mote_tasks.task_server:main",
+            "save_zone = mote_tasks.save_zone:main",
         ],
     },
 )

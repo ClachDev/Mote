@@ -7,11 +7,13 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
+from mote_bringup import sites
+
 
 def generate_launch_description():
     launch_dir = os.path.join(get_package_share_directory("mote_bringup"), "launch")
 
-    default_map = os.path.join(os.path.expanduser("~"), ".mote", "map.yaml")
+    default_map = sites.resolve_map()
 
     use_sim_time = LaunchConfiguration("use_sim_time")
 

@@ -11,10 +11,12 @@ pixi run build          # Build all packages with colcon + Ninja
 pixi run submodules     # Fetch git submodules (sllidar_ros2, kinematic_icp)
 pixi run launch         # Full robot bringup (hardware + lidar + camera + localization)
 pixi run slam           # SLAM stack only (run alongside launch)
-pixi run nav            # Nav2 stack (requires a saved map at ~/.mote/map.yaml)
+pixi run nav            # Nav2 stack (loads the active site's map; see Sites)
 pixi run mapping        # bringup + SLAM together (build/extend a map)
-pixi run robot          # bringup + Nav2 together (drive a saved map; needs ~/.mote/map.yaml)
-pixi run save-map       # Save current map to ~/.mote/map
+pixi run robot          # bringup + Nav2 together (drive the active site's map)
+pixi run save-map       # Save map + slam posegraph into the active site floor
+pixi run save-zone <n>  # Teach a zone: capture current robot pose into the site
+pixi run site           # Site CLI: create / add-floor / use / use-map / list / info
 pixi run teleop         # Keyboard teleoperation
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
 pixi run sync           # rsync project to Pi at SSH host 'mote'
@@ -61,6 +63,10 @@ The URDF reads it via `xacro.load_yaml('$(find mote_description)/config/robot.ya
 
 `velocity_scale` converts rad/s ↔ servo speed units. It's an empirical calibration value measured on real hardware with the `velocity_cal` tool, not derivable from datasheets.
 
+## Sites (maps & zones)
+
+Everything that is only meaningful relative to one mapped place — the Nav2 map pair, the slam_toolbox posegraph, and named zones — lives together as a **site bundle** under `~/.mote/sites/<site>/floors/<floor>/`, managed by `mote_bringup/sites.py` (CLI: `pixi run site`, docs in the module docstring). A floor is one SLAM session (one map frame); a site groups floors sharing a location. `~/.mote/active.yaml` selects the active site/floor per robot; launch files resolve the map (`nav2_launch.py`, `robot_launch.py`) and zones (`tasks_launch.py`) from it at launch time (zones fall back to the committed default). `MOTE_HOME` overrides `~/.mote` for tests/experiments. Map artifacts are immutable **revisions** under `floors/<floor>/maps/<rev>/`, published by atomically flipping the `floors/<floor>/map` symlink once the revision is complete — a half-written save or interrupted transfer is never visible, and `site use-map <rev>` rolls back. `save-map` stores the posegraph alongside the map so mapping can be *continued* in the same frame later (extend, don't remap — remapping breaks zone coordinates). Zones are taught by driving there and running `pixi run save-zone <name>`, not by editing YAML. Maps are saved as PNG (map_server reads it natively; browsers can render it directly).
+
 ## Architecture
 
 Mote is a differential-drive robot built on **ROS 2 Jazzy**, managed entirely through pixi (no system ROS install required). Four first-party packages:
@@ -80,7 +86,7 @@ Contains `urdf/mote.urdf.xacro` and `config/robot.yaml`. The xacro loads robot.y
 Launch files, config, udev rules, and systemd services.
 
 **Launch hierarchy:** the two mission launches (`mapping_launch.py`, `robot_launch.py`) each take a `base` arg (default true) that includes the hardware base, and a `use_sim_time` arg they forward to everything they include. The sim runs these *same* files with `base:=false`, supplying a Gazebo base in place of the drivers — so the missions are defined once and the sim exercises the real launch files.
-- `robot_launch.py` — nav mission: `mote_launch.py` (if `base`) + `nav2_launch.py` (drive a saved map). Forwards a `map` arg, defaulting to `~/.mote/map.yaml`.
+- `robot_launch.py` — nav mission: `mote_launch.py` (if `base`) + `nav2_launch.py` (drive a saved map). Forwards a `map` arg, defaulting to the active site's map (see Sites).
 - `mapping_launch.py` — mapping mission: `mote_launch.py` (if `base`) + `slam_launch.py` + `nav2_launch.py` (`localisation:=false`): build/extend a map with SLAM *and* drive to goals autonomously while doing so.
 - `mote_launch.py` — the hardware base: robot_state_publisher, ros2_control_node, controller spawners, sllidar, laser_filter, v4l2_camera, and `localization_launch.py`. Reads `robot.yaml` for wheel geometry (injected into DiffDriveController params) and sensor config. Asserts `use_sim_time` (default false) for the whole tree via `SetParameter`.
 - `localization_launch.py` — kinematic_icp LIDAR odometry (publishes `odom`→`base`; the map→odom corrector is slam_toolbox when mapping or AMCL when navigating). Despite the name, it does *not* run AMCL — AMCL lives in `nav2_launch.py`.
@@ -112,7 +118,7 @@ Home for camera-derived perception. Runs on the robot (feeds Nav2), so unlike `m
 
 ### `mote_tasks` (Python/ament)
 The task layer: py_trees behaviour trees on top of Nav2 (synced to the Pi). py_trees is a pixi *PyPI* dependency (not packaged on robostack/conda-forge); the ROS glue is first-party and small — no py_trees_ros. Contains:
-- `task_server.py` — node hosting the fetch tree: subscribes `task/command` (String, `fetch <object_zone> <drop_zone>`), publishes `task/status`, ticks the tree on a timer. Zone names → map poses come from a zones YAML: `~/.mote/zones.yaml` when present (launch-time check, same pattern as the camera calibration), else the committed `config/zones.default.yaml` (poses match `mote_world.sdf`).
+- `task_server.py` — node hosting the fetch tree: subscribes `task/command` (String, `fetch <object_zone> <drop_zone>`), publishes `task/status`, ticks the tree on a timer. Zone names → map poses come from a zones YAML resolved via Sites (active floor, then legacy `~/.mote/zones.yaml`, then the committed `config/zones.default.yaml` whose poses match `mote_world.sdf`). `save_zone` (`pixi run save-zone <name>`) teaches zones from the live robot pose.
 - `behaviours/` — `DriveTo` (Nav2 NavigateToPose action client as a behaviour; cancels in-flight goals on preemption) and `TimedStub` (placeholder pick/place until the SO-101 arm is actuated).
 - `trees/fetch.py` — the fetch mission: wait → drive to object → pick (stub) → drive to drop → place (stub). Blackboard keys `task`/`object_pose`/`drop_pose` are the extension seam: later perception writes a detected pose instead of a named zone.
 - `test/test_fetch_tree.py` — full tree tick against a mock `navigate_to_pose` server (no Gazebo/Nav2), run by `pixi run test`.

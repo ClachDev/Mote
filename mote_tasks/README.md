@@ -33,10 +33,12 @@ pixi run -- ros2 topic pub --once /task/command std_msgs/msg/String "{data: fetc
 pixi run -- ros2 topic echo /task/status
 ```
 
-On the real robot, run `pixi run tasks` alongside `pixi run robot` and put
-map-specific zones in `~/.mote/zones.yaml` (preferred automatically by
-`tasks_launch.py`, same pattern as the camera calibration); the committed
-`config/zones.default.yaml` documents the format.
+On the real robot, run `pixi run tasks` alongside `pixi run robot`. Zones
+belong to the active site (see the Sites section in CLAUDE.md) and are taught
+by driving the robot to the spot and running `pixi run save-zone <name>` —
+poses are reachable by construction. `tasks_launch.py` resolves the active
+site's zones automatically, falling back to the committed
+`config/zones.default.yaml` (which also documents the format).
 
 ## Interface
 

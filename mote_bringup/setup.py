@@ -16,6 +16,8 @@ setup(
         (os.path.join("share", package_name, "config"), glob("config/*")),
     ],
     install_requires=["setuptools"],
+    # the 'test' extra tells colcon to run these tests with pytest
+    extras_require={"test": ["pytest"]},
     zip_safe=True,
     maintainer="Michael Johnson",
     maintainer_email="michael@clach.dev",
@@ -25,6 +27,7 @@ setup(
         "console_scripts": [
             "odom_tf_relay = mote_bringup.odom_tf_relay:main",
             "bag_pruner = mote_bringup.bag_pruner:main",
+            "site = mote_bringup.sites:main",
         ],
     },
 )

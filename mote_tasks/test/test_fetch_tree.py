@@ -5,6 +5,8 @@ immediately, so the test exercises command parsing, blackboard wiring, both
 DriveTo behaviours, the pick/place stubs, and outcome reporting.
 """
 
+import os
+import random
 import time
 
 import pytest
@@ -47,6 +49,9 @@ class MockNav(Node):
 
 @pytest.fixture
 def ros():
+    # A private DDS domain so a live robot/sim session on this machine can't
+    # cross-talk with the test's task_server and mock nav server.
+    os.environ["ROS_DOMAIN_ID"] = str(random.randint(60, 100))
     rclpy.init()
     yield
     rclpy.shutdown()
