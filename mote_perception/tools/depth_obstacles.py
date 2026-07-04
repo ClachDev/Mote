@@ -6,9 +6,10 @@ the floor as obstacles, and renders:
   [ camera | colorized depth | BEV: depth-obstacles (cyan) vs lidar (magenta) ]
 Also reports depth-vs-lidar range error at matching bearings (metric accuracy).
 
-    pixi run -e dev python mote_perception/tools/depth_obstacles.py
+    pixi run -e dev python mote_perception/tools/depth_obstacles.py [bag] [depth_dir] [out_dir]
 """
 
+import argparse
 import math
 import os
 
@@ -22,9 +23,9 @@ from rosidl_runtime_py.utilities import get_message
 from mote_perception.ground_projection import GroundProjector, chain_static_transforms
 from mote_perception.depth_rescale import DepthFloorRescaler
 
-BAG = "/home/michael/.mote/bags/20260627_132846"
-DEPTH = "/home/michael/.claude/jobs/b37cd0ff/tmp/depth"
-OUT = "/home/michael/.claude/jobs/b37cd0ff/tmp/depth_obs"
+DEFAULT_BAG = os.path.expanduser("~/.mote/bags/20260627_132846")
+DEFAULT_DEPTH = os.path.expanduser("~/.mote/depth")
+DEFAULT_OUT = os.path.expanduser("~/.mote/depth_obs")
 STRIDE = 280
 Z_OBSTACLE = 0.04  # m above floor to count as obstacle
 Z_CEIL = 1.6
@@ -71,11 +72,17 @@ def bev(cam_xy, lidar_xy):
 
 
 def main():
-    os.makedirs(OUT, exist_ok=True)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("bag", nargs="?", default=DEFAULT_BAG)
+    ap.add_argument("depth_dir", nargs="?", default=DEFAULT_DEPTH)
+    ap.add_argument("out_dir", nargs="?", default=DEFAULT_OUT)
+    args = ap.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
     bridge = CvBridge()
     reader = rosbag2_py.SequentialReader()
     reader.open(
-        rosbag2_py.StorageOptions(uri=BAG, storage_id="mcap"),
+        rosbag2_py.StorageOptions(uri=args.bag, storage_id="mcap"),
         rosbag2_py.ConverterOptions("", ""),
     )
     types = {t.name: t.type for t in reader.get_all_topics_and_types()}
@@ -114,7 +121,7 @@ def main():
             img_count += 1
             if proj is None or img_count % STRIDE != 0:
                 continue
-            npy = f"{DEPTH}/frame_{saved:02d}.npy"
+            npy = f"{args.depth_dir}/frame_{saved:02d}.npy"
             if not os.path.exists(npy):
                 saved += 1
                 continue
@@ -160,7 +167,7 @@ def main():
                         err.append(abs(cr[near].min() - rr))
 
             dimg = cv2.imread(
-                f"{DEPTH}/frame_{saved:02d}_gray.png", cv2.IMREAD_GRAYSCALE
+                f"{args.depth_dir}/frame_{saved:02d}_gray.png", cv2.IMREAD_GRAYSCALE
             )
             dcol = (
                 cv2.applyColorMap(dimg, cv2.COLORMAP_INFERNO)
@@ -177,7 +184,7 @@ def main():
             b = bev(cam_xy, lidar_xy)
             h = frame.shape[0]
             panel = np.hstack([frame, tint, dcol, cv2.resize(b, (h, h))])
-            cv2.imwrite(f"{OUT}/depth_{saved:02d}.png", panel)
+            cv2.imwrite(f"{args.out_dir}/depth_{saved:02d}.png", panel)
             print(f"depth_{saved:02d}: obstacle pts={obs.sum()}")
             saved += 1
 
@@ -190,7 +197,7 @@ def main():
             f"  n={len(e)}  mean {e.mean():.3f}  median {np.median(e):.3f}  "
             f"RMSE {np.sqrt((e**2).mean()):.3f}  p90 {np.percentile(e, 90):.3f} m"
         )
-    print(f"-> {OUT}")
+    print(f"-> {args.out_dir}")
 
 
 if __name__ == "__main__":

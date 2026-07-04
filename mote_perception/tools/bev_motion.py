@@ -115,13 +115,11 @@ def odom_pose(tf_msg):
 
 def main():
     bag = (
-        sys.argv[1] if len(sys.argv) > 1 else "/home/michael/.mote/bags/20260627_132846"
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else os.path.expanduser("~/.mote/bags/20260627_132846")
     )
-    out_dir = (
-        sys.argv[2]
-        if len(sys.argv) > 2
-        else "/home/michael/.claude/jobs/b37cd0ff/tmp/bev"
-    )
+    out_dir = sys.argv[2] if len(sys.argv) > 2 else os.path.join(bag, "_bev")
     os.makedirs(out_dir, exist_ok=True)
     bridge = CvBridge()
     reader = rosbag2_py.SequentialReader()
