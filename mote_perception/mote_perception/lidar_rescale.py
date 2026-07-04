@@ -1,18 +1,21 @@
 """Metric rescaling of monocular depth against lidar range returns.
 
-The floor-plane rescale (depth_rescale.py) anchors scale on a narrow near-floor
-band and extrapolates out to far walls, and it depends on the camera->floor angle
--- which varies with the floor slope and how the robot rests (measured ~1.5 deg
-across rest positions). The lidar instead gives metric range on the surfaces the
-depth must get right (walls), referenced through the lidar->camera transform. Both
-sensors are bolted to the chassis, so that transform is invariant to chassis tilt:
-the scale it yields is independent of how the body or floor is pitched.
+Learned monocular depth (Depth Anything V2) is only metric up to a per-frame
+affine ambiguity in disparity -- 1/true = a * (1/pred) + b, the natural space for
+these networks -- and the ambiguity is not stable frame to frame, so it must be
+re-solved every frame. The lidar gives metric range on the surfaces the depth
+must get right (walls), referenced through the lidar->camera transform. Both
+sensors are bolted to the chassis, so that transform is invariant to chassis
+tilt: the scale it yields is independent of how the body or floor is pitched.
+(An earlier floor-plane anchor was rejected for exactly that reason: it fit a
+narrow near-floor band, extrapolated out to the walls, and shifted with the
+camera->floor angle -- measured ~1.5 deg across rest positions.)
 
 A 2D scan samples a single height -- a thin curved band in the image -- but the
-correction is a global affine in disparity (the same model the floor fit uses), so
-fitting on that band and applying everywhere is valid as long as the band spans a
-range of depths. When it doesn't (too few returns in view, or all at one range),
-`rescale` returns None and the caller holds the last good fit.
+correction is a global affine in disparity, so fitting on that band and applying
+everywhere is valid as long as the band spans a range of depths. When it doesn't
+(too few returns in view, or all at one range), `rescale` returns None and the
+caller holds the last good fit.
 
 The affine is fit by robust regression (Theil-Sen), not by maximizing inlier count.
 The pairs scatter to both sides of the true line, so a count objective is multimodal
@@ -32,10 +35,33 @@ degeneracy (a <= ~0), not an absolute scale.
 import cv2
 import numpy as np
 
-from mote_perception.depth_rescale import (
-    apply_affine_disparity,
-    fit_affine_disparity_theilsen,
-)
+
+def fit_affine_disparity_theilsen(pred, true, inlier_thresh=0.08):
+    """Robust regression of 1/true = a*(1/pred) + b via Theil-Sen.
+
+    The median of all pairwise slopes, then the median intercept -- a unique,
+    stable central estimate. Deterministic (full pairwise, no sampling) and
+    robust to ~29% outliers. Returns (a, b, inlier_fraction); inlier_thresh is
+    in disparity units (1/m).
+    """
+    p = 1.0 / np.maximum(pred, 1e-3)
+    q = 1.0 / np.maximum(true, 1e-3)
+    n = len(p)
+    if n < 3:
+        return 1.0, 0.0, 0.0
+    i, j = np.triu_indices(n, 1)
+    dp = p[j] - p[i]
+    nz = dp != 0
+    a = float(np.median((q[j] - q[i])[nz] / dp[nz]))
+    b = float(np.median(q - a * p))
+    frac = float(np.mean(np.abs(q - (a * p + b)) < inlier_thresh))
+    return a, b, frac
+
+
+def apply_affine_disparity(depth, a, b):
+    """Apply the disparity-space correction to a depth map (metres)."""
+    disp = a / np.maximum(depth, 1e-3) + b
+    return 1.0 / np.maximum(disp, 1e-3)
 
 
 def scan_to_points(ranges, angle_min, angle_increment, range_min, range_max):

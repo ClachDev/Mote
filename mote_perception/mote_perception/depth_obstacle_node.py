@@ -1,20 +1,17 @@
 """Off-board depth -> obstacle PointCloud2 node (no torch; runs anywhere).
 
 Subscribes the compressed camera stream, forwards each frame to the depth server
-(tools/depth_server.py, in the pixi depth environment) over a socket, metrically
-rescales the returned depth (against time-synced lidar range returns, falling back
-to the floor plane), back-projects to 3D, keeps points standing above the floor,
-and publishes them as a PointCloud2 for a Nav2 obstacle layer. The cloud is
-stamped with the IMAGE capture time so Nav2
-places it via tf at the moment it was seen — which is how the (off-board, ~0.6 s)
-latency is absorbed without inflation or a speed cap.
+(tools/depth_server.py, in the pixi depth environment; protocol in depth_wire.py),
+metrically rescales the returned depth against time-synced lidar range returns,
+back-projects to 3D, keeps points standing above the floor, and publishes them as
+a PointCloud2 for a Nav2 obstacle layer. The cloud is stamped with the IMAGE
+capture time so Nav2 places it via tf at the moment it was seen — which is how
+the (off-board, ~0.6 s) latency is absorbed without inflation or a speed cap.
 
 Lidar stays the primary, low-latency obstacle/clearing source; this is a slow
 supplementary marker for the low/thin things the 2D scan misses.
 """
 
-import socket
-import struct
 from collections import deque
 
 import cv2
@@ -33,14 +30,14 @@ from sensor_msgs.msg import (
 )
 import tf2_ros
 
+from mote_perception.depth_wire import DepthClient
 from mote_perception.ground_projection import (
     GroundProjector,
     fit_ground_plane,
     level_rotation,
     transform_to_matrix,
 )
-from mote_perception.depth_rescale import DepthFloorRescaler, apply_affine_disparity
-from mote_perception.lidar_rescale import LidarDepthRescaler
+from mote_perception.lidar_rescale import LidarDepthRescaler, apply_affine_disparity
 
 
 def make_xyzrgb_cloud(header, xyz, bgr):
@@ -83,16 +80,6 @@ def make_xyzrgb_cloud(header, xyz, bgr):
     return msg
 
 
-def recvall(sock, n):
-    buf = bytearray()
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            return None
-        buf.extend(chunk)
-    return bytes(buf)
-
-
 class DepthObstacleNode(Node):
     def __init__(self):
         super().__init__("depth_obstacle_node")
@@ -120,10 +107,6 @@ class DepthObstacleNode(Node):
         self.declare_parameter("pixel_stride", 3)
         self.declare_parameter("socket_timeout", 2.0)
         self.declare_parameter("publish_debug", True)
-        # "auto" = lidar-anchored scale, holding the last good fit when a scan can't
-        # constrain it (floor fit only until the first lidar fit, or when forced);
-        # "lidar" / "floor" force one source.
-        self.declare_parameter("rescale_source", "auto")
         self.declare_parameter("scan_topic", "/scan_filtered")
         self.declare_parameter("scan_max_dt", 0.2)
         # Fit the floor plane each frame and rotate the cloud level, removing residual
@@ -139,16 +122,20 @@ class DepthObstacleNode(Node):
         self.rmin = self.get_parameter("range_min").value
         self.rmax = self.get_parameter("range_max").value
         self.stride = self.get_parameter("pixel_stride").value
-        self.source = self.get_parameter("rescale_source").value
         self.scan_max_dt = float(self.get_parameter("scan_max_dt").value)
         self.plane_fit = self.get_parameter("plane_fit").value
         self.plane_max_tilt = float(self.get_parameter("plane_max_tilt_deg").value)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.client = DepthClient(
+            self.get_parameter("server_host").value,
+            int(self.get_parameter("server_port").value),
+            float(self.get_parameter("socket_timeout").value),
+            warn=lambda m: self.get_logger().warn(m, throttle_duration_sec=2.0),
+        )
         self.cam_info = None
         self.proj = None
-        self.rescaler = None
         self.lidar_rescaler = None
         self.scans = deque(maxlen=50)
         self.last_ab = None
@@ -158,26 +145,22 @@ class DepthObstacleNode(Node):
         self.last_c = 0.0  # floor-plane offset held with last_R
         self.diag = ""
         self.plane_diag = ""
-        self.rays_opt = None
-        self.sock = None
 
         self.create_subscription(CameraInfo, "camera_info", self._on_info, 10)
         # Depth 1: inference is slower than the frame rate, so only ever process the
         # freshest frame and let the rest drop -- a deeper queue would just feed stale
         # frames that publish an obstacle cloud already behind the robot.
         self.create_subscription(CompressedImage, "image/compressed", self._on_image, 1)
-        if self.source != "floor":
-            scan_topic = self.get_parameter("scan_topic").value
-            # Own callback group so scans keep buffering on another thread while the
-            # ~0.5 s blocking inference runs in _on_image (else the buffer goes stale
-            # and no scan lands near an image's capture stamp).
-            self.create_subscription(
-                LaserScan,
-                scan_topic,
-                self._on_scan,
-                10,
-                callback_group=MutuallyExclusiveCallbackGroup(),
-            )
+        # Own callback group so scans keep buffering on another thread while the
+        # ~0.5 s blocking inference runs in _on_image (else the buffer goes stale
+        # and no scan lands near an image's capture stamp).
+        self.create_subscription(
+            LaserScan,
+            self.get_parameter("scan_topic").value,
+            self._on_scan,
+            10,
+            callback_group=MutuallyExclusiveCallbackGroup(),
+        )
         self.pub = self.create_publisher(PointCloud2, "camera_obstacles", 5)
         self.debug = self.get_parameter("publish_debug").value
         if self.debug:
@@ -234,45 +217,36 @@ class DepthObstacleNode(Node):
         return True
 
     def _rescale(self, depth, stamp):
-        """Metric-rescale the depth map, preferring lidar.
+        """Metric-rescale the depth map against the time-nearest lidar scan.
 
-        Lidar scale when this scan constrains it; otherwise hold the last good lidar
-        (a, b) rather than fall back to the floor fit, which is the very method the
-        lidar replaces — falling back to it would reintroduce the over-range exactly
-        when lidar can't help (e.g. facing a flat wall, no depth spread). The floor
-        fit is used only before any lidar fit has succeeded, or when forced.
+        When the nearest scan can't constrain the fit (no time match, too few
+        pairs, no depth spread — e.g. facing a flat wall), hold the last good
+        (a, b): the correction drifts slowly, so a briefly stale scale beats a
+        missing cloud. Before the first successful fit there is nothing to hold
+        and the frame is skipped.
 
         Returns (corrected_depth, (a, b, frac), source) or (None, None, source).
         """
         self.diag = ""
-        if self.source != "floor":
-            if not self._ensure_lidar():
-                if self.source == "lidar":
-                    return None, None, "lidar"
-            else:
-                scan, dt_ms = self._nearest_scan(stamp)
-                if scan is not None and dt_ms <= self.scan_max_dt * 1e3:
-                    out = self.lidar_rescaler.rescale(depth, scan)
-                    self.diag = (
-                        f"  scans {len(self.scans)} dt {dt_ms:.0f}ms "
-                        f"pairs {self.lidar_rescaler.last_npairs}"
-                    )
-                    if out is not None:
-                        self.last_ab = out[1][:2]
-                        return (*out, "lidar")
-                else:
-                    dt = f"{dt_ms:.0f}ms" if dt_ms is not None else "n/a"
-                    self.diag = f"  scans {len(self.scans)} dt {dt} (no match)"
-                if self.last_ab is not None:
-                    a, b = self.last_ab
-                    return (
-                        apply_affine_disparity(depth, a, b),
-                        (a, b, float("nan")),
-                        "hold",
-                    )
-                if self.source == "lidar":
-                    return None, None, "lidar"
-        return (*self.rescaler.rescale(depth), "floor")
+        if not self._ensure_lidar():
+            return None, None, "lidar"
+        scan, dt_ms = self._nearest_scan(stamp)
+        if scan is not None and dt_ms <= self.scan_max_dt * 1e3:
+            out = self.lidar_rescaler.rescale(depth, scan)
+            self.diag = (
+                f"  scans {len(self.scans)} dt {dt_ms:.0f}ms "
+                f"pairs {self.lidar_rescaler.last_npairs}"
+            )
+            if out is not None:
+                self.last_ab = out[1][:2]
+                return (*out, "lidar")
+        else:
+            dt = f"{dt_ms:.0f}ms" if dt_ms is not None else "n/a"
+            self.diag = f"  scans {len(self.scans)} dt {dt} (no match)"
+        if self.last_ab is not None:
+            a, b = self.last_ab
+            return apply_affine_disparity(depth, a, b), (a, b, float("nan")), "hold"
+        return None, None, "lidar"
 
     def _ground_correct(self, pts):
         """Rotate the cloud so the fitted floor plane is level.
@@ -314,67 +288,10 @@ class DepthObstacleNode(Node):
             return False
         T = transform_to_matrix(tf.transform.translation, tf.transform.rotation)
         self.proj = GroundProjector.from_camera_info(self.cam_info, T)
-        self.rescaler = DepthFloorRescaler(self.proj)
-        u, v = np.meshgrid(np.arange(self.proj.width), np.arange(self.proj.height))
-        uv = (
-            np.column_stack([u.ravel(), v.ravel()]).astype(np.float64).reshape(-1, 1, 2)
-        )
-        norm = cv2.undistortPoints(uv, self.proj.K, self.proj.D).reshape(-1, 2)
-        self.rays_opt = np.column_stack([norm[:, 0], norm[:, 1], np.ones(len(norm))])
         self.get_logger().info(
             f"setup done: camera at {self.proj.camera_height:.3f} m; publishing obstacles"
         )
         return True
-
-    def _drop_connection(self):
-        if self.sock is not None:
-            try:
-                self.sock.close()
-            except OSError:
-                pass
-            self.sock = None
-
-    def _connect(self):
-        if self.sock is not None:
-            return self.sock
-        host = self.get_parameter("server_host").value
-        port = self.get_parameter("server_port").value
-        timeout = float(self.get_parameter("socket_timeout").value)
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(timeout)
-            s.connect((host, port))
-            self.sock = s
-            self.get_logger().info(f"connected to depth server {host}:{port}")
-        except OSError as e:
-            self.get_logger().warn(f"depth server unavailable ({e}); skipping frame")
-            self.sock = None
-        return self.sock
-
-    def _infer(self, jpeg):
-        s = self._connect()
-        if s is None:
-            return None
-        try:
-            s.sendall(struct.pack(">I", len(jpeg)) + jpeg)
-            hdr = recvall(s, 8)
-            if hdr is None:
-                raise ConnectionError("server closed")
-            h, w = struct.unpack(">II", hdr)
-            if h == 0 or w == 0:
-                self.get_logger().warn(
-                    "depth server rejected frame; skipping", throttle_duration_sec=2.0
-                )
-                return None
-            body = recvall(s, h * w * 4)
-            if body is None:
-                raise ConnectionError("server closed mid-depth")
-            depth = np.frombuffer(body, np.float32).reshape(h, w)
-            return depth
-        except (OSError, ConnectionError) as e:
-            self.get_logger().warn(f"inference failed ({e}); will reconnect")
-            self._drop_connection()
-            return None
 
     def _subscribed(self, pub):
         return pub is not None and pub.get_subscription_count() > 0
@@ -401,7 +318,7 @@ class DepthObstacleNode(Node):
                 throttle_duration_sec=2.0,
             )
             return
-        depth = self._infer(blob)
+        depth = self.client.infer(blob)
         if depth is None:
             return
         if depth.shape != (self.proj.height, self.proj.width):
@@ -428,8 +345,7 @@ class DepthObstacleNode(Node):
         if not (obs or full):  # only the corrected map was wanted
             return
 
-        d = depth_corr.ravel()
-        pts = (self.rays_opt * d[:, None]) @ self.proj.R.T + self.proj.C
+        pts = self.proj.back_project(depth_corr)
         pts = self._ground_correct(pts)
         bx, by, bz = pts[:, 0], pts[:, 1], pts[:, 2]
         rng = np.hypot(bx, by)
@@ -489,6 +405,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        node.client.close()
         node.destroy_node()
         rclpy.try_shutdown()
 

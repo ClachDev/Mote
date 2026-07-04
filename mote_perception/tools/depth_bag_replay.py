@@ -22,86 +22,20 @@ Then, in the dev/default env (needs cv2 + rosbag2_py):
 """
 
 import argparse
-import socket
-import struct
 import sys
 import tempfile
 
 import cv2
 import numpy as np
-from rclpy.serialization import deserialize_message
-import rosbag2_py
-from sensor_msgs.msg import CameraInfo, CompressedImage, LaserScan
-from tf2_msgs.msg import TFMessage
 
-from mote_perception.ground_projection import chain_static_transforms
-from mote_perception.depth_rescale import fit_affine_disparity_theilsen
-from mote_perception.lidar_rescale import LidarDepthRescaler
+import bag_utils
+from mote_perception.depth_wire import DEFAULT_PORT, DepthClient
+from mote_perception.lidar_rescale import (
+    LidarDepthRescaler,
+    fit_affine_disparity_theilsen,
+)
 
 A_MIN = 0.5  # below this the lidar fit has collapsed to a degenerate/inverted line
-
-
-def recvall(s, n):
-    buf = bytearray()
-    while len(buf) < n:
-        c = s.recv(n - len(buf))
-        if not c:
-            return None
-        buf.extend(c)
-    return bytes(buf)
-
-
-def infer(jpeg, host, port):
-    """Send one JPEG to the depth server and return the float32 depth map."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.connect((host, port))
-    except OSError as e:
-        sys.exit(
-            f"could not reach depth server at {host}:{port} ({e}); "
-            f"start it with `env -u PYTHONPATH pixi run depth-server`"
-        )
-    s.sendall(struct.pack(">I", len(jpeg)) + jpeg)
-    hdr = recvall(s, 8)
-    if hdr is None:
-        sys.exit("depth server closed without replying (check its log for a traceback)")
-    h, w = struct.unpack(">II", hdr)
-    if h == 0 or w == 0:
-        s.close()
-        return None
-    body = recvall(s, h * w * 4)
-    s.close()
-    return np.frombuffer(body, np.float32).reshape(h, w)
-
-
-def load(bag):
-    r = rosbag2_py.SequentialReader()
-    r.open(
-        rosbag2_py.StorageOptions(uri=bag, storage_id="mcap"),
-        rosbag2_py.ConverterOptions("", ""),
-    )
-    imgs, scans, tf_static, caminfo = [], [], None, None
-    while r.has_next():
-        topic, data, t = r.read_next()
-        if topic == "/image_raw/compressed":
-            imgs.append((t, bytes(deserialize_message(data, CompressedImage).data)))
-        elif topic == "/scan_filtered":
-            scans.append((t, deserialize_message(data, LaserScan)))
-        elif topic == "/tf_static" and tf_static is None:
-            tf_static = deserialize_message(data, TFMessage)
-        elif topic == "/camera_info" and caminfo is None:
-            caminfo = deserialize_message(data, CameraInfo)
-    if not imgs or not scans or tf_static is None or caminfo is None:
-        sys.exit(
-            "bag is missing one of /image_raw/compressed /scan_filtered "
-            "/tf_static /camera_info -- record the `perception` stream"
-        )
-    return imgs, scans, tf_static, caminfo
-
-
-def colorize(d, vmax):
-    d = np.clip(np.nan_to_num(d), 0, vmax)
-    return cv2.applyColorMap((255 * d / vmax).astype(np.uint8), cv2.COLORMAP_TURBO)
 
 
 def main():
@@ -112,30 +46,29 @@ def main():
         "--out", default=None, help="dir for colorized PNGs (default: temp)"
     )
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=5601)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = ap.parse_args()
     out = args.out or tempfile.mkdtemp(prefix="depth_replay_")
 
-    imgs, scans, tf_static, caminfo = load(args.bag)
+    imgs, scans, tf_static, caminfo = bag_utils.load_perception_bag(args.bag)
     print(f"{len(imgs)} imgs, {len(scans)} scans; writing PNGs to {out}")
 
     # T_optical_scan = inv(T_base_optical) @ T_base_scan (camera and lidar are
     # siblings under base_footprint), built from the bag's static transforms.
-    T_bo = chain_static_transforms(
-        tf_static.transforms, "camera_optical_link", "base_footprint"
-    )
-    T_bs = chain_static_transforms(
-        tf_static.transforms, "lidar_scan_link", "base_footprint"
-    )
+    T_bo, T_bs = bag_utils.base_transforms(tf_static, scans)
     resc = LidarDepthRescaler(caminfo.k, caminfo.d, np.linalg.inv(T_bo) @ T_bs)
+
+    client = DepthClient(args.host, args.port)
+    if client.connect() is None:
+        sys.exit("start the server with `pixi run depth-server` (or `pixi run depth`)")
 
     for k, i in enumerate(np.linspace(0, len(imgs) - 1, args.frames).astype(int)):
         ts, jpeg = imgs[i]
-        depth = infer(jpeg, args.host, args.port)
+        depth = client.infer(jpeg)
         if depth is None:
-            print(f"[f{k:>2}] server rejected frame")
+            print(f"[f{k:>2}] no depth for this frame")
             continue
-        _, scan = min(scans, key=lambda s: abs(s[0] - ts))
+        _, scan = bag_utils.nearest_scan(scans, ts)
         pred, true = resc.pairs(scan, depth)
         rd = depth[np.isfinite(depth)]
         line = (
@@ -158,9 +91,9 @@ def main():
                     f"med {np.median(cf):.2f} >20m {100 * (cf > 20).mean():.1f}%"
                 )
         print(line)
-        cv2.imwrite(f"{out}/f{k:02d}_raw.png", colorize(depth, 8.0))
+        cv2.imwrite(f"{out}/f{k:02d}_raw.png", bag_utils.colorize(depth, 8.0))
         if corr is not None:
-            cv2.imwrite(f"{out}/f{k:02d}_corr.png", colorize(corr, 5.0))
+            cv2.imwrite(f"{out}/f{k:02d}_corr.png", bag_utils.colorize(corr, 5.0))
 
 
 if __name__ == "__main__":

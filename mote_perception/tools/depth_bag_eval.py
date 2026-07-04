@@ -27,26 +27,26 @@ depth_bag_replay.py), in the dev/default env:
 
 import argparse
 import os
+import sys
 import tempfile
 import time
 
 import cv2
 import numpy as np
 
-from mote_perception.depth_rescale import (
-    apply_affine_disparity,
-    fit_affine_disparity_theilsen,
-)
+import bag_utils
+from mote_perception.depth_wire import DEFAULT_PORT, DepthClient
 from mote_perception.ground_projection import (
     GroundProjector,
-    chain_static_transforms,
     fit_ground_plane,
     level_rotation,
 )
-from mote_perception.lidar_rescale import LidarDepthRescaler, scan_to_points
-
-# sibling tool (same dir is on sys.path when run as a script): bag loader + server client
-import depth_bag_replay as rep
+from mote_perception.lidar_rescale import (
+    LidarDepthRescaler,
+    apply_affine_disparity,
+    fit_affine_disparity_theilsen,
+    scan_to_points,
+)
 
 
 def _err(pred, true):
@@ -73,11 +73,9 @@ def _accuracy(pred, true):
     return raw_ar, raw_d1, al_ar, al_d1
 
 
-def _cloud(depth, proj, rays_opt, stride=4):
-    d = depth.ravel()[::stride]
-    pts = (rays_opt[::stride] * d[:, None]) @ proj.R.T + proj.C
-    ok = np.isfinite(pts).all(1)
-    return pts[ok]
+def _cloud(depth, proj, stride=4):
+    pts = proj.back_project(depth, stride)
+    return pts[np.isfinite(pts).all(1)]
 
 
 def _scatter(xs, ys, xlim, ylim, size=(360, 480), flipy=True):
@@ -100,34 +98,32 @@ def main():
     ap.add_argument("--frames", type=int, default=8)
     ap.add_argument("--out", default=None)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=5601)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = ap.parse_args()
     out = args.out or tempfile.mkdtemp(prefix=f"depth_eval_{args.label}_")
     os.makedirs(out, exist_ok=True)
 
-    imgs, scans, tf_static, caminfo = rep.load(args.bag)
-    T_bo = chain_static_transforms(
-        tf_static.transforms, "camera_optical_link", "base_footprint"
-    )
-    T_bs = chain_static_transforms(
-        tf_static.transforms, "lidar_scan_link", "base_footprint"
-    )
+    imgs, scans, tf_static, caminfo = bag_utils.load_perception_bag(args.bag)
+    T_bo, T_bs = bag_utils.base_transforms(tf_static, scans)
     resc = LidarDepthRescaler(caminfo.k, caminfo.d, np.linalg.inv(T_bo) @ T_bs)
     proj = GroundProjector.from_camera_info(caminfo, T_bo)
     H, W = proj.height, proj.width
-    u, v = np.meshgrid(np.arange(W), np.arange(H))
-    uv = np.column_stack([u.ravel(), v.ravel()]).astype(np.float64).reshape(-1, 1, 2)
-    norm = cv2.undistortPoints(uv, proj.K, proj.D).reshape(-1, 2)
-    rays_opt = np.column_stack([norm[:, 0], norm[:, 1], np.ones(len(norm))])
+
+    client = DepthClient(args.host, args.port)
+    if client.connect() is None:
+        sys.exit("start the server with `pixi run depth-server` (or `pixi run depth`)")
 
     lat, acc = [], []
     print(f"{args.label}: {len(imgs)} imgs; writing to {out}")
     for k, i in enumerate(np.linspace(0, len(imgs) - 1, args.frames).astype(int)):
         ts, jpeg = imgs[i]
         t0 = time.perf_counter()
-        depth = rep.infer(jpeg, args.host, args.port)
+        depth = client.infer(jpeg)
+        if depth is None:
+            print(f"[f{k:>2}] no depth for this frame")
+            continue
         lat.append((time.perf_counter() - t0) * 1000)
-        _, scan = min(scans, key=lambda s: abs(s[0] - ts))
+        _, scan = bag_utils.nearest_scan(scans, ts)
         pred, true = resc.pairs(scan, depth)
         m = _accuracy(pred, true)
         if m:
@@ -137,7 +133,7 @@ def main():
         corr = apply_affine_disparity(depth, a, b)
 
         # depth map + lidar overlay (project lidar points, color by true range)
-        dimg = rep.colorize(depth, 8.0)
+        dimg = bag_utils.colorize(depth, 8.0)
         pts_l = scan_to_points(
             scan.ranges,
             scan.angle_min,
@@ -152,13 +148,13 @@ def main():
                 po[front].reshape(-1, 1, 3), np.zeros(3), np.zeros(3), proj.K, proj.D
             )[0].reshape(-1, 2)
             rng = po[front, 2]
-            cols = rep.colorize(rng.reshape(1, -1), 8.0).reshape(-1, 3)
+            cols = bag_utils.colorize(rng.reshape(1, -1), 8.0).reshape(-1, 3)
             for (xp, yp), c in zip(px, cols):
                 if 0 <= xp < W and 0 <= yp < H:
                     cv2.circle(dimg, (int(xp), int(yp)), 3, [int(x) for x in c], -1)
         cv2.imwrite(f"{out}/{args.label}_f{k:02d}_depth.png", dimg)
 
-        cloud = _cloud(corr, proj, rays_opt)
+        cloud = _cloud(corr, proj)
         cv2.imwrite(
             f"{out}/{args.label}_f{k:02d}_side.png",
             _scatter(cloud[:, 0], cloud[:, 2], (0, 4), (-0.1, 1.6)),

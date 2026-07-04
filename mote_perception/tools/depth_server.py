@@ -11,18 +11,18 @@ discarded anyway, and the relative model measured both more accurate and faster 
 tools/depth_bag_eval.py). Relative models output disparity, so it's inverted to depth
 here; pass --metric for a metric model (depth already in metres, no inversion).
 
-Protocol (length-prefixed, big-endian):
-  request : uint32 nbytes, then `nbytes` of JPEG/PNG-compressed image
-  reply   : uint32 H, uint32 W, then H*W float32 depth (row-major, metres)
-            H=0 or W=0 means the frame was rejected (no payload follows)
+The wire protocol lives in mote_perception/depth_wire.py (shared with the node and
+the offline tools). This file runs uninstalled in the torch env, so the package is
+imported straight from the source tree.
 """
 
 import argparse
 import io
 import os
 import socket
-import struct
+import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -30,26 +30,23 @@ import torch.nn.functional as F
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mote_perception.depth_wire import (  # noqa: E402
+    DEFAULT_PORT,
+    recv_image,
+    send_depth,
+    send_rejection,
+)
+
 MODEL = (
     "depth-anything/Depth-Anything-V2-Small-hf"  # relative (SSI); see module docstring
 )
-ERROR_REPLY = struct.pack(">II", 0, 0)
-
-
-def recvall(conn, n):
-    buf = bytearray()
-    while len(buf) < n:
-        chunk = conn.recv(n - len(buf))
-        if not chunk:
-            return None
-        buf.extend(chunk)
-    return bytes(buf)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=5601)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--model", default=MODEL)
     # Default model is relative (outputs disparity, near=large) -> invert to depth so
     # the node (which expects depth, then refits scale) works. --metric: the model
@@ -73,13 +70,10 @@ def main():
         print("client", addr)
         try:
             while True:
-                hdr = recvall(conn, 4)
-                if hdr is None:
-                    break
-                (n,) = struct.unpack(">I", hdr)
-                blob = recvall(conn, n)
+                blob = recv_image(conn)
                 if blob is None:
                     break
+                depth = None
                 try:
                     img = Image.open(io.BytesIO(blob)).convert("RGB")
                     W, H = img.size
@@ -87,25 +81,25 @@ def main():
                     inputs = proc(images=img, return_tensors="pt")
                     with torch.no_grad():
                         pred = model(**inputs).predicted_depth
-                    depth = (
+                    out = (
                         F.interpolate(
                             pred[None], size=(H, W), mode="bicubic", align_corners=False
                         )[0, 0]
                         .numpy()
                         .astype(np.float32)
                     )
-                    if (
-                        not args.metric
-                    ):  # disparity -> depth; clamp far (disp~0) to ~1 km
-                        depth = (1.0 / np.maximum(depth, 1e-3)).astype(np.float32)
+                    if not args.metric:  # disparity -> depth; clamp far (disp~0)
+                        out = (1.0 / np.maximum(out, 1e-3)).astype(np.float32)
                     dt = (time.perf_counter() - t0) * 1000
-                    reply = struct.pack(">II", H, W) + depth.tobytes()
-                    log = f"served {W}x{H} in {dt:.0f} ms"
+                    depth, log = out, f"served {W}x{H} in {dt:.0f} ms"
                 except OSError as e:
-                    reply, log = ERROR_REPLY, f"bad frame ({e}); skipping"
+                    log = f"bad frame ({e}); skipping"
                 except Exception as e:
-                    reply, log = ERROR_REPLY, f"inference failed ({e}); skipping"
-                conn.sendall(reply)
+                    log = f"inference failed ({e}); skipping"
+                if depth is None:
+                    send_rejection(conn)
+                else:
+                    send_depth(conn, depth)
                 print(log)
         except OSError:
             pass

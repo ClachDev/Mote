@@ -1,11 +1,10 @@
-"""Pixel <-> ground-plane geometry for the monocular obstacle detector.
+"""Camera <-> base-frame geometry for the monocular obstacle detector.
 
-The camera is rigidly mounted, so the mapping between image pixels and the floor
-plane (z=0 in base_footprint) is a fixed function of the camera intrinsics and the
-static camera->base transform. This module computes that mapping once and is
-imported by both the offline bag harness and the live ROS node, so the two cannot
-drift apart ("real" and "sim must match" only means something if the geometry is
-shared).
+The camera is rigidly mounted, so back-projection into the base frame and the
+mapping to the floor plane (z=0 in base_footprint) are fixed functions of the
+camera intrinsics and the static camera->base transform. This module computes
+them once and is imported by both the offline bag harnesses and the live ROS
+node, so the two cannot drift apart.
 
 Conventions:
 - Optical frame (REP-103): z forward, x right, y down.
@@ -150,6 +149,7 @@ class GroundProjector:
         self.T_base_optical = np.asarray(T_base_optical, dtype=np.float64)
         self.R = self.T_base_optical[:3, :3]
         self.C = self.T_base_optical[:3, 3]  # camera origin in base frame
+        self._rays = None
 
     @classmethod
     def from_camera_info(cls, cam_info, T_base_optical):
@@ -157,27 +157,28 @@ class GroundProjector:
             cam_info.k, cam_info.d, cam_info.width, cam_info.height, T_base_optical
         )
 
-    def pixels_to_ground(self, uv):
-        """Project image pixels onto the floor plane (z=0) in the base frame.
+    def pixel_rays(self):
+        """Undistorted unit-z optical-frame rays for every pixel, row-major (H*W, 3).
 
-        `uv` is an (N, 2) array of (u, v) pixel coords. Returns an (N, 3) array of
-        (x, y, 0) base-frame points and an (N,) boolean mask of which rays actually
-        hit the floor in front of the camera (rays at/above the horizon are False
-        and their points are NaN).
+        Cached: the grid depends only on the intrinsics. Multiplying by a depth
+        map's raveled values back-projects the whole frame; see `back_project`.
         """
-        uv = np.asarray(uv, dtype=np.float64).reshape(-1, 1, 2)
-        # Undistort to normalized image coords, then a unit-z ray in the optical frame.
-        norm = cv2.undistortPoints(uv, self.K, self.D).reshape(-1, 2)
-        rays_opt = np.column_stack([norm[:, 0], norm[:, 1], np.ones(len(norm))])
-        rays_base = rays_opt @ self.R.T  # rotate directions into base frame
-        dz = rays_base[:, 2]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            lam = -self.C[2] / dz  # C_z + lam*dz = 0
-        valid = (dz < 0) & (lam > 0) & np.isfinite(lam)
-        pts = self.C[None, :] + lam[:, None] * rays_base
-        pts[:, 2] = 0.0
-        pts[~valid] = np.nan
-        return pts, valid
+        if self._rays is None:
+            u, v = np.meshgrid(np.arange(self.width), np.arange(self.height))
+            uv = np.column_stack([u.ravel(), v.ravel()]).astype(np.float64)
+            norm = cv2.undistortPoints(uv.reshape(-1, 1, 2), self.K, self.D)
+            norm = norm.reshape(-1, 2)
+            self._rays = np.column_stack([norm[:, 0], norm[:, 1], np.ones(len(norm))])
+        return self._rays
+
+    def back_project(self, depth, stride=1):
+        """Depth map -> (N, 3) base-frame points, in row-major pixel order.
+
+        With stride > 1 every stride-th pixel is used (N = ceil(H*W/stride));
+        stride 1 keeps the output index-aligned with the raveled pixel grid.
+        """
+        d = np.asarray(depth).ravel()[::stride]
+        return (self.pixel_rays()[::stride] * d[:, None]) @ self.R.T + self.C
 
     def ground_to_pixels(self, xy):
         """Project floor points (base frame, z=0) back into the image.
