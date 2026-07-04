@@ -175,7 +175,6 @@ class GroundProjector:
             lam = -self.C[2] / dz  # C_z + lam*dz = 0
         valid = (dz < 0) & (lam > 0) & np.isfinite(lam)
         pts = self.C[None, :] + lam[:, None] * rays_base
-        pts[~valid] = np.nan
         pts[:, 2] = 0.0
         pts[~valid] = np.nan
         return pts, valid

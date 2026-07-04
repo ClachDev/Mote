@@ -158,7 +158,6 @@ class DepthObstacleNode(Node):
         self.last_c = 0.0  # floor-plane offset held with last_R
         self.diag = ""
         self.plane_diag = ""
-        self.grid = None
         self.rays_opt = None
         self.sock = None
 
@@ -317,8 +316,9 @@ class DepthObstacleNode(Node):
         self.proj = GroundProjector.from_camera_info(self.cam_info, T)
         self.rescaler = DepthFloorRescaler(self.proj)
         u, v = np.meshgrid(np.arange(self.proj.width), np.arange(self.proj.height))
-        self.grid = (u.ravel(), v.ravel())
-        uv = np.column_stack(self.grid).astype(np.float64).reshape(-1, 1, 2)
+        uv = (
+            np.column_stack([u.ravel(), v.ravel()]).astype(np.float64).reshape(-1, 1, 2)
+        )
         norm = cv2.undistortPoints(uv, self.proj.K, self.proj.D).reshape(-1, 2)
         self.rays_opt = np.column_stack([norm[:, 0], norm[:, 1], np.ones(len(norm))])
         self.get_logger().info(
