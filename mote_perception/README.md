@@ -58,17 +58,15 @@ On the robot, facing a cluttered floor:
 
 *Go-under gate: green (≤ 0.18 m) marks so Nav2 avoids the legs; red is above the robot's height and passable — it paths through the gap beneath a seat or tabletop.*
 
-![Camera obstacles (cyan) filling in where the 2D lidar (magenta) is blind.](../docs/images/perception_camera_vs_lidar_bev.webp)
-
-*Bird's-eye view: camera points (cyan) catch the low stool the single lidar plane (magenta) barely grazes.*
-
 Pipeline: **Depth Anything V2-Small (relative)** gives a dense disparity map,
 inverted to depth. Its scale is arbitrary, so every frame is **metrically rescaled
 by an affine-in-disparity fit (Theil-Sen) anchored to lidar range returns**
 (`lidar_rescale.py`) — the lidar gives metric truth through a chassis-fixed
-transform that's invariant to body/floor tilt; the floor-plane fit
-(`depth_rescale.py`) is only a fallback before the first lidar fit. The floor plane
-is then fit per frame and the cloud rotated level (`ground_projection.py`) to remove
+transform that's invariant to body/floor tilt. When a scan can't constrain the
+fit (facing a flat wall, no depth spread) the last good correction is held; before
+the first fit the frame is skipped. (An earlier floor-plane scale anchor was
+removed: it shifted with floor slope and resting pitch.) The floor plane is then
+fit per frame and the cloud rotated level (`ground_projection.py`) to remove
 residual camera tilt, so a point's z is its true height above the floor. Points
 above `z_obstacle` (default 0.02 m) become the cloud, stamped at **image-capture
 time** so Nav2 places it via tf at the moment it was seen (this is how the off-board
@@ -88,6 +86,11 @@ as two processes:
   ```bash
   pixi run depth
   ```
+
+The wire protocol between them (length-prefixed TCP frames) is defined in one
+place, `mote_perception/depth_wire.py` — the spec, the framing helpers, the
+`DepthClient` used by the node and the offline tools, and the reasons a
+hand-rolled protocol beats gRPC/ROS for this link are all in its docstring.
 
 Key params: `z_obstacle` (height deadband, default 0.02 m — below ~1.5 cm floor
 noise false-positives), `range_min`/`range_max` (default 0.25–1.2 m: the mount's
@@ -141,6 +144,20 @@ depth node in-mission by design (it is off-board). Then check, in order:
    new pose can tilt the floor above the 0.02 m gate. Static-frame evals can't
    surface this; if it appears, tighten `plane_max_tilt_deg` or the fit gates.
 
-Everything is developed and validated offline against recorded bags:
-`tools/depth_obstacles.py` overlays the obstacle decision and compares the cloud
-to lidar; other `tools/*.py` are the spike harnesses behind the design.
+### Offline tools
+
+Everything is developed and validated offline against recorded bags
+(`pixi run record`). All run in the dev/default env; the three depth tools need a
+server up (`pixi run depth-server`). Shared bag loading lives in
+`tools/bag_utils.py`; each tool's docstring has the details.
+
+- `depth_bag_replay.py` — re-runs the exact pipeline on a bag; prints per-frame
+  fit diagnostics (the rig that found the RANSAC bistability).
+- `depth_bag_eval.py` — model accuracy/speed vs lidar, plus side/BEV inspection
+  views; model-agnostic, for comparing depth servers.
+- `depth_obstacles.py` — decision-level overlay (what marks and why) and the
+  camera-vs-lidar BEV, both point sets transformed into `base_footprint`.
+- `bag_overlay.py` — geometry sanity check: floor grid + lidar projected into
+  the camera frames.
+- `measure_camera_pitch.py` — live checkerboard measurement of camera
+  pitch/roll/height (mount calibration).
