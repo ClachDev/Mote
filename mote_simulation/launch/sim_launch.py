@@ -16,6 +16,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.conditions import IfCondition
@@ -164,6 +165,35 @@ def generate_launch_description():
             condition=IfCondition(EqualsSubstitution(mode, mode_value)),
         )
 
+    # Every world ships a sibling <world>.zones.yaml giving the task layer's
+    # named zones (pickup/dropoff/home) coordinates valid in that world, so a
+    # fetch mission runs anywhere on the world ladder. Whenever a mission mode
+    # is up (Nav2 running), include the real tasks_launch.py with the matching
+    # zones file — on the robot the same launch resolves zones from the active
+    # site instead.
+    def task_layer(context):
+        if LaunchConfiguration("mode").perform(context) == "none":
+            return []
+        world_file = LaunchConfiguration("world").perform(context)
+        zones = os.path.join(
+            sim_share, "worlds", world_file.removesuffix(".sdf") + ".zones.yaml"
+        )
+        return [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        get_package_share_directory("mote_tasks"),
+                        "launch",
+                        "tasks_launch.py",
+                    )
+                ),
+                launch_arguments={
+                    "zones_file": zones,
+                    "use_sim_time": "true",
+                }.items(),
+            )
+        ]
+
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -192,5 +222,6 @@ def generate_launch_description():
             localization,
             mission("mapping_launch.py", "mapping"),
             mission("robot_launch.py", "nav"),
+            OpaqueFunction(function=task_layer),
         ]
     )
