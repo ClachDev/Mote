@@ -10,7 +10,7 @@ submodules = "git submodule update --init"
 build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5", depends-on = [
     "submodules",
 ] }
-test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_tasks mote_perception --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_perception mote_tasks --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
 
@@ -41,6 +41,7 @@ record = "ros2 launch mote_bringup record_launch.py"
 depth = "bash mote_perception/tools/depth_workstation.sh"
 # GPU (AMD ROCm) variant of `depth`; falls back to CPU if no usable GPU is found.
 depth-rocm = "bash mote_perception/tools/depth_workstation.sh rocm"
+detect = "bash mote_perception/tools/detect_workstation.sh"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
 
 #### The below tasks are tied to specific features and environments however they
@@ -121,6 +122,7 @@ ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
 ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
 ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
+ros-jazzy-vision-msgs = ">=4.1.0"
 ros-jazzy-xacro = ">=2.0.0"
 scservo-linux = "==1.0.0"
 ros-jazzy-ament-cmake-gtest = ">=2.5"
@@ -158,10 +160,15 @@ ros-jazzy-gz-ros2-control = "*"
 numpy = ">=1.26,<3"
 pillow = ">=10,<13"
 pytorch = ">=2,<3"
+# scipy: undeclared requirement of transformers' Owlv2ImageProcessor
+scipy = ">=1,<2"
 transformers = ">=4,<5"
 
+# -u: the servers log by printing; unbuffered stdout so the lines survive
+# redirection to a file (block buffering otherwise holds them indefinitely)
 [feature.depth.tasks]
-depth-server = "python mote_perception/tools/depth_server.py"
+depth-server = "python -u mote_perception/tools/depth_server.py"
+detect-server = "python -u mote_perception/tools/detect_server.py"
 
 # GPU-accelerated sibling of the `depth` feature (env `depth-rocm`). Same server,
 # but torch comes from the pytorch.org ROCm wheel index instead of conda-forge so

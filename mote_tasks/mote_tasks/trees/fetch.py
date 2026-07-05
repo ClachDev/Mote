@@ -1,36 +1,25 @@
-"""The fetch tree: wait for a task, drive to the object, pick it up,
-drive to the drop zone, place it.
+"""The fetch tree: wait for a task, acquire the object's pose, drive to it,
+pick it up, drive to the drop zone, place it.
 
 The task server owns the blackboard keys: ``task`` (a human-readable task
-string, None when idle) plus the two poses. The tree idles in WaitForTask
-until ``task`` is set, runs the mission, and the server clears ``task``
-when the root reports SUCCESS or FAILURE.
+string, None when idle), the two poses, and ``object_label``. A zone target
+arrives with ``object_pose`` already set and AcquireObject passes through; a
+label target arrives with ``object_label`` set instead and AcquireObject asks
+the detector for a matching pose. The tree idles in WaitForTask until ``task``
+is set, runs the mission, and the server clears ``task`` when the root reports
+SUCCESS or FAILURE.
 """
 
 import py_trees
 
 from mote_tasks.behaviours.manipulation import TimedStub
 from mote_tasks.behaviours.nav import DriveTo
+from mote_tasks.behaviours.perception import AcquireObject
 
 TASK_KEY = "task"
 OBJECT_POSE_KEY = "object_pose"
+OBJECT_LABEL_KEY = "object_label"
 DROP_POSE_KEY = "drop_pose"
-
-COMMAND = "fetch"
-
-
-def parse_command(zones: dict, words: list):
-    """Parse a ``fetch <object_zone> <drop_zone>`` command against known zones.
-
-    Returns (object_pose, drop_pose) on success; raises ValueError with a
-    user-facing message on failure.
-    """
-    if len(words) != 3 or words[0] != COMMAND:
-        raise ValueError(f"expected: {COMMAND} <object_zone> <drop_zone>")
-    unknown = [w for w in words[1:] if w not in zones]
-    if unknown:
-        raise ValueError(f"unknown zone(s) {unknown}, have {sorted(zones)}")
-    return zones[words[1]], zones[words[2]]
 
 
 class WaitForTask(py_trees.behaviour.Behaviour):
@@ -55,6 +44,7 @@ def create_fetch_tree(
         memory=True,
         children=[
             WaitForTask(),
+            AcquireObject("acquire_object", OBJECT_POSE_KEY, OBJECT_LABEL_KEY),
             DriveTo("drive_to_object", OBJECT_POSE_KEY),
             TimedStub("pick", pick_duration),
             DriveTo("drive_to_drop", DROP_POSE_KEY),

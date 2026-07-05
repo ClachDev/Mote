@@ -1,16 +1,19 @@
 # mote_perception
 
-Home for Mote's camera-derived perception nodes. This is **L0 (Foundation)** of
-the vision pipeline: package scaffold, a camera health monitor, camera-calibration
-plumbing, and confirmation of compressed image transport. Obstacle detection and
-ML (L1) come later. This package **runs on the robot** (it will eventually feed
-Nav2), so unlike `mote_simulation` it is synced to the Pi.
+Home for Mote's camera-derived perception nodes, built as staged layers:
+**L0 (Foundation)** — package scaffold, camera health monitor, calibration
+plumbing, compressed transport; **L1 (Obstacles)** — off-board monocular depth
+feeding a Nav2 costmap layer; **L2 (Semantics)** — off-board open-vocabulary
+detection feeding object poses to the task layer. This package **runs on the
+robot** (it feeds Nav2), so unlike `mote_simulation` it is synced to the Pi.
 
 ## Nodes
 
 - `camera_monitor` — subscribes to `image` (remapped to `/image_raw`) and logs
   the measured frame rate, resolution, and encoding every few seconds, warning
   when no frames arrive. Dependency-light (rclpy + sensor_msgs, no OpenCV).
+- `depth_obstacle_node` — L1, see below.
+- `object_detector_node` — L2, see below.
 
 Run the launch:
 
@@ -158,6 +161,45 @@ depth node in-mission by design (it is off-board). Then check, in order:
    new pose can tilt the floor above the 0.02 m gate. Static-frame evals can't
    surface this; if it appears, tighten `plane_max_tilt_deg` or the fit gates.
 
+## L2 — Semantic understanding (off-board open-vocabulary detection)
+
+Turns "fetch the red box" into a map pose. OWLv2 detects arbitrary text queries
+— no training, no fixed class list — so the fetch target is whatever the task
+command names. Same two-process split as L1, with the query riding in each
+request:
+
+- `tools/detect_server.py` — keeps OWLv2 resident in the pixi depth
+  environment, serving detections over a socket (`pixi run detect-server`;
+  protocol in `mote_perception/detect_wire.py`).
+- `object_detector_node` — light rclpy node (no torch). Idles until a label set
+  arrives on `detect/labels` (std_msgs/String, comma-separated, transient_local;
+  empty string = idle) — the task layer's `AcquireObject` sets it while a
+  mission needs a pose and clears it after. While idle the node holds **no
+  image subscription at all**, so it costs neither inference nor a second copy
+  of the camera stream over Wi-Fi.
+  Each detection is **grounded by dropping the bbox bottom-centre pixel through
+  the floor plane** (`GroundProjector.pixels_to_ground`) — the fetch mission's
+  objects sit on the floor, so no depth model is needed in this loop — then
+  transformed to the map frame **at the image capture stamp**, absorbing the
+  off-board latency the same way L1 does. Poses go out on `detected_objects`
+  (vision_msgs/Detection3DArray, map frame); `detections` (2D boxes) and
+  `detections/overlay/compressed` (annotated JPEG) serve debugging/RViz.
+- Workstation all-in-one, sharing the robot's DDS graph: `pixi run detect`.
+  Against the sim, first bridge the raw camera into the compressed transport
+  the node consumes (the robot's camera publishes it natively; the gz bridge
+  does not):
+  ```bash
+  pixi run -- ros2 run image_transport republish raw compressed \
+    --ros-args -r in:=/image_raw -r out/compressed:=/image_raw/compressed -p use_sim_time:=true
+  ```
+
+Grounding accuracy note: with the camera at ~0.10 m the floor rays are shallow,
+so range error grows quickly with distance — metre-scale beyond ~2 m. That is
+fine for its job (navigate *towards* the object; the goal is a standoff pose,
+not a grasp), and `range_max` (default 3.0 m) drops anything farther. Key
+params: `min_score` (default 0.3; the server's `--threshold` stays low so score
+policy lives client-side), `range_max`, `server_host`/`server_port`.
+
 ### Offline tools
 
 Everything is developed and validated offline against recorded bags
@@ -171,6 +213,9 @@ server up (`pixi run depth-server`). Shared bag loading lives in
   views; model-agnostic, for comparing depth servers.
 - `depth_obstacles.py` — decision-level overlay (what marks and why) and the
   camera-vs-lidar BEV, both point sets transformed into `base_footprint`.
+- `detect_bag.py` — L2 sanity harness: open-vocab detection over a bag's frames,
+  writing overlays with boxes, scores, and grounded floor positions (needs
+  `pixi run detect-server`).
 - `bag_overlay.py` — geometry sanity check: floor grid + lidar projected into
   the camera frames.
 - `measure_camera_pitch.py` — live checkerboard measurement of camera

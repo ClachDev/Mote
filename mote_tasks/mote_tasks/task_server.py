@@ -1,17 +1,15 @@
-"""Ticks a mission behaviour tree and accepts task commands over ROS.
+"""Hosts the fetch behaviour tree and accepts task commands.
 
-Today the only mission is fetch (mote_tasks.trees.fetch), so this hosts the
-fetch tree directly; the command grammar and zone-lookup for "fetch" itself
-live in trees/fetch.py (``parse_command``), keeping this class's own job
-generic: subscribe, dispatch to the mission's parser, tick, report.
+Commands arrive on ``task/command`` (std_msgs/String):
 
-Commands arrive on ``task/command`` (std_msgs/String), e.g.:
+    fetch <target> <drop_zone>
 
-    fetch <object_zone> <drop_zone>
-
-Zone names come from the zones YAML (parameter ``zones_file``, falling back
-to the committed config/zones.default.yaml). Outcomes are published on
-``task/status`` as accepted/rejected/succeeded/failed strings.
+``target`` is a zone name when it matches one, otherwise it is an
+open-vocabulary object label handed to the detector (underscores become
+spaces, so ``fetch red_box dropoff`` looks for "red box"). Zone names come
+from the zones YAML (parameter ``zones_file``, falling back to the committed
+config/zones.default.yaml). Outcomes are published on ``task/status`` as
+accepted/rejected/succeeded/failed strings.
 """
 
 import os
@@ -46,7 +44,12 @@ class TaskServer(Node):
         self.tree = fetch.create_fetch_tree(pick_duration, place_duration)
         self.tree.setup(node=self)
         self.blackboard = py_trees.blackboard.Client(name="task_server")
-        for key in (fetch.TASK_KEY, fetch.OBJECT_POSE_KEY, fetch.DROP_POSE_KEY):
+        for key in (
+            fetch.TASK_KEY,
+            fetch.OBJECT_POSE_KEY,
+            fetch.OBJECT_LABEL_KEY,
+            fetch.DROP_POSE_KEY,
+        ):
             self.blackboard.register_key(key, access=py_trees.common.Access.WRITE)
         self.blackboard.set(fetch.TASK_KEY, None)
 
@@ -60,16 +63,28 @@ class TaskServer(Node):
         self.status_pub.publish(String(data=text))
 
     def on_command(self, msg: String):
+        words = msg.data.split()
         if self.blackboard.get(fetch.TASK_KEY):
             self.publish_status(f"rejected: busy with '{self.blackboard.task}'")
             return
-        try:
-            object_pose, drop_pose = fetch.parse_command(self.zones, msg.data.split())
-        except ValueError as e:
-            self.publish_status(f"rejected: '{msg.data}' ({e})")
+        if len(words) != 3 or words[0] != "fetch":
+            self.publish_status(
+                f"rejected: '{msg.data}' (expected: fetch <object_zone> <drop_zone>)"
+            )
             return
-        self.blackboard.set(fetch.OBJECT_POSE_KEY, object_pose)
-        self.blackboard.set(fetch.DROP_POSE_KEY, drop_pose)
+        target, drop = words[1], words[2]
+        if drop not in self.zones:
+            self.publish_status(
+                f"rejected: unknown drop zone '{drop}', have {sorted(self.zones)}"
+            )
+            return
+        if target in self.zones:
+            self.blackboard.set(fetch.OBJECT_POSE_KEY, self.zones[target])
+            self.blackboard.set(fetch.OBJECT_LABEL_KEY, None)
+        else:
+            self.blackboard.unset(fetch.OBJECT_POSE_KEY)
+            self.blackboard.set(fetch.OBJECT_LABEL_KEY, target.replace("_", " "))
+        self.blackboard.set(fetch.DROP_POSE_KEY, self.zones[drop])
         self.blackboard.set(fetch.TASK_KEY, msg.data)
         self.publish_status(f"accepted: {msg.data}")
 

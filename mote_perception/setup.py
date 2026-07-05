@@ -27,6 +27,7 @@ setup(
         "console_scripts": [
             "camera_monitor = mote_perception.camera_monitor:main",
             "depth_obstacle_node = mote_perception.depth_obstacle_node:main",
+            "object_detector_node = mote_perception.object_detector_node:main",
         ],
     },
 )
