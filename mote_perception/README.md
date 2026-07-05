@@ -176,7 +176,13 @@ request:
   empty string = idle) — the task layer's `AcquireObject` sets it while a
   mission needs a pose and clears it after. While idle the node holds **no
   image subscription at all**, so it costs neither inference nor a second copy
-  of the camera stream over Wi-Fi.
+  of the camera stream over Wi-Fi. To drive it by hand (debug/demo), the
+  publisher must match the transient_local durability or DDS silently drops
+  the message:
+  ```bash
+  pixi run -- ros2 topic pub --once --qos-durability transient_local \
+    /detect/labels std_msgs/msg/String "{data: 'shoe, cup'}"
+  ```
   Each detection is **grounded by dropping the bbox bottom-centre pixel through
   the floor plane** (`GroundProjector.pixels_to_ground`) — the fetch mission's
   objects sit on the floor, so no depth model is needed in this loop — then
