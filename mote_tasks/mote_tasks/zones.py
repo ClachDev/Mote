@@ -1,13 +1,20 @@
 """Named navigation targets loaded from a zones YAML file.
 
-Format:
+Schema:
+
+    frame_id: <str, optional, default "map">
+    zones:
+      <name>: {x: <float, required>, y: <float, required>, yaw: <float, optional, default 0.0>}
+      ...
+
+x and y are metres in frame_id; yaw is radians about +z.
+
+Example:
 
     frame_id: map
     zones:
       pickup: {x: 1.8, y: -1.5, yaw: 0.0}
       dropoff: {x: -1.8, y: 1.5}
-
-Yaw is radians about +z and defaults to 0.
 """
 
 import math
@@ -47,6 +54,9 @@ def load_zones(path: str) -> dict[str, PoseStamped]:
     frame_id = data.get("frame_id", "map")
     zones = {}
     for name, spec in data["zones"].items():
+        missing = [k for k in ("x", "y") if k not in spec]
+        if missing:
+            raise ValueError(f"zone '{name}' missing required key(s) {missing}")
         pose = PoseStamped()
         pose.header.frame_id = frame_id
         pose.pose.position.x = float(spec["x"])

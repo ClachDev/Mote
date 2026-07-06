@@ -164,7 +164,7 @@ def generate_launch_description():
             launch_arguments={
                 "base": "false",
                 "use_sim_time": "true",
-                "record": "false",
+                "record": "true",
             }.items(),
             condition=IfCondition(EqualsSubstitution(mode, mode_value)),
         )

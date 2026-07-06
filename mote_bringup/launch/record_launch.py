@@ -5,9 +5,7 @@ parallel under ~/.mote/bags/<name>/<timestamp> (MOTE_HOME overrides ~/.mote)
 with its own segment length and rolling disk cap (bag_pruner deletes the
 oldest segments once a stream exceeds its cap so continuous recording never
 fills the disk). A ``streams`` arg selects a comma-separated subset (default:
-all) — mapping_launch.py passes ``streams:=mapping`` so every mapping session
-is recorded and save-map can stamp the bag into the map revision's provenance
-(see sites.py).
+all).
 
 The compressed image stream is recorded rather than raw; republish it to
 /image_raw on playback with image_transport.

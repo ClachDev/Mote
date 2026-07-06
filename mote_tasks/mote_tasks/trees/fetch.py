@@ -16,6 +16,22 @@ TASK_KEY = "task"
 OBJECT_POSE_KEY = "object_pose"
 DROP_POSE_KEY = "drop_pose"
 
+COMMAND = "fetch"
+
+
+def parse_command(zones: dict, words: list):
+    """Parse a ``fetch <object_zone> <drop_zone>`` command against known zones.
+
+    Returns (object_pose, drop_pose) on success; raises ValueError with a
+    user-facing message on failure.
+    """
+    if len(words) != 3 or words[0] != COMMAND:
+        raise ValueError(f"expected: {COMMAND} <object_zone> <drop_zone>")
+    unknown = [w for w in words[1:] if w not in zones]
+    if unknown:
+        raise ValueError(f"unknown zone(s) {unknown}, have {sorted(zones)}")
+    return zones[words[1]], zones[words[2]]
+
 
 class WaitForTask(py_trees.behaviour.Behaviour):
     """Idle (RUNNING) until the task server writes a task to the blackboard."""

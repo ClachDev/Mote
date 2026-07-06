@@ -1,6 +1,11 @@
-"""Hosts the fetch behaviour tree and accepts task commands.
+"""Ticks a mission behaviour tree and accepts task commands over ROS.
 
-Commands arrive on ``task/command`` (std_msgs/String):
+Today the only mission is fetch (mote_tasks.trees.fetch), so this hosts the
+fetch tree directly; the command grammar and zone-lookup for "fetch" itself
+live in trees/fetch.py (``parse_command``), keeping this class's own job
+generic: subscribe, dispatch to the mission's parser, tick, report.
+
+Commands arrive on ``task/command`` (std_msgs/String), e.g.:
 
     fetch <object_zone> <drop_zone>
 
@@ -55,23 +60,16 @@ class TaskServer(Node):
         self.status_pub.publish(String(data=text))
 
     def on_command(self, msg: String):
-        words = msg.data.split()
         if self.blackboard.get(fetch.TASK_KEY):
             self.publish_status(f"rejected: busy with '{self.blackboard.task}'")
             return
-        if len(words) != 3 or words[0] != "fetch":
-            self.publish_status(
-                f"rejected: '{msg.data}' (expected: fetch <object_zone> <drop_zone>)"
-            )
+        try:
+            object_pose, drop_pose = fetch.parse_command(self.zones, msg.data.split())
+        except ValueError as e:
+            self.publish_status(f"rejected: '{msg.data}' ({e})")
             return
-        unknown = [w for w in words[1:] if w not in self.zones]
-        if unknown:
-            self.publish_status(
-                f"rejected: unknown zone(s) {unknown}, have {sorted(self.zones)}"
-            )
-            return
-        self.blackboard.set(fetch.OBJECT_POSE_KEY, self.zones[words[1]])
-        self.blackboard.set(fetch.DROP_POSE_KEY, self.zones[words[2]])
+        self.blackboard.set(fetch.OBJECT_POSE_KEY, object_pose)
+        self.blackboard.set(fetch.DROP_POSE_KEY, drop_pose)
         self.blackboard.set(fetch.TASK_KEY, msg.data)
         self.publish_status(f"accepted: {msg.data}")
 

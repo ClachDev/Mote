@@ -16,7 +16,6 @@ setup(
         (os.path.join("share", package_name, "config"), glob("config/*")),
     ],
     install_requires=["setuptools"],
-    # the 'test' extra tells colcon to run these tests with pytest
     extras_require={"test": ["pytest"]},
     zip_safe=True,
     maintainer="Michael Johnson",

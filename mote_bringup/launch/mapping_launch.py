@@ -33,8 +33,7 @@ def generate_launch_description():
                 "record",
                 default_value="true",
                 description="Record the session's 'mapping' rosbag stream so "
-                "save-map can stamp it into the map revision's provenance. The "
-                "sim passes false.",
+                "save-map can stamp it into the map revision's provenance.",
             ),
             include(
                 "mote_launch.py", condition=IfCondition(LaunchConfiguration("base"))
