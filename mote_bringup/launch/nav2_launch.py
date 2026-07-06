@@ -5,6 +5,8 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node, SetParameter
 from launch_ros.substitutions import FindPackageShare
 
+from mote_bringup import sites
+
 LOCALIZATION_NODES = [
     "map_server",
     "amcl",
@@ -23,8 +25,9 @@ NAVIGATION_NODES = [
 def generate_launch_description():
     map_arg = DeclareLaunchArgument(
         "map",
-        default_value="",
-        description="Full path to the map yaml file to load (ignored when localisation:=false)",
+        default_value=sites.resolve_map(),
+        description="Full path to the map yaml file to load; defaults to the "
+        "active site's floor map (ignored when localisation:=false)",
     )
 
     localisation_arg = DeclareLaunchArgument(

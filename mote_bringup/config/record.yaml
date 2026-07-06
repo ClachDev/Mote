@@ -3,6 +3,16 @@
 # length and rolling disk cap (enforced by bag_pruner).
 
 streams:
+  # Recorded during mapping sessions so save-map can stamp the bag into the
+  # map revision's meta.yaml. Enough to re-run SLAM offline.
+  mapping:
+    topics:
+      - /tf
+      - /tf_static
+      - /scan_filtered
+    split: 600
+    max_gb: 4.0
+
   lite:
     topics:
       - /tf

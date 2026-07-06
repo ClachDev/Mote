@@ -16,6 +16,7 @@ setup(
         (os.path.join("share", package_name, "config"), glob("config/*")),
     ],
     install_requires=["setuptools"],
+    extras_require={"test": ["pytest"]},
     zip_safe=True,
     maintainer="Michael Johnson",
     maintainer_email="michael@clach.dev",
@@ -26,6 +27,7 @@ setup(
             "odom_tf_relay = mote_bringup.odom_tf_relay:main",
             "system_monitor = mote_bringup.system_monitor:main",
             "bag_pruner = mote_bringup.bag_pruner:main",
+            "site = mote_bringup.sites:main",
         ],
     },
 )

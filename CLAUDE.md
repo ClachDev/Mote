@@ -11,11 +11,14 @@ pixi run build          # Build all packages with colcon + Ninja
 pixi run submodules     # Fetch git submodules (sllidar_ros2, kinematic_icp)
 pixi run launch         # Full robot bringup (hardware + lidar + camera + localization)
 pixi run slam           # SLAM stack only (run alongside launch)
-pixi run nav            # Nav2 stack (requires a saved map at ~/.mote/map.yaml)
+pixi run nav            # Nav2 stack (loads the active site's map; see Sites)
 pixi run mapping        # bringup + SLAM together (build/extend a map)
-pixi run robot          # bringup + Nav2 together (drive a saved map; needs ~/.mote/map.yaml)
-pixi run save-map       # Save current map to ~/.mote/map
+pixi run robot          # bringup + Nav2 together (drive the active site's map)
+pixi run save-map       # Save map + slam posegraph into the active site floor
+pixi run save-zone <n>  # Teach a zone: capture current robot pose into the site
+pixi run site           # Site CLI: create / add-floor / use / use-map / list / info
 pixi run teleop         # Keyboard teleoperation
+pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi-powersave + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -62,6 +65,10 @@ The URDF reads it via `xacro.load_yaml('$(find mote_description)/config/robot.ya
 
 `velocity_scale` converts rad/s ↔ servo speed units. It's an empirical calibration value measured on real hardware with the `velocity_cal` tool, not derivable from datasheets.
 
+## Sites (maps & zones)
+
+Everything that is only meaningful relative to one mapped place — the Nav2 map pair, the slam_toolbox posegraph, and named zones — lives together as a **site bundle** under `~/.mote/sites/<site>/floors/<floor>/`, managed by `mote_bringup/sites.py` (CLI: `pixi run site`, docs in the module docstring). A floor is one SLAM session (one map frame); a site groups floors sharing a location. `~/.mote/active.yaml` selects the active site/floor per robot; launch files resolve the map (`nav2_launch.py`, `robot_launch.py`) and zones (`tasks_launch.py`) from it at launch time (zones fall back to the committed default). `MOTE_HOME` overrides `~/.mote` for tests/experiments. Map artifacts are immutable **revisions** under `floors/<floor>/maps/<rev>/`, published by atomically flipping the `floors/<floor>/map` symlink once the revision is complete — a half-written save or interrupted transfer is never visible, and `site use-map <rev>` rolls back. `save-map` stores the posegraph alongside the map so mapping can be *continued* in the same frame later (extend, don't remap — remapping breaks zone coordinates). Mapping runs also record the `mapping` rosbag stream by default (`mapping_launch.py record:=true`; the sim passes false), and `save-map` stamps the session's bag into the revision's `meta.yaml` for provenance (`site info` shows it). Zones are taught by driving there and running `pixi run save-zone <name>`, not by editing YAML. Maps are saved as PNG (map_server reads it natively; browsers can render it directly).
+
 ## Architecture
 
 Mote is a differential-drive robot built on **ROS 2 Jazzy**, managed entirely through pixi (no system ROS install required). Four first-party packages:
@@ -81,8 +88,8 @@ Contains `urdf/mote.urdf.xacro` and `config/robot.yaml`. The xacro loads robot.y
 Launch files, config, udev rules, NetworkManager drop-ins, and systemd services.
 
 **Launch hierarchy:** the two mission launches (`mapping_launch.py`, `robot_launch.py`) each take a `base` arg (default true) that includes the hardware base, and a `use_sim_time` arg they forward to everything they include. The sim runs these *same* files with `base:=false`, supplying a Gazebo base in place of the drivers — so the missions are defined once and the sim exercises the real launch files.
-- `robot_launch.py` — nav mission: `mote_launch.py` (if `base`) + `nav2_launch.py` (drive a saved map). Forwards a `map` arg, defaulting to `~/.mote/map.yaml`.
-- `mapping_launch.py` — mapping mission: `mote_launch.py` (if `base`) + `slam_launch.py` + `nav2_launch.py` (`localisation:=false`): build/extend a map with SLAM *and* drive to goals autonomously while doing so.
+- `robot_launch.py` — nav mission: `mote_launch.py` (if `base`) + `nav2_launch.py` (drive a saved map). Forwards a `map` arg, defaulting to the active site's map (see Sites).
+- `mapping_launch.py` — mapping mission: `mote_launch.py` (if `base`) + `slam_launch.py` + `nav2_launch.py` (`localisation:=false`) + `record_launch.py` (`streams:=mapping`, unless `record:=false`): build/extend a map with SLAM *and* drive to goals autonomously while doing so, recording the session for map provenance.
 - `mote_launch.py` — the hardware base: robot_state_publisher, ros2_control_node, controller spawners, sllidar, laser_filter, v4l2_camera, and `localization_launch.py`. Reads `robot.yaml` for wheel geometry (injected into DiffDriveController params) and sensor config. Asserts `use_sim_time` (default false) for the whole tree via `SetParameter`.
 - `localization_launch.py` — kinematic_icp LIDAR odometry (publishes `odom`→`base`; the map→odom corrector is slam_toolbox when mapping or AMCL when navigating). Despite the name, it does *not* run AMCL — AMCL lives in `nav2_launch.py`.
 - `slam_launch.py` — slam_toolbox (accepts `use_sim_time:=true` for the sim)
@@ -98,8 +105,8 @@ Launch files, config, udev rules, NetworkManager drop-ins, and systemd services.
 
 ### `mote_simulation` (Python/ament)
 Workstation-only Gazebo simulation, kept separate from `mote_bringup` so it can be excluded from the robot sync (`pixi run sync` skips `mote_simulation/`). Built only in the `sim` pixi environment. Contains:
-- `launch/sim_launch.py` — Gazebo sim: headless gz server, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter, and the shared `localization_launch.py`. Takes a `world:=` arg (file in `mote_simulation/worlds/`, default `mote_world.sdf` — the simple smoke-test room; `office_world.sdf` is a medium hospital-ward corridor for stress-testing localisation; `hospital_world.sdf` is the hard tier — a ~58x38 m looping hospital, generated by `worlds/gen_hospital.py`). The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF). It pulls `controllers.yaml`, `laser_filters.yaml`, and `localization_launch.py` from `mote_bringup`'s share so the sim and the real robot can't drift apart. It asserts `use_sim_time:=true` for the whole process tree via `SetParameter`. A `mode:=mapping|nav` arg includes the real `mapping_launch.py` / `robot_launch.py` with `base:=false` (default `none` = sim only): the sim provides the base and *delegates* the mission to the actual launch files, so it can't re-encode or drift from them, and `pixi run sim-mapping` / `sim-nav` put those mission launches under test. (`pixi run mapping`/`robot` are the hardware entry points — same files, `base` defaulting true, wall-clock time.) The dependency direction stays one-way: `mote_simulation` includes from `mote_bringup`, never the reverse.
-- `worlds/` — an easy->hard ladder: `mote_world.sdf` (easy smoke-test room), `office_world.sdf` (medium hospital-ward corridor), and `hospital_world.sdf` (hard ~58x38 m looping hospital with ~50 rooms and clutter). The hard world is generated by `worlds/gen_hospital.py` (committed alongside its output — edit the script's layout and regenerate rather than hand-editing the SDF).
+- `launch/sim_launch.py` — Gazebo sim: headless gz server, robot spawn, ros_gz bridge (/clock, /scan), controllers, laser_filter, and the shared `localization_launch.py`. Takes a `world:=` arg (file in `mote_simulation/worlds/`, default `mote_world.sdf` — the simple smoke-test room; `office_world.sdf` is a medium hospital-ward corridor for stress-testing localisation; `hospital_world.sdf` is the hard tier — a ~58x38 m looping hospital, generated by `worlds/gen_hospital.py`). The URDF is processed with `use_sim:=true`, which swaps `MoteHardware` for `gz_ros2_control` and adds a simulated lidar (specs from `robot.yaml` `lidar.sim`). Without that flag the xacro output is unchanged. Controller params are merged into one temp file (gz_ros2_control loads a single `<parameters>` file referenced in the URDF). It pulls `controllers.yaml`, `laser_filters.yaml`, and `localization_launch.py` from `mote_bringup`'s share so the sim and the real robot can't drift apart. It asserts `use_sim_time:=true` for the whole process tree via `SetParameter`. A `mode:=mapping|nav` arg includes the real `mapping_launch.py` / `robot_launch.py` with `base:=false` (default `none` = sim only): the sim provides the base and *delegates* the mission to the actual launch files, so it can't re-encode or drift from them, and `pixi run sim-mapping` / `sim-nav` put those mission launches under test. Mission modes also include `tasks_launch.py` with the loaded world's sibling `worlds/<world>.zones.yaml` as `zones_file`, so the fetch mission runs anywhere on the world ladder with matching zone coordinates. (`pixi run mapping`/`robot` are the hardware entry points — same files, `base` defaulting true, wall-clock time.) The dependency direction stays one-way: `mote_simulation` includes from `mote_bringup` and `mote_tasks`, never the reverse.
+- `worlds/` — an easy->hard ladder: `mote_world.sdf` (easy smoke-test room), `office_world.sdf` (medium hospital-ward corridor), and `hospital_world.sdf` (hard ~58x38 m looping hospital with ~50 rooms and clutter). The hard world is generated by `worlds/gen_hospital.py` (committed alongside its output — edit the script's layout and regenerate rather than hand-editing the SDF). Every world has a sibling `<world>.zones.yaml` with the same zone names (`pickup`/`dropoff`/`home`); the hospital's is emitted by the generator, which asserts every zone clears the walls and furniture.
 - `test/sim_smoke/` — `run_sim_smoke.sh` + `verify_sim.py`, the `pixi run sim-test` gate.
 
 ### `mote_perception` (Python/ament)
@@ -110,6 +117,13 @@ Home for camera-derived perception. Runs on the robot (feeds Nav2), so unlike `m
 - `launch/perception_launch.py` — declares `use_sim_time` (applied via `SetParameter`) and starts `camera_monitor` with `image` remapped to `/image_raw`.
 - `config/` — camera-calibration home. `camera_info.default.yaml` is a committed fallback calibration for the UGREEN webcam; a per-robot `~/.mote/camera_calibration.yaml` (outside the repo) overrides it. `mote_launch.py` prefers the `~/.mote` file when present, else `robot.yaml`'s `camera.default_info_url`, passing the result to `v4l2_camera_node` as `camera_info_url`. `config/README.md` documents when/how to calibrate (with the printable checkerboard).
 - Compressed transport is already provided by the `image-transport-plugins` dep, so the camera publishes `/image_raw/compressed`; off-board/RViz consumers should prefer it. See `mote_perception/README.md`.
+
+### `mote_tasks` (Python/ament)
+The task layer: py_trees behaviour trees on top of Nav2 (synced to the Pi). py_trees is a pixi *PyPI* dependency (not packaged on robostack/conda-forge); the ROS glue is first-party and small — no py_trees_ros. Contains:
+- `task_server.py` — node hosting the fetch tree: subscribes `task/command` (String, `fetch <object_zone> <drop_zone>`), publishes `task/status`, ticks the tree on a timer. Zone names → map poses come from a zones YAML resolved via Sites (active floor, then legacy `~/.mote/zones.yaml`, then the committed `config/zones.default.yaml` whose poses match `mote_world.sdf`; in the sim, `sim_launch.py` passes the loaded world's own zones file instead). `save_zone` (`pixi run save-zone <name>`) teaches zones from the live robot pose.
+- `behaviours/` — `DriveTo` (Nav2 NavigateToPose action client as a behaviour; cancels in-flight goals on preemption) and `TimedStub` (placeholder pick/place until the SO-101 arm is actuated).
+- `trees/fetch.py` — the fetch mission: wait → drive to object → pick (stub) → drive to drop → place (stub). Blackboard keys `task`/`object_pose`/`drop_pose` are the extension seam: later perception writes a detected pose instead of a named zone.
+- `test/test_fetch_tree.py` — full tree tick against a mock `navigate_to_pose` server (no Gazebo/Nav2), run by `pixi run test`.
 
 ### Third-party submodules (`third_party/`)
 - `sllidar_ros2` — SLAMTEC RPLIDAR C1 ROS 2 driver

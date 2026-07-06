@@ -1,0 +1,13 @@
+# Fallback zones, used only when no site is active: tasks_launch.py resolves
+# the active site's zones.yaml first (see sites.resolve_zones), and
+# task_server.py only falls back to this file when that resolves to "".
+# Coordinates are placed for mote_world.sdf (the 6x6 m sim room; obstacles
+# sit at (1.5, 1.0) and (-1.2, -1.5)) so `pixi run sim-mapping` + `pixi run
+# tasks` work out of the box with no saved site. They won't make sense
+# anywhere else — a real robot should always have an active site with its
+# own taught zones.yaml.
+frame_id: map
+zones:
+  pickup: {x: 1.8, y: -1.5, yaw: 0.0}
+  dropoff: {x: -1.8, y: 1.5, yaw: 3.14}
+  home: {x: 0.0, y: 0.0, yaw: 0.0}

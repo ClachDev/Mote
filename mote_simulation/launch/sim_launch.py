@@ -16,6 +16,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.conditions import IfCondition
@@ -160,9 +161,42 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 os.path.join(bringup_share, "launch", launch_file)
             ),
-            launch_arguments={"base": "false", "use_sim_time": "true"}.items(),
+            launch_arguments={
+                "base": "false",
+                "use_sim_time": "true",
+                "record": LaunchConfiguration("record"),
+            }.items(),
             condition=IfCondition(EqualsSubstitution(mode, mode_value)),
         )
+
+    # Every world ships a sibling <world>.zones.yaml giving the task layer's
+    # named zones (pickup/dropoff/home) coordinates valid in that world, so a
+    # fetch mission runs anywhere on the world ladder. Whenever a mission mode
+    # is up (Nav2 running), include the real tasks_launch.py with the matching
+    # zones file — on the robot the same launch resolves zones from the active
+    # site instead.
+    def task_layer(context):
+        if LaunchConfiguration("mode").perform(context) == "none":
+            return []
+        world_file = LaunchConfiguration("world").perform(context)
+        zones = os.path.join(
+            sim_share, "worlds", world_file.removesuffix(".sdf") + ".zones.yaml"
+        )
+        return [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        get_package_share_directory("mote_tasks"),
+                        "launch",
+                        "tasks_launch.py",
+                    )
+                ),
+                launch_arguments={
+                    "zones_file": zones,
+                    "use_sim_time": "true",
+                }.items(),
+            )
+        ]
 
     return LaunchDescription(
         [
@@ -176,6 +210,14 @@ def generate_launch_description():
                 default_value="none",
                 description="Mission to run on top of the sim: 'mapping' (SLAM + "
                 "Nav2), 'nav' (Nav2 against a saved map), or 'none' (sim only)",
+            ),
+            DeclareLaunchArgument(
+                "record",
+                default_value="false",
+                description="Record the mission's rosbag stream (see "
+                "mapping_launch.py/robot_launch.py). Opt-in in sim, unlike on "
+                "the real robot, so quick/CI sim runs don't write bags by "
+                "default.",
             ),
             SetParameter(name="use_sim_time", value=True),
             gz_server,
@@ -192,5 +234,6 @@ def generate_launch_description():
             localization,
             mission("mapping_launch.py", "mapping"),
             mission("robot_launch.py", "nav"),
+            OpaqueFunction(function=task_layer),
         ]
     )
