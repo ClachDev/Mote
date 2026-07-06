@@ -85,8 +85,8 @@ controller_server:
       stateful: true
       critics: ["WheelSpeedLimit", "RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
       WheelSpeedLimit.class: "mote_nav::WheelSpeedLimitCritic"
-      WheelSpeedLimit.max_wheel_speed: 0.218
-      WheelSpeedLimit.wheel_separation: 0.22
+      # max_wheel_speed and wheel_separation are injected from robot.yaml by
+      # nav2_launch.py so the hardware envelope has one source of truth.
       WheelSpeedLimit.scale: 1.0
       BaseObstacle.scale: 0.02
       PathAlign.scale: 32.0

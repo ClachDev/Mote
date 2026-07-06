@@ -1,3 +1,8 @@
+import os
+import tempfile
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -55,6 +60,35 @@ def generate_launch_description():
         ]
     )
 
+    # The WheelSpeedLimit critic's wheel_separation and max_wheel_speed come from
+    # robot.yaml, not nav2_params.yaml, so the hardware envelope has one source of
+    # truth. Overlaid on controller_server only (later params files win).
+    with open(
+        os.path.join(
+            get_package_share_directory("mote_description"), "config", "robot.yaml"
+        )
+    ) as f:
+        robot_cfg = yaml.safe_load(f)
+    critic_params_file = tempfile.NamedTemporaryFile(
+        mode="w", prefix="mote_wheel_critic_", suffix=".yaml", delete=False
+    )
+    yaml.safe_dump(
+        {
+            "controller_server": {
+                "ros__parameters": {
+                    "FollowPath": {
+                        "WheelSpeedLimit.wheel_separation": robot_cfg[
+                            "wheel_separation"
+                        ],
+                        "WheelSpeedLimit.max_wheel_speed": robot_cfg["max_wheel_speed"],
+                    }
+                }
+            }
+        },
+        critic_params_file,
+    )
+    critic_params_file.close()
+
     cmd_vel_remap = ("/cmd_vel", "/diff_drive_controller/cmd_vel")
 
     map_server = Node(
@@ -76,7 +110,7 @@ def generate_launch_description():
     controller_server = Node(
         package="nav2_controller",
         executable="controller_server",
-        parameters=[nav2_params],
+        parameters=[nav2_params, critic_params_file.name],
         remappings=[cmd_vel_remap],
         output="screen",
     )
