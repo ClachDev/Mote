@@ -83,7 +83,11 @@ controller_server:
       trans_stopped_velocity: 0.25
       short_circuit_trajectory_evaluation: true
       stateful: true
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      critics: ["WheelSpeedLimit", "RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      WheelSpeedLimit.class: "mote_nav::WheelSpeedLimitCritic"
+      WheelSpeedLimit.max_wheel_speed: 0.218
+      WheelSpeedLimit.wheel_separation: 0.22
+      WheelSpeedLimit.scale: 1.0
       BaseObstacle.scale: 0.02
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
