@@ -2,7 +2,7 @@
 # ~/.mote/camera_calibration.yaml overrides this at launch (see config/README.md).
 image_width: 640
 image_height: 480
-camera_name: mote_camera
+camera_name: ugreen_camera
 camera_matrix:
   rows: 3
   cols: 3
