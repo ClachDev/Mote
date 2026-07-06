@@ -164,7 +164,7 @@ def generate_launch_description():
             launch_arguments={
                 "base": "false",
                 "use_sim_time": "true",
-                "record": "true",
+                "record": LaunchConfiguration("record"),
             }.items(),
             condition=IfCondition(EqualsSubstitution(mode, mode_value)),
         )
@@ -210,6 +210,14 @@ def generate_launch_description():
                 default_value="none",
                 description="Mission to run on top of the sim: 'mapping' (SLAM + "
                 "Nav2), 'nav' (Nav2 against a saved map), or 'none' (sim only)",
+            ),
+            DeclareLaunchArgument(
+                "record",
+                default_value="false",
+                description="Record the mission's rosbag stream (see "
+                "mapping_launch.py/robot_launch.py). Opt-in in sim, unlike on "
+                "the real robot, so quick/CI sim runs don't write bags by "
+                "default.",
             ),
             SetParameter(name="use_sim_time", value=True),
             gz_server,
