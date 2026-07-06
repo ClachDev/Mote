@@ -108,26 +108,22 @@ pixi run submodules
 pixi run build
 ```
 
-### 3. Device names and permissions
-
-The launch files address hardware by stable names (`/dev/mote_servos`,
-`/dev/mote_lidar`, `/dev/mote_camera`) that are created by the udev rules in
-[`mote_bringup/udev/`](mote_bringup/udev/). Install them with:
+If you run these on your developer machine, you can sync the code to the Pi using
 
 ```bash
-pixi run udev
+pixi run sync          # one-off sync
+# or
+pixi run sync-watch    # sync changes automatically
 ```
 
-The rules match each device by its USB vendor/product ID, which is enough as
-long as you only have one of each kind plugged in. If you run multiple identical
-USB-serial adapters you'll need to pin a serial number — see the comments in
-[`99-mote.rules`](mote_bringup/udev/99-mote.rules).
+### 3. Setup Pi
 
-Serial access also requires your user to be in the `dialout` group (log out and
-back in afterwards):
+There are a few setup tasks that must be run on the Pi before first use. These
+set up udev rules, systemd services, and other configuration. It should only
+need to be run once.
 
 ```bash
-sudo usermod -aG dialout $USER
+pixi run setup
 ```
 
 ### 4. Configure the servos

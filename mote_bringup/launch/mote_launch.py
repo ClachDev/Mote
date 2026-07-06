@@ -121,6 +121,11 @@ def generate_launch_description():
         parameters=[camera_params],
     )
 
+    system_monitor = Node(
+        package="mote_bringup",
+        executable="system_monitor",
+    )
+
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(bringup_share, "launch", "localization_launch.py")
@@ -143,6 +148,7 @@ def generate_launch_description():
             rplidar,
             laser_filter,
             camera,
+            system_monitor,
             localization,
         ]
     )

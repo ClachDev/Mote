@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "odom_tf_relay = mote_bringup.odom_tf_relay:main",
+            "system_monitor = mote_bringup.system_monitor:main",
             "bag_pruner = mote_bringup.bag_pruner:main",
             "site = mote_bringup.sites:main",
         ],

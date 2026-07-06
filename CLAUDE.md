@@ -20,7 +20,9 @@ pixi run site           # Site CLI: create / add-floor / use / use-map / list / 
 pixi run teleop         # Keyboard teleoperation
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
 pixi run sync           # rsync project to Pi at SSH host 'mote'
-pixi run udev           # Install udev rules (needs sudo)
+pixi run setup          # One-time Pi setup: udev + wifi-powersave + systemd (needs sudo)
+pixi run udev           # Install udev rules + dialout group (needs sudo)
+pixi run wifi-powersave # Disable WiFi power save via NetworkManager (needs sudo)
 pixi run setup-ids      # Guided servo ID assignment tool
 pixi run kill           # Kill stale ROS processes and reset daemon
 
@@ -83,7 +85,7 @@ A `ros2_control` `SystemInterface` plugin (`MoteHardware`) that drives two Feete
 Contains `urdf/mote.urdf.xacro` and `config/robot.yaml`. The xacro loads robot.yaml at processing time and uses those values directly — no xacro args are needed or accepted. The `<ros2_control>` tag embeds the servo params so they reach `MoteHardware::on_init`.
 
 ### `mote_bringup` (Python/ament)
-Launch files, config, udev rules, and systemd services.
+Launch files, config, udev rules, NetworkManager drop-ins, and systemd services.
 
 **Launch hierarchy:** the two mission launches (`mapping_launch.py`, `robot_launch.py`) each take a `base` arg (default true) that includes the hardware base, and a `use_sim_time` arg they forward to everything they include. The sim runs these *same* files with `base:=false`, supplying a Gazebo base in place of the drivers — so the missions are defined once and the sim exercises the real launch files.
 - `robot_launch.py` — nav mission: `mote_launch.py` (if `base`) + `nav2_launch.py` (drive a saved map). Forwards a `map` arg, defaulting to the active site's map (see Sites).
