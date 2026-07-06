@@ -17,7 +17,12 @@ from datetime import datetime
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    LogInfo,
+    OpaqueFunction,
+)
 
 from mote_bringup import sites
 
@@ -36,8 +41,7 @@ def _bags_dir(kind):
     return str(base)
 
 
-def _record(kind, topics, split):
-    output = os.path.join(_bags_dir(kind), datetime.now().strftime("%Y%m%d_%H%M%S"))
+def _record(kind, topics, split, output):
     return ExecuteProcess(
         cmd=[
             "ros2",
@@ -80,12 +84,24 @@ def _stream_actions(context):
             f"unknown record stream(s) {sorted(unknown)}; "
             f"record.yaml defines {sorted(streams)}"
         )
-    actions = []
-    for name, stream in streams.items():
-        if selected and name not in selected:
-            continue
+    active = [name for name in streams if not selected or name in selected]
+    actions = [
+        LogInfo(
+            msg=f"[record_launch] recording {len(active)} stream(s): "
+            f"{', '.join(active)}"
+        )
+    ]
+    for name in active:
+        stream = streams[name]
         split = stream["split"]
-        actions.append(_record(name, stream["topics"], split))
+        output = os.path.join(_bags_dir(name), datetime.now().strftime("%Y%m%d_%H%M%S"))
+        actions.append(
+            LogInfo(
+                msg=f"[record_launch] stream '{name}' -> {output} "
+                f"({len(stream['topics'])} topics: {', '.join(stream['topics'])})"
+            )
+        )
+        actions.append(_record(name, stream["topics"], split, output))
         actions.append(_pruner(name, stream["max_gb"], split))
     return actions
 
