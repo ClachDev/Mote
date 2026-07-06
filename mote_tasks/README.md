@@ -47,8 +47,8 @@ site's zones automatically, falling back to the committed
   matching a zone name drives straight there; anything else is an
   **open-vocabulary object label** (underscores become spaces, so
   `fetch red_box dropoff` looks for "red box") resolved by the perception
-  stack's detector — run `pixi run detect` on the workstation alongside the
-  mission (see mote_perception's README, L2).
+  stack's detector — run `pixi run perception` (the node) and `pixi run inference`
+  (its server) alongside the mission (see mote_perception's README, L2).
 - `task/status` (std_msgs/String): `accepted:` / `rejected:` / `succeeded:` /
   `failed:` plus the task text
 - A task in progress rejects new commands; a failure anywhere (Nav2 abort,

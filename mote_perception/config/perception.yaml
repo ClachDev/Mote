@@ -1,0 +1,18 @@
+# Perception runtime config, read by perception_launch.py.
+#
+# inference_host: where the depth/detect inference servers run (started with
+# `pixi run inference`). 127.0.0.1 runs them on this machine; point it at a GPU
+# box to offload the torch work. Override per-deployment in ~/.mote/perception.yaml
+# (uncommitted) rather than editing this file — same precedence as the camera
+# calibration.
+inference_host: 127.0.0.1
+
+# Each node is torch-free and idles cheaply when its server is unreachable, so
+# leaving one enabled without its server running is harmless. Disable one here if
+# the Pi can't carry its per-frame CPU cost.
+depth:
+  enabled: true
+  server_port: 5601
+detect:
+  enabled: true
+  server_port: 5602

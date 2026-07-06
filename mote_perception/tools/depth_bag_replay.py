@@ -13,9 +13,8 @@ fit collapses prints `DEGENERATE` (slope a < 0.5, i.e. the near-flat/inverted li
 and its corrected map will look inverted. Use it to inspect any future "depth goes
 to noise" bag without needing the robot.
 
-Needs a depth server already listening (separate terminal, in the depth env):
-    pixi run depth                 # runs server + live node; or just the server:
-    env -u PYTHONPATH pixi run depth-server
+Needs a depth server already listening (separate terminal, in the inference env):
+    pixi run depth-server          # or `pixi run inference` for depth + detect
 
 Then, in the dev/default env (needs cv2 + rosbag2_py):
     pixi run python mote_perception/tools/depth_bag_replay.py <bag_dir> [--frames N] [--out DIR]
