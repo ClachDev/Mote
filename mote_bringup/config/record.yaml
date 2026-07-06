@@ -8,6 +8,13 @@ streams:
       - /tf
       - /tf_static
       - /scan_filtered
+      - /diff_drive_controller/cmd_vel
+      - /diff_drive_controller/odom
+      - /goal_pose
+      - /plan
+      - /task/command
+      - /task/status
+      - /diagnostics
     split: 600 # seconds per bag segment
     max_gb: 2.0 # rolling disk cap
 

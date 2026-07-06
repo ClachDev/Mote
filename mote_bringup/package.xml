@@ -7,6 +7,8 @@
   <maintainer email="michael@clach.dev">Michael Johnson</maintainer>
   <license>Apache-2.0</license>
 
+  <exec_depend>diagnostic_msgs</exec_depend>
+
   <export>
     <build_type>ament_python</build_type>
   </export>
