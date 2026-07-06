@@ -38,9 +38,26 @@ def generate_launch_description():
                 default_value=default_map,
                 description="Full path to the map yaml file Nav2 should load",
             ),
+            DeclareLaunchArgument(
+                "record",
+                default_value="true",
+                description="Record the session's rosbag streams (record_streams).",
+            ),
+            DeclareLaunchArgument(
+                "record_streams",
+                default_value="lite,perception",
+                description="Comma-separated record.yaml streams to capture when "
+                "record is true. Excludes 'mapping', whose bags are provenance for "
+                "save-map; narrow this (e.g. 'lite') to skip the heavy camera stream.",
+            ),
             include(
                 "mote_launch.py", condition=IfCondition(LaunchConfiguration("base"))
             ),
             include("nav2_launch.py", map=LaunchConfiguration("map")),
+            include(
+                "record_launch.py",
+                condition=IfCondition(LaunchConfiguration("record")),
+                streams=LaunchConfiguration("record_streams"),
+            ),
         ]
     )
