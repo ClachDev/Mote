@@ -63,28 +63,22 @@ class TaskServer(Node):
         self.status_pub.publish(String(data=text))
 
     def on_command(self, msg: String):
-        words = msg.data.split()
         if self.blackboard.get(fetch.TASK_KEY):
             self.publish_status(f"rejected: busy with '{self.blackboard.task}'")
             return
-        if len(words) != 3 or words[0] != "fetch":
-            self.publish_status(
-                f"rejected: '{msg.data}' (expected: fetch <object_zone> <drop_zone>)"
+        try:
+            object_pose, object_label, drop_pose = fetch.parse_command(
+                self.zones, msg.data.split()
             )
+        except ValueError as e:
+            self.publish_status(f"rejected: '{msg.data}' ({e})")
             return
-        target, drop = words[1], words[2]
-        if drop not in self.zones:
-            self.publish_status(
-                f"rejected: unknown drop zone '{drop}', have {sorted(self.zones)}"
-            )
-            return
-        if target in self.zones:
-            self.blackboard.set(fetch.OBJECT_POSE_KEY, self.zones[target])
-            self.blackboard.set(fetch.OBJECT_LABEL_KEY, None)
+        if object_pose is not None:
+            self.blackboard.set(fetch.OBJECT_POSE_KEY, object_pose)
         else:
             self.blackboard.unset(fetch.OBJECT_POSE_KEY)
-            self.blackboard.set(fetch.OBJECT_LABEL_KEY, target.replace("_", " "))
-        self.blackboard.set(fetch.DROP_POSE_KEY, self.zones[drop])
+        self.blackboard.set(fetch.OBJECT_LABEL_KEY, object_label)
+        self.blackboard.set(fetch.DROP_POSE_KEY, drop_pose)
         self.blackboard.set(fetch.TASK_KEY, msg.data)
         self.publish_status(f"accepted: {msg.data}")
 

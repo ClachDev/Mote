@@ -21,6 +21,27 @@ OBJECT_POSE_KEY = "object_pose"
 OBJECT_LABEL_KEY = "object_label"
 DROP_POSE_KEY = "drop_pose"
 
+COMMAND = "fetch"
+
+
+def parse_command(zones: dict, words: list):
+    """Parse ``fetch <target> <drop_zone>`` against known zones.
+
+    Returns ``(object_pose, object_label, drop_pose)``. A ``target`` that names
+    a zone yields that pose and no label; any other target is an open-vocabulary
+    object label (underscores become spaces) with no pose, left for the detector
+    to resolve. Raises ValueError with a user-facing message when the command is
+    malformed or the drop zone is unknown.
+    """
+    if len(words) != 3 or words[0] != COMMAND:
+        raise ValueError(f"expected: {COMMAND} <target> <drop_zone>")
+    target, drop = words[1], words[2]
+    if drop not in zones:
+        raise ValueError(f"unknown drop zone '{drop}', have {sorted(zones)}")
+    if target in zones:
+        return zones[target], None, zones[drop]
+    return None, target.replace("_", " "), zones[drop]
+
 
 class WaitForTask(py_trees.behaviour.Behaviour):
     """Idle (RUNNING) until the task server writes a task to the blackboard."""
