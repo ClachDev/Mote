@@ -57,11 +57,15 @@ res.directions_deg   # detected wall orientations
 
 - **Done:** FFT declutter core + CLI + diagnostics, validated on a real noisy
   mote map (see `scratchpad_results/map_cleanup/`).
-- **Not yet:** wiring into `save-map` (offer a `--clean` that stores a cleaned
-  revision alongside the raw one — never destructive, since map cleaning must
-  not corrupt zone coordinates), and the ROSE² **room-segmentation** layer
-  (Hough → DBSCAN line clustering → representative lines → face/room graph),
-  which needs `scikit-learn` (DBSCAN) added to the env.
+- **Done:** wired into `save-map` as an automatic post-processing pass
+  (`sites._promote_cleaned`): every saved revision keeps the untouched
+  map_saver output as `map_raw.png` and promotes the decluttered image to the
+  served `map.png`. The `map.yaml` frame is byte-identical, so zone coordinates
+  and localization are unaffected; a cleaning failure falls back to serving the
+  raw map rather than losing a freshly-mapped area.
+- **Not yet:** the ROSE² **room-segmentation** layer (Hough → DBSCAN line
+  clustering → representative lines → face/room graph), which needs
+  `scikit-learn` (DBSCAN) added to the env.
 
 ## Parameters
 

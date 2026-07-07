@@ -8,13 +8,19 @@ place, managed as a single versioned unit.
             zones.yaml             named poses in this floor's map frame
             map -> maps/<rev>/     symlink to the current map revision
             maps/<rev>/            immutable once published:
-                map.yaml + map.png     nav2 map_server pair
+                map.yaml + map.png     nav2 map_server pair — the cleaned map,
+                                       the one that is served and distributed
+                map_raw.png            the untouched map_saver output, kept for
+                                       provenance/audit (same frame as map.png)
+                diagnostics.png        before/after + detected structure panel
                 map.posegraph + .data  slam_toolbox graph (lets mapping
-                                       continue later in the same frame)
-                meta.yaml              provenance: when it was saved and which
+                                       continue later in the same frame; belongs
+                                       to the raw map, never the cleaned one)
+                meta.yaml              provenance: when it was saved, which
                                        mapping bag (~/.mote/bags/mapping/<ts>,
                                        recorded by mapping_launch.py) the
-                                       session was captured in
+                                       session was captured in, and the cleaning
+                                       pass parameters + stats
 
 A map revision is fully staged in its maps/<rev>/ directory before the
 ``map`` symlink is flipped to it (one atomic rename), so a half-written
@@ -214,9 +220,17 @@ def cmd_info():
         return
     for rev in revisions(fdir):
         marker = " *" if rev == current else ""
-        bag = revision_meta(fdir, rev).get("bag")
-        suffix = f"  (bag: {bag})" if bag else ""
-        print(f"  maps/{rev}{marker}{suffix}")
+        meta = revision_meta(fdir, rev)
+        clean = meta.get("clean", {})
+        if not clean:
+            clean_note = "raw only"
+        elif clean.get("ok"):
+            clean_note = f"cleaned -{clean.get('removed', '?')}"
+        else:
+            clean_note = "clean FAILED, serving raw"
+        bag = meta.get("bag")
+        bag_note = f", bag: {bag}" if bag else ""
+        print(f"  maps/{rev}{marker}  ({clean_note}{bag_note})")
 
 
 def revisions(fdir: Path) -> list[str]:
@@ -277,6 +291,58 @@ def revision_meta(fdir: Path, rev: str) -> dict:
     return yaml.safe_load(meta_file.read_text()) or {}
 
 
+def _clean_map_png(raw_png: Path, out_png: Path, diag_png: Path) -> dict:
+    """Declutter a saved occupancy PNG: read raw_png, write the cleaned map to
+    out_png and a diagnostics panel to diag_png. Returns cleaning stats for
+    meta.yaml. Kept file-only (no ROS) so it is testable off the robot.
+    """
+    import cv2
+
+    from mote_bringup.map_cleanup import Params, extract_structure
+    from mote_bringup.map_cleanup.cli import make_diagnostics
+
+    occ = cv2.imread(str(raw_png), cv2.IMREAD_GRAYSCALE)
+    if occ is None:
+        raise RuntimeError(f"could not read {raw_png}")
+    params = Params()
+    res = extract_structure(occ, params)
+    cv2.imwrite(str(out_png), res.cleaned_map)
+    cv2.imwrite(str(diag_png), make_diagnostics(occ, res))
+    before, after = int(res.wall.sum()), int(res.clean_wall.sum())
+    return {
+        "ok": True,
+        "wedge_halfwidth_deg": params.wedge_halfwidth_deg,
+        "peak_rel_threshold": params.peak_rel_threshold,
+        "directions_deg": [round(d, 1) for d in res.directions_deg],
+        "occupied_before": before,
+        "occupied_after": after,
+        "removed": before - after,
+        "added": int((res.clean_wall & ~res.wall).sum()),
+    }
+
+
+def _promote_cleaned(rev_dir: Path) -> dict:
+    """Turn a freshly-saved raw revision into a served, cleaned one.
+
+    The untouched map_saver output (map.png) is kept as map_raw.png and the
+    decluttered image is promoted to the served map.png. map.yaml's frame is
+    identical for both (only pixels change), so zones and localization are
+    unaffected. A cleaning failure never discards the map — the raw is served
+    instead. Returns the clean stats block for meta.yaml.
+    """
+    raw_png = rev_dir / "map_raw.png"
+    (rev_dir / "map.png").rename(raw_png)
+    (rev_dir / "map_raw.yaml").write_text(
+        (rev_dir / "map.yaml").read_text().replace("map.png", "map_raw.png")
+    )
+    try:
+        return _clean_map_png(raw_png, rev_dir / "map.png", rev_dir / "diagnostics.png")
+    except Exception as exc:  # noqa: BLE001 — a bad clean must not lose the map
+        shutil.copyfile(raw_png, rev_dir / "map.png")
+        print(f"WARNING: map cleaning failed ({exc}); serving raw map", file=sys.stderr)
+        return {"ok": False, "error": str(exc)}
+
+
 def save_map():
     act = active()
     if not act:
@@ -323,14 +389,22 @@ def save_map():
             f"incomplete map revision (missing map{'/map'.join(missing)}) — "
             "discarded; are mapping + slam_toolbox running?"
         )
+    clean = _promote_cleaned(rev_dir)
+
     meta = {"schema": SCHEMA, "saved": time.strftime("%Y-%m-%dT%H:%M:%S")}
     bag = latest_mapping_bag()
     if bag:
         meta["bag"] = str(bag.relative_to(mote_dir()))
+    meta["clean"] = clean
     (rev_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False))
     _publish_revision(fdir, rev_dir.name)
     _prune_revisions(fdir)
-    print(f"saved map + posegraph revision {rev_dir.name}  ({_active_str()})")
+    served = "cleaned" if clean.get("ok") else "raw (cleaning failed)"
+    stats = f", declutter -{clean['removed']} cells" if clean.get("ok") else ""
+    print(
+        f"saved map + posegraph revision {rev_dir.name}  ({_active_str()}); "
+        f"serving {served} map{stats}"
+    )
 
 
 def use_map(rev: str):
