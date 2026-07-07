@@ -63,6 +63,7 @@ class Params:
     score_threshold: float | None = None  # None -> Otsu over the wall region
     min_component_area: int = 6  # drop cleaned blobs smaller than this (cells)
     dilate_gate_px: int = 2  # only keep cleaned walls near an original wall
+    protect_observed_free: bool = True  # never turn observed-free cells into walls
 
 
 def _binarise(occ: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -205,6 +206,13 @@ def extract_structure(occ: np.ndarray, params: Params | None = None) -> Structur
         ),
     ).astype(bool)
     clean &= gate
+
+    # A cell the robot actually observed as free must never become a wall: the
+    # line-completing reconstruction would otherwise seal real doorways and
+    # openings the robot drove through. Gap-filling is only legitimate in
+    # never-observed (unknown) space.
+    if params.protect_observed_free:
+        clean &= ~free
 
     # Drop tiny speckle components.
     clean = _area_filter(clean, params.min_component_area)
