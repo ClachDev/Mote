@@ -1,6 +1,6 @@
 """CLI: declutter a ROS occupancy-grid PNG and render a diagnostics panel.
 
-    pixi run -- python -m mote_bringup.map_cleanup.cli INPUT.png [--out DIR]
+    python -m mote_bringup.map_cleanup.cli INPUT.png [--out DIR]
 
 Writes a cleaned map PNG and a side-by-side diagnostics image (input, Fourier
 spectrum with detected orientations, angular-energy plot, cleaned map).
