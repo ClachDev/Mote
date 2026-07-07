@@ -1,7 +1,7 @@
 """FFT-based structure extraction for decluttering 2D occupancy grid maps.
 
-A clean-room implementation of the structure-identification stage of ROSE /
-ROSE2 (Robust Structure identification and rOom SEgmentation, arXiv:2203.03519):
+Implements the structure-identification method described in ROSE / ROSE2
+(Robust Structure identification and rOom SEgmentation, arXiv:2203.03519):
 straight walls in an occupancy map concentrate their Fourier energy along a few
 dominant orientations, while clutter, sensor speckle and ragged edges spread
 energy uniformly across all orientations. Detecting those dominant orientations

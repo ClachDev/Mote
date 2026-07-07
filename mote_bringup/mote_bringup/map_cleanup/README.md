@@ -5,15 +5,11 @@ salt-and-pepper occupied cells in free space, ragged wall edges, furniture and
 other movable clutter frozen into the geometry. This module recovers the clean
 structural skeleton (the walls) and drops the rest.
 
-It is a clean-room reimplementation of the structure-identification stage of
-**ROSE / ROSE²** ("Robust Structure identification and rOom SEgmentation from
-occupancy grid maps", [arXiv:2203.03519](https://arxiv.org/abs/2203.03519)).
-The original authors' code
-([aislabunimi/ROSE2](https://github.com/aislabunimi/ROSE2)) is GPLv3 and ROS 1,
-so rather than vendor it this is a from-scratch, ROS-2-native implementation of
-the geometry. The technique is purely geometric — **no training, no model, no
-network** — which is why it was worth reimplementing rather than reaching for a
-learned floor-plan model.
+It implements the structure-identification method described in **ROSE / ROSE²**
+("Robust Structure identification and rOom SEgmentation from occupancy grid
+maps", [arXiv:2203.03519](https://arxiv.org/abs/2203.03519)). The technique is
+purely geometric — **no training, no model, no network** — which makes it a good
+fit for a small robot that just needs its saved maps tidied.
 
 ## Idea
 
