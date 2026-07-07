@@ -1,0 +1,11 @@
+<library path="mote_nav">
+  <class
+    name="mote_nav::WheelSpeedLimitCritic"
+    type="mote_nav::WheelSpeedLimitCritic"
+    base_class_type="dwb_core::TrajectoryCritic">
+    <description>
+      Rejects DWB trajectories whose implied per-wheel surface speed exceeds the
+      servo limit for the Mote differential drive.
+    </description>
+  </class>
+</library>

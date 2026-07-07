@@ -5,6 +5,12 @@
 wheel_radius: 0.0325
 wheel_separation: 0.22
 
+# Maximum wheel surface speed the servos sustain at the 5V supply — the hard
+# ceiling measured from recorded odometry, not a datasheet value. Consumed by
+# the Nav2 WheelSpeedLimit critic (injected via nav2_launch.py) to keep
+# commanded (v, omega) within what the differential drive can actually deliver.
+max_wheel_speed: 0.218
+
 # Drive servo bus
 servos:
   port: /dev/mote_servos

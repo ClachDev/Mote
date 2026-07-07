@@ -83,7 +83,11 @@ controller_server:
       trans_stopped_velocity: 0.25
       short_circuit_trajectory_evaluation: true
       stateful: true
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      critics: ["WheelSpeedLimit", "RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      WheelSpeedLimit.class: "mote_nav::WheelSpeedLimitCritic"
+      # max_wheel_speed and wheel_separation are injected from robot.yaml by
+      # nav2_launch.py so the hardware envelope has one source of truth.
+      WheelSpeedLimit.scale: 1.0
       BaseObstacle.scale: 0.02
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
