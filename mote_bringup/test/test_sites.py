@@ -137,6 +137,60 @@ def test_revision_meta_round_trip(mote_home):
     assert sites.revision_meta(fdir, "r1")["bag"] == "bags/mapping/20260101_000001"
 
 
+def _stage_raw_map(rev_dir):
+    """Write a synthetic ROS occupancy PNG + yaml as if map_saver just ran."""
+    import cv2
+    import numpy as np
+
+    m = np.full((100, 140), 205, np.uint8)  # unknown
+    m[20:80, 20:120] = 254  # free room
+    m[20:80, 20] = 0  # walls (axis-aligned so a direction is detectable)
+    m[20:80, 119] = 0
+    m[20, 20:120] = 0
+    m[79, 20:120] = 0
+    rng = np.random.default_rng(0)
+    ys, xs = rng.integers(21, 79, 40), rng.integers(21, 119, 40)
+    m[ys, xs] = 0  # speckle clutter to declutter
+    rev_dir.mkdir(parents=True)
+    cv2.imwrite(str(rev_dir / "map.png"), m)
+    (rev_dir / "map.yaml").write_text(
+        "image: map.png\nresolution: 0.05\norigin: [-1.0, -2.0, 0.0]\n"
+        "negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n"
+    )
+
+
+def test_promote_cleaned_serves_clean_and_keeps_raw(mote_home):
+    import cv2
+
+    fdir = mote_home / "f"
+    rev_dir = fdir / "maps" / "r1"
+    _stage_raw_map(rev_dir)
+    clean = sites._promote_cleaned(rev_dir)
+
+    assert clean["ok"] and clean["removed"] > 0
+    # raw retained, cleaned promoted to the served map.png, diagnostics written
+    assert (rev_dir / "map_raw.png").exists()
+    assert (rev_dir / "diagnostics.png").exists()
+    assert "map_raw.png" in (rev_dir / "map_raw.yaml").read_text()
+    assert "image: map.png" in (rev_dir / "map.yaml").read_text()  # frame untouched
+    raw = cv2.imread(str(rev_dir / "map_raw.png"), cv2.IMREAD_GRAYSCALE)
+    served = cv2.imread(str(rev_dir / "map.png"), cv2.IMREAD_GRAYSCALE)
+    assert raw.shape == served.shape  # same frame => zones stay valid
+    assert (raw != served).any()  # served is cleaned, not the raw bytes
+
+
+def test_promote_cleaned_failure_falls_back_to_raw(mote_home):
+    fdir = mote_home / "f"
+    rev_dir = fdir / "maps" / "r1"
+    rev_dir.mkdir(parents=True)
+    (rev_dir / "map.png").write_text("not a png")  # cv2 cannot read -> failure
+    (rev_dir / "map.yaml").write_text("image: map.png\nresolution: 0.05\n")
+    clean = sites._promote_cleaned(rev_dir)
+
+    assert clean["ok"] is False and "error" in clean
+    assert (rev_dir / "map.png").read_bytes() == (rev_dir / "map_raw.png").read_bytes()
+
+
 def test_cli_round_trip(mote_home, capsys):
     sites.main(["create", "beta"])
     sites.main(["create", "alpha"])
