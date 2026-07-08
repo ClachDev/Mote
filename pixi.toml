@@ -53,10 +53,18 @@ camera_calibration = "ros2 run camera_calibration cameracalibrator --size 6x9 --
 # without a rebuild thanks to colcon --symlink-install; only C++ needs `build`.
 sync-watch = "watchexec --debounce 1s -- pixi run sync"
 
+# Sim sites (maps + zones) are committed under mote_simulation/sim_home and
+# selected via MOTE_HOME, so sim-nav loads a world's own map and never touches
+# the robot's real ~/.mote. sim_launch resolves the map from the world arg.
+[feature.sim.activation.env]
+MOTE_HOME = "$PIXI_PROJECT_ROOT/mote_simulation/sim_home"
+
 [feature.sim.tasks]
 sim = "ros2 launch mote_simulation sim_launch.py"
 sim-mapping = "ros2 launch mote_simulation sim_launch.py mode:=mapping"
 sim-nav = "ros2 launch mote_simulation sim_launch.py mode:=nav"
+# Build/refresh a world's committed site by mapping it with SLAM (see the tool).
+sim-map-world = "bash mote_simulation/tools/map_world.sh"
 sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
     "build",
 ] }

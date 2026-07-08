@@ -1,0 +1,9 @@
+# Named navigation targets for office_world.sdf (the medium hospital-ward
+# corridor: 22 m x 2 m corridor, five 4.4 m rooms per side with doorways at
+# y=+/-1 centred on each room). pickup and dropoff sit in rooms at opposite
+# ends and sides, so a fetch traverses most of the corridor and two doorways.
+frame_id: map
+zones:
+  pickup: {x: -8.8, y: 3.5, yaw: 1.571}
+  dropoff: {x: 8.8, y: -3.5, yaw: -1.571}
+  home: {x: 0.0, y: 0.0, yaw: 0.0}

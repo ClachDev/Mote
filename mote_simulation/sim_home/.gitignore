@@ -1,0 +1,11 @@
+# Committed sim MOTE_HOME: the per-world site bundles under sites/ are checked
+# in (maps + zones), but per-run mutable state is not.
+active.yaml
+bags/
+
+# The slam posegraph exists only to *continue* mapping in the same frame later;
+# the sim always maps a world fresh (tools/map_world.sh), so it is never loaded
+# here and would just add ~100 MB of binary blobs to the repo. nav only needs
+# map.png + map.yaml. Kept out of git (regenerated locally on each save).
+*.posegraph
+*.data

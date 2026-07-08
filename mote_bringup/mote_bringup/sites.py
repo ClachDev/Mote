@@ -224,6 +224,8 @@ def cmd_info():
         clean = meta.get("clean", {})
         if not clean:
             clean_note = "raw only"
+        elif clean.get("skipped"):
+            clean_note = "raw (clean skipped)"
         elif clean.get("ok"):
             clean_note = f"cleaned -{clean.get('removed', '?')}"
         else:
@@ -343,7 +345,14 @@ def _promote_cleaned(rev_dir: Path) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def save_map():
+def save_map(clean: bool = True):
+    """Save the running mapping session into a new revision of the active floor.
+
+    ``clean`` runs the FFT declutter pass and serves the cleaned map (the robot
+    default). Pass ``clean=False`` for already-clean maps — e.g. sim maps built
+    from ground-truth geometry, where the declutter pass, tuned for real-sensor
+    noise, would strip the thin true walls — to serve the raw map_saver output.
+    """
     act = active()
     if not act:
         sys.exit("no active site (run: site create <name>)")
@@ -389,18 +398,25 @@ def save_map():
             f"incomplete map revision (missing map{'/map'.join(missing)}) — "
             "discarded; are mapping + slam_toolbox running?"
         )
-    clean = _promote_cleaned(rev_dir)
+    clean_stats = _promote_cleaned(rev_dir) if clean else {"skipped": True}
 
     meta = {"schema": SCHEMA, "saved": time.strftime("%Y-%m-%dT%H:%M:%S")}
     bag = latest_mapping_bag()
     if bag:
         meta["bag"] = str(bag.relative_to(mote_dir()))
-    meta["clean"] = clean
+    meta["clean"] = clean_stats
     (rev_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False))
     _publish_revision(fdir, rev_dir.name)
     _prune_revisions(fdir)
-    served = "cleaned" if clean.get("ok") else "raw (cleaning failed)"
-    stats = f", declutter -{clean['removed']} cells" if clean.get("ok") else ""
+    if clean_stats.get("skipped"):
+        served = "raw (clean skipped)"
+    elif clean_stats.get("ok"):
+        served = "cleaned"
+    else:
+        served = "raw (cleaning failed)"
+    stats = (
+        f", declutter -{clean_stats['removed']} cells" if clean_stats.get("ok") else ""
+    )
     print(
         f"saved map + posegraph revision {rev_dir.name}  ({_active_str()}); "
         f"serving {served} map{stats}"
