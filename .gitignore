@@ -10,3 +10,5 @@ log/
 #llm
 .claude/
 __pycache__/
+
+scratchpad*
