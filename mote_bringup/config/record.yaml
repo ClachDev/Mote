@@ -21,6 +21,12 @@ streams:
       - /diff_drive_controller/cmd_vel
       - /diff_drive_controller/odom
       - /goal_pose
+      # RViz's Nav2 Goal tool sends the goal over the navigate_to_pose action,
+      # not /goal_pose. The goal request itself is a service (unrecordable), but
+      # these two topics capture the goal lifecycle — status carries the
+      # accepted/succeeded/aborted transitions, feedback the live progress.
+      - /navigate_to_pose/_action/status
+      - /navigate_to_pose/_action/feedback
       - /plan
       - /task/command
       - /task/status
