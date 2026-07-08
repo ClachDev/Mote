@@ -20,16 +20,27 @@ SIM_DIR="$ROOT/mote_simulation"
 LOG="$(mktemp -t mote_map_"$STEM".XXXXXX.log)"
 SIM_PID=""
 
-cleanup() {
-    # Kill the launch's whole process group (gz, bridge, controllers, slam, nav).
-    [ -n "$SIM_PID" ] && kill -- -"$SIM_PID" 2>/dev/null
-    sleep 2
-    # Belt-and-suspenders for stragglers. Match the gz server and slam node by
-    # name — NOT "$WORLD", which also appears in this script's own argv and
-    # would make pkill -9 kill the orchestrator itself.
-    pkill -9 -f 'gz sim' 2>/dev/null
-    pkill -9 -f 'async_slam_toolbox_node' 2>/dev/null
+# Every mapping-stack node, matched by its binary/launch path. NOT "$WORLD",
+# which also appears in this script's own argv and would kill the orchestrator.
+NODE_PAT='gz sim|nav2_|slam_toolbox|kinematic_icp|online_node|robot_state_publisher|parameter_bridge|ros_gz|task_server|laser_filter'
+purge() {
+    # Hard-kill the whole stack by PID, repeatedly. A plain group-kill races the
+    # next launch: nodes can take several seconds to exit and release their DDS
+    # graph / TF authority, and a leftover odom publisher poisons the next run's
+    # TF with future-stamped transforms. Poll until nothing survives.
+    for _ in 1 2 3 4; do
+        local alive
+        alive=$(pgrep -f "$NODE_PAT")
+        [ -z "$alive" ] && break
+        # shellcheck disable=SC2086
+        kill -9 $alive 2>/dev/null
+        sleep 2
+    done
     ros2 daemon stop >/dev/null 2>&1
+}
+cleanup() {
+    [ -n "$SIM_PID" ] && kill -- -"$SIM_PID" 2>/dev/null
+    purge
     return 0
 }
 # Only on interrupt/termination; the normal and fail paths call cleanup + exit
@@ -60,7 +71,10 @@ else:
     print(f"WARNING: no zones file {src}", file=sys.stderr)
 PY
 
-ros2 daemon stop >/dev/null 2>&1
+# Start from a guaranteed-clean graph: kill any stale mapping nodes left by a
+# previous world or a crashed run, so this sim's TF/DDS aren't poisoned by them.
+purge
+if pgrep -f "$NODE_PAT" >/dev/null; then fail "sim nodes still alive after purge"; fi
 sleep 1
 
 echo ">> launching mapping sim..."
