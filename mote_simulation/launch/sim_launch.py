@@ -169,6 +169,39 @@ def generate_launch_description():
             condition=IfCondition(EqualsSubstitution(mode, mode_value)),
         )
 
+    # nav mode loads a saved map. Which one is decided by the world: each world
+    # has a committed site under the sim MOTE_HOME (site name == world stem),
+    # built by tools/map_world.sh. Resolve its map here from the world arg and
+    # pass it to robot_launch, so `sim-nav world:=X` always drives X's own map
+    # and never falls back to the robot's real ~/.mote active site.
+    def nav_mission(context):
+        if LaunchConfiguration("mode").perform(context) != "nav":
+            return []
+        from mote_bringup import sites
+
+        stem = LaunchConfiguration("world").perform(context).removesuffix(".sdf")
+        map_yaml = sites.floor_dir(stem, "ground") / "map" / "map.yaml"
+        args = {
+            "base": "false",
+            "use_sim_time": "true",
+            "record": LaunchConfiguration("record").perform(context),
+        }
+        if map_yaml.exists():
+            args["map"] = str(map_yaml)
+        else:
+            print(
+                f"WARNING: no committed sim map for '{stem}' at {map_yaml}; "
+                f"build one with `pixi run sim-map-world {stem}.sdf`"
+            )
+        return [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(bringup_share, "launch", "robot_launch.py")
+                ),
+                launch_arguments=args.items(),
+            )
+        ]
+
     # Every world ships a sibling <world>.zones.yaml giving the task layer's
     # named zones (pickup/dropoff/home) coordinates valid in that world, so a
     # fetch mission runs anywhere on the world ladder. Whenever a mission mode
@@ -233,7 +266,7 @@ def generate_launch_description():
             laser_filter,
             localization,
             mission("mapping_launch.py", "mapping"),
-            mission("robot_launch.py", "nav"),
+            OpaqueFunction(function=nav_mission),
             OpaqueFunction(function=task_layer),
         ]
     )
