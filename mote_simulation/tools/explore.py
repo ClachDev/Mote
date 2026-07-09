@@ -12,9 +12,9 @@ sole driver and a next-best-view observation spin at each goal:
   provably complete and minimises travel). Tiny speckle clusters and a
   blacklist of unreachable points are filtered out.
 * observe — Nav2 ``navigate_to_pose`` drives to a goal backed off the frontier
-  into verified free space and *oriented to face the unknown*, so the robot
-  arrives looking into the new region. On arrival it spins in place a full turn
-  so slam sees the surrounding walls square-on — this is what fills the
+  into verified free space (out of costmap inflation) and oriented to face the
+  unknown, so the robot arrives looking into the new region. On arrival it spins
+  a full turn so slam sees the surrounding walls square-on — filling the
   grazing-angle "fans" a corridor-only pass leaves beside every doorway.
 
 Ends when no reachable frontier cluster remains (covered) or the budget
@@ -43,14 +43,19 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
 SEED_SPIN = 7.0  # sim s of in-place rotation to bootstrap the first frontiers
 SPIN_RATE = 1.0  # observation-spin yaw rate (rad/s), under the 1.87 angular cap
+RECOVER_BACK = 3.0  # sim s to drive backward to un-wedge after a failed goal
+RECOVER_TURN = 2.0  # sim s to then rotate, so the next attempt leaves at a new heading
+TURN_RATE = 1.0  # recovery yaw rate (rad/s)
 BACKOFF = 0.8  # aim the Nav2 goal at least this far back from the frontier, into
-# known free space, so the planner can actually reach it (a frontier cell sits on
-# the unknown boundary, inside costmap inflation, and goals there never arrive)
-MAX_BACKOFF = 1.3  # ...but no further than this from the frontier, so the goal
-# stays *near* the opening and the robot drives up to it rather than backing all
-# the way to its own position (which would make progress stall)
-MIN_CLUSTER = 6  # ignore frontier clusters smaller than this many cells (noise)
-CLEANUP_CLUSTER = 3  # ...but in the cleanup sweep chase smaller ones too
+# known free space, so the planner can reach it (a frontier cell sits on the
+# unknown boundary, inside costmap inflation, and goals there never arrive)
+MAX_BACKOFF = 1.3  # ...but no further, so the goal stays near the opening and the
+# robot drives up to it rather than backing to its own position (progress stalls)
+MIN_CLUSTER = 4  # ignore frontier clusters smaller than this many cells. Kept
+# fairly low because sim maps are ground-truth-clean (no sensor speckle), so small
+# clusters are real openings, not noise — filtering them hard made the robot
+# declare "covered" with rooms half-mapped.
+CLEANUP_CLUSTER = 1  # ...and the cleanup sweep chases every last frontier
 OBSERVE_R = 1.2  # ring radius (m) for viewpoint sampling when the straight
 # back-off collapses onto the robot — used to circle a free-standing obstacle
 COLLAPSE_MIN = 0.6  # a back-off goal closer than this to the robot is "collapsed"
@@ -122,6 +127,20 @@ class Explorer(Node):
             rclpy.spin_once(self, timeout_sec=0.05)
         self.publish(0.0, 0.0)
 
+    def recover(self):
+        """Physically un-wedge after a failed goal: back up open-loop, then turn.
+        Nav2 has just failed to make progress, so its recovery (if any) didn't
+        free the robot — drive it out directly via cmd_vel so exploration can
+        resume elsewhere instead of burning the whole budget stuck in one spot."""
+        start = self.sim_now()
+        while self.sim_now() - start < RECOVER_BACK:
+            self.publish(-0.15, 0.0)
+            rclpy.spin_once(self, timeout_sec=0.05)
+        while self.sim_now() - start < RECOVER_BACK + RECOVER_TURN:
+            self.publish(0.0, TURN_RATE)
+            rclpy.spin_once(self, timeout_sec=0.05)
+        self.publish(0.0, 0.0)
+
     def grid_array(self):
         g = self.grid
         w, h = g.info.width, g.info.height
@@ -172,8 +191,8 @@ class Explorer(Node):
         return out
 
     def _clear(self, a, info, gx, gy):
-        """True if world point (gx, gy) is a free cell with CLEAR_CELLS of free
-        space around it (so Nav2 accepts it, not lost in costmap inflation)."""
+        """True if (gx, gy) is a free cell with CLEAR_CELLS of free space around
+        it (so Nav2 accepts it, not lost in unknown/wall inflation)."""
         res = info.resolution
         col = int((gx - info.origin.position.x) / res)
         row = int((gy - info.origin.position.y) / res)
@@ -191,18 +210,15 @@ class Explorer(Node):
     def free_goal(self, cx, cy, here):
         """A reachable goal for the frontier at (cx, cy), oriented to face it.
 
-        Primary: step back from the frontier toward the robot (BACKOFF..MAX_BACKOFF
-        metres) to the first clear cell — near the opening but out of inflation.
+        Step back from the frontier toward the robot (BACKOFF..MAX_BACKOFF metres)
+        to the first clear cell — near the opening but out of the costmap inflation
+        that rejects goals sitting on the unknown boundary. Capping at MAX_BACKOFF
+        keeps the goal by the opening so the robot drives up to it.
 
-        Fallback (cleanup sweep only): if that clear cell lands on the robot
-        (COLLAPSE_MIN), the frontier is a shadow the robot can't see from where it
-        stands (e.g. behind a free-standing obstacle). Sample viewpoints on a ring
-        around the frontier and take the reachable one *farthest* from the robot,
-        so it circles round to observe. This runs only after coverage is complete
-        (self.cleanup) — during the main sweep such collapses are left for greedy
-        exploration to reach from elsewhere, which keeps the robot from being
-        diverted onto long, often-unreachable detours mid-exploration. Returns
-        (gx, gy, yaw) or None if nothing clear/reachable is found."""
+        Cleanup sweep only: if that clear cell lands on the robot (COLLAPSE_MIN),
+        the frontier is a shadow it cannot see from here (e.g. behind a
+        free-standing obstacle); circle it via a viewpoint ring and take the
+        reachable one farthest from the robot. Returns (gx, gy, yaw) or None."""
         a = self.grid_array()
         info = self.grid.info
         res = info.resolution
@@ -405,6 +421,11 @@ def main():
             node.spin_in_place(2 * math.pi / SPIN_RATE)  # observe square-on
         else:
             blacklist.append((cx, cy))
+            # stuck/aborted/timeout can leave the robot physically wedged in
+            # inflation or a corner; back out so it doesn't spend the rest of the
+            # budget failing every goal from the same spot.
+            if res in ("stuck", "aborted", "timeout"):
+                node.recover()
             continue
         # If we didn't actually travel, this frontier is occluded/unreachable
         # from here — blacklist it so we don't pick it again next scan.
