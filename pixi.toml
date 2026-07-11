@@ -10,7 +10,7 @@ submodules = "git submodule update --init"
 build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5", depends-on = [
     "submodules",
 ] }
-test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_tasks mote_perception --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_tasks mote_perception --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
 
