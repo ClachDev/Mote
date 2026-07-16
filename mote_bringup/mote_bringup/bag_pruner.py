@@ -13,6 +13,7 @@ active run does not affect playback of the segments that remain.
 import argparse
 import os
 import shutil
+import signal
 import time
 
 
@@ -85,6 +86,10 @@ def main():
 
     cap_bytes = int(args.max_gb * 1e9)
     os.makedirs(args.dir, exist_ok=True)
+    # Launch shutdown reaches this process as SIGTERM (the sweep interval is
+    # far longer than launch's SIGINT escalation window); exit cleanly instead
+    # of dying mid-sleep with an error in the launch log.
+    signal.signal(signal.SIGTERM, lambda _sig, _frame: exit(0))
     try:
         while True:
             prune(args.dir, cap_bytes)
