@@ -11,6 +11,18 @@ grid — 240mm places holes right at the plate edge, and 250mm+ would be tight o
 the bed. All components fit within the 235mm footprint, and the power bank
 (152mm longest dimension) fits comfortably within the circle.
 
+### Mounting grid: ORP plates, half-pitch mounts
+
+Both chassis plates are pure [ORP](https://openroboticplatform.com/designrules)
+grid — Ø3.5 mm holes at 20 mm pitch — so any ORP part bolts straight on. 20 mm
+is too coarse to place every mount where it needs to sit, so the mounts carry
+their holes at a **10 mm half-pitch** instead: shifting a mount by 10 mm lines
+a different subset of its holes up with the plate, giving 10 mm placement
+granularity without touching the plate grid. Keep new mounts on the
+half-pitch and keep the plates pure ORP. The survey behind this rule and the
+fastening roadmap (migrating nut pockets to heat-set inserts) are in
+[research/fastening.md](research/fastening.md).
+
 ### Power: 5V only
 
 Mote standardises on 5V (USB-C power bank) and does not offer a 12V variant.

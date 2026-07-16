@@ -51,6 +51,8 @@ optional extras once validated.
 | Part                      | Qty | Unit price | Link                                                                | Notes                                                                                                                                                           |
 | ------------------------- | --- | ---------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | BNO085 9-DOF IMU breakout | 1   | ~£15       | [AliExpress](https://www.aliexpress.com/item/1005010674706575.html) | Requires soldering iron to attach header pins. Intended for wheel slip detection and improved odometry when fused with wheel encoders via `robot_localization`. |
+| M3 nyloc nuts (~100pcs)   | 1   | ~£3        | —                                                                   | Vibration-resistant swap for plain nuts at joints where the nut stays accessible (not inside a hex pocket). See [research/fastening.md](research/fastening.md). |
+| M3 heat-set inserts (M3×D5×L4, ~100pcs) | 1 | ~£6 | —                                                            | Candidate replacement for the captive-nut pockets — one-tool, any-order assembly; needs a soldering iron insert tip. See [research/fastening.md](research/fastening.md). |
 
 ---
 
