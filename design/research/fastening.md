@@ -63,6 +63,43 @@ hardware.
 slicer decision, not a purchasing decision, and the plates can be revised
 whenever the change earns a reprint.
 
+### Field notes: ORP after one build
+
+Mote is a first build on ORP, and three flaws are now visible from use.
+Recorded here because they bound how much the standard should be deferred to,
+not because any of them changes the recommendation below.
+
+First, granularity: a 20 mm pitch suits larger robots, but optimising
+component fit on a 235 mm plate wants finer placement. The mounts' de-facto
+10 mm half-pitch recovers some of it, but the standard itself has no
+finer-grid provision.
+
+Second, and more fundamental: **ORP standardises a hole pattern, not an
+interface.** The servo mounts had to be explicitly positioned so the wheel
+sat correctly relative to the chassis — a functional constraint (axle height,
+wheel-contact position) that lives entirely outside the standard. The result
+is that neither the plate nor the servo mount is actually reusable on a
+different robot without some additional convention; grid compatibility gave
+fastener interchange, not part interchange. A useful standard for drivetrain
+parts would have to specify functional datums, not just hole locations.
+
+Third, the mounting system is underspecified: the standard says nothing about
+which side threads, how nuts are retained, or assembly direction, so every
+ORP design re-solves fastening ad hoc — this document included. Other ORP
+components don't visibly converge on an answer (no inserts sighted). The
+trapped-nut plate below is effectively a local extension of the standard's
+unclaimed territory.
+
+Prior art worth studying if the mounting convention is ever revisited:
+TurtleBot 3's waffle plates — small injection-moulded lattice modules,
+riveted edge-to-edge into arbitrary plate sizes and shapes, with a hole
+pattern dense enough to approximate continuous placement. The tiling idea is
+the interesting part: the "plate" stops being a monolith, so chassis size
+decouples from bed size and a damaged section is a cheap replacement — though
+notably TB3 also leaves threading unspecified (bolts + nuts for components,
+rivets for plate-to-plate), so it solves granularity and extensibility, not
+fastening.
+
 ---
 
 ## Recommendation
