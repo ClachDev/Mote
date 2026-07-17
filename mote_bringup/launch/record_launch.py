@@ -49,8 +49,14 @@ def _record(kind, topics, split, output):
             "record",
             "--max-bag-duration",
             str(split),
+            # Action topics (e.g. /navigate_to_pose/_action/status) are hidden;
+            # without this flag the recorder silently skips them even when they
+            # are listed explicitly. Recording stays limited to the listed
+            # topics — the flag only lets hidden ones through that filter.
+            "--include-hidden-topics",
             "-o",
             output,
+            "--topics",
             *topics,
         ],
         output="screen",
@@ -59,11 +65,13 @@ def _record(kind, topics, split, output):
 
 def _pruner(kind, max_gb, interval):
     return ExecuteProcess(
+        # Invoked directly rather than through `ros2 run`, whose wrapper does
+        # not forward launch's shutdown signals to its child — the pruner
+        # would outlive every session as an orphan.
         cmd=[
-            "ros2",
-            "run",
-            "mote_bringup",
-            "bag_pruner",
+            "python3",
+            "-m",
+            "mote_bringup.bag_pruner",
             "--dir",
             _bags_dir(kind),
             "--max-gb",
@@ -72,6 +80,10 @@ def _pruner(kind, max_gb, interval):
             str(interval),
         ],
         output="screen",
+        # The pruner is the only thing standing between continuous recording
+        # and a full disk, so restart it if it ever dies.
+        respawn=True,
+        respawn_delay=5.0,
     )
 
 
