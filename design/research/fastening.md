@@ -44,6 +44,10 @@ Usage fact that shapes the answer: the build has stabilised. Most components
 are static; only the SO-101 arm comes on and off often. So the design goal is
 *every joint serviceable from outside the robot*, not universal quick-release.
 
+(Measured geometry of the v1 parts — hole counts, pitches, pocket census —
+lives in [mounting_survey.md](mounting_survey.md), with the script that
+produced it.)
+
 ---
 
 ## Constraint Audit
@@ -102,7 +106,14 @@ fastening.
 
 ---
 
-## Recommendation
+## Candidate Scheme
+
+*Status note: review of this document grew into the
+[v2 redesign process](../REDESIGN.md), under which fastening is decided per
+joint against a joint schedule in Phase 3 — not globally. The scheme below is
+the strongest whole-robot answer this survey produced; it stands as the
+default for any joint the schedule doesn't overrule, and as the interim fix
+wherever v1 parts get reprinted before v2 reaches them.*
 
 Three changes, all geometry, using hardware already in the £6 set:
 
