@@ -19,9 +19,10 @@ is too coarse to place every mount where it needs to sit, so the mounts carry
 their holes at a **10 mm half-pitch** instead: shifting a mount by 10 mm lines
 a different subset of its holes up with the plate, giving 10 mm placement
 granularity without touching the plate grid. Keep new mounts on the
-half-pitch and keep the plates pure ORP. The survey behind this rule and the
-fastening roadmap (migrating nut pockets to heat-set inserts) are in
-[research/fastening.md](research/fastening.md).
+half-pitch and keep the plates pure ORP. The measurements behind this rule
+are in [research/mounting_survey.md](research/mounting_survey.md); fastening
+is surveyed in [research/fastening.md](research/fastening.md), and both feed
+the [v2 redesign process](REDESIGN.md).
 
 ### Power: 5V only
 

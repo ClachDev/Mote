@@ -58,12 +58,12 @@ Two things the captive-nut pockets impose — know them before you start:
   protruding tip can press against the Pi board and damage it — test the
   screw in its pocket *before* the Pi is in place.
 
-> **Note:** I am not convinced yet that screws and nuts are the optimal choice
-> here. Nuts have a tendency to loosen up due to vibrations while driving
-> around. Nyloc nuts (where the nut is accessible) or a plastic-safe
-> medium-strength threadlocker help in the meantime; the longer-term options —
-> heat-set inserts being the front-runner — are surveyed in
-> [research/fastening.md](research/fastening.md).
+> **Note:** screws and nuts are not settled as the fastening scheme. Bare
+> nuts (outside a pocket) tend to loosen from driving vibration — nyloc nuts,
+> or a plastic-safe medium-strength threadlocker, fix that in the meantime.
+> The fastening options are surveyed in
+> [research/fastening.md](research/fastening.md); per-joint decisions belong
+> to the [v2 redesign process](REDESIGN.md).
 
 Suggested order:
 
