@@ -66,6 +66,9 @@ way to package everything up without worrying about ecosystem concerns.
 | [`mote_bringup`](mote_bringup/)         | Launch files for bringing up the robot                    |
 | [`mote_description`](mote_description/) | URDF robot model and TF tree                              |
 | [`mote_hardware`](mote_hardware/)       | ros2_control hardware interface for the Feetech servo bus |
+| [`mote_nav`](mote_nav/)                 | Nav2 plugins for navigation                               |
+| [`mote_perception`](mote_perception/)   | Camera-derived perception (health monitor, depth obstacles) |
+| [`mote_tasks`](mote_tasks/)             | Behaviour-tree task layer that drives Nav2 to run missions |
 | [`mote_simulation`](mote_simulation/)   | Gazebo sim, worlds, and smoke test (workstation only)     |
 
 I'm trying to keep all dependencies from

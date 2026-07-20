@@ -1,10 +1,11 @@
 # mote_perception
 
-Home for Mote's camera-derived perception nodes. This is **L0 (Foundation)** of
-the vision pipeline: package scaffold, a camera health monitor, camera-calibration
-plumbing, and confirmation of compressed image transport. Obstacle detection and
-ML (L1) come later. This package **runs on the robot** (it will eventually feed
-Nav2), so unlike `mote_simulation` it is synced to the Pi.
+Home for Mote's camera-derived perception nodes. It spans **L0 (Foundation)** —
+package scaffold, a camera health monitor, camera-calibration plumbing, and
+compressed image transport — and **L1**, the off-board monocular depth-obstacle
+pipeline that turns the camera into a `PointCloud2` of obstacles for Nav2
+(documented below). This package **runs on the robot** (it feeds Nav2), so unlike
+`mote_simulation` it is synced to the Pi.
 
 ## Nodes
 
