@@ -3,9 +3,9 @@
 Runs scripted nav missions in the headless Gazebo sim and scores them against
 **Gazebo ground truth**, so Nav2 / SLAM / localization config changes can be
 *proven* with numbers instead of eyeballed in RViz. This is the runner the
-planned parameter-sweep tool and the future IMU-justification study build on;
-the metric maths lives in a ROS-free module (`metrics.py`) so an offline
-bag-replay scorer can reuse it unchanged.
+[parameter-sweep tool](sweep/README.md) (`pixi run bench-sweep`) and the future
+IMU-justification study build on; the metric maths lives in a ROS-free module
+(`metrics.py`) so an offline bag-replay scorer can reuse it unchanged.
 
 ## Usage
 

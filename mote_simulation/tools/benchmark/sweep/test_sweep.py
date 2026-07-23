@@ -222,6 +222,21 @@ def test_rank_disqualifies_infeasible_and_success_drop():
     assert not dropped_goals["eligible"]
 
 
+def test_is_winner_requires_positive_margin():
+    # a set that is worse than baseline (negative score) is not a winner
+    worse = {"index": 1, "eligible": True, "score": {"total": -0.3}}
+    assert not score.is_winner(worse)
+    # a tiny improvement below the margin is not a winner
+    tiny = {"index": 2, "eligible": True, "score": {"total": score.WIN_MARGIN / 2}}
+    assert not score.is_winner(tiny)
+    # a clear improvement is
+    clear = {"index": 3, "eligible": True, "score": {"total": 0.5}}
+    assert score.is_winner(clear)
+    # the baseline is never a winner
+    base = {"index": 0, "eligible": True, "score": {"total": 0.0}}
+    assert not score.is_winner(base)
+
+
 def test_report_builds_with_unran_set():
     import sweep_report
 

@@ -22,7 +22,7 @@ def _pct(imp):
 def build_markdown(ranked, baseline, spec, provenance, defaults):
     """``ranked`` best-first; ``baseline`` is the index-0 record; ``defaults`` maps
     a winner assignment id -> committed value (for the old/new table)."""
-    winner = next((r for r in ranked if r.get("eligible") and r["index"] != 0), None)
+    winner = next((r for r in ranked if score.is_winner(r)), None)
     lines = [
         f"# Parameter sweep report — {spec.name}",
         "",
@@ -45,7 +45,8 @@ def build_markdown(ranked, baseline, spec, provenance, defaults):
         )
         + ". A set must be *feasible* (peak per-wheel speed within the "
         f"{provenance['wall_mps']:.3f} m/s hardware wall) and hold goal success "
-        "at or above baseline to be eligible to win.",
+        "at or above baseline to be eligible, and beat the baseline by more than "
+        f"a {score.WIN_MARGIN:+.2f} margin to be declared the winner.",
         "",
     ]
 
@@ -53,9 +54,10 @@ def build_markdown(ranked, baseline, spec, provenance, defaults):
         lines += [
             "## Result: keep the current defaults",
             "",
-            "No eligible set scored above the baseline. The committed config is "
-            "the best of those tried (or every improvement was infeasible / cost "
-            "goal success). Details below.",
+            f"No set beat the baseline by more than the {score.WIN_MARGIN:+.2f} "
+            "win margin. The committed config is the best of those tried (or every "
+            "improvement was too small, infeasible, or cost goal success). Details "
+            "below.",
             "",
         ]
     else:

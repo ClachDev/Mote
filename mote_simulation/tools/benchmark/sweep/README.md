@@ -117,8 +117,16 @@ win by trading goal completions for speed.
 - **Success floor** — the winner's mean success rate must be at or above the
   baseline's (minus a small tolerance).
 
+A set is only declared the **winner** if it is eligible *and* beats the baseline
+by more than a small margin (`score.WIN_MARGIN`); a smaller improvement is likely
+within run-to-run variance (weigh it against the per-metric CVs the benchmark
+reports) and isn't worth a config change. Otherwise the report says "keep the
+current defaults".
+
 Weights and per-world weights are overridable in the spec's `scoring` block; the
-defaults live in `score.py`.
+defaults live in `score.py`. The benchmark graph runs on a dedicated
+`ROS_DOMAIN_ID` (default 42, `--ros-domain-id`) so a sim in another worktree or a
+robot on the network can't pollute it.
 
 ## Outputs
 

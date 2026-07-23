@@ -76,6 +76,21 @@ DEFAULT_WEIGHTS = {
 SUCCESS_GATE_TOL = 0.01
 # Allow this fractional slack above the wheel-speed wall before disqualifying.
 FEASIBILITY_TOL = 0.05
+# A set must beat the baseline by more than this weighted-improvement margin to
+# be declared a winner; below it, keep the committed defaults (a smaller margin
+# is not worth a config change and is likely within run-to-run variance — weigh
+# it against the per-metric CVs in the report).
+WIN_MARGIN = 0.02
+
+
+def is_winner(rec):
+    """True if ``rec`` is an eligible, non-baseline set that beat the baseline by
+    more than ``WIN_MARGIN``."""
+    return (
+        rec.get("index") != 0
+        and rec.get("eligible")
+        and rec.get("score", {}).get("total", 0.0) > WIN_MARGIN
+    )
 
 
 def world_metrics(run):

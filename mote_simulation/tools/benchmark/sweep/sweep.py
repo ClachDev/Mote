@@ -80,12 +80,17 @@ def assignments_json(assignments):
     ]
 
 
-def run_benchmark(spec, set_dir, env_overrides):
+def run_benchmark(spec, set_dir, env_overrides, domain_id):
     """Invoke bench.py for one parameter set; return its parsed run.json (or None
-    on failure). ``env_overrides`` names the merged param files to apply."""
+    on failure). ``env_overrides`` names the merged param files to apply;
+    ``domain_id`` isolates the ROS graph on a dedicated DDS domain."""
     set_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env.update(env_overrides)
+    # Isolate the whole benchmark (sim + Nav2 + ground-truth bridge + recorder)
+    # on a dedicated DDS domain, so a sim running in another worktree — or a live
+    # robot on the network — can't pollute the graph and silently fail goals.
+    env["ROS_DOMAIN_ID"] = str(domain_id)
     cmd = [
         sys.executable,
         str(BENCH),
@@ -129,6 +134,13 @@ def main():
         default=0,
         help="cap the number of sets (baseline + first N-1); 0 = all",
     )
+    ap.add_argument(
+        "--ros-domain-id",
+        type=int,
+        default=42,
+        help="DDS domain to isolate the benchmark graph on (avoids collisions "
+        "with other sims/robots on the network)",
+    )
     args = ap.parse_args()
 
     spec = spec_mod.load(args.spec)
@@ -147,6 +159,7 @@ def main():
         "spec": str(Path(args.spec).resolve()),
         "wall_mps": wall,
         "wheel_separation_m": wheel_sep,
+        "ros_domain_id": args.ros_domain_id,
     }
 
     log(f"spec '{spec.name}': {spec.grid_size()} grid points + baseline")
@@ -174,7 +187,9 @@ def main():
             records.append(rec)
             continue
 
-        run_json, bench_dir = run_benchmark(spec, set_dir, env_overrides)
+        run_json, bench_dir = run_benchmark(
+            spec, set_dir, env_overrides, args.ros_domain_id
+        )
         if run_json is None:
             log(f"set {i} produced no metrics; leaving it unranked")
             records.append(rec)
@@ -209,18 +224,18 @@ def main():
     )
     log(f"wrote {run_dir / 'report.md'} and ranking.json")
 
-    winner = next((r for r in ordered if r.get("eligible") and r["index"] != 0), None)
+    winner = next((r for r in ordered if score.is_winner(r)), None)
     if winner:
         log(f"WINNER: {winner['label']}  score {winner['score']['total']:+.3f}")
     else:
-        log("no eligible set beat the baseline — keep the current defaults")
+        log("no set beat the baseline by the win margin — keep the defaults")
     return 0
 
 
 def _winner_defaults(ordered):
     """Committed default value for each assignment id, for the report's old/new
     table."""
-    winner = next((r for r in ordered if r.get("eligible") and r["index"] != 0), None)
+    winner = next((r for r in ordered if score.is_winner(r)), None)
     if not winner:
         return {}
     out = {}
