@@ -76,6 +76,29 @@ metric so run-to-run variance is explicit when comparing two configs. Provenance
 (git commit, world, map revision, nav2_params path, timestamp) is recorded in
 both `run.json` and the report so two runs are comparable.
 
+## Observed baseline & variance
+
+From `pixi run bench -- --worlds mote_world.sdf,hospital_world.sdf --trials 2`
+(commit `f177473`, sim maps as committed). Two trials per world; the point is
+that a fixed config is *reproducible* enough to compare against:
+
+| world | goals ok | ATE rmse (mean ± std) | ATE CV | time-to-goal CV | min clearance |
+| --- | --- | --- | --- | --- | --- |
+| mote_world | 3/3, 3/3 | 0.068 ± 0.007 m | 10% | 0.8% | 0.95 m |
+| hospital_world | 2/3, 1/3 | 0.085 ± 0.004 m | 4% | 4.9% | 0.34 m |
+
+Localization ATE is stable across trials in **both** worlds (CV ≤ 10%), so a
+config change that moves ATE by more than a few cm is a real signal, not noise.
+Goal-success is the noisier axis: mote completes every goal, while hospital's
+long (~30 m) legs bump the default 120 s `--goal-timeout` non-deterministically
+(2/3 then 1/3) — localization is fine there, the legs just need more time. For a
+fair hospital success rate, raise the cap, e.g.
+`--worlds hospital_world.sdf --goal-timeout 300`.
+
+A settle period (`--settle`, default 8 s) before the first goal is load-bearing:
+driving the instant TF appears, before AMCL and the costmaps converge, makes the
+robot mislocalize and fail every goal. 8 s is enough for these worlds.
+
 ## Layout
 
 | file | role | ROS? |
