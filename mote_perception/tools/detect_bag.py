@@ -36,6 +36,9 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--min-score", type=float, default=MIN_SCORE)
+    # OWLv2's first (cold) inference on CPU can take >10 s, especially with many
+    # labels; the default socket timeout is generous so that frame doesn't drop.
+    ap.add_argument("--timeout", type=float, default=30.0)
     args = ap.parse_args()
     labels = [w.strip() for w in args.labels.split(",") if w.strip()]
 
@@ -44,7 +47,7 @@ def main():
         tf_static.transforms, "camera_optical_link", "base_footprint"
     )
     proj = GroundProjector.from_camera_info(caminfo, T_bo)
-    client = DetectClient(args.host, args.port)
+    client = DetectClient(args.host, args.port, timeout=args.timeout)
 
     os.makedirs(args.out, exist_ok=True)
     step = max(1, len(imgs) // args.frames)
