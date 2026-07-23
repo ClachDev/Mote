@@ -222,6 +222,29 @@ def test_rank_disqualifies_infeasible_and_success_drop():
     assert not dropped_goals["eligible"]
 
 
+def test_existing_run_only_trusts_completed_sets(tmp_path=None):
+    import sweep
+
+    tmp = Path(tmp_path or tempfile.mkdtemp())
+    # a completed set: run.json with an aggregated trial
+    done = tmp / "set_done" / "ts"
+    done.mkdir(parents=True)
+    (done / "run.json").write_text(
+        json.dumps({"worlds": [{"world": "w", "aggregate": {"n_trials": 2}}]})
+    )
+    rj, bd = sweep.existing_run(tmp / "set_done")
+    assert rj is not None and bd == done
+    # an interrupted set: run.json present but no trials -> re-run
+    partial = tmp / "set_partial" / "ts"
+    partial.mkdir(parents=True)
+    (partial / "run.json").write_text(
+        json.dumps({"worlds": [{"world": "w", "aggregate": {"n_trials": 0}}]})
+    )
+    assert sweep.existing_run(tmp / "set_partial") == (None, None)
+    # a set never started
+    assert sweep.existing_run(tmp / "set_missing") == (None, None)
+
+
 def test_is_winner_requires_positive_margin():
     # a set that is worse than baseline (negative score) is not a winner
     worse = {"index": 1, "eligible": True, "score": {"total": -0.3}}

@@ -8,8 +8,9 @@ via merged temp files and the ``MOTE_*_PARAMS_FILE`` seam
 (``mote_bringup.param_overrides``); the committed configs are never touched.
 
     pixi run bench-sweep mote_simulation/tools/benchmark/sweep/examples/office_nav.yaml
-    pixi run bench-sweep <spec.yaml> --dry-run     # print the plan, launch nothing
-    pixi run bench-sweep <spec.yaml> --max-sets 4  # cap sets (baseline + first N-1)
+    pixi run bench-sweep <spec.yaml> --dry-run          # print the plan, launch nothing
+    pixi run bench-sweep <spec.yaml> --max-sets 4       # cap sets (baseline + first N-1)
+    pixi run bench-sweep <spec.yaml> --resume <run_dir> # finish an interrupted sweep
 
 Outputs (under ``sweep_results/<UTC>/``, git-ignored):
 
@@ -119,6 +120,24 @@ def run_benchmark(spec, set_dir, env_overrides, domain_id):
     return json.loads(run_json.read_text()), run_json.parent
 
 
+def existing_run(set_dir):
+    """Return (run_json_dict, bench_dir) for a set already completed on disk, or
+    (None, None). Only a run.json whose worlds carry aggregated trials counts as
+    complete, so a partially-written run from an interrupted sweep is re-run
+    rather than trusted."""
+    for rj in sorted(Path(set_dir).rglob("run.json")):
+        try:
+            data = json.loads(rj.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        worlds = data.get("worlds", [])
+        if worlds and any(
+            (w.get("aggregate") or {}).get("n_trials", 0) > 0 for w in worlds
+        ):
+            return data, rj.parent
+    return None, None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("spec", help="sweep spec YAML")
@@ -141,6 +160,12 @@ def main():
         help="DDS domain to isolate the benchmark graph on (avoids collisions "
         "with other sims/robots on the network)",
     )
+    ap.add_argument(
+        "--resume",
+        default="",
+        help="reuse an existing sweep dir: sets whose run.json already exists are "
+        "loaded and skipped, the rest are run (a long sweep survives a restart)",
+    )
     args = ap.parse_args()
 
     spec = spec_mod.load(args.spec)
@@ -150,8 +175,16 @@ def main():
         log(f"capping {len(grid)} sets to {args.max_sets}")
         grid = grid[: args.max_sets]
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = Path(args.out) / ts
+    if args.resume:
+        run_dir = Path(args.resume)
+        if not run_dir.is_dir():
+            log(f"--resume dir does not exist: {run_dir}")
+            return 1
+        ts = run_dir.name
+        log(f"resuming {run_dir} (completed sets are reused)")
+    else:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        run_dir = Path(args.out) / ts
     run_dir.mkdir(parents=True, exist_ok=True)
     provenance = {
         "timestamp": ts,
@@ -187,9 +220,13 @@ def main():
             records.append(rec)
             continue
 
-        run_json, bench_dir = run_benchmark(
-            spec, set_dir, env_overrides, args.ros_domain_id
-        )
+        run_json, bench_dir = existing_run(set_dir)
+        if run_json is not None:
+            log(f"reusing existing result for set {i}")
+        else:
+            run_json, bench_dir = run_benchmark(
+                spec, set_dir, env_overrides, args.ros_domain_id
+            )
         if run_json is None:
             log(f"set {i} produced no metrics; leaving it unranked")
             records.append(rec)

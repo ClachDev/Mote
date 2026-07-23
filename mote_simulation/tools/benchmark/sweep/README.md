@@ -139,7 +139,10 @@ sweep_results/<UTC>/
 ```
 
 `--dry-run` writes `plan.md` / `plan.json` and the merged params instead, so a
-spec can be checked without a sim.
+spec can be checked without a sim. `--resume <run_dir>` reuses the completed sets
+already in a sweep dir and runs only the rest, so a long sweep survives a restart
+(an interrupted set — no aggregated trials in its `run.json` — is re-run, not
+trusted).
 
 ## Layout
 
