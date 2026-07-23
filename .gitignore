@@ -12,3 +12,6 @@ log/
 __pycache__/
 
 scratchpad*
+
+# Sim benchmark outputs (timestamped metrics/reports)
+benchmark_results/

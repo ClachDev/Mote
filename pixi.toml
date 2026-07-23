@@ -10,7 +10,7 @@ submodules = "git submodule update --init"
 build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5", depends-on = [
     "submodules",
 ] }
-test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_tasks mote_perception --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_perception mote_tasks --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
 
@@ -38,7 +38,6 @@ slam = "ros2 launch mote_bringup slam_launch.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
 perception = "ros2 launch mote_perception perception_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
-depth = "bash mote_perception/tools/depth_workstation.sh"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
 
 #### The below tasks are tied to specific features and environments however they
@@ -65,6 +64,9 @@ sim-mapping = "ros2 launch mote_simulation sim_launch.py mode:=mapping"
 sim-nav = "ros2 launch mote_simulation sim_launch.py mode:=nav"
 # Build/refresh a world's committed site by mapping it with SLAM (see the tool).
 sim-map-world = "bash mote_simulation/tools/map_world.sh"
+# Benchmark the nav mission against Gazebo ground truth -> metrics JSON + report.
+# Args pass through, e.g. `pixi run bench -- --worlds mote_world.sdf --trials 3`.
+bench = "python mote_simulation/tools/benchmark/bench.py"
 sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
     "build",
 ] }
@@ -119,6 +121,7 @@ ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
 ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
 ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
+ros-jazzy-vision-msgs = ">=4.1.0"
 ros-jazzy-xacro = ">=2.0.0"
 scservo-linux = "==1.0.0"
 ros-jazzy-ament-cmake-gtest = ">=2.5"
@@ -152,14 +155,63 @@ ros-jazzy-ros-gz-sim = "*"
 ros-jazzy-ros-gz-bridge = "*"
 ros-jazzy-gz-ros2-control = "*"
 
-[feature.depth.dependencies]
+# Off-board inference env: torch + the depth/detect servers, no ROS. Runs on the
+# "inference machine" (a GPU box, or the same box as the robot/sim via 127.0.0.1).
+[feature.inference.dependencies]
 numpy = ">=1.26,<3"
 pillow = ">=10,<13"
 pytorch = ">=2,<3"
+# scipy: undeclared requirement of transformers' Owlv2ImageProcessor
+scipy = ">=1,<2"
 transformers = ">=4,<5"
 
-[feature.depth.tasks]
-depth-server = "python mote_perception/tools/depth_server.py"
+# -u: the servers log by printing; unbuffered stdout so the lines survive
+# redirection to a file (block buffering otherwise holds them indefinitely)
+[feature.inference.tasks]
+# Both servers together — the usual way to run a dedicated inference machine.
+inference = "bash mote_perception/tools/inference_server.sh"
+# Or one model at a time (e.g. depth-server --metric, or to save VRAM).
+depth-server = "python -u mote_perception/tools/depth_server.py"
+detect-server = "python -u mote_perception/tools/detect_server.py"
+
+# GPU-accelerated sibling of the `inference` feature (env `inference-rocm`). Same
+# depth/detect servers, but torch comes from the pytorch.org ROCm wheel index
+# instead of conda-forge so inference can run on an AMD GPU. Kept a separate env so
+# the CPU `inference` env, the robot/Pi default env, and their solves are
+# untouched. The ROCm wheels bundle their own userspace (no system ROCm needed) and
+# only publish cp3.x up to 3.12, so python is pinned here (the CPU inference env
+# floats to 3.14). numpy/pillow/scipy stay on conda; only torch + transformers come
+# from PyPI so pip resolves torch against the ROCm index rather than pulling conda's
+# CPU pytorch. x86_64-only: the wheels have no aarch64 build and the aarch64 robot
+# never runs this workstation feature.
+[feature.inference-rocm]
+platforms = ["linux-64"]
+
+[feature.inference-rocm.dependencies]
+python = "3.12.*"
+numpy = ">=1.26,<3"
+pillow = ">=10,<13"
+# scipy: undeclared requirement of transformers' Owlv2ImageProcessor
+scipy = ">=1,<2"
+
+[feature.inference-rocm.pypi-dependencies]
+torch = { version = ">=2.8,<3", index = "https://download.pytorch.org/whl/rocm6.4" }
+pytorch-triton-rocm = { version = "*", index = "https://download.pytorch.org/whl/rocm6.4" }
+transformers = ">=4,<5"
+
+# gfx1103 (Phoenix3 RDNA3 iGPU) is not an officially supported ROCm target; the
+# standard workaround is to masquerade as gfx1100. Set here so it applies to every
+# `pixi run -e inference-rocm` invocation without manual exporting.
+[feature.inference-rocm.activation.env]
+HSA_OVERRIDE_GFX_VERSION = "11.0.0"
+
+# GPU-suffixed names so the CPU tasks (`inference`, `depth-server`, `detect-server`)
+# stay unambiguous; `inference-rocm` runs both servers on the GPU (the servers'
+# --device auto picks the GPU when present), the single-server variants save VRAM.
+[feature.inference-rocm.tasks]
+inference-rocm = "bash mote_perception/tools/inference_server.sh"
+depth-server-rocm = "python -u mote_perception/tools/depth_server.py"
+detect-server-rocm = "python -u mote_perception/tools/detect_server.py"
 
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
@@ -172,6 +224,9 @@ env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
 dev = { features = ["dev"], solve-group = "default" }
 # Own solve (no solve-group) so sim deps can never shift the robot/Pi env
 sim = { features = ["sim"] }
-depth = { features = ["depth"], no-default-feature = true }
+inference = { features = ["inference"], no-default-feature = true }
+inference-rocm = { features = ["inference-rocm"], no-default-feature = true }
+# ^ GPU sibling of `inference`; own solve (no solve-group) so the ROCm torch wheel
+# can never perturb any other env.
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
 lint = { features = ["lint"], no-default-feature = true }

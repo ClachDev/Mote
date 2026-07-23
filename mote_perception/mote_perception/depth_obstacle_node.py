@@ -1,7 +1,7 @@
 """Off-board depth -> obstacle PointCloud2 node (no torch; runs anywhere).
 
 Subscribes the compressed camera stream, forwards each frame to the depth server
-(tools/depth_server.py, in the pixi depth environment; protocol in depth_wire.py),
+(tools/depth_server.py, in the pixi inference environment; protocol in depth_wire.py),
 metrically rescales the returned depth against time-synced lidar range returns,
 back-projects to 3D, keeps points standing above the floor, and publishes them as
 a PointCloud2 for a Nav2 obstacle layer. The cloud is stamped with the IMAGE

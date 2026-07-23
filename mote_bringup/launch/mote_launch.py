@@ -107,10 +107,11 @@ def generate_launch_description():
         "video_device": cam["device"],
         "image_size": cam["image_size"],
         "camera_frame_id": "camera_optical_link",
-        # The camera only captures YUYV or MJPG (no raw RGB8 in the UVC spec), so
-        # publish the captured encoding as-is instead of paying for a YUYV->RGB8
-        # conversion on every frame regardless of whether anything needs RGB8.
-        "output_encoding": "yuv422_yuy2",
+        # bgr8 so the compressed stream carries a correct encoding label:
+        # compressed_image_transport can't round-trip yuv422_yuy2 (it decodes to
+        # bgr8 but keeps the yuv422 label), which breaks any consumer that trusts
+        # the label, e.g. the RViz Camera display.
+        "output_encoding": "bgr8",
     }
     # A per-robot calibration in ~/.mote overrides the packaged default fallback.
     user_calibration = os.path.expanduser("~/.mote/camera_calibration.yaml")

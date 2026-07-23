@@ -563,7 +563,7 @@ Visualization Manager:
           Update Interval: 0
           Value: true
         - Class: rviz_default_plugins/Image
-          Enabled: false
+          Enabled: true
           Max Value: 1
           Median window: 5
           Min Value: 0
@@ -574,8 +574,8 @@ Visualization Manager:
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Best Effort
-            Value: /image_raw
-          Value: false
+            Value: /image_raw/compressed
+          Value: true
         - Class: rviz_default_plugins/Image
           Enabled: true
           Max Value: 1
@@ -589,6 +589,20 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Reliable
             Value: /camera_depth
+          Value: true
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Detections
+          Normalize Range: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /detections/overlay/compressed
           Value: true
       Enabled: true
       Name: Debug
@@ -657,6 +671,8 @@ Window Geometry:
     collapsed: false
   Depth:
     collapsed: false
+  Detections:
+    collapsed: false
   Displays:
     collapsed: false
   Height: 1308
@@ -664,7 +680,7 @@ Window Geometry:
   Hide Right Dock: false
   Navigation:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd00000002000000000000015d000004c2fc0200000005fb000000100044006900730070006c006100790073010000003d0000011a000000c900fffffffb0000000a00560069006500770073010000015d000000d8000000a400fffffffb0000000c00430061006d006500720061020000041f000000c8000001c3000000d6fb0000000c00540065006c0065006f0070010000023b0000013e0000013e00fffffffb0000000a00440065007000740068010000037f000001800000001600ffffff00000001000001ce000004c2fc0200000003fb00000014004e0061007600690067006100740069006f006e010000003d0000029d000001df00fffffffb000000160053006c0061006d0054006f006f006c0062006f007801000002e00000021f0000018500fffffffb0000000a0049006d006100670065000000003d000004c20000000000000000000006c9000004c200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000002000000000000015d000004c2fc0200000003fb000000100044006900730070006c006100790073010000003d0000011a000000c900fffffffb0000000a00560069006500770073010000015d000000d8000000a400fffffffb0000000c00540065006c0065006f0070010000023b000002c40000013e00ffffff00000001000001ce000004c2fc0200000005fb00000014004e0061007600690067006100740069006f006e010000003d0000012c000000c900fffffffb000000160053006c0061006d0054006f006f006c0062006f0078010000016f000000f0000000c900fffffffb0000000c00430061006d0065007200610100000265000000da000000a400fffffffb0000000a004400650070007400680100000345000000da000000a400fffffffb000000140044006500740065006300740069006f006e00730100000425000000da000000a400ffffff000006c9000004c200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   SlamToolbox:
     collapsed: false
   Teleop:

@@ -99,5 +99,25 @@
         </visual>
       </link>
     </model>
+
+    <!-- Fetchable object for the L2 detector: a small red box on the floor,
+         0.6 m ahead of the pickup zone pose (1.8, -1.5, yaw 0), so it is in
+         view on arrival and `fetch red_box dropoff` works out of the box. -->
+    <model name="red_box">
+      <static>true</static>
+      <pose>2.4 -1.5 0.06 0 0 0.2</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.12 0.12 0.12</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.12 0.12 0.12</size></box></geometry>
+          <material>
+            <ambient>0.8 0.05 0.05 1</ambient>
+            <diffuse>0.8 0.05 0.05 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
   </world>
 </sdf>
