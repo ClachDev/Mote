@@ -223,3 +223,48 @@ def test_ground_to_pixels_below_horizon():
     proj, K, _ = _projector()
     px = proj.ground_to_pixels([2.0, 0.0]).reshape(2)
     assert px[1] > K[1, 2]  # v below the principal point
+
+
+# --- pixels_to_ground: floor-ray grounding used by the L2 detector -----------
+# A dedicated forward-level projector (camera at ~robot height, optical axis
+# level, looking along +x) to exercise pixels_to_ground against known geometry
+# and against ground_to_pixels.
+
+
+def _forward_level_projector(height=0.10):
+    K_flat = [200.0, 0.0, 320.0, 0.0, 200.0, 240.0, 0.0, 0.0, 1.0]
+    D = [0.0] * 5
+    T = np.array(
+        [
+            [0.0, 0.0, 1.0, 0.0],
+            [-1.0, 0.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0, height],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    return GroundProjector(K_flat, D, 640, 480, T)
+
+
+def test_pixels_to_ground_known_floor_point():
+    proj = _forward_level_projector(height=0.10)
+    # A pixel 20 rows below the principal point looks down atan(20/200) from
+    # level; from 0.10 m up that ray meets the floor at x = 0.1 * 200 / 20 = 1 m.
+    pt = proj.pixels_to_ground([[320.0, 260.0]])[0]
+    assert pt == pytest.approx([1.0, 0.0, 0.0], abs=1e-9)
+
+
+def test_pixels_to_ground_horizon_is_nan():
+    proj = _forward_level_projector()
+    # At or above the principal row the ray never descends to the floor.
+    above, at = proj.pixels_to_ground([[320.0, 220.0], [320.0, 240.0]])
+    assert np.isnan(above).all()
+    assert np.isnan(at).all()
+
+
+def test_pixels_to_ground_round_trip_with_ground_to_pixels():
+    proj = _forward_level_projector(height=0.10)
+    xy = np.array([[0.5, 0.1], [1.0, -0.2], [2.0, 0.0]])
+    uv = proj.ground_to_pixels(xy)
+    back = proj.pixels_to_ground(uv)
+    assert back[:, :2] == pytest.approx(xy, abs=1e-6)
+    assert back[:, 2] == pytest.approx(0.0, abs=1e-9)

@@ -1,4 +1,4 @@
-"""Off-board monocular-depth inference server (runs in the pixi depth environment).
+"""Off-board monocular-depth inference server (runs in the pixi inference environment).
 
 Keeps Depth Anything V2 resident and serves depth over a local socket so the ROS
 node (which has no torch) can stay light and run anywhere — on the workstation

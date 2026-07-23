@@ -64,16 +64,20 @@ def send_rejection(conn):
     conn.sendall(struct.pack(">II", 0, 0))
 
 
-class DepthClient:
-    """Persistent connection to the depth server, reconnecting on demand.
+class WireClient:
+    """Persistent connection to an inference server, reconnecting on demand.
 
-    `infer` returns the depth map, or None when the frame could not be served
-    (server unreachable, connection lost, or frame rejected) — callers skip the
-    frame either way. A failed call tears the socket down so the next call
-    reconnects. `warn` receives one line per failure (a logger or print).
+    Shared plumbing for the depth and detect clients: subclasses set ``NAME``
+    (for log lines) and implement ``infer``, returning None when the frame
+    could not be served (server unreachable, connection lost, or frame
+    rejected) — callers skip the frame either way. A failed call tears the
+    socket down so the next call reconnects. `warn` receives one line per
+    failure (a logger or print).
     """
 
-    def __init__(self, host, port=DEFAULT_PORT, timeout=2.0, warn=print):
+    NAME = "inference"
+
+    def __init__(self, host, port, timeout=2.0, warn=print):
         self.host, self.port, self.timeout, self.warn = host, port, timeout, warn
         self.sock = None
 
@@ -87,9 +91,24 @@ class DepthClient:
             s.connect((self.host, self.port))
             self.sock = s
         except OSError as e:
-            self.warn(f"depth server unavailable ({e}); skipping frame")
+            self.warn(f"{self.NAME} server unavailable ({e}); skipping frame")
             self.sock = None
         return self.sock
+
+    def close(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
+
+
+class DepthClient(WireClient):
+    NAME = "depth"
+
+    def __init__(self, host, port=DEFAULT_PORT, timeout=2.0, warn=print):
+        super().__init__(host, port, timeout, warn)
 
     def infer(self, blob):
         """One compressed image in, one float32 depth map (or None) out."""
@@ -113,11 +132,3 @@ class DepthClient:
             self.warn(f"inference failed ({e}); will reconnect")
             self.close()
             return None
-
-    def close(self):
-        if self.sock is not None:
-            try:
-                self.sock.close()
-            except OSError:
-                pass
-            self.sock = None

@@ -180,6 +180,22 @@ class GroundProjector:
         d = np.asarray(depth).ravel()[::stride]
         return (self.pixel_rays()[::stride] * d[:, None]) @ self.R.T + self.C
 
+    def pixels_to_ground(self, uv):
+        """Intersect pixel rays with the floor plane (z=0 in the base frame).
+
+        `uv` is (N, 2) pixel coords. Returns (N, 3) base-frame points; rows are
+        NaN where the ray points at or above the horizon and never meets the
+        floor.
+        """
+        uv = np.asarray(uv, dtype=np.float64).reshape(-1, 1, 2)
+        norm = cv2.undistortPoints(uv, self.K, self.D).reshape(-1, 2)
+        rays = np.column_stack([norm, np.ones(len(norm))]) @ self.R.T
+        out = np.full((len(rays), 3), np.nan)
+        down = rays[:, 2] < -1e-9
+        t = -self.C[2] / rays[down, 2]
+        out[down] = self.C + t[:, None] * rays[down]
+        return out
+
     def ground_to_pixels(self, xy):
         """Project floor points (base frame, z=0) back into the image.
 
