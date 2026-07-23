@@ -84,8 +84,22 @@ as two processes:
 - Workstation all-in-one command: starts the depth server and the ROS obstacle
   node together, using the workstation's ROS graph:
   ```bash
-  pixi run depth
+  pixi run depth        # CPU server
+  pixi run depth-rocm   # AMD ROCm GPU server (auto-falls back to CPU)
   ```
+
+`depth-rocm` runs the server in the `depth-rocm` pixi env (torch from the
+pytorch.org ROCm wheel index; see `pixi.toml`). The server picks
+`cuda` when `torch.cuda.is_available()` else `cpu` — override with
+`--device cpu|cuda`, and `--fp16` for half precision (GPU only). On an idle
+workstation the iGPU is no faster than the CPU (this small ViT is
+bandwidth-bound), but it stays flat under CPU load (RViz + ROS + the obstacle
+node) where the CPU-only server degrades to ~1–2 s/frame, and it frees the CPU
+for Nav2. It needs a working ROCm GPU: on an unsupported iGPU (e.g. gfx1103) the
+env sets `HSA_OVERRIDE_GFX_VERSION=11.0.0` to masquerade as a supported target,
+and the user must be able to open `/dev/kfd` (be in the `render`/`video` groups).
+fp16 and larger models (V2-Base/Large) can crash or hang on unsupported iGPUs —
+keep the default fp32 + V2-Small there.
 
 The wire protocol between them (length-prefixed TCP frames) is defined in one
 place, `mote_perception/depth_wire.py` — the spec, the framing helpers, the

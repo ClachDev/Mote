@@ -51,11 +51,27 @@ def main():
     # the node (which expects depth, then refits scale) works. --metric: the model
     # already outputs metric depth, so pass it through unchanged.
     ap.add_argument("--metric", action="store_true")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    ap.add_argument("--fp16", action="store_true")
     args = ap.parse_args()
+
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = args.device
+    use_fp16 = args.fp16 and device != "cpu"
+    if device != "cpu":
+        print(
+            "using GPU:", torch.cuda.get_device_name(0), "fp16" if use_fp16 else "fp32"
+        )
+    else:
+        print("using CPU")
 
     print("loading", args.model, "(metric)" if args.metric else "(relative)")
     proc = AutoImageProcessor.from_pretrained(args.model)
-    model = AutoModelForDepthEstimation.from_pretrained(args.model).eval()
+    model = AutoModelForDepthEstimation.from_pretrained(args.model).eval().to(device)
+    if use_fp16:
+        model = model.half()
     # Leave torch's default thread count (physical cores). Setting it to
     # os.cpu_count() counts SMT siblings, and oversubscribing them thrashes the
     # CPU (~460 ms vs ~330 ms per frame here — measured with depth_bag_eval.py).
@@ -79,13 +95,19 @@ def main():
                     img = Image.open(io.BytesIO(blob)).convert("RGB")
                     W, H = img.size
                     t0 = time.perf_counter()
-                    inputs = proc(images=img, return_tensors="pt")
+                    inputs = proc(images=img, return_tensors="pt").to(device)
+                    if use_fp16:
+                        inputs = inputs.to(torch.float16)
                     with torch.no_grad():
                         pred = model(**inputs).predicted_depth
                     out = (
                         F.interpolate(
-                            pred[None], size=(H, W), mode="bicubic", align_corners=False
+                            pred[None].float(),
+                            size=(H, W),
+                            mode="bicubic",
+                            align_corners=False,
                         )[0, 0]
+                        .cpu()
                         .numpy()
                         .astype(np.float32)
                     )

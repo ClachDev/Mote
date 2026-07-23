@@ -39,6 +39,8 @@ teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p sta
 perception = "ros2 launch mote_perception perception_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
 depth = "bash mote_perception/tools/depth_workstation.sh"
+# GPU (AMD ROCm) variant of `depth`; falls back to CPU if no usable GPU is found.
+depth-rocm = "bash mote_perception/tools/depth_workstation.sh rocm"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
 
 #### The below tasks are tied to specific features and environments however they
@@ -161,6 +163,39 @@ transformers = ">=4,<5"
 [feature.depth.tasks]
 depth-server = "python mote_perception/tools/depth_server.py"
 
+# GPU-accelerated sibling of the `depth` feature (env `depth-rocm`). Same server,
+# but torch comes from the pytorch.org ROCm wheel index instead of conda-forge so
+# inference can run on an AMD GPU. Kept a separate env so the CPU `depth` env, the
+# robot/Pi default env, and their solves are untouched. The ROCm wheels bundle
+# their own userspace (no system ROCm needed) and only publish cp3.x up to 3.12,
+# so python is pinned here (the CPU depth env floats to 3.14). numpy/pillow stay
+# on conda; only torch + transformers come from PyPI so pip resolves torch against
+# the ROCm index rather than pulling conda's CPU pytorch. x86_64-only: the wheels
+# have no aarch64 build and the aarch64 robot never runs this workstation feature.
+[feature.depth-rocm]
+platforms = ["linux-64"]
+
+[feature.depth-rocm.dependencies]
+python = "3.12.*"
+numpy = ">=1.26,<3"
+pillow = ">=10,<13"
+
+[feature.depth-rocm.pypi-dependencies]
+torch = { version = ">=2.8,<3", index = "https://download.pytorch.org/whl/rocm6.4" }
+pytorch-triton-rocm = { version = "*", index = "https://download.pytorch.org/whl/rocm6.4" }
+transformers = ">=4,<5"
+
+# gfx1103 (Phoenix3 RDNA3 iGPU) is not an officially supported ROCm target; the
+# standard workaround is to masquerade as gfx1100. Set here so it applies to every
+# `pixi run -e depth-rocm` invocation without manual exporting.
+[feature.depth-rocm.activation.env]
+HSA_OVERRIDE_GFX_VERSION = "11.0.0"
+
+# Distinct name from the CPU `depth-server` task so `pixi run depth-server` stays
+# unambiguous (CPU); the GPU server is `pixi run depth-server-rocm`.
+[feature.depth-rocm.tasks]
+depth-server-rocm = "python mote_perception/tools/depth_server.py"
+
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
 
@@ -173,5 +208,8 @@ dev = { features = ["dev"], solve-group = "default" }
 # Own solve (no solve-group) so sim deps can never shift the robot/Pi env
 sim = { features = ["sim"] }
 depth = { features = ["depth"], no-default-feature = true }
+depth-rocm = { features = ["depth-rocm"], no-default-feature = true }
+# ^ GPU sibling of `depth`; own solve (no solve-group) so the ROCm torch wheel can
+# never perturb any other env.
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
 lint = { features = ["lint"], no-default-feature = true }
