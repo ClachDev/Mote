@@ -117,11 +117,16 @@ win by trading goal completions for speed.
 - **Success floor** — the winner's mean success rate must be at or above the
   baseline's (minus a small tolerance).
 
-A set is only declared the **winner** if it is eligible *and* beats the baseline
-by more than a small margin (`score.WIN_MARGIN`); a smaller improvement is likely
-within run-to-run variance (weigh it against the per-metric CVs the benchmark
-reports) and isn't worth a config change. Otherwise the report says "keep the
-current defaults".
+A set is only declared the **winner** if it is eligible *and* beats the **noise
+floor** by more than `score.WIN_MARGIN`. The noise floor is the best score of any
+baseline-*replicate* set — a swept set whose values all happen to equal the
+committed defaults, so its non-zero score is pure run-to-run variance. Requiring a
+winner to clear that floor stops the sweep from "improving" the config by noise.
+A cartesian grid gives a replicate for free whenever the defaults are among the
+swept values (the `office_nav` example has one); if a grid has none, the floor is
+0 and the margin alone guards, so include a replicate point when you can. A
+replicate can never itself win. Otherwise the report says "keep the current
+defaults".
 
 Weights and per-world weights are overridable in the spec's `scoring` block; the
 defaults live in `score.py`. The benchmark graph runs on a dedicated
