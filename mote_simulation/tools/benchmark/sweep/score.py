@@ -84,7 +84,12 @@ FEASIBILITY_TOL = 0.05
 # against noise, so a spec should include a replicate point to calibrate it (the
 # cartesian grid gives one for free whenever the defaults are among the swept
 # values). Weigh a marginal winner against the per-metric CVs in the report.
-WIN_MARGIN = 0.05
+#
+# 0.10 is a deliberately conservative effect size: the office_nav run measured a
+# replicate noise floor of ~0.13, nearly as large as the best candidate's ~0.19,
+# so a smaller margin (0.05) rubber-stamped noise. A real win must clear the
+# floor by an amount on the order of the noise itself.
+WIN_MARGIN = 0.10
 
 
 def noise_floor(sets):
