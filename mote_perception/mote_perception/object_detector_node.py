@@ -1,7 +1,7 @@
 """Off-board open-vocabulary detection -> map-frame object poses (no torch).
 
 Subscribes the compressed camera stream, forwards each frame plus the current
-label set to the detection server (tools/detect_server.py, in the pixi depth
+label set to the detection server (tools/detect_server.py, in the pixi inference
 environment; protocol in detect_wire.py), grounds each detection by dropping
 the bbox bottom-centre pixel through the floor plane (the fetch mission's
 objects sit on the floor, so no depth model is needed in this loop), and

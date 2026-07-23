@@ -1,7 +1,7 @@
 """Wire protocol and client for the off-board open-vocabulary detection server.
 
 Same two-process split and framing style as depth_wire.py (which holds the
-rationale): the server runs torch in the pixi depth environment, the node runs
+rationale): the server runs torch in the pixi inference environment, the node runs
 rclpy without torch, and the only shared pieces are this module and a TCP
 socket. Detection adds one twist over depth — the query is part of the request,
 because open-vocabulary labels come from the live task command, not from
