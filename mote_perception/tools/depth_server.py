@@ -18,7 +18,6 @@ imported straight from the source tree.
 
 import argparse
 import io
-import os
 import socket
 import sys
 import time
@@ -57,7 +56,9 @@ def main():
     print("loading", args.model, "(metric)" if args.metric else "(relative)")
     proc = AutoImageProcessor.from_pretrained(args.model)
     model = AutoModelForDepthEstimation.from_pretrained(args.model).eval()
-    torch.set_num_threads(os.cpu_count())
+    # Leave torch's default thread count (physical cores). Setting it to
+    # os.cpu_count() counts SMT siblings, and oversubscribing them thrashes the
+    # CPU (~460 ms vs ~330 ms per frame here — measured with depth_bag_eval.py).
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
