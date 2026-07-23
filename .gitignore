@@ -15,3 +15,6 @@ scratchpad*
 
 # Sim benchmark outputs (timestamped metrics/reports)
 benchmark_results/
+
+# Bag-replay scoring outputs (timestamped metrics/reports/maps)
+bag_replay_results/
