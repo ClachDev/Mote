@@ -18,12 +18,12 @@ Extracted from the committed STLs with [`hole_survey.py`](hole_survey.py)
 |------|----------------|------------|----------------|
 | Chassis Base | 101 | **20 mm, pure ORP** | none |
 | Chassis Top | 97 | **20 mm, pure ORP** | none |
-| Motor Support | 4 | 20 mm | none |
-| Battery Mount | 13 | 10 mm | 4 |
-| C1 Lidar Mount | 16 | 10 mm | ~6 (side-loaded) |
-| Waveshare Mount | 8 | 9–10 mm | ~4 (side-loaded) |
-| Pi Bottom | 27 | 10 mm | 3 |
-| Camera Mount | 8 | mixed 4–10 mm | 1 |
+| Motor Support | 4 | 20 mm | none (lug nuts sit bare) |
+| Battery Mount | 13 | 10 mm | 4, open-**bottom** (to plate) |
+| C1 Lidar Mount | 16 | 10 mm | 6, open-**top** (into lidar tray) |
+| Waveshare Mount | 8 | 9–10 mm | 4, open-**top** (under board) |
+| Pi Bottom | 27 | 10 mm | 3 (board-retention bosses) |
+| Camera Mount | 8 | mixed 4–10 mm | 1 (stud seat; free nut below) |
 
 Two findings worth stating explicitly:
 
@@ -37,10 +37,36 @@ Two findings worth stating explicitly:
   it is now written down (see design/README.md, "Mounting grid").
 
 One caution for anyone reasoning from this table: the pocket census counts
-geometry, not usage — which pockets are side-loaded versus open-topped
-matters for the fastening discussion (open-top slots rely on the mounted
-component to retain the nut), and the per-part details above should be
-re-verified in CAD before a part is revised.
+geometry, not usage. The M3-hex-pocket column above counts *where* a nut sits,
+not *which face the pocket opens on* — and that is what matters for fastening,
+because an open-top pocket relies on the mounted component to retain the nut.
+That distinction is now measured directly (below), not left open.
+
+## Resolved: which face each nut pocket opens on
+
+`hole_survey.py` reports the *axis* a hex pocket is bored along, but a raw
+axis reading misleads here: it tagged the C1 and Waveshare pockets
+"side-loaded" (their walls showed under the x/y scans), which would mean the
+nut is captive in the mount. Cross-sectioning the solids
+([`pocket_section.py`](pocket_section.py), ray-cast occupancy — no topology
+guessing) shows the opposite. Per mount, the nut pocket opens on:
+
+| Mount | Pocket opens toward | Who retains the nut | Verdict |
+|-------|---------------------|---------------------|---------|
+| Battery Mount | the base plate below (open-bottom) | the plate it bolts to | captive once assembled — fine |
+| **C1 Lidar Mount** | **up into the sensor tray** | **the lidar sitting on it** | **open-top: sensor is a structural nut-retainer** |
+| **Waveshare Mount** | **up under the board** | **the Waveshare board** | **open-top: board retains the nut** |
+| Camera Mount | free nut below the plate (stud workaround) | nothing | **bare nut — loosens** |
+| Motor Support (servo lugs) | bare nuts in open air | nothing | **bare nut — loosens** |
+
+So the tentative "side-loaded" labels were wrong: **no mount roofs its own
+nut.** The C1 and Waveshare pockets open *upward*, confirming the nested-stack
+problem in [fastening.md](fastening.md) §1 (the sensor must be seated before
+the mount goes on the plate, and the mount can't be handled loaded). The
+joints that actually loosen are the genuinely bare ones — servo lugs and the
+camera-mount stud workaround — not the sensor mounts. This is the evidence
+behind fastening.md's "roof the nut slots" change and the joint schedule's
+retention column in [../REDESIGN.md](../REDESIGN.md).
 
 ## The half-pitch grid rule
 
@@ -63,4 +89,5 @@ general-purpose grid at all.
 
 - [ORP design rules](https://openroboticplatform.com/designrules) — Ø3.5 mm
   holes, 20 mm X/Y pitch; no finer-grid provision exists in the standard.
-- [`hole_survey.py`](hole_survey.py) — the measurements in this document.
+- [`hole_survey.py`](hole_survey.py) — the hole/pocket census in this document.
+- [`pocket_section.py`](pocket_section.py) — the nut-pocket opening directions.
