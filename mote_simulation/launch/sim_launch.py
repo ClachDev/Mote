@@ -62,7 +62,7 @@ def generate_launch_description():
 
     urdf_file = os.path.join(description_share, "urdf", "mote.urdf.xacro")
     robot_description_content = Command(
-        f"xacro {urdf_file} use_sim:=true "
+        f"xacro {urdf_file} use_sim:=true arm:=false "
         f"sim_controllers_file:={sim_controllers_file.name}"
     )
     robot_description = {

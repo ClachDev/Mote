@@ -10,6 +10,13 @@
   <xacro:arg name="sim_controllers_file" default=""/>
   <xacro:property name="use_sim" value="$(arg use_sim)"/>
 
+  <!-- SO-101 follower arm links. On by default (the arm is mounted); the sim
+       passes arm:=false since it does not model the arm. The joint names match
+       mote_description/config/robot.yaml and the /joint_states published by
+       mote_arm's driver, so robot_state_publisher animates the arm in TF. -->
+  <xacro:arg name="arm" default="true"/>
+  <xacro:property name="arm" value="$(arg arm)"/>
+
 
   <!-- ===================== MEASUREMENTS ===================== -->
   <!--
@@ -205,6 +212,102 @@
     <child  link="camera_optical_link"/>
     <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
   </joint>
+
+  <!-- ===================== SO-101 FOLLOWER ARM ===================== -->
+  <!--
+    Approximate geometry for TF/visualisation only (not dynamics): each link is
+    a thin cylinder along its parent-to-child offset. Joint axes follow the
+    SO-101 kinematics (pan about Z, lift/elbow/wrist_flex about Y, roll about X).
+    Link lengths are nominal; refine if a collision model is ever needed. The
+    URDF joint limits are generous — the soft limits that actually gate motion
+    live in robot.yaml and are enforced by the mote_arm driver.
+  -->
+  <xacro:if value="${arm}">
+    <material name="arm_grey"><color rgba="0.35 0.35 0.38 1.0"/></material>
+
+    <xacro:macro name="arm_link" params="name length radius:=0.018">
+      <link name="${name}">
+        <visual>
+          <origin xyz="0 0 ${length/2}" rpy="0 0 0"/>
+          <geometry><cylinder radius="${radius}" length="${length}"/></geometry>
+          <material name="arm_grey"/>
+        </visual>
+      </link>
+    </xacro:macro>
+
+    <!-- Arm base: mounted on the top plate, roughly centred. -->
+    <link name="arm_base_link">
+      <visual>
+        <geometry><box size="0.05 0.05 0.03"/></geometry>
+        <material name="arm_grey"/>
+      </visual>
+    </link>
+    <joint name="arm_mount_joint" type="fixed">
+      <parent link="top_plate_link"/>
+      <child  link="arm_base_link"/>
+      <origin xyz="0.0 0 0.015" rpy="0 0 0"/>
+    </joint>
+
+    <!-- shoulder_pan: yaw about Z -->
+    <xacro:arm_link name="shoulder_pan_link" length="0.04"/>
+    <joint name="shoulder_pan" type="revolute">
+      <parent link="arm_base_link"/>
+      <child  link="shoulder_pan_link"/>
+      <origin xyz="0 0 0.015" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="-3.14" upper="3.14" effort="10" velocity="3.0"/>
+    </joint>
+
+    <!-- shoulder_lift: pitch about Y (start of the upper arm) -->
+    <xacro:arm_link name="shoulder_lift_link" length="0.116"/>
+    <joint name="shoulder_lift" type="revolute">
+      <parent link="shoulder_pan_link"/>
+      <child  link="shoulder_lift_link"/>
+      <origin xyz="0 0 0.04" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-3.14" upper="3.14" effort="10" velocity="3.0"/>
+    </joint>
+
+    <!-- elbow_flex: pitch about Y -->
+    <xacro:arm_link name="elbow_flex_link" length="0.135"/>
+    <joint name="elbow_flex" type="revolute">
+      <parent link="shoulder_lift_link"/>
+      <child  link="elbow_flex_link"/>
+      <origin xyz="0 0 0.116" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-3.14" upper="3.14" effort="10" velocity="3.0"/>
+    </joint>
+
+    <!-- wrist_flex: pitch about Y -->
+    <xacro:arm_link name="wrist_flex_link" length="0.05"/>
+    <joint name="wrist_flex" type="revolute">
+      <parent link="elbow_flex_link"/>
+      <child  link="wrist_flex_link"/>
+      <origin xyz="0 0 0.135" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-3.14" upper="3.14" effort="10" velocity="3.0"/>
+    </joint>
+
+    <!-- wrist_roll: roll about X -->
+    <xacro:arm_link name="wrist_roll_link" length="0.04"/>
+    <joint name="wrist_roll" type="revolute">
+      <parent link="wrist_flex_link"/>
+      <child  link="wrist_roll_link"/>
+      <origin xyz="0 0 0.05" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="-3.14" upper="3.14" effort="10" velocity="3.0"/>
+    </joint>
+
+    <!-- gripper: one actuated jaw, modelled as a revolute finger -->
+    <xacro:arm_link name="gripper_link" length="0.05" radius="0.012"/>
+    <joint name="gripper" type="revolute">
+      <parent link="wrist_roll_link"/>
+      <child  link="gripper_link"/>
+      <origin xyz="0.0 0 0.04" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-0.2" upper="1.7" effort="10" velocity="3.0"/>
+    </joint>
+  </xacro:if>
 
   <!-- ===================== ROS2 CONTROL ===================== -->
 

@@ -10,12 +10,14 @@ submodules = "git submodule update --init"
 build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5", depends-on = [
     "submodules",
 ] }
-test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_perception mote_tasks --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_perception mote_tasks mote_arm --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
 
 # Pi Setup tasks
 setup-ids = "ros2 run mote_hardware setup_ids"
+# SO-101 follower arm bring-up (see mote_arm/README.md, mote_arm/BENCH.md).
+arm-check = "ros2 run mote_arm arm_check"
 udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
 wifi-powersave = "bash mote_bringup/networkmanager/install.sh"
 install-systemd = "bash mote_bringup/systemd/install.sh"
@@ -39,6 +41,10 @@ teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p sta
 perception = "ros2 launch mote_perception perception_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
+# SO-101 arm driver (joint states + safe jog target control); run alongside a
+# mission like perception. Jog it interactively with `pixi run arm-jog`.
+arm = "ros2 launch mote_arm arm_launch.py"
+arm-jog = "ros2 run mote_arm jog"
 
 #### The below tasks are tied to specific features and environments however they
 #### can be run like any other task.
@@ -130,6 +136,10 @@ ros-jazzy-ament-cmake-gtest = ">=2.5"
 # robostack/conda-forge, so it comes from PyPI.
 [pypi-dependencies]
 py-trees = ">=2.2,<3"
+# Feetech STS servo SDK (imports as scservo_sdk) for the SO-101 arm bus in
+# mote_arm; pure-Python, not packaged on robostack/conda-forge. Same servo
+# family as the drive wheels (mote_hardware uses the vendored C++ SDK).
+feetech-servo-sdk = ">=1.0"
 
 [feature.dev.dependencies]
 ros-jazzy-desktop = ">=0.11.0"

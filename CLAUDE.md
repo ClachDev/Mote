@@ -19,6 +19,9 @@ pixi run save-zone <n>  # Teach a zone: capture current robot pose into the site
 pixi run site           # Site CLI: create / add-floor / use / use-map / list / info
 pixi run teleop         # Keyboard teleoperation
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
+pixi run arm            # SO-101 arm driver: joint states + safe jog control
+pixi run arm-jog        # Interactive per-joint jog CLI (needs `pixi run arm`)
+pixi run arm-check      # Standalone arm bus enumeration + health + udev helper
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi-powersave + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -127,6 +130,36 @@ The task layer: py_trees behaviour trees on top of Nav2 (synced to the Pi). py_t
 - `behaviours/` — `DriveTo` (Nav2 NavigateToPose action client as a behaviour; cancels in-flight goals on preemption), `AcquireObject` (label missions: publishes the label to `detect/labels`, waits for a matching `detected_objects` detection, writes a standoff goal — 0.4 m short of the object, facing it — to `object_pose`; zone missions pass through), and `TimedStub` (placeholder pick/place until the SO-101 arm is actuated).
 - `trees/fetch.py` — the fetch mission: wait → acquire object → drive to object → pick (stub) → drive to drop → place (stub). Blackboard keys `task`/`object_pose`/`object_label`/`drop_pose` are the seam between the command grammar and perception.
 - `test/` — `test_fetch_tree.py` (full tree tick against a mock `navigate_to_pose` server) and `test_fetch_object.py` (fetch-by-label against a mock detector), no Gazebo/Nav2 needed, run by `pixi run test`.
+
+### `mote_arm` (Python/ament)
+SO-101 **follower** arm bring-up (synced to the Pi). There is no leader arm.
+Uses **direct Feetech control** (not LeRobot): the arm servos are the same
+STS-class Feetech bus as the drive wheels, so it reuses the servo stack rather
+than pulling `torch` onto the lean Pi env — the sole new dep is the pure-Python
+`feetech-servo-sdk` (`scservo_sdk`). All arm config (port, baud, servo IDs,
+per-joint soft limits, home offsets, direction) lives in `robot.yaml`'s `arm:`
+section. Contains:
+- `config.py` — parses `arm:`; encoder<->radian conversion + soft-limit clamping
+  (ROS-free, unit-tested in `test/`).
+- `bus.py` — `FeetechBus`, a thin `scservo_sdk` wrapper (lazy import so
+  build/lint/test stay hardware-free); register map matches `mote_hardware`.
+- `arm_driver` (node, `pixi run arm`) — the **single bus owner**: publishes
+  `/joint_states` for the arm, accepts absolute goals on `arm/goal`
+  (soft-clamped), exposes `arm/set_torque` (`std_srvs/SetBool`). Starts **limp**
+  and goes limp on shutdown — nothing moves without an explicit command.
+- `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client* of the
+  driver (publishes clamped `arm/goal`, torque-off on exit). No bus contention.
+- `arm_check` (`pixi run arm-check`) — standalone enumeration/health + a
+  ready-to-paste udev line + `--save-home` calibration snapshot. Run with the
+  driver stopped (it owns the same port).
+- The arm links/joints are added to `mote.urdf.xacro` behind an `arm:=true`
+  default (the sim passes `arm:=false`); joint names match `robot.yaml` and
+  `/joint_states` so robot_state_publisher animates the arm in TF.
+- Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
+  the human bench runbook in `mote_arm/BENCH.md`.
+- **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
+  an unresolved mechanical clash, tracked separately, not addressed here.
+  `mote_arm` is not part of the mission bringup; run it explicitly.
 
 ### Third-party submodules (`third_party/`)
 - `sllidar_ros2` — SLAMTEC RPLIDAR C1 ROS 2 driver

@@ -20,6 +20,33 @@ servos:
   velocity_scale: 674.1  # rad/s to servo speed units; measure with `ros2 run mote_hardware velocity_cal`
   acceleration: 0        # 0 = maximum acceleration
 
+# SO-101 follower arm (Feetech STS-class servos on their own serial bus).
+# Consumed by mote_arm (driver, jog CLI, arm_check) and by the arm section of
+# mote.urdf.xacro. There is no leader arm — this is the follower only.
+#
+# CALIBRATION STATUS: min/max are conservative placeholders and home/invert are
+# defaults. Measure them at the bench (see mote_arm/BENCH.md) and update here —
+# robot.yaml is the single source of truth, so nothing else needs editing.
+#
+# WIRING: `port` assumes the arm has its own USB-serial adapter symlinked to
+# /dev/mote_arm (udev rule in mote_bringup/udev/99-mote.rules). If the arm
+# instead shares the wheel driver board, set port to /dev/mote_servos and give
+# every arm servo an ID that does not collide with the wheels (7, 9).
+arm:
+  port: /dev/mote_arm
+  baud_rate: 1000000
+  moving_speed: 500      # jog move speed cap, servo steps/s (gentle)
+  moving_acc: 20         # 0-254, units of 100 steps/s^2
+  # min/max are soft limits in radians about each joint's mechanical zero.
+  # home is the raw encoder count (0-4095) at that zero; 2048 = servo mid-point.
+  joints:
+    - {name: shoulder_pan,  id: 1, min: -1.90, max: 1.90, home: 2048, invert: false}
+    - {name: shoulder_lift, id: 2, min: -1.75, max: 1.75, home: 2048, invert: false}
+    - {name: elbow_flex,    id: 3, min: -1.60, max: 1.60, home: 2048, invert: false}
+    - {name: wrist_flex,    id: 4, min: -1.75, max: 1.75, home: 2048, invert: false}
+    - {name: wrist_roll,    id: 5, min: -2.70, max: 2.70, home: 2048, invert: false}
+    - {name: gripper,       id: 6, min:  0.00, max: 1.50, home: 2048, invert: false}
+
 # Sensors
 lidar:
   port: /dev/mote_lidar
