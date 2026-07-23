@@ -212,8 +212,14 @@ def cmd_info():
         return
     fdir = floor_dir(*act)
     print(f"active: {act[0]}/{act[1]}  ({fdir})")
-    zones_state = "ok" if (fdir / "zones.yaml").exists() else "missing"
-    print(f"  zones.yaml   {zones_state}")
+    zones_yaml = fdir / "zones.yaml"
+    if zones_yaml.exists():
+        zones = (yaml.safe_load(zones_yaml.read_text()) or {}).get("zones") or {}
+        with_fp = sum(1 for z in zones.values() if "radius" in z or "polygon" in z)
+        fp_note = f", {with_fp} with a footprint" if with_fp else ""
+        print(f"  zones.yaml   ok ({len(zones)} zones{fp_note})")
+    else:
+        print("  zones.yaml   missing")
     current = current_revision(fdir)
     if not current:
         print("  map          none (run: pixi run save-map during mapping)")
