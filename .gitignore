@@ -15,3 +15,5 @@ scratchpad*
 
 # Sim benchmark outputs (timestamped metrics/reports)
 benchmark_results/
+# Parameter-sweep outputs (timestamped rankings/reports/merged params)
+sweep_results/

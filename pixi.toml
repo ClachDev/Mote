@@ -67,6 +67,10 @@ sim-map-world = "bash mote_simulation/tools/map_world.sh"
 # Benchmark the nav mission against Gazebo ground truth -> metrics JSON + report.
 # Args pass through, e.g. `pixi run bench -- --worlds mote_world.sdf --trials 3`.
 bench = "python mote_simulation/tools/benchmark/bench.py"
+# Parameter sweep on top of bench: run the benchmark per parameter set, rank
+# against the baseline, emit a ranking + provenance report. Sequential (one gz
+# instance). `pixi run bench-sweep <spec.yaml>`; `-- --dry-run` prints the plan.
+bench-sweep = "python mote_simulation/tools/benchmark/sweep/sweep.py"
 sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
     "build",
 ] }
