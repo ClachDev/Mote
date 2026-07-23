@@ -1,4 +1,4 @@
-"""Off-board open-vocabulary detection server (runs in the pixi depth environment).
+"""Off-board open-vocabulary detection server (runs in the pixi inference environment).
 
 Keeps OWLv2 resident and serves object detections over a local socket so the
 ROS node (which has no torch) can stay light and run anywhere — the same

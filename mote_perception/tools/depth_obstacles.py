@@ -88,7 +88,9 @@ def main():
 
     client = DepthClient(args.host, args.port)
     if client.connect() is None:
-        sys.exit("start the server with `pixi run depth-server` (or `pixi run depth`)")
+        sys.exit(
+            "start the server with `pixi run depth-server` (or `pixi run inference`)"
+        )
 
     err = []  # depth-vs-lidar range errors at matched bearings
     print(f"{len(imgs)} imgs; writing to {out}")

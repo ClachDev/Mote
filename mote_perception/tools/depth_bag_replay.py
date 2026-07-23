@@ -59,7 +59,9 @@ def main():
 
     client = DepthClient(args.host, args.port)
     if client.connect() is None:
-        sys.exit("start the server with `pixi run depth-server` (or `pixi run depth`)")
+        sys.exit(
+            "start the server with `pixi run depth-server` (or `pixi run inference`)"
+        )
 
     for k, i in enumerate(np.linspace(0, len(imgs) - 1, args.frames).astype(int)):
         ts, jpeg = imgs[i]
