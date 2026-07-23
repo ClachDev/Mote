@@ -68,6 +68,18 @@ def set_label(assignments):
     return ", ".join(p.label(v) for p, v in assignments)
 
 
+def is_baseline_replicate(assignments):
+    """True if a (non-empty) set assigns every parameter its committed default, so
+    it re-runs the baseline config and its score is a pure run-to-run noise
+    sample (see score.noise_floor)."""
+    if not assignments:
+        return False
+    for param, value in assignments:
+        if overrides.default_value(REPO, param.target, param.key_paths[0]) != value:
+            return False
+    return True
+
+
 def assignments_json(assignments):
     return [
         {
@@ -211,6 +223,7 @@ def main():
             "label": label,
             "assignments": assignments_json(assignments),
             "override_files": env_overrides,
+            "is_replicate": is_baseline_replicate(assignments),
             "ran": False,
             "metrics": {},
             "feasibility": {"feasible": True, "peak_wheel_mps": None},
@@ -245,9 +258,10 @@ def main():
         log("no set produced metrics — check the per-set bench logs")
         return 1
 
-    ranked = score.rank(ran, spec.weights, spec.world_weights)
+    ranked, floor = score.rank(ran, spec.weights, spec.world_weights)
     unran = [r for r in records if not r["ran"]]
     ordered = ranked + unran
+    provenance["noise_floor"] = floor
 
     baseline = next(r for r in ran if r["index"] == 0)
     defaults = _winner_defaults(ordered)
@@ -261,18 +275,21 @@ def main():
     )
     log(f"wrote {run_dir / 'report.md'} and ranking.json")
 
-    winner = next((r for r in ordered if score.is_winner(r)), None)
+    winner = next((r for r in ordered if r.get("is_winner")), None)
     if winner:
         log(f"WINNER: {winner['label']}  score {winner['score']['total']:+.3f}")
     else:
-        log("no set beat the baseline by the win margin — keep the defaults")
+        log(
+            f"no set beat the noise floor ({floor:+.3f}) by the win margin — "
+            "keep the defaults"
+        )
     return 0
 
 
 def _winner_defaults(ordered):
     """Committed default value for each assignment id, for the report's old/new
     table."""
-    winner = next((r for r in ordered if score.is_winner(r)), None)
+    winner = next((r for r in ordered if r.get("is_winner")), None)
     if not winner:
         return {}
     out = {}

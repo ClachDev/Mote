@@ -216,10 +216,39 @@ def test_rank_disqualifies_infeasible_and_success_drop():
         "metrics": _metrics(rmse=0.05, time=18.0),
         "feasibility": {"feasible": True, "peak_wheel_mps": 0.21},
     }
-    ranked = score.rank([baseline, fast_infeasible, dropped_goals, good])
+    ranked, floor = score.rank([baseline, fast_infeasible, dropped_goals, good])
     assert ranked[0]["index"] == 3, "the feasible improvement should win"
     assert not fast_infeasible["eligible"]
     assert not dropped_goals["eligible"]
+    assert good["is_winner"] and floor == 0.0
+
+
+def test_noise_floor_from_replicate_blocks_marginal_winner():
+    # a replicate (same config as baseline) that scores +0.13 sets the floor,
+    # so a candidate at +0.18 (only +0.05 above, == margin, not > it) is NOT a
+    # winner; the "improvement" is within run-to-run noise.
+    baseline = {
+        "index": 0,
+        "metrics": _metrics(),
+        "feasibility": {"feasible": True, "peak_wheel_mps": 0.2},
+    }
+    replicate = {
+        "index": 1,
+        "is_replicate": True,
+        "metrics": _metrics(rmse=0.070, time=18.0),
+        "feasibility": {"feasible": True, "peak_wheel_mps": 0.2},
+    }
+    candidate = {
+        "index": 2,
+        "metrics": _metrics(rmse=0.068, time=17.5),
+        "feasibility": {"feasible": True, "peak_wheel_mps": 0.2},
+    }
+    ranked, floor = score.rank([baseline, replicate, candidate])
+    assert floor > 0.0, "the replicate should establish a non-zero noise floor"
+    assert not replicate["is_winner"], "a replicate can never win"
+    # candidate only wins if it clears floor + margin
+    clears = candidate["score"]["total"] > floor + score.WIN_MARGIN
+    assert candidate["is_winner"] == clears
 
 
 def test_existing_run_only_trusts_completed_sets(tmp_path=None):
@@ -303,9 +332,15 @@ def test_report_builds_with_unran_set():
         "metrics": {},
         "feasibility": {"feasible": True, "peak_wheel_mps": None},
     }
-    ranked = score.rank([baseline, winner])
+    ranked, floor = score.rank([baseline, winner])
     ordered = ranked + [unran]
-    provenance = {"timestamp": "t", "git_commit": "abc", "spec": "s", "wall_mps": 0.218}
+    provenance = {
+        "timestamp": "t",
+        "git_commit": "abc",
+        "spec": "s",
+        "wall_mps": 0.218,
+        "noise_floor": floor,
+    }
     md = sweep_report.build_markdown(
         ordered, baseline, _Spec(), provenance, {"nav2:a.b": 0}
     )

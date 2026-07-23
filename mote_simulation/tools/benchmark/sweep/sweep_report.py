@@ -22,7 +22,8 @@ def _pct(imp):
 def build_markdown(ranked, baseline, spec, provenance, defaults):
     """``ranked`` best-first; ``baseline`` is the index-0 record; ``defaults`` maps
     a winner assignment id -> committed value (for the old/new table)."""
-    winner = next((r for r in ranked if score.is_winner(r)), None)
+    winner = next((r for r in ranked if r.get("is_winner")), None)
+    floor = provenance.get("noise_floor", 0.0)
     lines = [
         f"# Parameter sweep report — {spec.name}",
         "",
@@ -45,8 +46,11 @@ def build_markdown(ranked, baseline, spec, provenance, defaults):
         )
         + ". A set must be *feasible* (peak per-wheel speed within the "
         f"{provenance['wall_mps']:.3f} m/s hardware wall) and hold goal success "
-        "at or above baseline to be eligible, and beat the baseline by more than "
-        f"a {score.WIN_MARGIN:+.2f} margin to be declared the winner.",
+        "at or above baseline to be eligible. To be declared the winner it must "
+        f"beat the **noise floor** ({floor:+.3f}) by more than a "
+        f"{score.WIN_MARGIN:+.2f} margin. The noise floor is the best score of any "
+        "baseline-*replicate* set (same config as the defaults) — its non-zero "
+        "score is pure run-to-run variance, so a real improvement must clear it.",
         "",
     ]
 
@@ -54,9 +58,10 @@ def build_markdown(ranked, baseline, spec, provenance, defaults):
         lines += [
             "## Result: keep the current defaults",
             "",
-            f"No set beat the baseline by more than the {score.WIN_MARGIN:+.2f} "
-            "win margin. The committed config is the best of those tried (or every "
-            "improvement was too small, infeasible, or cost goal success). Details "
+            f"No set beat the noise floor ({floor:+.3f}) by more than the "
+            f"{score.WIN_MARGIN:+.2f} win margin, so every apparent improvement is "
+            "within run-to-run variance. The committed config is the best of those "
+            "tried (or an improvement was infeasible or cost goal success). Details "
             "below.",
             "",
         ]

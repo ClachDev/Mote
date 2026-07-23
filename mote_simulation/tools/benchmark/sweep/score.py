@@ -76,20 +76,35 @@ DEFAULT_WEIGHTS = {
 SUCCESS_GATE_TOL = 0.01
 # Allow this fractional slack above the wheel-speed wall before disqualifying.
 FEASIBILITY_TOL = 0.05
-# A set must beat the baseline by more than this weighted-improvement margin to
-# be declared a winner; below it, keep the committed defaults (a smaller margin
-# is not worth a config change and is likely within run-to-run variance — weigh
-# it against the per-metric CVs in the report).
-WIN_MARGIN = 0.02
+# A set must beat the noise floor by more than this weighted-improvement margin
+# to be declared a winner. The noise floor is the best score of any
+# baseline-*replicate* set — a swept set whose values all equal the committed
+# defaults, so its non-zero score is pure run-to-run variance. If the grid has no
+# replicate, the floor is 0 (the baseline itself) and the margin alone guards
+# against noise, so a spec should include a replicate point to calibrate it (the
+# cartesian grid gives one for free whenever the defaults are among the swept
+# values). Weigh a marginal winner against the per-metric CVs in the report.
+WIN_MARGIN = 0.05
 
 
-def is_winner(rec):
-    """True if ``rec`` is an eligible, non-baseline set that beat the baseline by
-    more than ``WIN_MARGIN``."""
+def noise_floor(sets):
+    """Best score among baseline-replicate sets (``is_replicate`` True); 0.0 if
+    none. A replicate has the same config as the baseline, so its score measures
+    the scoring's own run-to-run noise."""
+    scores = [
+        r["score"]["total"] for r in sets if r.get("is_replicate") and r.get("score")
+    ]
+    return max([0.0, *scores])
+
+
+def is_winner(rec, floor=0.0):
+    """True if ``rec`` is an eligible, non-baseline, non-replicate set that beat
+    the noise ``floor`` by more than ``WIN_MARGIN``."""
     return (
         rec.get("index") != 0
         and rec.get("eligible")
-        and rec.get("score", {}).get("total", 0.0) > WIN_MARGIN
+        and not rec.get("is_replicate")
+        and rec.get("score", {}).get("total", 0.0) > floor + WIN_MARGIN
     )
 
 
@@ -186,9 +201,11 @@ def rank(sets, weights=None, world_weights=None):
     """Score and order a list of set records against the baseline (index 0).
 
     Each record is a dict with at least ``index``, ``metrics`` (world-metrics
-    dict), and ``feasibility``. Adds ``score`` and ``eligible`` in place and
-    returns the list ordered best-first: eligible sets by descending score, then
-    ineligible ones. The baseline is always eligible (it is the reference).
+    dict), ``feasibility``, and optionally ``is_replicate``. Adds ``score``,
+    ``eligible`` and ``is_winner`` in place and returns ``(ordered, noise_floor)``
+    — the list best-first (eligible by descending score, then ineligible) and the
+    replicate-derived noise floor a winner had to clear. The baseline is always
+    eligible (it is the reference).
     """
     baseline = sets[0]
     base_metrics = baseline["metrics"]
@@ -198,8 +215,11 @@ def rank(sets, weights=None, world_weights=None):
         feasible = rec["feasibility"]["feasible"]
         success_ok = mean_success(rec["metrics"]) >= base_success - SUCCESS_GATE_TOL
         rec["eligible"] = bool(feasible and (success_ok or rec["index"] == 0))
+    floor = noise_floor(sets)
+    for rec in sets:
+        rec["is_winner"] = is_winner(rec, floor)
     ordered = sorted(
         sets,
         key=lambda r: (not r["eligible"], -r["score"]["total"]),
     )
-    return ordered
+    return ordered, floor
