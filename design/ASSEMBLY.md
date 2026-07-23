@@ -47,9 +47,23 @@ covers all fasteners. Most joints take **M3×12**: the screw passes through a ~6
 mm plate into a part with a ~6 mm captive-nut pocket. Use **M3×10** for thinner
 stacks.
 
-> **Note:** I am not convinced yet that screws and nuts are the optimal choice
-> here. Nuts have a tendency to loosen up due to vibrations while driving around
-> so we may want something more reliable.
+Two things the captive-nut pockets impose — know them before you start:
+
+- **Bolt direction and order are fixed.** A pocket only holds the nut on its
+  own side, so each joint tightens from the opposite face. This is why the
+  order below matters: some joints become unreachable once the next part is
+  on, and undoing a step can mean backing out several others.
+- **Check screw length before tightening.** A screw even slightly too long
+  protrudes past the nut. This matters most at the Pi holder, where the
+  protruding tip can press against the Pi board and damage it — test the
+  screw in its pocket *before* the Pi is in place.
+
+> **Note:** screws and nuts are not settled as the fastening scheme. Bare
+> nuts (outside a pocket) tend to loosen from driving vibration — nyloc nuts,
+> or a plastic-safe medium-strength threadlocker, fix that in the meantime.
+> The fastening options are surveyed in
+> [research/fastening.md](research/fastening.md); per-joint decisions belong
+> to the [v2 redesign process](REDESIGN.md).
 
 Suggested order:
 
