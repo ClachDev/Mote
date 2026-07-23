@@ -12,5 +12,10 @@ for unit in "$SRC_DIR"/*.service; do
         | sudo tee "/etc/systemd/system/$(basename "$unit")" > /dev/null
 done
 
+# Bound the journal so the always-restarting services can never fill the disk.
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo cp "$SRC_DIR/journald-mote.conf" /etc/systemd/journald.conf.d/journald-mote.conf
+sudo systemctl restart systemd-journald
+
 sudo systemctl daemon-reload
-sudo systemctl enable mote-bringup mote-slam mote-nav mote-record
+sudo systemctl enable mote-bringup mote-slam mote-nav mote-record mote-health

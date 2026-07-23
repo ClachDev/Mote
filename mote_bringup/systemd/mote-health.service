@@ -1,0 +1,29 @@
+[Unit]
+Description=Mote Health Monitor
+After=mote-bringup.service
+Wants=mote-bringup.service
+PartOf=mote-bringup.service
+StartLimitIntervalSec=0
+
+[Service]
+# Type=notify + WatchdogSec is the watchdog integration point. The health
+# monitor sends READY=1 once its executor is up and pets the watchdog on every
+# publish; if the monitor itself hangs and stops publishing, systemd kills and
+# restarts it (a safe, isolated restart — it does not touch the drive stack).
+# The monitor is deliberately the feeder rather than the mission services: it is
+# the process whose whole job is to stay alive and observe, so watching *it* is
+# the low-risk place to bind a watchdog.
+Type=notify
+NotifyAccess=all
+WatchdogSec=15
+User=@USER@
+WorkingDirectory=@HOME@/Mote
+Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run health
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+
+[Install]
+WantedBy=multi-user.target

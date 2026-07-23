@@ -1,16 +1,24 @@
 [Unit]
 Description=Mote SLAM
 After=mote-bringup.service
+# BindsTo so SLAM stops if bringup goes down and restarts with it (its map frame
+# is meaningless without live odom/scan), and PartOf so a bringup restart
+# propagates. Requires alone would not restart SLAM when bringup restarts.
 Requires=mote-bringup.service
+BindsTo=mote-bringup.service
+PartOf=mote-bringup.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=@USER@
 WorkingDirectory=@HOME@/Mote
-ExecStart=@HOME@/.pixi/bin/pixi run slam
-Restart=on-failure
-RestartSec=5
 Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run slam
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
 
 [Install]
 WantedBy=multi-user.target

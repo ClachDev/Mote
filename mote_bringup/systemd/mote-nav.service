@@ -2,15 +2,20 @@
 Description=Mote Navigation
 After=mote-slam.service
 Requires=mote-slam.service
+BindsTo=mote-slam.service
+PartOf=mote-slam.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=@USER@
 WorkingDirectory=@HOME@/Mote
-ExecStart=@HOME@/.pixi/bin/pixi run nav
-Restart=on-failure
-RestartSec=5
 Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run nav
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
 
 [Install]
 WantedBy=multi-user.target

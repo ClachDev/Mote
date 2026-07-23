@@ -91,12 +91,18 @@ def generate_launch_description():
 
     cmd_vel_remap = ("/cmd_vel", "/diff_drive_controller/cmd_vel")
 
+    # respawn=True relaunches a crashed nav2 server; the lifecycle managers
+    # (attempt_respawn_reconnection defaults true) then reconnect their bond and
+    # re-activate it, so a single server crash recovers without restarting nav.
+    respawn = {"respawn": True, "respawn_delay": 2.0}
+
     map_server = Node(
         package="nav2_map_server",
         executable="map_server",
         parameters=[nav2_params, {"yaml_filename": LaunchConfiguration("map")}],
         condition=IfCondition(localisation),
         output="screen",
+        **respawn,
     )
 
     amcl = Node(
@@ -105,6 +111,7 @@ def generate_launch_description():
         parameters=[nav2_params],
         condition=IfCondition(localisation),
         output="screen",
+        **respawn,
     )
 
     controller_server = Node(
@@ -113,6 +120,7 @@ def generate_launch_description():
         parameters=[nav2_params, critic_params_file.name],
         remappings=[cmd_vel_remap],
         output="screen",
+        **respawn,
     )
 
     smoother_server = Node(
@@ -120,6 +128,7 @@ def generate_launch_description():
         executable="smoother_server",
         parameters=[nav2_params],
         output="screen",
+        **respawn,
     )
 
     planner_server = Node(
@@ -127,6 +136,7 @@ def generate_launch_description():
         executable="planner_server",
         parameters=[nav2_params],
         output="screen",
+        **respawn,
     )
 
     behavior_server = Node(
@@ -135,6 +145,7 @@ def generate_launch_description():
         parameters=[nav2_params],
         remappings=[cmd_vel_remap],
         output="screen",
+        **respawn,
     )
 
     bt_navigator = Node(
@@ -142,6 +153,7 @@ def generate_launch_description():
         executable="bt_navigator",
         parameters=[nav2_params],
         output="screen",
+        **respawn,
     )
 
     waypoint_follower = Node(
@@ -149,6 +161,7 @@ def generate_launch_description():
         executable="waypoint_follower",
         parameters=[nav2_params],
         output="screen",
+        **respawn,
     )
 
     lifecycle_manager_localization = Node(
@@ -160,6 +173,7 @@ def generate_launch_description():
                 "autostart": True,
                 "node_names": LOCALIZATION_NODES,
                 "bond_timeout": 10.0,
+                "attempt_respawn_reconnection": True,
             }
         ],
         condition=IfCondition(localisation),
@@ -175,6 +189,7 @@ def generate_launch_description():
                 "autostart": True,
                 "node_names": NAVIGATION_NODES,
                 "bond_timeout": 10.0,
+                "attempt_respawn_reconnection": True,
             }
         ],
         output="screen",

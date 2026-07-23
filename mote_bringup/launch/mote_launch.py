@@ -51,16 +51,25 @@ def generate_launch_description():
     )
     wheel_params_file.close()
 
+    # respawn=True gives per-node recovery: if a driver process crashes, the
+    # launch system relaunches it within respawn_delay. This is the inner layer;
+    # systemd restarts the whole service only if `pixi run launch` itself dies.
+    # The spawners are one-shot and re-run via the OnProcessStart handler when
+    # controller_manager respawns, so they are not marked respawn.
+    respawn = {"respawn": True, "respawn_delay": 2.0}
+
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
         parameters=[robot_description],
+        **respawn,
     )
 
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[robot_description, controller_config, wheel_params_file.name],
+        **respawn,
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -90,6 +99,7 @@ def generate_launch_description():
                 "scan_mode": "Standard",
             }
         ],
+        **respawn,
     )
 
     laser_filter = Node(
@@ -100,6 +110,7 @@ def generate_launch_description():
             ("scan", "/scan"),
             ("scan_filtered", "/scan_filtered"),
         ],
+        **respawn,
     )
 
     cam = cfg["camera"]
@@ -124,11 +135,13 @@ def generate_launch_description():
         executable="v4l2_camera_node",
         name="camera",
         parameters=[camera_params],
+        **respawn,
     )
 
     system_monitor = Node(
         package="mote_bringup",
         executable="system_monitor",
+        **respawn,
     )
 
     localization = IncludeLaunchDescription(

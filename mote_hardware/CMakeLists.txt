@@ -62,13 +62,19 @@ add_executable(setup_ids
 target_link_libraries(setup_ids mote_hardware SCServo::SCServo)
 target_compile_features(setup_ids PUBLIC cxx_std_17)
 
+add_executable(servo_ping
+  tools/servo_ping.cpp
+)
+target_link_libraries(servo_ping mote_hardware SCServo::SCServo)
+target_compile_features(servo_ping PUBLIC cxx_std_17)
+
 install(TARGETS mote_hardware
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
 
-install(TARGETS servo_debug velocity_cal swap_ids setup_ids
+install(TARGETS servo_debug velocity_cal swap_ids setup_ids servo_ping
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 

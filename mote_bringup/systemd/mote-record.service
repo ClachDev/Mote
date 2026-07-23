@@ -1,16 +1,22 @@
 [Unit]
 Description=Mote Data Recording
 After=mote-bringup.service
+# Wants + PartOf: recording follows bringup (restarts when it does) but is not
+# required for it — a recorder crash must never take down the drive stack.
 Wants=mote-bringup.service
+PartOf=mote-bringup.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=@USER@
 WorkingDirectory=@HOME@/Mote
-ExecStart=@HOME@/.pixi/bin/pixi run record
-Restart=on-failure
-RestartSec=5
 Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run record
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
 
 [Install]
 WantedBy=multi-user.target

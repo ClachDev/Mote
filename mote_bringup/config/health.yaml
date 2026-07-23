@@ -1,0 +1,58 @@
+# Health monitor liveness expectations.
+#
+# The health_monitor node checks each entry for freshness (a message seen within
+# `timeout` seconds) and, when `min_rate` is set, for sustained rate over the
+# reporting window. `critical: true` subsystems drive the robot-level FAULT
+# state; non-critical ones only drive DEGRADED. A per-robot ~/.mote/health.yaml
+# overrides this packaged default (same pattern as perception.yaml).
+
+# Aggregation + publish period, seconds.
+period: 1.0
+
+topics:
+  - name: scan
+    topic: /scan
+    type: sensor_msgs/msg/LaserScan
+    min_rate: 5.0
+    timeout: 2.0
+    critical: true
+  - name: scan_filtered
+    topic: /scan_filtered
+    type: sensor_msgs/msg/LaserScan
+    min_rate: 5.0
+    timeout: 2.0
+    critical: true
+  - name: joint_states
+    topic: /joint_states
+    type: sensor_msgs/msg/JointState
+    min_rate: 5.0
+    timeout: 2.0
+    critical: true
+  # Camera feeds perception, not the safety-critical drive loop, so a camera
+  # dropout is DEGRADED, not FAULT. The compressed stream is subscribed to
+  # avoid pulling the full raw image just to measure liveness.
+  - name: camera
+    topic: /image_raw/compressed
+    type: sensor_msgs/msg/CompressedImage
+    min_rate: 5.0
+    timeout: 5.0
+    critical: false
+
+# TF edges to watch. odom->base_footprint is the live odometry corrector
+# (kinematic_icp); map->odom appears only once localised (slam or AMCL), so it
+# is non-critical — its absence means "not yet localised", not "broken".
+tf:
+  - name: odometry
+    parent: odom
+    child: base_footprint
+    timeout: 2.0
+    critical: true
+  - name: localization
+    parent: map
+    child: odom
+    timeout: 5.0
+    critical: false
+
+# Fold the host status published by system_monitor on /diagnostics (CPU, temp,
+# under-voltage) into the robot-level summary so a brown-out shows as DEGRADED.
+subscribe_diagnostics: true
