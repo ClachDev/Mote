@@ -254,3 +254,7 @@ server up (`pixi run depth-server`). Shared bag loading lives in
   the camera frames.
 - `measure_camera_pitch.py` — live checkerboard measurement of camera
   pitch/roll/height (mount calibration).
+- `sfm_stage0_geometry.py` — multi-view depth feasibility harness (issue #21,
+  Stage 0): parallax across the image, pose-at-stamp accuracy, and usable-baseline
+  duty cycle from a bag's `/tf` + images alone (no server, no lidar). Findings in
+  [`design/research/sfm_stage0_results.md`](../design/research/sfm_stage0_results.md).
