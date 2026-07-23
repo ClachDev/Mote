@@ -17,7 +17,7 @@ These are separable: a method can fix flicker without fixing scale (video-depth 
 
 ## Constraint Zero: Inference Is CPU-Only
 
-This reshapes the whole answer, so it goes first. The off-board `depth_server.py` runs conda-forge `pytorch` in the `depth` pixi environment with `torch.set_num_threads(os.cpu_count())` — CPU inference. The workstation GPU is an AMD Phoenix3 iGPU (Ryzen 7040 class): no CUDA, and no ROCm build in the env. Depth Anything V2-Small (~25 M params) already costs ~0.5 s/frame here, and the issue's latency budget is ~2x the current ~0.6 s capture→publish path.
+This reshapes the whole answer, so it goes first. The off-board `depth_server.py` runs conda-forge `pytorch` in the `depth` pixi environment — CPU inference by default. The workstation GPU is an AMD Phoenix3 iGPU (Ryzen 7040 class, gfx1103). Depth Anything V2-Small (~25 M params) already costs ~0.5 s/frame on the CPU here, and the issue's latency budget is ~2x the current ~0.6 s capture→publish path.
 
 Consequences, before any accuracy argument:
 
@@ -25,7 +25,9 @@ Consequences, before any accuracy argument:
 - **ViT-based MVS (MVSAnywhere) is likely over budget** at full resolution; would need aggressive downscaling to even measure.
 - **What fits:** classical stereo matching (ARCore's depth-from-motion ran on *one phone CPU core*), lightweight cost-volume MVS (DeepVideoMVS is MobileNet-based and was built for exactly this class of budget), sparse feature tracking + triangulation (milliseconds), and small streaming video-depth models (oVDA runs 20 FPS on a Jetson edge device; a CPU should manage the pipeline's ~2 Hz).
 
-If a CUDA GPU ever joins the fleet, the triage below changes materially — noted per candidate.
+If a capable GPU ever joins the fleet, the triage below changes materially — noted per candidate.
+
+> **Update (task 152, 2026-07-23): a ROCm path now runs the server on the Phoenix3 iGPU, but it does not lift this constraint.** `pixi run depth-rocm` serves inference on the iGPU via ROCm (torch masquerading gfx1103 as gfx1100). Measured: for V2-Small the iGPU only *ties* the CPU (~350 ms — the small ViT is memory-bandwidth-bound, and the iGPU shares LPDDR5 + power with the CPU), and for *larger* models it is *slower* than the CPU, because gfx1103's fast flash/mem-efficient attention kernels are broken and fall back to the slow math backend (V2-Base ~1.2 s GPU vs ~0.9 s CPU; fp16 crashes with an invalid-ISA GPU fault). That path was landed for robustness under CPU contention — it stays flat while the CPU-only server balloons to ~1–2 s under load — **not** for raw throughput. So the heavy-model verdicts below stand: the "if a GPU joins" trigger means a *capable discrete GPU* (the RTX-4090-class hardware MASt3R/VGGT are benchmarked on, of which this iGPU is ~1%), not the ROCm iGPU path.
 
 ---
 
