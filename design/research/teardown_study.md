@@ -86,12 +86,25 @@ that an ORP grid standardises holes but *not* the interface — see
 [fastening.md](fastening.md) field notes.)
 
 **Physical-arm pass (operator-in-the-loop).** The rules above are CAD- and
-doc-derived; the physical arm is the check on them. Confirmations to fold in
-from the built follower — see the open question at the end of this document:
-whether the gauge-first workflow was actually used and caught anything;
-whether any horizontal-axis hole needed manual support despite R2; and which
-of the arm's own joints are opened often in use (feeds the serviceability
-class, and the SO-Base ↔ Chassis Top arm-swap joint in the schedule).
+doc-derived; the built follower confirms them, with one useful nuance:
+
+- **R2 holds in practice.** Every horizontal-axis screw hole printed clean —
+  none needed manual support. The bridged-hole geometry does its job on a real
+  printer, not just in the guide.
+- **R4 is a gate, not a guaranteed intervention.** The gauges were printed
+  first as the workflow directs, but they came out fine and the "zero" and
+  "−0.1 mm" tolerance variants were indistinguishable in fit — so no printer
+  tuning was needed and the gauge changed nothing about the final parts. That
+  is the coupon *working as designed*: on an in-tolerance printer it is a cheap
+  no-op; its value is bounded to catching the out-of-spec minority before they
+  waste a full print. The rule survives, but v2 should frame the coupon as
+  insurance with a pass/adjust decision, not as a step that always bites.
+- **The arm's internal joints are set-and-forget.** The follower has not been
+  taken apart since assembly — so serviceability spending on the *arm* is
+  wasted, and the only frequently-opened boundary is the whole-arm swap at
+  SO-Base ↔ Chassis Top (already the one frequent structural joint in the
+  schedule). This corroborates the bimodal-service finding: build once, open
+  rarely, with a couple of deliberate exceptions.
 
 ---
 
@@ -176,7 +189,7 @@ layer-adhesion and tolerance limits.)
 | Fix one print orientation per part, first; design features for it (SO-101 R1) | **Yes — core rule.** Mote v1 left orientation implicit; v2 declares it per part. |
 | Bridge/teardrop holes that fight the orientation; no support in them (SO-101 R2) | **Yes.** Directly fixes v1's horizontal-axis and blind-hole pains. |
 | State the support policy as a checkable spec (≤45°, none in cross-axis holes) (SO-101 R3) | **Yes.** Makes "no heroic supports" testable. |
-| Ship a calibration coupon; builder tunes the printer before the real parts (SO-101 R4 / LEGO contrast) | **Yes — the answer to tolerance variance.** v2 requires it; SO-101 proves it works. |
+| Ship a calibration coupon; builder tunes the printer before the real parts (SO-101 R4 / LEGO contrast) | **Yes — the answer to tolerance variance,** framed as a pass/adjust gate. The built follower's printer passed it trivially, so v2 should treat it as cheap insurance for the out-of-spec minority, not a step that always bites. |
 | Fasteners only what ships with the components; no inserts (SO-101 R5) | **Yes.** Matches v2's "prefer shipped hardware" requirement. |
 | Locate off functional datums per joint; hold interfaces with a gauge, not a grid (SO-101 R6) | **Yes.** Answers v1's "grid gives holes, not an interface" finding. |
 | Dense grid for near-continuous placement (TB3 T2) | **Partly.** The *intent* transfers; the fine grid itself is cheap only under moulding — Mote keeps coarse ORP + half-pitch mounts (see mounting_survey.md). |
@@ -189,14 +202,6 @@ The spine of `DESIGN-RULES.md` (Phase 2) is the top block: orientation-first,
 bridged holes, a stated support policy, a builder calibration coupon,
 shipped-hardware fastening, and datum-located joints. Everything the
 injection-moulded exemplars get from their tooling, Mote has to earn in the
-design — and the SO-101 shows it is earnable.
-
----
-
-## Open question for the operator (physical SO-101 pass)
-
-The SO-101 rules above are extracted from CAD and the print guide. The
-physical-arm confirmations (R4 gauge workflow, R2 support behaviour, and the
-arm's own service-frequency joints) need the built follower in hand — recorded
-here so the teardown is honest about what is measured vs. stated. See the
-task's operator question.
+design — and the SO-101 shows it is earnable. The physical-follower pass
+(Exemplar 1) confirms the two rules that were checkable in the built arm (R2
+bridged holes, R4 the calibration gate) and the bimodal-service picture.
