@@ -359,9 +359,9 @@ inference node per site," which the per-robot `inference_host` already expresses
   at **Kilted** (the distro after Jazzy)
   ([rmw_zenoh binaries announcement](https://discourse.openrobotics.org/t/rmw-zenoh-binaries-for-rolling-jazzy-and-humble/41395)).
 - **What would Zenoh actually buy us, and would it simplify other decisions?**
-  Honestly assessed: Zenoh is a mesh data-plane that natively routes across WAN/NAT
-  and scales discovery far better than DDS, with per-robot namespace prefixing and
-  TLS/ACLs at the Zenoh layer
+  Zenoh is a mesh data-plane that natively routes across WAN/NAT and scales discovery
+  far better than DDS, with per-robot namespace prefixing and TLS/ACLs at the Zenoh
+  layer
   ([zenoh-plugin-ros2dds](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds),
   [Zenoh access control](https://zenoh.io/docs/manual/access-control/)). Notably the
   bridge is *"tested with `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`"* — exactly Mote's
@@ -421,12 +421,10 @@ needs to join the robot's DDS graph. With discovery pinned to localhost:
 concept, [docs](https://docs.ros.org/en/jazzy/Concepts/Intermediate/About-Domain-ID.html)
 — a non-issue rather than something to engineer around.)
 
-**Identity is server-allocated (server-first, fixing the inversion).** The robot
-cannot know its `id` before it registers, so the server owns the id space: `mote
-enroll` presents a bootstrap token + hardware facts (MAC, serial), the **server
-allocates** `id`/`name` and records the row, and the agent writes `robot.yaml` as a
-cache that re-enrolling can rebuild. The server is the system of record; the file is
-a cache.
+**Identity is server-allocated.** The robot cannot know its `id` before it
+registers, so the server owns the id space: `mote enroll` presents a bootstrap token
++ hardware facts (MAC, serial), the server allocates `id`/`name` and records the row,
+and the agent writes `robot.yaml` as a cache that re-enrolling can rebuild.
 
 **Per-robot vs shared config — formalise the split that already exists.** Shared
 *code + config* ships identically via the prefix.dev package (Q6). Per-robot
@@ -621,15 +619,14 @@ version and re-activate"* — **one update mechanism**, satisfying the brief. (T
 there is no update mechanism at all — rsync-then-build-on-Pi, `pixi.toml:26`,
 `mote-bringup.service`; this replaces it.)
 
-**"Install-alongside" means two envs on *disk*, never two stacks *running*.** This
-is the important clarification: the Pi does **not** have the CPU for two ROS stacks
-at once, and it couldn't anyway — the hardware is exclusive (one process set can
-hold the servo/lidar/camera serial ports, `mote_hardware` opens the port in
-`on_activate`). So the new version is only *installed and staged* while the old one
-runs; the actual cutover **stops the old stack, then starts the new one**. There is
-a brief, deliberate downtime at the swap, which is why updates are **scheduled when
-the robot is idle/charging, not mid-mission** (the orchestrator holds the update
-until the agent reports the robot idle). "Keep the old env active" means kept
+**"Install-alongside" means two envs on *disk*, never two stacks *running*.** The Pi
+does not have the CPU for two ROS stacks at once, and the hardware is exclusive
+anyway (one process set holds the servo/lidar/camera serial ports — `mote_hardware`
+opens the port in `on_activate`). So the new version is only *installed and staged*
+while the old one runs; the cutover **stops the old stack, then starts the new one**.
+That brief downtime is why updates are **scheduled when the robot is idle/charging,
+not mid-mission** (the orchestrator holds the update until the agent reports idle).
+"Keep the old env active" means kept
 *installed on disk* for rollback, not kept *running*.
 
 **Flow (per robot, driven by the agent):**
@@ -713,18 +710,16 @@ per-channel auth on top; do **not** build a PKI or a custom auth server for v1.
 
 ## The other pipelines: fleet server & inference server
 
-The review rightly notes the robot pipeline is only one of three. The non-robot
-roles need their own provisioning + update story, and it is deliberately *different*
-from the robot OTA because they are server software, not fleet-managed robots.
+The robot pipeline is only one of three. The non-robot roles need their own
+provisioning + update story, deliberately *different* from the robot OTA because they
+are server software, not fleet-managed robots.
 
-**Inference server (the GPU box) — a managed compute node, not a hand-updated box.**
-The earlier draft's "update it whenever" was too manual and error-prone; the fix is
-to treat it as a **managed node the fleet server drives with the same machinery as a
-robot, minus the ROS bits**. It runs a tiny agent (the same `mote_agent` in a
-"compute node" mode, or a stripped variant) that reports its version/health to the
-fleet server and executes staged updates on command — so it shows up in the roster
-with a version and a health state, and its updates are orchestrated, gated, and
-reported, not done by hand over SSH.
+**Inference server (the GPU box) — a managed compute node.** Treat it as a **managed
+node the fleet server drives with the same machinery as a robot, minus the ROS
+bits**: it runs a tiny agent (the same `mote_agent` in a "compute node" mode) that
+reports its version/health and executes staged updates on command, so it shows up in
+the roster and its updates are orchestrated, gated, and reported — not done by hand
+over SSH.
 - *Provisioning:* install pixi, join the tailnet (tagged `tag:inference`), run the
   perception servers as a service — `pixi run inference` (Linux systemd) or the
   equivalent Windows service (this box is the Windows/NVIDIA machine the parallel
@@ -766,9 +761,9 @@ posture that keeps robot autonomy independent of fleet infrastructure.
 
 ## Scaling: one robot → ten thousand
 
-The recommendations are tuned for the **homelab horizon**; this section is the
-honest cost curve and the breaking points, and — the key claim — how the *seams*
-let us cross each regime without a redesign.
+The recommendations are tuned for the **homelab horizon**; this section is the cost
+curve and the breaking points, and how the *seams* let us cross each regime without
+a redesign.
 
 | Component | A · Homelab (1–10, one site) | B · Small fleet (10s–100s, few sites, one org) | C · Platform (1k–10k, many sites & customers) |
 |---|---|---|---|
