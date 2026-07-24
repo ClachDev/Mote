@@ -14,6 +14,15 @@ breakdown at the end is sized so each milestone becomes one dispatchable task.
 > release channel (`pixi.toml:3`). Where a recommendation leans on one of those,
 > the file and line are cited. Claims about candidate technologies link their
 > docs; anything I could not verify is flagged **(verify)**.
+>
+> **Two horizons.** Mote is an example/portfolio project, so the design is
+> written for the **homelab horizon** (1–10 robots, one operator, one site) —
+> that is what v0/v1 build and what the recommendations optimise for. But every
+> choice is also judged against a **platform horizon** (1k–10k robots across many
+> sites and customers) so we can see its cost curve and its breaking point. The
+> [Scaling](#scaling-one-robot--ten-thousand) section makes that explicit; each
+> transport choice below carries a **Cost & tradeoffs** note so the downside is on
+> the page next to the upside.
 
 ---
 
@@ -62,7 +71,10 @@ Updates consume the pending **prefix.dev `mote` channel** (`pixi.toml:3`) —
 install-alongside, health-check, keep the old env for rollback — so there is one
 update mechanism, not two. Keep the **fleet server and the inference server as
 separate roles** (small always-on vs big intermittent GPU); they may co-locate but
-scale independently.
+scale independently. The whole thing is deliberately the *cheap homelab shape*,
+but the seams are chosen so the platform-scale swaps
+([Scaling](#scaling-one-robot--ten-thousand)) are implementation changes behind the
+same seams, not a redesign.
 
 ---
 
@@ -83,7 +95,7 @@ graph TB
             dots["…"]
         end
         subgraph fleet["Fleet server (small, always-on: VPS / home box / Pi)"]
-            broker["MQTT broker (Mosquitto)<br/>retained state · LWT · per-robot topics"]
+            broker["MQTT broker (Mosquitto → EMQX at scale)<br/>retained state · LWT · per-robot topics<br/>+ MQTT-over-WebSocket for the web UI"]
             registry["Site/map registry<br/>canonical site bundles + revisions"]
             api["Fleet API + thin web UI<br/>roster · health · dispatch · rollout"]
             ota["Update orchestrator<br/>ring rollout state"]
@@ -92,15 +104,17 @@ graph TB
         ops["Operator<br/>Foxglove (deep view) + fleet dashboard (roster)"]
     end
 
-    prefix["prefix.dev &quot;mote&quot; channel<br/>versioned package releases"]
+    prefix["prefix.dev &quot;mote&quot; channel<br/>versioned package releases<br/>(robot + inference-server packages)"]
 
-    agent1 <-->|MQTT: health / dispatch / OTA state| broker
+    agent1 <-->|MQTT: health / dispatch / OTA state / map-notify| broker
     agent1 <-->|"HTTP/rsync: pull & publish revisions"| registry
     fbridge1 <-->|Foxglove WS: pose · camera · teleop| ops
+    broker <-->|MQTT-over-WS: live roster + pose| ops
     api --- ops
     ros1 -.->|"raw TCP depth/detect (unauthenticated wire, now on tailnet)"| infer
     ota -.->|"target version per ring"| agent1
     agent1 -.->|pixi install pinned version| prefix
+    infer -.->|pixi install (same channel, own env)| prefix
 ```
 
 ---
@@ -130,15 +144,23 @@ depends on the fleet server. So when connectivity drops:
 - inbound commands are acked so a dropped command is neither lost nor
   double-applied.
 
+**The agent being the sole egress is also the fleet-scale isolation story.**
+Because DDS never leaves the robot (nothing subscribes to the robot's DDS graph
+from off-box — the agent translates to MQTT/Foxglove instead), there is no
+fleet-wide DDS graph to partition, discovery floods can't cross robots, and the
+`ROS_DOMAIN_ID` question (Q3) shrinks to the rare case of two robots sharing one
+physical LAN segment.
+
 **Fleet server vs inference server: separate roles.** The task brief asks whether
 they are the same box. They should be **distinct roles**, because their shape is
 opposite:
 
 | | Fleet server | Inference server |
 |---|---|---|
-| Uptime | always-on | up only when a robot needs perception |
+| Uptime | always-on (availability-critical) | up only when a robot needs perception |
 | Compute | tiny (broker, files, a web app) | heavy GPU (torch: OWLv2, Depth-Anything) |
 | Hardware | VPS / home box / even a spare Pi | Windows/NVIDIA gaming PC |
+| State | registry + retained broker state (back up) | stateless (models + code only) |
 | Trust | holds fleet secrets, operator auth | runs an **unauthenticated** wire protocol |
 
 That last row is decisive. The inference wire is explicitly *"unauthenticated;
@@ -151,7 +173,9 @@ it a separate role means its box can be off half the day without touching fleet
 availability, and its unauthenticated port is never something the fleet server has
 to firewall around — the Tailscale substrate (Q2) makes "trusted network" true
 across the internet for free. They *may* co-locate on one physical machine at home
-today; the design just refuses to *assume* it.
+today; the design just refuses to *assume* it. Provisioning + updates for both of
+these non-robot roles are in
+[The other pipelines](#the-other-pipelines-fleet-server--inference-server).
 
 ---
 
@@ -175,16 +199,35 @@ every other transport option otherwise has to solve individually:
 - **Cheap on a Pi.** WireGuard is a kernel module; idle cost is negligible, which
   matters on the Pi that is already carrying Nav2 + SLAM + perception.
 - **Stable identity + encryption for free.** Every device gets a stable MagicDNS
-  name and an always-on encrypted link, and the free tier covers **100 devices /
-  3 users with ACLs, MagicDNS, and subnet routing** — comfortably a hobby fleet
-  (see Tailscale pricing; **verify** current free-tier limits at adoption time).
+  name and an always-on encrypted link, and the free tier covers a homelab fleet
+  (**verify** current free-tier limits at adoption — historically ~100 devices /
+  3 users with ACLs, MagicDNS, subnet routing).
 - **It directly fixes today's model.** The current "same LAN + same
   `ROS_DOMAIN_ID`" workflow (`mote_perception/config/README.md:49-51`) becomes
-  "same tailnet" — the workstation, and now the fleet server, reach the robot as
-  if on one LAN from anywhere.
+  "same tailnet."
 
-Everything below assumes this substrate. It is why the app-layer choices can stay
-simple.
+**Cost & tradeoffs.**
+- **Pricing shape bites at scale.** Tailscale charges *per user*, with unlimited
+  *user* devices — but robots are **tagged devices** (not tied to a human), and
+  tagged resources start at **50 per plan with $1/device/month overage**
+  ([Tailscale pricing](https://tailscale.com/pricing)). So 200 robots ≈ $150/mo
+  in tags; **10,000 robots ≈ ~$10k/mo** in tag overages alone, before per-user
+  seats. Cheap at homelab scale, a real line item at platform scale.
+- **Cloud-locked coordination plane.** The control/coordination server is
+  Tailscale's SaaS; you can self-host DERP *relays* but not the coordinator. That
+  is a vendor dependency and a availability/SPOF consideration for a commercial
+  fleet.
+- **Relay latency.** If two peers can't NAT-punch a direct path, traffic falls
+  back to a DERP relay, adding latency and a bandwidth ceiling (relays are for
+  connectivity, not throughput). Direct WireGuard is near-line-rate; relayed is
+  not — matters for the inference link (Layer 3).
+- **Single flat tailnet doesn't multi-tenant.** One tailnet mixing many customers'
+  robots is wrong for isolation and blast radius.
+- **Escape hatch: [Headscale](https://headscale.net/)** — an open-source, BSD-3
+  self-hosted reimplementation of the coordination server (single-tailnet, embedded
+  DERP). It removes the per-device cost and the vendor lock at the price of
+  operating it yourself. This is the Regime-B/C answer, and it is a drop-in behind
+  the same "every device has a stable overlay IP" seam.
 
 #### Layer 1 — rich live data + teleop: Foxglove (adopt, don't build)
 
@@ -197,131 +240,228 @@ introspection, and *faster* than rosbridge. Foxglove is the operator's **deep
 single-robot console**: live pose on the floor map, `/tf`, camera peek
 (the camera already publishes `/image_raw/compressed`, `CLAUDE.md`), raw topic
 inspection, and **teleop** (publishing back to the robot is supported over the
-WS protocol).
+WS protocol). Reach it over the tailnet directly
+(`wss://<robot-magicdns>:8765`) or via Foxglove's device-token remote path
+(`FOXGLOVE_DEVICE_TOKEN`).
 
-Two ways to reach it, both fine on the tailnet: connect Foxglove desktop/web
-directly to `wss://<robot-magicdns>:8765`, or use Foxglove's own device-token
-remote path (`FOXGLOVE_DEVICE_TOKEN`) if we later want their cloud in the loop.
-Foxglove's free tier is **5 connected devices, unlimited viewers, live
-connections** (see [Foxglove pricing](https://foxglove.dev/pricing)) — enough for
-a small fleet, with a clear paid upgrade if it grows. This is a **buy/adopt**, not
-a build: reimplementing a ROS visualiser + teleop console is a large project with
-no payoff.
+**Is it a full RViz replacement? No — and that's fine.** Many teams move from RViz
+to Foxglove for remote/scale workflows, but **RViz's interactive-marker primitives
+remain RViz-only**, and teams keep a targeted RViz session for that
+([RViz vs Foxglove vs Rerun](https://foxglove.dev/robotics/rviz-vs-foxglove-vs-rerun)).
+Mote already ships RViz in the `dev` environment (`pixi run rviz`, `CLAUDE.md`), so
+we keep RViz for local development and adopt Foxglove for *remote/fleet* viewing —
+they don't compete.
+
+**Alternatives considered.**
+- **RViz** — local only, no remote/fleet story, no web client. Kept for dev, not a
+  fleet console.
+- **[Rerun](https://foxglove.dev/robotics/rerun-vs-foxglove)** — fully open source
+  (MIT/Apache), excellent for logged/offline analysis, but **no live multi-user /
+  cloud-hosted live sessions** — the exact thing a remote ops console needs. Wrong
+  fit for live teleop; right fit if we later want open-source offline bag analysis.
+- **rosbridge** — older JSON protocol, no schema, slower; Foxglove WS supersedes it
+  ([What is ROSBridge?](https://foxglove.dev/robotics/rosbridge)). Compatibility
+  fallback only.
+- **Build our own ROS web viewer** — large project, no payoff over Foxglove's free
+  tier.
+
+**Cost & tradeoffs.** Free tier = **3 users / 5 devices / 10 GB**
+([Foxglove pricing](https://foxglove.dev/pricing)) — covers v0/v1, and the **5
+connected-device cap is the first wall we hit** (Regime B). Paid pricing is
+per-user + storage + usage (Enterprise is quote-only). The tradeoff is a **vendor
+dependency for the ops console** and a per-seat/per-device cost curve; the mitigation
+is that Foxglove is *adopted at a seam* (it consumes the robot's ROS graph and
+nothing else depends on it), so it can be swapped for Rerun-offline + a custom live
+panel later without touching robot code. Note also that streaming camera/pointcloud
+to Foxglove is **bandwidth-heavy** — throttle/scope topics per connection, and over
+a DERP-relayed link expect it to be the first thing that saturates.
 
 #### Layer 2 — fleet control plane: MQTT (`mote_agent` ↔ fleet server broker)
 
 The structured control plane — enrollment, task dispatch, health heartbeats,
-update state — is a different shape from live visualisation: many robots, small
-messages, and semantics that want *durability*. Use **MQTT** (Mosquitto broker on
-the fleet server; both [mosquitto](https://anaconda.org/conda-forge/mosquitto) and
+update state, map-change notifications — is a different shape from live
+visualisation: many robots, small messages, and semantics that want *durability*.
+Use **MQTT** (Mosquitto broker on the fleet server; both
+[mosquitto](https://anaconda.org/conda-forge/mosquitto) and
 [paho-mqtt](https://anaconda.org/conda-forge/paho-mqtt) are on conda-forge, so the
-agent stays inside the pixi solve). MQTT is the right fit because its native
-features *are* the fleet semantics we need, rather than things we'd hand-build:
+agent stays inside the pixi solve). MQTT fits because its native features *are* the
+fleet semantics we'd otherwise hand-build:
 
-- **Last Will & Testament** → a robot that drops off is detected *instantly* by
-  the broker publishing its will, without polling.
+- **Last Will & Testament** → a robot that drops off is detected *instantly*.
 - **Retained messages** → the last-known health/pose of every robot is available
-  the moment the dashboard connects; no "wait for the next heartbeat."
+  the moment a client connects; no "wait for the next heartbeat."
 - **Per-robot topic namespacing** → `mote/<robot_id>/health`,
   `mote/<robot_id>/task/command`, `mote/<robot_id>/task/status`,
-  `mote/<robot_id>/ota/state`. Multi-robot from day one falls out of the topic
-  tree.
+  `mote/<robot_id>/ota/state`, `mote/<robot_id>/pose`. Multi-robot falls out of the
+  topic tree.
 - **Cheap fan-out at the broker**, and cheap on the Pi.
 
 The bridge is trivial because the dispatch seam is already string-shaped:
 `task/command` and `task/status` are both `std_msgs/String`
-(`task_server.py:56-57`), with the grammar `fetch <target> <drop_zone>` in and
-status strings (`accepted:`/`rejected:`/`succeeded:`/`failed:`) out
-(`task_server.py:83-97`). The agent JSON-wraps those onto MQTT and back — no new
-ROS message types, no changes to `task_server`.
+(`task_server.py:56-57`), grammar `fetch <target> <drop_zone>` in and status
+strings (`accepted:`/`rejected:`/`succeeded:`/`failed:`) out
+(`task_server.py:83-97`). The agent JSON-wraps those onto MQTT — no new ROS message
+types, no changes to `task_server`.
 
-> A single persistent WebSocket/HTTP from agent to fleet server is the honest
-> fallback for a tiny fleet, but you would then reimplement LWT and retained
-> state by hand. A Mosquitto broker is a ~10-minute setup that gives both for
-> free, so MQTT is the recommendation.
+**Can a web UI connect to the broker directly?** Yes. Browsers speak **MQTT over
+WebSockets** via [MQTT.js](https://www.emqx.com/en/blog/mqtt-vs-websocket); the
+broker (Mosquitto, EMQX, HiveMQ all expose a WS listener) routes messages to the
+browser exactly as to any client. So the fleet dashboard (Q5) subscribes to
+`mote/+/pose` and `mote/+/health` over WS and renders live positions with no
+polling and no extra service in between. This is why the ops UI stays thin.
+
+**Cost & tradeoffs / limitations.**
+- **Pub/sub only — no native request/response.** Command→ack is modelled with a
+  reply topic + correlation id; fine, but it's a convention we implement, not a
+  built-in.
+- **No message history/replay.** Unlike Kafka, MQTT keeps only the *last retained*
+  value per topic. Good for "current pose/health"; if we later want a telemetry
+  time-series we add a subscriber that writes to a DB (or bridge to Kafka — EMQX
+  Enterprise has a Kafka data bridge). Out of scope for v1.
+- **Payloads should stay small.** MQTT is for control/telemetry, not for shipping
+  maps or camera frames — those go over HTTP (registry) and Foxglove respectively.
+- **Broker is a scaling knob, not a wall.** Mosquitto (single process) is right for
+  a homelab; it does *not* cluster. At Regime B/C swap it for **EMQX/HiveMQ**, which
+  are benchmarked into the **millions of concurrent connections** and cluster
+  horizontally ([EMQX WebSocket scaling](https://www.emqx.com/en/blog/a-deep-dive-into-emqx-s-websocket-performance)).
+  Same protocol, same topic tree, same agent code — a broker swap, not a redesign.
+- **Auth is broker-config, not free.** Anonymous by default; we must configure
+  per-robot credentials / TLS (Q7).
+- **Fallback if we didn't want a broker at all:** a single persistent
+  WebSocket/HTTP from agent to fleet server — but then we reimplement LWT and
+  retained state by hand. A Mosquitto broker is a ~10-minute setup that gives both
+  for free, so MQTT is the recommendation.
 
 #### Layer 3 — inference: unchanged, now on the tailnet
 
 The depth/detect link stays exactly as built — raw length-prefixed TCP on ports
 5601/5602 (`depth_wire.py:16-31`, `detect_wire.py:27-29`), `inference_host` from
 `perception.yaml` (`perception.yaml:8`). The only change is that `inference_host`
-now points at the GPU box's **MagicDNS name**, so the "run it on a trusted
-network" requirement is satisfied across the internet by the tailnet. Nothing in
-the perception code changes.
+points at the GPU box's **MagicDNS name**, so "run it on a trusted network" holds
+across the internet. Nothing in the perception code changes.
 
-#### Rejected / deferred alternatives
+**Does the tailnet affect latency? Yes, and it dictates placement.** WireGuard adds
+a small, roughly fixed per-packet crypto overhead; on a shared LAN that is
+negligible next to the torch inference time itself. But **if the robot and the GPU
+box are on different physical networks, the depth/detect round-trip now pays the
+WAN RTT** (tens to hundreds of ms), and if the two can't NAT-punch a direct path
+the DERP relay adds more. Perception is latency-sensitive (it feeds Nav2's
+obstacle layer and the fetch detector), so the design rule is: **keep the inference
+server on the same LAN/site as the robots it serves.** `inference_host` per-robot
+config (already `~/.mote`-overridable, `perception.yaml:5-6`) means each robot
+points at its *local* GPU box; the tailnet is what makes an *occasional* cross-site
+fallback possible, not the normal path. At platform scale this becomes "one
+inference node per site," which the per-robot `inference_host` already expresses.
 
-- **rmw_zenoh (swap the RMW).** Promising, but *not production-ready for Jazzy* —
-  the maintainers state it is "mostly feature-complete" but still changing, with
-  the first supported release targeted at **Kilted** (the distro after Jazzy)
+#### Rejected / deferred: rmw_zenoh and the Zenoh bridge
+
+- **rmw_zenoh (swap the RMW).** *Not production-ready for Jazzy* — maintainers call
+  it "mostly feature-complete" but still changing, first supported release targeted
+  at **Kilted** (the distro after Jazzy)
   ([rmw_zenoh binaries announcement](https://discourse.openrobotics.org/t/rmw-zenoh-binaries-for-rolling-jazzy-and-humble/41395)).
-  Swapping the robot's working RMW is a high-blast-radius change to a stack that
-  ships today on `rmw_cyclonedds_cpp` (`pixi.toml:221`). **Defer; revisit at
-  Kilted.**
-- **zenoh-plugin-ros2dds (DDS↔Zenoh bridge).** A genuinely strong *alternative*
-  to Foxglove-as-transport if we ever want full ROS-graph bridging *between*
-  robots, and notably it is *"tested with `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`"*
-  ([zenoh-plugin-ros2dds](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds)) —
-  exactly Mote's RMW — with per-robot namespace prefixing and TLS/ACLs available
-  at the Zenoh layer ([Zenoh access control](https://zenoh.io/docs/manual/access-control/),
-  [Zenoh TLS](https://zenoh.io/docs/manual/tls/)). It is kept as the **documented
-  fallback**: if the fleet later needs cross-robot topic sharing that MQTT +
-  Foxglove don't cover, this is the path, and it slots onto the same tailnet. For
-  v0/v1 it is more moving parts than the job needs.
-- **rosbridge.** Older JSON protocol, no schema support, slower than Foxglove WS
-  ([What is ROSBridge?](https://foxglove.dev/robotics/rosbridge)). Foxglove WS
-  supersedes it. Note only as a compatibility fallback.
-- **Raw DDS over the WAN.** Fragile (multicast discovery, discovery floods, no
-  NAT story). The tailnet could tunnel it, but per-robot domain isolation is
-  unsolved today (`ROS_DOMAIN_ID` never set) and DDS-over-WAN is not worth the
-  operational risk when MQTT + Foxglove cover the need.
+- **What would Zenoh actually buy us, and would it simplify other decisions?**
+  Honestly assessed: Zenoh is a mesh data-plane that natively routes across WAN/NAT
+  and scales discovery far better than DDS, with per-robot namespace prefixing and
+  TLS/ACLs at the Zenoh layer
+  ([zenoh-plugin-ros2dds](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds),
+  [Zenoh access control](https://zenoh.io/docs/manual/access-control/)). Notably the
+  bridge is *"tested with `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`"* — exactly Mote's
+  RMW. **If adopted, it could in principle absorb Layer 0 *and* the transport for
+  Foxglove/inference** (one mesh instead of Tailscale + per-app transports), because
+  it gives WAN routing + identity + ACLs in one layer. That is the theoretical
+  simplification.
+- **Why still defer.** The simplification is real but the maturity and blast radius
+  are not worth it now: it either means swapping the robot's working RMW (waits for
+  Kilted — and *"I would need a good reason"* to jump ROS versions, which this alone
+  isn't), or running the `zenoh-plugin-ros2dds` bridge as an *addition* — which is
+  more moving parts than Tailscale + MQTT + Foxglove for a homelab, without removing
+  any of them until we commit to Zenoh end-to-end. **Recommendation:** keep it as the
+  documented consolidation path — the seams (agent-as-egress, robot_id namespacing)
+  are Zenoh-compatible — and re-evaluate at Kilted, when the "good reason" would be:
+  we've hit Tailscale's per-device cost wall *and* want ROS-graph federation between
+  robots. Until both are true, don't.
 
 ---
 
 ### 3. Identity & provisioning — a `robot_id`, per-robot state stays in `~/.mote`
 
 **Recommendation.** Introduce a stable **`robot_id`** as the fleet's primary key,
-decoupled from the hostname (which is already ambiguous — `auldbot` in
-`pixi.toml:26` vs `mote` in the docs). Store it in a new
-**`~/.mote/robot.yaml`**, sitting alongside the `active.yaml` that already lives
-there (`sites.py:4`) and honouring the same `MOTE_HOME` override
-(`sites.py:63-64`) so tests and sim can fake it:
+decoupled from the hostname (already ambiguous — `auldbot` in `pixi.toml:26` vs
+`mote` in the docs). Cache it in a new **`~/.mote/robot.yaml`**, alongside the
+`active.yaml` that already lives there (`sites.py:4`) and honouring the same
+`MOTE_HOME` override (`sites.py:63-64`):
 
 ```yaml
-# ~/.mote/robot.yaml   (per-robot, never in the repo/package)
-id: mote-01            # stable primary key; keys every MQTT topic + registry entry
-name: "Front desk"     # human label shown in the ops UI
-domain_id: 1           # per-robot ROS_DOMAIN_ID (fixes the flat-graph problem)
+# ~/.mote/robot.yaml   (per-robot cache; the fleet server is the source of truth)
+id: mote-01            # assigned by the server at enroll; keys every topic + registry row
+name: "Front desk"     # human label, editable in the ops UI
+domain_id: 1           # per-LAN ROS_DOMAIN_ID (see below); assigned at enroll
+site: acme-hq          # which site's bundles this robot is entitled to
 ```
 
-Adding `domain_id` here also closes the second greenfield gap: today all robots
-would share the default domain 0. Having each robot set its own `ROS_DOMAIN_ID`
-from `robot.yaml` gives DDS-level isolation between robots on the same LAN, on top
-of the tailnet.
+**Who assigns id/domain_id — the flow is server-first (fixing the inversion).** The
+robot cannot already know its id/domain before it registers, so enrollment is:
+
+1. The robot boots with **no identity**, only a **bootstrap credential** (a
+   short-lived enrollment token, baked into the image or entered once).
+2. `mote enroll` calls the fleet server with that token + hardware facts (MAC,
+   serial). The **server allocates** `robot_id`, `domain_id`, and initial `name`
+   from its own registry (it owns the id space), records the row, and returns them.
+3. The agent writes `robot.yaml` (the cache) and the server pushes the entitled
+   site bundle (Q4).
+
+So the server is the allocator and system of record; `robot.yaml` is a local cache
+that can be rebuilt by re-enrolling. That resolves the "register vs enumerate"
+inversion in the earlier draft.
+
+**Where the Tailscale key comes from.** The overlay join needs a Tailscale **auth
+key** (or OAuth client), minted from the tailnet admin console/API
+([auth keys](https://tailscale.com/kb/1085/auth-keys)). In provisioning, the fleet
+server (which holds the tailnet API credential) mints a **single-use, tagged,
+pre-authorised** key at enroll time and hands it to the robot, so no human pastes a
+key and the robot lands with the right ACL tag (`tag:robot`). Ephemeral/pre-auth
+keys are exactly this use case.
+
+**`ROS_DOMAIN_ID` is a per-LAN multiplexer, not the fleet isolation mechanism.**
+Domain IDs range **0–232 (safe range 0–101), and are a *per-machine/per-LAN*
+concept — a computer runs out of them past ~120 co-located processes**
+([ROS_DOMAIN_ID docs](https://docs.ros.org/en/jazzy/Concepts/Intermediate/About-Domain-ID.html)).
+They do **not** scale as global fleet isolation, and they don't need to: per Q1 the
+robot's DDS graph never leaves the box, so two robots on *different* LANs never
+interfere regardless of domain. `domain_id` only matters when **two robots share
+one physical LAN** (e.g. a charging room), where distinct IDs stop their local
+graphs from merging. Automatic management is therefore small: the server assigns
+`domain_id` per *site* from a tiny pool (`hash(robot_id) mod 101`, or sequential
+within a site) at enroll — collisions only matter within one LAN, which a per-site
+pool of 101 covers comfortably. (Belt-and-braces alternatives if a LAN ever holds
+>101 robots: a CycloneDDS peer-list XML to disable multicast discovery, or simply
+that co-located robots don't federate anyway.)
 
 **Per-robot vs shared config — formalise the split that already exists.** Shared
-*code + config* ships identically to every robot via the prefix.dev package
-(Q6). Per-robot *state* stays in `~/.mote`, which is already the pattern:
-`active.yaml` (site/floor), `camera_calibration.yaml`, and the uncommitted
-`perception.yaml` override all live there and are all `MOTE_HOME`-relative
-(`perception.yaml:5-6`, `CLAUDE.md`). `robot.yaml` joins that set. The clean
-consequence: **an update can never touch identity**, because updates replace the
-package and `~/.mote` is outside it.
+*code + config* ships identically via the prefix.dev package (Q6). Per-robot
+*state* stays in `~/.mote` — `active.yaml`, `camera_calibration.yaml`, the
+uncommitted `perception.yaml` override (`perception.yaml:5-6`), and now
+`robot.yaml`. The clean consequence: **an update can never touch identity**,
+because updates replace the package and `~/.mote` is outside it.
 
-**Enrollment flow (new robot):**
+**Enrollment flow (new robot on a clean Pi) — the full sequence.** The earlier
+draft skipped steps; here it is end to end, and note that **the prefix.dev channel
+delivers the *ROS software*, not the OS-level setup** — the one-time `pixi run
+setup` tasks (udev rules, wifi-powersave, systemd unit install; `CLAUDE.md`,
+`mote_bringup/systemd/install.sh`) still have to run. Two honest options:
 
-1. Prepare the Pi and run the existing one-time `pixi run setup` (udev, wifi,
-   systemd — `CLAUDE.md`).
-2. `tailscale up` with a pre-authorised key → the robot joins the tailnet and
-   gets a MagicDNS name.
-3. `mote enroll` (new CLI, sibling to the existing `site` console script) writes
-   `robot.yaml` with an assigned `id`/`name`/`domain_id` and registers with the
-   fleet server; the server records the robot (keyed by `robot_id`, *not*
-   hostname) and pushes the appropriate site bundle (Q4).
-4. The robot appears in the ops roster.
+- **Golden image (recommended at any real scale):** bake OS + pixi + the setup
+  tasks + the Tailscale client into a flashable Pi image, so a new robot is "flash,
+  boot, `mote enroll`." The image is versioned like any other artifact.
+- **Bootstrap script (fine for the homelab):** a one-liner that installs pixi,
+  runs `pixi install` from the channel, runs `pixi run setup`, `tailscale up`, then
+  `mote enroll`.
 
-MagicDNS handles reachability; `robot_id` handles identity; the legacy `auldbot`
-hostname becomes irrelevant to the fleet layer.
+Either way the sequence is: **prepare OS → install runtime (pixi/channel) → run
+`setup` (udev/systemd/wifi) → join tailnet (server-minted key) → `mote enroll`
+(server allocates id/domain, pushes site) → appears in roster.** MagicDNS handles
+reachability; `robot_id` handles identity; the legacy `auldbot` hostname becomes
+irrelevant to the fleet layer.
 
 ---
 
@@ -333,10 +473,9 @@ for it: the module docstring states the whole bundle is *"plain files + YAML so 
 can be zipped, synced, or served by a web API without translation"*
 (`sites.py:33-35`).
 
-**Distribution = copy an immutable revision dir + one atomic flip.** A map
-revision is a timestamped directory `floors/<floor>/maps/<rev>/`, *immutable once
-published* (`sites.py` docstring), and the live map is a symlink flipped by an
-atomic `os.replace` (`sites.py:248-252`):
+**Distribution = copy an immutable revision dir + one atomic flip.** A map revision
+is a timestamped directory `floors/<floor>/maps/<rev>/`, *immutable once published*,
+and the live map is a symlink flipped by an atomic `os.replace` (`sites.py:248-252`):
 
 ```python
 tmp = fdir / f".map-{os.getpid()}"
@@ -344,41 +483,57 @@ os.symlink(os.path.join("maps", rev), tmp)
 os.replace(tmp, fdir / "map")          # atomic publish
 ```
 
-So a robot pulling a new map from the server = "download the `maps/<rev>/`
-directory, then flip the local `map` link" — and the existing revision model
-guarantees a **half-transferred revision is never visible** and rollback is a flip
-to an older rev (the exact semantics of `site use-map <rev>`,
-`sites.py:426-434`). The agent reuses this machinery rather than inventing map
-sync. `KEEP_REVISIONS = 3` (`sites.py:60`) already bounds local disk.
+A robot pulling a new map = "download the `maps/<rev>/` dir, then flip the local
+`map` link" — the existing revision model guarantees a **half-transferred revision
+is never visible**, and rollback is a flip to an older rev (the exact semantics of
+`site use-map <rev>`, `sites.py:426-434`). `KEEP_REVISIONS = 3` (`sites.py:60`)
+bounds local disk.
 
-**Who may publish.** A robot finishes a mapping session and runs `save-map`, which
-produces a new *local* revision with `map.yaml`+`map.png`, the raw PNG, the
-slam_toolbox posegraph, and a `meta.yaml` provenance record (`sites.py:348-410`).
-The agent then **uploads that revision to the fleet server**, which validates it
-and, if accepted, publishes it as the new **canonical** revision for that floor.
-Publishing is **server-gated: one writer wins.** Other robots pull the canonical
-revision on their next sync.
+**How does a robot know there's a new map? Event-driven, not polling.** The
+registry publishes a **retained** MQTT topic per floor,
+`mote/registry/site/<site>/floor/<floor>/current = <rev-id>`. The agent subscribes
+to the floors its robot is entitled to; when the retained value changes it pulls
+that revision and flips. Retained means a robot that was offline gets the current
+value the instant it reconnects — no polling, no missed updates. (A robot on that
+floor also gets a targeted `mote/<robot_id>/…` nudge so an active navigator can
+reload cleanly rather than mid-goal.)
 
-**Conflict: two robots map the same floor.** Do **not** auto-merge. Revisions are
-immutable and independent, and — critically — a map frame's origin is *"an
-accident of where SLAM started, so zones/map/posegraph must live and travel
-together"* (`sites.py` docstring). Two mapping runs produce two frames; merging
-them silently would break every taught zone coordinate. Instead: the server keeps
-both as **candidate revisions**, and an operator **promotes** one to be the
-floor's active revision — the same `site use-map` semantics, centralised. Nothing
-is lost, nothing is silently merged, and the loser's revision is retained for
-audit (matching the raw-map-retention ethos already in `save-map`).
+**Who may publish, and what validation runs.** A robot finishes mapping and runs
+`save-map`, which already produces a complete local revision: `map.yaml`+`map.png`,
+the raw PNG, the slam_toolbox posegraph, and a `meta.yaml` provenance record, and
+**locally refuses to publish a revision unless all four artifacts are present**
+(`sites.py:390-400`). The agent uploads that revision; the **fleet server
+re-validates before making it canonical** — a small validation step in the registry
+component, checking:
+
+- all required files present and non-empty (server-side repeat of the local
+  `sites.py:390-400` invariant, since the upload could truncate);
+- `map.yaml` parses and its `resolution`/`origin`/frame are sane, image dimensions
+  match, occupancy isn't degenerate (all-unknown / all-occupied);
+- `meta.yaml` provenance is present (who/when/which bag).
+
+If it passes, the server assigns it as the floor's **canonical** revision and
+flips the retained topic; if not, it's rejected with a reason surfaced in the UI.
+Publishing is **server-gated: one writer wins.**
+
+**Conflict: two robots map the same floor.** Do **not** auto-merge. A map frame's
+origin is *"an accident of where SLAM started, so zones/map/posegraph must live and
+travel together"* (`sites.py` docstring); silently merging two frames breaks every
+taught zone coordinate. Instead the server keeps both as **candidate revisions**,
+and an operator **promotes** one to canonical — the same `site use-map` semantics,
+centralised. Nothing is lost, nothing is silently merged, and the loser is retained
+for audit (matching the raw-map-retention ethos already in `save-map`).
 
 **`active.yaml` stays per-robot.** The *registry* of sites/floors/revisions is
-central, but which floor a given robot is currently on is local state
-(`sites.py:88-104`) — two robots can be on different floors of the same site at
-once.
+central; which floor a given robot is on is local state (`sites.py:88-104`).
 
-**PNG maps are a distribution asset, not just a rendering one.** Maps are PNG *by
-design* so a browser can render them directly (`sites.py` docstring, `CLAUDE.md`).
-That means the thin fleet UI (Q5) can show a floor map with a live pose dot
-without any tiling/vector pipeline — the registry serves the PNG, the UI draws a
-dot on it.
+**Where the registry actually stores bytes (scaling).** At homelab scale it is the
+fleet server's filesystem serving the bundle dirs over HTTP/rsync — literally the
+on-disk layout `sites.py` already writes. At Regime B/C the same immutable-revision
+model maps directly onto **object storage (S3/R2) + a metadata DB + a CDN**:
+revisions are content-addressed dirs (already), the "flip" becomes updating a
+pointer row, robots pull from the CDN. Because the bundle is "plain files + YAML"
+by design, that swap is a storage-backend change behind the same registry API.
 
 ---
 
@@ -388,65 +543,97 @@ dot on it.
 **build only the fleet-level view Foxglove doesn't provide.**
 
 - **Adopt Foxglove** (Q2) for the rich per-robot view: live pose on the floor map,
-  camera peek, teleop, raw topic inspection. Zero build, ROS-native, remote-access
-  built in, free tier covers a small fleet.
+  camera peek, teleop, raw topic inspection.
 - **Build a thin fleet dashboard** — the "minimum lovable" operator view — for the
-  one thing Foxglove is not: the **fleet roster**. A small web app on the fleet
-  server showing every robot with **online/health/battery/current-task**, a
-  per-robot **map + pose overlay** (PNG from the registry + a dot from the
-  retained MQTT pose — both cheap, per Q4), a **dispatch box** (publish
-  `fetch <target> <drop_zone>` to `mote/<robot_id>/task/command`), and a
-  **deep-link into Foxglove** for that robot.
+  one thing Foxglove is not: the **fleet roster**. A small web app that subscribes
+  to the broker over **MQTT-over-WebSockets** (Q2) — `mote/+/health` → the roster
+  with online/battery/current-task, `mote/+/pose` → live positions — plus a
+  **dispatch box** (publish `fetch <target> <drop_zone>` to
+  `mote/<robot_id>/task/command`) and a **deep-link into Foxglove** per robot.
 
-The seam makes this small: the dashboard is a thin client over the MQTT control
-plane (retained health topics → roster; publish → dispatch) plus the registry's
-PNG maps. It is emphatically **not** a rebuild of Foxglove, and Foxglove is
-emphatically **not** asked to be the fleet roster (it is per-connection, not a
-fleet database). Each tool does the half it is good at.
+**The map overlay: coordinate math and its limits.** Maps are PNG *by design* so a
+browser renders them directly (`sites.py` docstring). A robot pose in the map frame
+(metres) becomes a pixel via the `map.yaml` `resolution` (m/px) and `origin`:
+
+```
+px = (wx - origin_x) / resolution
+py = height_px - (wy - origin_y) / resolution     # image y is top-down
+```
+
+The same transform places **zones** (named poses / areas from the floor's
+`zones.yaml`) and a **heading arrow** from the pose quaternion. So "PNG + a few
+transformed markers on an HTML canvas" genuinely covers roster + single-robot
+situational awareness with no tiling/vector pipeline.
+
+**Its limitations — be honest about where it stops.** It is a static top-down 2D
+raster overlay. It is *fine* for a roster thumbnail and one or a few robots; it is
+*not* the tool for: dense multi-robot scenes (markers overlap, no clustering), 3D
+or point clouds, live costmap/laser layers, or very large sites (a fixed-resolution
+PNG needs pan/zoom — a canvas transform, still doable, but past that you want a
+tiled/vector map). The design rule: **the thin overlay is the fleet-glance view;
+the moment an operator needs depth (layers, 3D, teleop, a busy floor) they
+deep-link into Foxglove**, which already does all of that. We deliberately don't
+grow the custom overlay into a second Foxglove.
+
+The dashboard is thus a thin client over the MQTT control plane + the registry's
+PNG maps. It is **not** a rebuild of Foxglove, and Foxglove is **not** asked to be
+the fleet roster (it is per-connection, not a fleet database). Each tool does the
+half it is good at.
 
 ---
 
 ### 6. Updates — one mechanism, the prefix.dev channel, install-alongside + rollback
 
-**Recommendation.** Consume the **versioned prefix.dev `mote` channel** — already
-listed as a channel (`pixi.toml:3`), with the parallel Voro task productionizing
+**Recommendation.** Consume the **versioned prefix.dev `mote` channel** — already a
+listed channel (`pixi.toml:3`), with the parallel Voro task productionizing
 `pixi-build-ros` → that channel (`README.md`). The robot's software *is* a pixi
 environment resolved from that channel, so an update is *"resolve a new pinned
-version and re-activate"* — **there is exactly one update mechanism**, satisfying
-the brief's "consume it, don't invent a second." (Today there is no update
-mechanism at all — deploy is rsync-then-build-on-Pi, `pixi.toml:26`,
-`mote-bringup.service`; this replaces that.)
+version and re-activate"* — **one update mechanism**, satisfying the brief. (Today
+there is no update mechanism at all — rsync-then-build-on-Pi, `pixi.toml:26`,
+`mote-bringup.service`; this replaces it.)
 
 **Flow (per robot, driven by the agent):**
 
-1. Agent reports its **current version** on `mote/<robot_id>/ota/state`.
+1. Agent reports **current version** on `mote/<robot_id>/ota/state`.
 2. Operator sets a **target version for a rollout ring** (canary → stable).
-3. When told to update, the agent **installs the new version alongside the
-   current one** (a new pixi prefix / env, pinned by the lockfile — old env
-   untouched), then runs a **post-update health check** (does it launch? do the
-   controllers come up? a `sim-test`-style smoke gate).
-4. If healthy, **flip a `current` pointer** to the new env (the same
-   install-new-beside-old-then-flip pattern the map registry uses,
-   `sites.py:248-252`); if the health check fails **or the robot doesn't check
-   back in**, **revert to the previous env**. The previous prefix is retained for
-   exactly this.
+3. Agent **installs the new version alongside the current one** (a new pixi
+   prefix pinned by the lockfile — old env untouched), then runs a **post-update
+   health check** (does it launch? do controllers come up? a `sim-test`-style smoke
+   gate).
+4. If healthy, **flip a `current` pointer** to the new env (same
+   install-beside-old-then-flip pattern as the map registry, `sites.py:248-252`); if
+   the health check fails **or the robot doesn't check back in**, **revert to the
+   previous env**, retained for exactly this.
 5. Agent reports each transition — `idle → downloading → staged → activating →
-   healthy | rolled-back` — up the control plane.
+   healthy | rolled-back`.
 
-**Staged rollout.** Robots belong to a **ring** (canary/stable). The server holds
-a ring until the canary reports `healthy` for N minutes, then advances. Because
-`robot_id` keys everything and health is reported, this is bookkeeping on the
-server, not new robot code.
+**Disk & network cost — real, and minimisable.** Two envs' worth of ROS + deps is
+**gigabytes**, which is a genuine constraint on a Pi's SD/SSD, and pulling a full
+env over WAN per robot is a lot of bytes.
 
-**Identity is safe across updates.** `~/.mote` (robot.yaml, active.yaml, sites,
-calibration) is outside the package (Q3), so an update *cannot* clobber a robot's
-identity, site selection, or maps. That is a property we get for free from the
+- **Disk:** keep exactly **two slots** (current + one rollback), not N. And
+  conda/pixi **hard-links identical packages across environments**, so a new env
+  only costs disk for the packages that actually *changed* between versions — a
+  point release is megabytes, not gigabytes.
+- **Network:** conda fetches **per-package**, not whole-env, so an update downloads
+  only changed packages (the lockfile diff), not the world. At Regime B/C, put a
+  **channel mirror/CDN per site** so N robots don't each pull from prefix.dev over
+  WAN — robots resolve against the local mirror.
+- **Staging safety:** because staging is a separate prefix, a failed/half download
+  never touches the running robot.
+
+**Staged rollout.** Robots belong to a **ring** (canary/stable, and at multi-customer
+scale, per-customer rings). The server holds a ring until the canary reports
+`healthy` for N minutes, then advances — bookkeeping on the server keyed by
+`robot_id`, not new robot code.
+
+**Identity is safe across updates.** `~/.mote` is outside the package (Q3), so an
+update *cannot* clobber identity, site selection, or maps — a free property of the
 existing repo-vs-`~/.mote` split.
 
-> **(verify)** Whether prefix.dev supports package signing. If it does, verify
-> signatures on-robot as the code trust root. If not, the trust root is
-> account-scoped channel access + the pinned lockfile hashes + the tailnet — call
-> this out rather than assume signing.
+> **(verify)** prefix.dev package **signing** support. If available, verify
+> signatures on-robot as the code trust root; if not, the trust root is
+> account-scoped channel access + pinned lockfile hashes + the tailnet.
 
 ---
 
@@ -456,30 +643,112 @@ existing repo-vs-`~/.mote` split.
 per-channel auth on top; do **not** build a PKI or a custom auth server for v1.
 
 - **Transport encryption is free (WireGuard).** Every robot↔server, robot↔
-  inference, and operator↔robot link rides an encrypted WireGuard tunnel, and
-  **nothing robot-side is exposed to the public internet** — no port forwarding,
-  no public ports. This deletes an entire class of risk, and it is what makes the
-  **unauthenticated** inference wire (`depth_wire.py`, "run it on a trusted
-  network") safe across the internet.
-- **Authorization via Tailscale ACLs.** Scope who/what can reach what: operators
-  and the fleet server can reach a robot's Foxglove port and MQTT; robots reach
-  the broker and the inference box but not each other unless a future feature
-  needs it. ACLs are in the free tier.
-- **Per-channel auth on top of the tunnel:**
-  - **MQTT** — per-robot broker credentials (username = `robot_id`) or mTLS.
-  - **Foxglove remote** — its device token (`FOXGLOVE_DEVICE_TOKEN`).
-  - **Fleet API/UI** — operator auth (start with a simple token or GitHub/OIDC;
-    escalate only if needed).
-  - **Updates** — pinned exact versions via the pixi lockfile so a robot only runs
-    a resolved, hashed package set; package signing if prefix.dev offers it
-    (Q6 **verify**).
-- **Proportionality.** This is a small trusted fleet, not a public product. mTLS
-  everywhere and a custom PKI are deferred until the fleet operates *outside* the
-  trusted overlay. Note that Zenoh's TLS is *hop-by-hop, not end-to-end*
+  inference, operator↔robot link rides an encrypted WireGuard tunnel, and **nothing
+  robot-side is exposed to the public internet** — no port forwarding. This deletes
+  a whole class of risk and is what makes the **unauthenticated** inference wire
+  (`depth_wire.py`) safe across the internet.
+- **Authorization via Tailscale ACLs.** Tag robots `tag:robot`, servers
+  `tag:fleet`; ACL so operators + fleet server reach a robot's Foxglove/MQTT ports,
+  robots reach the broker + their local inference box, and **robots can't reach each
+  other**. Free-tier ACLs cover this.
+- **Per-channel auth on top of the tunnel:** MQTT → per-robot credentials
+  (username = `robot_id`) or mTLS; Foxglove remote → device token; Fleet API/UI →
+  operator auth (start with a token or GitHub/OIDC); Updates → pinned exact versions
+  via the lockfile (+ signing if available, Q6).
+- **Multi-tenant note (Regime C).** One flat tailnet does not isolate customers.
+  The platform-scale answer is **per-customer tenancy** — separate Headscale
+  tailnets or broker vhosts + topic-prefix ACLs per customer — so one customer's
+  operator can never see another's robots. Designed-for, not built in v1.
+- **Proportionality.** Small trusted fleet, not a public product: mTLS-everywhere
+  and a custom PKI wait until the fleet runs *outside* the trusted overlay. Note
+  Zenoh's TLS is *hop-by-hop, not end-to-end*
   ([Zenoh security analysis](https://census-labs.com/news/2025/03/17/zenoh-protocol-security-analysis/))
-  — a reason the encryption baseline lives at the WireGuard layer, which is
-  end-to-end between tailnet peers, rather than depending on an app-layer bridge's
-  TLS.
+  — a reason the encryption baseline lives at the WireGuard layer (end-to-end
+  between peers) rather than in an app-layer bridge.
+
+---
+
+## The other pipelines: fleet server & inference server
+
+The review rightly notes the robot pipeline is only one of three. The non-robot
+roles need their own provisioning + update story, and it is deliberately *different*
+from the robot OTA because they are server software, not fleet-managed robots.
+
+**Inference server (the GPU box).**
+- *Provisioning:* install pixi, join the tailnet (tagged `tag:inference`), run the
+  perception servers as a service — `pixi run inference` (Linux systemd) or the
+  equivalent Windows service (this box is the Windows/NVIDIA machine the parallel
+  inference-server Voro task productionizes; `pixi.toml` `inference`/`inference-rocm`
+  envs).
+- *Updates:* **the same prefix.dev channel**, a *different package + env* (the
+  torch inference server, no ROS). It is **stateless** (code + model weights only),
+  so updates are trivial blue/green: stand up the new version on a second port,
+  health-check with a probe request, flip `inference_host` port. Model-weight
+  artifacts are versioned alongside.
+- *Failure posture:* **not availability-critical** — the perception nodes idle
+  harmlessly when the server is unreachable (`depth_wire.py:70-76`,
+  `perception.yaml:10-12`), so the robot degrades (no depth-obstacle layer / no
+  open-vocab detect) rather than failing. Update it whenever.
+
+**Fleet server (broker + registry + API/UI).**
+- *Provisioning:* infrastructure-as-code — a container-compose (Mosquitto/EMQX +
+  registry service + web app) or a VM image. This is ordinary server ops, versioned
+  in the repo, **not** driven through the robot OTA channel.
+- *Updates:* standard container image deploy, ideally blue/green; the broker's
+  retained state + the registry (files → object storage/DB) are the state to
+  preserve and back up.
+- *Failure posture:* it is the **availability-critical** component for *operations*
+  (dispatch, roster, map publish), but **robot autonomy survives its downtime** —
+  a robot keeps executing its current mission and navigating locally (Q1). So "fleet
+  server down" degrades fleet *management*, not robot *safety*. HA becomes worth it
+  at Regime B/C, not at homelab scale.
+
+Net: **three pipelines, one release channel for the two ROS-software roles (robot,
+inference) and normal server-deploy for the fleet server**, each with a failure
+posture that keeps robot autonomy independent of fleet infrastructure.
+
+---
+
+## Scaling: one robot → ten thousand
+
+The recommendations are tuned for the **homelab horizon**; this section is the
+honest cost curve and the breaking points, and — the key claim — how the *seams*
+let us cross each regime without a redesign.
+
+| Component | A · Homelab (1–10, one site) | B · Small fleet (10s–100s, few sites, one org) | C · Platform (1k–10k, many sites & customers) |
+|---|---|---|---|
+| **Overlay** | Tailscale free/Starter | Tailscale Premium **or** self-hosted **Headscale** (per-device cost & vendor lock bite) | **Drop the full mesh.** Robots keep an **outbound TLS connection to a broker**; mesh/relay only for on-demand Foxglove/SSH; per-customer tailnets/Headscale |
+| **Control plane** | Mosquitto (single node) | Mosquitto or single **EMQX** node | **EMQX/HiveMQ cluster** (millions of conns), per-region, per-customer vhosts |
+| **Ops console** | Foxglove free (5-device cap = first wall) | Foxglove Pro (per-seat) | Foxglove Enterprise **or** Rerun-offline + custom live panel; multi-tenant fleet UI |
+| **Registry** | Fleet-server filesystem over HTTP/rsync | Same, on a proper VM | **Object storage (S3/R2) + metadata DB + CDN** |
+| **Fleet server** | A Pi / small VPS | A VM, backups | HA, multi-region, per-customer isolation |
+| **Inference** | One shared GPU box | One GPU box per site (`inference_host` per robot) | One+ per site; autoscale; still LAN-local to robots |
+| **Updates** | Pull from prefix.dev directly | Per-site channel mirror | CDN-mirrored channel, per-customer rings, delta packages |
+| **Est. overlay cost** | ~free | ~$150/mo tags @200 robots (or run Headscale) | **~$10k/mo Tailscale tags @10k** → Headscale/broker-only makes the case |
+
+**The three things that actually break at scale, and the pivot each forces:**
+
+1. **Tailscale's per-tagged-device cost** (~$1/device/mo past 50). Fine to
+   hundreds; ~$10k/mo at 10k. *Pivot:* self-host **Headscale**, or — better at
+   platform scale — stop requiring a full mesh and have robots hold only an
+   **outbound broker connection** (MQTT/TLS scales to millions and needs no mesh),
+   using the relay only for interactive sessions.
+2. **Mosquitto doesn't cluster** and **Foxglove's free device cap is 5**. *Pivot:*
+   EMQX/HiveMQ cluster; Foxglove Pro/Enterprise or a custom multi-tenant console.
+   Both are **swaps behind the same seams** (same MQTT topic tree, same ROS graph),
+   not rewrites.
+3. **`ROS_DOMAIN_ID` never scales as isolation** (safe range ~101, per-LAN). It was
+   *never* asked to — robot-local DDS + agent-as-egress (Q1) means there is no
+   global graph to partition, so this is a non-problem by construction, only a
+   per-LAN nicety.
+
+**Why the pivots are cheap:** the v0/v1 seams were chosen for exactly this —
+`robot_id` keys everything (not hostname), the topic tree is already per-robot,
+site bundles are already object-storable immutable dirs, the agent is already the
+sole egress, and both ROS roles already release through one channel. Crossing a
+regime is replacing an *implementation* (Mosquitto→EMQX, filesystem→object storage,
+Tailscale→Headscale/broker-only) behind a seam that doesn't move. That is the whole
+reason the homelab design is allowed to be simple.
 
 ---
 
@@ -489,15 +758,16 @@ Explicitly **out of scope** for the first fleet, to keep each milestone shippabl
 
 - **No multi-robot traffic coordination.** No centralised path planning, no
   deconfliction, no fleet traffic manager. Each robot navigates independently.
-  (This is the big Locus-style capability; deliberately deferred.)
-- **No automatic map merging.** Two mappers → two candidate revisions → an
-  operator promotes one (Q4). No auto-merge, ever.
-- **No cross-robot task allocation/optimization.** An operator (or a trivial
-  queue) assigns a task to a *specific* robot. No auctioning/bin-packing.
-- **No cloud data lake / long-term bag pipeline.** Bags stay local
-  (`~/.mote/bags/`, `sites.py`); Foxglove's storage covers spot inspection.
-- **No public-internet-exposed services.** Everything on the tailnet. No custom
-  PKI.
+  (The big Locus-style capability; deliberately deferred.)
+- **No automatic map merging.** Two mappers → two candidate revisions → an operator
+  promotes one (Q4). No auto-merge, ever.
+- **No cross-robot task allocation/optimization.** An operator (or a trivial queue)
+  assigns a task to a *specific* robot. No auctioning/bin-packing.
+- **No telemetry time-series / cloud data lake.** MQTT carries *current* state; bags
+  stay local (`~/.mote/bags/`, `sites.py`); Foxglove covers spot inspection.
+- **No public-internet-exposed services, no multi-tenant isolation, no HA.**
+  Everything on one tailnet, one org, single-node servers. (Regime B/C designed-for,
+  not built.)
 - **No safety-rated remote e-stop or high-rate teleop SLA over WAN.** Teleop is
   best-effort; all safety behaviour stays local on the robot.
 - **No RMW swap.** `rmw_cyclonedds_cpp` stays; rmw_zenoh revisited at Kilted (Q2).
@@ -506,70 +776,86 @@ Explicitly **out of scope** for the first fleet, to keep each milestone shippabl
 
 ## Milestones
 
-Each milestone is sized to be **one dispatchable Voro task**. The v0 line is "one
-robot fully remotely operable off-LAN"; the v1 line is "second robot enrolled."
-Security (M7) is cross-cutting — its hardening can fold into each milestone, but it
-is called out so it isn't forgotten.
+Each milestone is sized to be **one dispatchable Voro task**. Dependencies and
+parallelism are called out so several can be dispatched at once.
+
+**Dependency graph** (→ = must-precede; siblings under one parent can run in
+parallel):
+
+```
+M0 (overlay + identity) ─┬─> M1 (agent + control plane) ─┬─> M3 (fleet UI)
+                         │                                └─> M4 (map registry)
+                         ├─> M2 (Foxglove)      [parallel with M1]
+                         └─> Ms (server pipelines) [parallel with M1/M2]
+M1 ──> M5 (OTA)   [also needs the prefix.dev release task]
+{M1,M3,M4} ──> M6 (second robot)
+M7 (security hardening) : cross-cutting, folds into each; can start after M0
+```
 
 ### v0 — one robot, fully remotely operable off-LAN
 
 - **M0 · Overlay + identity foundation.** Tailscale on robot + workstation + fleet
-  box. Introduce `~/.mote/robot.yaml` (`id`/`name`/`domain_id`), a `mote enroll`
-  CLI, and wire `ROS_DOMAIN_ID` from it. Formalise the per-robot (`~/.mote`) vs
-  shared (package) config split.
-  *Accept:* robot reachable by MagicDNS from off-LAN; `robot_id` stable across
-  reboots; two processes on different domains don't cross-talk.
-  *Seams:* `sites.py:63-104` (`~/.mote` state, `MOTE_HOME`), `pixi.toml:219-221`.
+  box; `~/.mote/robot.yaml` (server-allocated `id`/`name`/`domain_id`); a `mote
+  enroll` CLI with the **server-first allocation flow** (Q3); wire `ROS_DOMAIN_ID`;
+  formalise per-robot (`~/.mote`) vs shared (package) config.
+  *Accept:* clean-Pi → enrolled → reachable by MagicDNS off-LAN; `robot_id` stable
+  across reboots. *Depends on:* nothing. *Blocks:* M1, M2, Ms.
+  *Seams:* `sites.py:63-104`, `pixi.toml:219-221`.
 
-- **M1 · `mote_agent` + control plane.** New `mote-agent.service`; Mosquitto on
-  the fleet server; agent publishes health/heartbeat (with LWT) and bridges
-  `task/command`↔`task/status` to `mote/<robot_id>/…`.
-  *Accept:* dispatch a `fetch` and observe status transitions, from off-LAN, over
-  MQTT.
-  *Seams:* `task_server.py:56-57` (String topics), `:83-97` (status grammar);
-  `mote_bringup/systemd/` (service pattern).
+- **M1 · `mote_agent` + control plane.** `mote-agent.service`; Mosquitto; agent
+  publishes health/pose (LWT + retained) and bridges `task/command`↔`task/status`
+  to `mote/<robot_id>/…`.
+  *Accept:* dispatch a `fetch` and observe status transitions, off-LAN, over MQTT.
+  *Depends on:* M0. *Blocks:* M3, M4, M5, M6. *Parallel with:* M2, Ms.
+  *Seams:* `task_server.py:56-57`, `:83-97`; `mote_bringup/systemd/`.
 
 - **M2 · Foxglove observability + teleop.** `foxglove_bridge` on the robot; a
   Foxglove layout for pose-on-PNG-map + camera peek + teleop.
-  *Accept:* operator drives the robot and watches its camera/pose remotely.
-  *Seams:* PNG maps (`sites.py` docstring), `/image_raw/compressed` (`CLAUDE.md`).
+  *Accept:* operator drives + watches one robot remotely.
+  *Depends on:* M0 only. **Parallel with M1** (independent transport).
+  *Seams:* PNG maps (`sites.py`), `/image_raw/compressed` (`CLAUDE.md`).
 
-- **M3 · Thin fleet UI.** Web app on the fleet server: roster with health, a
-  per-robot map+pose overlay, a dispatch box, and a Foxglove deep-link.
+- **M3 · Thin fleet UI.** Web app subscribing to the broker over MQTT-over-WS:
+  roster + health, per-robot map+pose overlay (coordinate transform, Q5), dispatch
+  box, Foxglove deep-link.
   *Accept:* the "minimum lovable" operator view works for one robot, fully off-LAN.
-  *Seams:* retained MQTT health/pose (M1), registry PNG maps (Q4).
-  **← end of v0.**
+  *Depends on:* M1. **← end of v0.**
 
-### v1 — second robot enrolled, plus the shared-infrastructure milestones
+### v1 — second robot enrolled, plus shared infrastructure
 
-- **M4 · Central site/map registry + distribution.** Fleet server stores canonical
-  site bundles; agent pulls revisions (stage dir + atomic flip) and uploads new
-  revisions from `save-map`; operator promotes a floor's active revision.
-  *Accept:* map a floor on the robot, publish it, and have the robot re-pull the
-  canonical revision; a second candidate revision is retained, not merged.
-  *Seams:* `sites.py:248-252` (atomic flip), `:348-410` (`save-map`),
-  `:426-434` (`use-map`).
+- **M4 · Central site/map registry + distribution.** Registry stores canonical
+  bundles; agent pulls revisions (stage + atomic flip) on the retained
+  `…/current` MQTT signal and uploads new revisions from `save-map`; **server-side
+  validation** (Q4); operator promotes a floor's active revision.
+  *Accept:* map a floor, publish, robot re-pulls canonical; a second candidate is
+  retained, not merged. *Depends on:* M1. *Parallel with:* M2, M5, Ms.
+  *Seams:* `sites.py:248-252`, `:348-410`, `:390-400`, `:426-434`.
 
-- **M5 · OTA updates via prefix.dev.** Agent reports version; server drives
-  ring rollout; install-alongside + health-check + rollback; report update state.
-  *Accept:* push a new version to a canary; auto-rollback on a failed health
-  check; stable ring only advances after the canary is healthy.
-  *Seams:* `pixi.toml:3` (channel), the `~/.mote`-vs-package split (Q3).
-  *Depends on:* the parallel prefix.dev release task producing versioned packages.
+- **M5 · OTA updates via prefix.dev.** Agent reports version; server drives ring
+  rollout; install-alongside (two slots, hardlink-dedup) + health-check + rollback;
+  report update state.
+  *Accept:* push a version to a canary; auto-rollback on failed health check; stable
+  ring advances only after canary healthy. *Depends on:* M1 **and** the parallel
+  prefix.dev release task producing versioned packages. *Parallel with:* M4.
+  *Seams:* `pixi.toml:3`, the `~/.mote`-vs-package split (Q3).
+
+- **Ms · Server pipelines.** Provisioning + update story for the inference server
+  (same channel, own env, stateless blue/green) and the fleet server (IaC container
+  deploy). *Accept:* rebuild either server from scratch via its documented pipeline;
+  robot autonomy unaffected while the fleet server is down. *Depends on:* M0.
+  **Parallel with M1/M2/M4.** *Seams:* `pixi.toml` inference envs; `depth_wire.py:70-76`.
 
 - **M6 · Second robot enrollment (multi-robot hardening).** Enroll `mote-02`;
-  verify per-robot MQTT namespacing, domain isolation, and registry sharing
-  end-to-end; fleet UI shows two robots; exercise the two-mapper conflict/promote
-  flow.
-  *Accept:* two robots dispatched independently from one UI; the roster and maps
-  are correct for both.
-  **← v1 complete.**
+  verify per-robot MQTT namespacing, per-LAN domain assignment, registry sharing;
+  fleet UI shows two; exercise the two-mapper conflict/promote flow.
+  *Accept:* two robots dispatched independently from one UI. *Depends on:* M1, M3,
+  M4. **← v1 complete.**
 
-- **M7 · Security hardening (cross-cutting).** Tailscale ACLs; per-robot broker
-  credentials / mTLS; Foxglove tokens; operator auth on the fleet API; pinned +
-  (if available) signed packages.
-  *Accept:* a device not on the tailnet cannot reach any robot or the broker; a
-  robot cannot read another robot's command topic.
+- **M7 · Security hardening (cross-cutting).** Tailscale ACL tags; per-robot broker
+  credentials / mTLS; Foxglove tokens; operator auth on the fleet API; pinned (+
+  signed if available) packages. *Accept:* a device off the tailnet reaches nothing;
+  a robot can't read another robot's command topic. *Depends on:* M0; folds into
+  each milestone as it lands.
 
 ---
 
@@ -578,12 +864,14 @@ is called out so it isn't forgotten.
 Claims grounded in the repo (cited inline) are verified. External claims flagged
 **(verify)** before building on them:
 
-- Tailscale free-tier limits (100 devices / 3 users / ACLs) — confirm current at
-  adoption.
+- Tailscale free-tier limits + **tagged-device pricing** ($1/device/mo past 50) —
+  confirm current at adoption; it drives the Regime-C cost pivot.
 - `ros-jazzy-foxglove-bridge` exact availability/version on robostack-jazzy.
-- Foxglove free-tier device count (5) and teleop-over-WS specifics — confirm
-  against current Foxglove docs.
+- Foxglove free-tier caps (3 users / 5 devices / 10 GB) and teleop-over-WS specifics.
+- EMQX/HiveMQ cluster scale figures (millions of connections) — vendor benchmarks.
 - prefix.dev package **signing** support — determines the OTA code trust root
   (Q6/M5).
+- conda/pixi cross-env **hardlink dedup + per-package fetch** behaviour — the basis
+  of the OTA disk/network minimisation (M5); confirm on the Pi's filesystem.
 - rmw_zenoh Jazzy production status — re-check at Kilted before reconsidering the
   RMW swap.
