@@ -16,13 +16,33 @@ Protocol (all integers big-endian):
               float32 x0, y0, x1, y1 (pixel corners in the request image)
               k == 0xFFFFFFFF means the frame was rejected; no payload follows.
 
+    health  : uint32 n == HEALTH_MAGIC, no payload; server replies with the
+              shared JSON status blob (see depth_wire). Same framing as depth so
+              WireClient.health works unchanged against this service too.
+
 A connection carries any number of request/reply cycles; either end closing the
 socket ends the session.
 """
 
 import struct
 
-from mote_perception.depth_wire import WireClient, recvall
+from mote_perception.depth_wire import (
+    HEALTH_MAGIC,
+    WireClient,
+    recvall,
+    send_health,
+)
+
+__all__ = [
+    "HEALTH_MAGIC",
+    "send_health",
+    "recv_request",
+    "send_detections",
+    "send_rejection",
+    "DetectClient",
+    "DEFAULT_PORT",
+    "REJECTED",
+]
 
 DEFAULT_PORT = 5602
 REJECTED = 0xFFFFFFFF

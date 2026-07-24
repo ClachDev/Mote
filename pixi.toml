@@ -65,6 +65,10 @@ arm-jog = "ros2 run mote_arm jog"
 arm-pose = "ros2 run mote_arm arm_pose"
 # Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
 arm-gains = "ros2 run mote_arm arm_gains"
+# Robot-side inference diagnostics (torch-free — run in the default/robot env):
+# probe the inference machine's health/version, or benchmark round-trip latency.
+inference-health = "python -u mote_perception/tools/inference_health.py"
+inference-bench = "python -u mote_perception/tools/inference_bench.py"
 
 #### The below tasks are tied to specific features and environments however they
 #### can be run like any other task.
@@ -215,10 +219,12 @@ transformers = ">=4,<5"
 # redirection to a file (block buffering otherwise holds them indefinitely)
 [feature.inference.tasks]
 # Both servers together — the usual way to run a dedicated inference machine.
-inference = "bash mote_perception/tools/inference_server.sh"
+inference = "python -u mote_perception/tools/inference_server.py"
 # Or one model at a time (e.g. depth-server --metric, or to save VRAM).
 depth-server = "python -u mote_perception/tools/depth_server.py"
 detect-server = "python -u mote_perception/tools/detect_server.py"
+# Warm the HuggingFace cache so the first request doesn't block on a download.
+inference-prefetch = "python -u mote_perception/tools/prefetch_models.py"
 
 # GPU-accelerated sibling of the `inference` feature (env `inference-rocm`). Same
 # depth/detect servers, but torch comes from the pytorch.org ROCm wheel index
@@ -255,9 +261,48 @@ HSA_OVERRIDE_GFX_VERSION = "11.0.0"
 # stay unambiguous; `inference-rocm` runs both servers on the GPU (the servers'
 # --device auto picks the GPU when present), the single-server variants save VRAM.
 [feature.inference-rocm.tasks]
-inference-rocm = "bash mote_perception/tools/inference_server.sh"
+inference-rocm = "python -u mote_perception/tools/inference_server.py"
 depth-server-rocm = "python -u mote_perception/tools/depth_server.py"
 detect-server-rocm = "python -u mote_perception/tools/detect_server.py"
+inference-prefetch-rocm = "python -u mote_perception/tools/prefetch_models.py"
+
+# CUDA sibling of the `inference` feature (env `inference-cuda`), for the dedicated
+# off-board inference machine: a Windows gaming PC with an NVIDIA GPU. Same
+# depth/detect servers, but torch comes from the pytorch.org CUDA wheel index
+# (win_amd64 cu128 build) instead of conda-forge's CPU pytorch. This is the
+# destination tier — the ROCm iGPU path stays the Linux-dev fallback.
+#
+# win-64 only, and note the *feature* declares win-64 even though the workspace
+# platforms are linux only: pixi resolves this feature's environment for win-64
+# alone and leaves every other env (the aarch64 robot, linux dev, sim) untouched,
+# so a Windows torch wheel can never perturb the robot solve. python is pinned to
+# 3.12 (the pytorch.org wheels only publish cp3.x up to 3.12); numpy/pillow/scipy
+# stay on conda and only torch + transformers come from PyPI so pip resolves torch
+# against the CUDA index. No triton — it has no Windows wheels and torch on Windows
+# doesn't need it. Native Windows (not WSL2) is the chosen host: it binds the
+# socket straight onto the LAN and auto-starts via a Scheduled Task, with no WSL
+# NAT/port-proxy layer between the robot and the server (see
+# docs/inference-server.md for the host decision and setup guide).
+[feature.inference-cuda]
+platforms = ["win-64"]
+
+[feature.inference-cuda.dependencies]
+python = "3.12.*"
+numpy = ">=1.26,<3"
+pillow = ">=10,<13"
+# scipy: undeclared requirement of transformers' Owlv2ImageProcessor
+scipy = ">=1,<2"
+opencv = ">=4,<5"
+
+[feature.inference-cuda.pypi-dependencies]
+torch = { version = ">=2.8,<3", index = "https://download.pytorch.org/whl/cu128" }
+transformers = ">=4,<5"
+
+[feature.inference-cuda.tasks]
+inference-cuda = "python -u mote_perception/tools/inference_server.py"
+depth-server-cuda = "python -u mote_perception/tools/depth_server.py"
+detect-server-cuda = "python -u mote_perception/tools/detect_server.py"
+inference-prefetch-cuda = "python -u mote_perception/tools/prefetch_models.py"
 
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
@@ -278,5 +323,8 @@ inference = { features = ["inference"], no-default-feature = true }
 inference-rocm = { features = ["inference-rocm"], no-default-feature = true }
 # ^ GPU sibling of `inference`; own solve (no solve-group) so the ROCm torch wheel
 # can never perturb any other env.
+inference-cuda = { features = ["inference-cuda"], no-default-feature = true }
+# ^ win-64/NVIDIA sibling for the dedicated gaming-PC inference machine; own solve,
+# win-64 only, so its CUDA torch wheel never touches the robot/dev/sim envs.
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
 lint = { features = ["lint"], no-default-feature = true }

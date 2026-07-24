@@ -36,8 +36,13 @@ concern, not by machine — which machine each half lands on is a deployment cho
   stream until it has labels), so it's safe to leave enabled without a server.
 - **The inference servers run wherever the compute is** — `pixi run inference`
   starts both (depth + detect) in the torch-only `inference` pixi env. That's a
-  GPU box, or the robot/dev machine itself. `pixi run inference-rocm` is the same
-  pair on an AMD ROCm GPU (see the L1 section below for the iGPU caveats).
+  GPU box, or the robot/dev machine itself. `pixi run inference-rocm` runs the
+  same pair on an AMD ROCm GPU (the Linux-dev fallback tier; see the L1 section
+  for the iGPU caveats), and **`pixi run inference-cuda`** runs them on a
+  dedicated NVIDIA Windows box — the productionized "inference server" role, with
+  boot auto-start, a health probe, and the multi-service pattern documented in
+  **[`docs/inference-server.md`](../../docs/inference-server.md)**. All three run
+  the same servers via one cross-platform supervisor (`tools/inference_server.py`).
 
 The only knob is **`inference_host`** in `config/perception.yaml` (with the same
 `~/.mote/perception.yaml` override as the camera calibration): leave it
@@ -45,6 +50,13 @@ The only knob is **`inference_host`** in `config/perception.yaml` (with the same
 offload just inference. The same file's `depth.enabled` / `detect.enabled` toggle
 each node — turn one off if the Pi can't carry its per-frame CPU cost. Nothing is
 passed at launch time.
+
+Check the server from the robot with **`pixi run inference-health [--host H]`**
+(torch-free — prints each service's model/device/GPU/version, or `DOWN`), and
+measure round-trip latency with **`pixi run inference-bench`** (see
+[`benchmarks/`](benchmarks/README.md)). When the server is absent the nodes warn
+and skip frames — nav keeps running on lidar alone; the full fallback matrix is
+in the inference-server doc.
 
 > Note: `perception_launch.py` is a separate process, not part of the mission
 > bringup — run `pixi run perception` alongside `pixi run mapping`/`robot`.
@@ -197,7 +209,9 @@ request:
 - `tools/detect_server.py` — keeps OWLv2 resident in the torch-only `inference`
   pixi env, serving detections over a socket (`pixi run detect-server`, or
   `pixi run inference` to run it beside the depth server; protocol in
-  `mote_perception/detect_wire.py`).
+  `mote_perception/detect_wire.py`). Picks `cuda` when available (override with
+  `--device cpu|cuda`); on the CUDA inference PC it runs on the GPU, on CPU it
+  uses all cores.
 - `object_detector_node` — light rclpy node (no torch). Idles until a label set
   arrives on `detect/labels` (std_msgs/String, comma-separated, transient_local;
   empty string = idle) — the task layer's `AcquireObject` sets it while a
@@ -258,3 +272,23 @@ server up (`pixi run depth-server`). Shared bag loading lives in
   Stage 0): parallax across the image, pose-at-stamp accuracy, and usable-baseline
   duty cycle from a bag's `/tf` + images alone (no server, no lidar). Findings in
   [`design/research/sfm_stage0_results.md`](../design/research/sfm_stage0_results.md).
+
+### Inference-server tools
+
+Run the servers and operate them from the robot side. See
+[`docs/inference-server.md`](../../docs/inference-server.md) for the deployment
+role and [`benchmarks/`](benchmarks/README.md) for numbers.
+
+- `tools/inference_server.py` — cross-platform supervisor that runs every service
+  (the `SERVICES` list) bound to `0.0.0.0` and tears the rest down if one dies; the
+  `inference` / `inference-rocm` / `inference-cuda` tasks all run it. Add a tenant
+  by adding a row.
+- `tools/inference_health.py` (`pixi run inference-health`) — torch-free probe of
+  each service's health/version over the wire; `DOWN` if unreachable, non-zero exit
+  if any service is down.
+- `tools/inference_bench.py` (`pixi run inference-bench`) — torch-free round-trip
+  latency/fps benchmark against a server; writes JSON for the benchmarks dir.
+- `tools/prefetch_models.py` (`pixi run inference-prefetch[-cuda|-rocm]`) — warm the
+  HuggingFace cache so the first request doesn't block on a download.
+- `deploy/windows/` — PowerShell setup + boot auto-start for the NVIDIA Windows
+  inference PC (`setup.ps1`, `install_service.ps1`, `run_inference.ps1`).

@@ -19,6 +19,7 @@ imported straight from the source tree.
 import argparse
 import io
 import socket
+import struct
 import sys
 import time
 from pathlib import Path
@@ -32,8 +33,10 @@ from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mote_perception.depth_wire import (  # noqa: E402
     DEFAULT_PORT,
-    recv_image,
+    HEALTH_MAGIC,
+    recvall,
     send_depth,
+    send_health,
     send_rejection,
 )
 
@@ -76,6 +79,17 @@ def main():
     # os.cpu_count() counts SMT siblings, and oversubscribing them thrashes the
     # CPU (~460 ms vs ~330 ms per frame here — measured with depth_bag_eval.py).
 
+    health_info = {
+        "service": "depth",
+        "model": args.model,
+        "device": device,
+        "gpu": torch.cuda.get_device_name(0) if device != "cpu" else None,
+        "fp16": use_fp16,
+        "metric": args.metric,
+        "torch": torch.__version__,
+        "cuda_available": torch.cuda.is_available(),
+    }
+
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((args.host, args.port))
@@ -87,7 +101,15 @@ def main():
         print("client", addr)
         try:
             while True:
-                blob = recv_image(conn)
+                hdr = recvall(conn, 4)
+                if hdr is None:
+                    break
+                (n,) = struct.unpack(">I", hdr)
+                if n == HEALTH_MAGIC:
+                    send_health(conn, health_info)
+                    print("health check")
+                    continue
+                blob = recvall(conn, n)
                 if blob is None:
                     break
                 depth = None

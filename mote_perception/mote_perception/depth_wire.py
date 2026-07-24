@@ -19,16 +19,28 @@ Protocol (all integers big-endian):
     reply   : uint32 H, uint32 W, then H*W float32 depth (row-major, metres)
               H == W == 0 means the frame was rejected; no payload follows.
 
+    health  : uint32 n == HEALTH_MAGIC (0xFFFFFFFF, never a real image length),
+              no payload; the server replies uint32 L, then L bytes of UTF-8
+              JSON describing the running service (model, device, versions).
+
 A connection carries any number of request/reply cycles; either end closing the
-socket ends the session.
+socket ends the session. The health request shares this framing so the same
+persistent socket and reconnect logic cover it — the robot can ask "who am I
+talking to?" over the existing link (see WireClient.health).
 """
 
+import json
 import socket
 import struct
 
 import numpy as np
 
 DEFAULT_PORT = 5601
+
+# Leading uint32 sentinel marking a health request instead of an image length.
+# 0xFFFFFFFF (4 GiB) can never be a real compressed-image length, so servers can
+# branch on it before reading any payload.
+HEALTH_MAGIC = 0xFFFFFFFF
 
 
 def recvall(sock, n):
@@ -62,6 +74,16 @@ def send_depth(conn, depth):
 def send_rejection(conn):
     """Server side: reply that the frame could not be processed."""
     conn.sendall(struct.pack(">II", 0, 0))
+
+
+def send_health(conn, info):
+    """Server side: reply to a health request with a JSON status blob.
+
+    `info` is any JSON-serialisable dict (service name, model, device, versions).
+    Shared by every server so the client's health probe is service-agnostic.
+    """
+    body = json.dumps(info).encode("utf-8")
+    conn.sendall(struct.pack(">I", len(body)) + body)
 
 
 class WireClient:
@@ -102,6 +124,32 @@ class WireClient:
             except OSError:
                 pass
             self.sock = None
+
+    def health(self):
+        """The server's status dict, or None if unreachable or the check failed.
+
+        Sends the health sentinel over the persistent socket and reads back the
+        JSON status blob. Works against any server (depth, detect, future
+        tenants) since the framing is shared. A failure tears the socket down so
+        the next call — health or infer — reconnects, exactly like `infer`.
+        """
+        s = self.connect()
+        if s is None:
+            return None
+        try:
+            s.sendall(struct.pack(">I", HEALTH_MAGIC))
+            hdr = recvall(s, 4)
+            if hdr is None:
+                raise ConnectionError("server closed")
+            (n,) = struct.unpack(">I", hdr)
+            body = recvall(s, n)
+            if body is None:
+                raise ConnectionError("server closed mid-health")
+            return json.loads(body.decode("utf-8"))
+        except (OSError, ConnectionError, ValueError) as e:
+            self.warn(f"{self.NAME} health check failed ({e}); will reconnect")
+            self.close()
+            return None
 
 
 class DepthClient(WireClient):
