@@ -579,18 +579,18 @@ by design, that swap is a storage-backend change behind the same registry API.
 - **Adopt Foxglove** (Q2) for the rich per-robot view: live pose on the floor map,
   camera peek, teleop, raw topic inspection.
 - **Build a thin fleet dashboard** — the "minimum lovable" operator view — for the
-  one thing Foxglove is not: the **fleet roster**. A small web app that subscribes
-  to the broker over **MQTT-over-WebSockets** (Q2) — `mote/+/health` → the roster
-  with online/current-task (and *battery* as a schema field, **future** — nothing in
-  the tree publishes battery state yet), `mote/+/pose` → live positions — plus a
-  **dispatch box** and a **deep-link into Foxglove** per robot.
-
-  **Dispatch authorization** (browser talks straight to the broker, so the fleet API
-  never sees the command): the operator's broker credential is scoped by ACL to
-  *subscribe* `mote/+/health|pose` and *publish only* `mote/+/task/command` (Q7). If
-  we later want dispatch to go through the fleet API for audit/policy, route the
-  dispatch box there and keep the browser's broker role read-only — a config choice,
-  not a redesign.
+  one thing Foxglove is not: the **fleet roster**. The browser is **read-only on the
+  broker**: it subscribes over **MQTT-over-WebSockets** (Q2) — `mote/+/health` → the
+  roster with online/current-task (and *battery* as a schema field, **future** —
+  nothing in the tree publishes battery state yet), `mote/+/pose` → live positions —
+  plus a **deep-link into Foxglove** per robot.
+- **Dispatch goes through the fleet API, not straight to the broker.** The dispatch
+  box POSTs to the fleet API, which authorizes the operator, writes an **audit
+  record**, and *then* publishes `mote/<robot_id>/task/command`. Broker ACLs alone
+  can't attribute or gate per-operator dispatch, and there's no audit trail if the
+  command never passes through a mediating service — so the read path stays on the
+  broker (cheap, live, no service in the middle) while the *write* path is mediated.
+  The operator's broker credential is therefore subscribe-only (Q7).
 
 **The fleet map is a proper interactive 2D map, not a static thumbnail.** The floor
 PNG is only the *basemap*; the view on top of it is a pannable, zoomable 2D canvas
@@ -719,9 +719,10 @@ per-channel auth on top; do **not** build a PKI or a custom auth server for v1.
   other**. Free-tier ACLs cover this.
 - **Per-channel auth on top of the tunnel:** MQTT → per-robot credentials
   (username = `robot_id`, publish only under its own prefix) or mTLS; the **operator
-  broker credential** → ACL to subscribe `mote/+/health|pose` and publish only
-  `mote/+/task/command` (this is where dispatch authz lives, since the browser talks
-  straight to the broker — Q5); Foxglove remote → device token; Fleet API/UI →
+  broker credential** → **subscribe-only** ACL on `mote/+/health|pose` (the browser
+  never publishes; dispatch is mediated by the fleet API, Q5); **dispatch authz +
+  audit** → the Fleet API, which authorizes the operator and records the command
+  before publishing `task/command`; Foxglove remote → device token; Fleet API/UI →
   operator auth (start with a token or GitHub/OIDC); Updates → pinned exact versions
   via the lockfile (+ signing if available, Q6).
 - **Multi-tenant note (Regime C).** One flat tailnet does not isolate customers.
@@ -855,7 +856,11 @@ Explicitly **out of scope** for the first fleet, to keep each milestone shippabl
 ## Milestones
 
 Each milestone is sized to be **one dispatchable Voro task**. Dependencies and
-parallelism are called out so several can be dispatched at once.
+parallelism are called out so several can be dispatched at once. **Any milestone
+that creates a surface others consume — a topic tree, a health payload, the dispatch
+API, the bundle/registry API — must ship that interface as a documented, versioned
+schema/spec, not an incidental implementation detail**, so dashboards, tooling, and
+future agents build against the contract rather than the internals.
 
 **Dependency graph** (→ = must-precede; siblings under one parent can run in
 parallel):
@@ -888,7 +893,8 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   `task/command`↔`task/status` to `mote/<robot_id>/…` with the single-in-flight ack
   rule (Q1).
   *Accept:* enroll a robot and dispatch a `fetch`, observing status transitions,
-  off-LAN, over MQTT. *Depends on:* M0. *Blocks:* M3, M4, M5, M6. *Parallel with:*
+  off-LAN, over MQTT; the **MQTT topic tree + health payload are published as a
+  versioned schema**. *Depends on:* M0. *Blocks:* M3, M4, M5, M6. *Parallel with:*
   M2, Ms. *Seams:* `task_server.py:67-68`, `:1-15`; `mote_bringup/systemd/`.
 
 - **M2 · Foxglove observability + teleop.** `foxglove_bridge` on the robot; a
@@ -897,11 +903,13 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   *Depends on:* M0 only. **Parallel with M1** (independent transport).
   *Seams:* PNG maps (`sites.py`), `/image_raw/compressed` (`CLAUDE.md`).
 
-- **M3 · Thin fleet UI.** Web app subscribing to the broker over MQTT-over-WS:
-  roster + health, per-robot map+pose overlay (coordinate transform, Q5), dispatch
-  box, Foxglove deep-link.
-  *Accept:* the "minimum lovable" operator view works for one robot, fully off-LAN.
-  *Depends on:* M1. **← end of v0.**
+- **M3 · Thin fleet UI + dispatch API.** Web app: roster + health and per-robot
+  map+pose overlay from the broker (**read-only**, MQTT-over-WS; coordinate transform,
+  Q5); **dispatch through the fleet API** (authorizes the operator, writes an audit
+  record, then publishes `task/command` — Q5/Q7); Foxglove deep-link.
+  *Accept:* the "minimum lovable" operator view works for one robot, fully off-LAN;
+  the **dispatch API is documented as a versioned spec** and the browser holds no
+  broker publish rights. *Depends on:* M1. **← end of v0.**
 
 ### v1 — second robot enrolled, plus shared infrastructure
 
@@ -910,8 +918,9 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   `…/current` MQTT signal and uploads new revisions from `save-map`; **server-side
   validation** (Q4); operator promotes a floor's active revision.
   *Accept:* map a floor, publish, robot re-pulls canonical; a second candidate is
-  retained, not merged. *Depends on:* M1. *Parallel with:* M2, M5, Ms.
-  *Seams:* `sites.py:254-258`, `:348-410`, `:390-400`, `:426-434`.
+  retained, not merged; the **bundle/registry API is documented as a versioned
+  schema**. *Depends on:* M1. *Parallel with:* M2, M5, Ms.
+  *Seams:* `sites.py:254-258`, `:348-410`, `:396-406`, `:432-441`.
 
 - **M5 · OTA updates via prefix.dev.** Agent reports version; server drives ring
   rollout; install-alongside (two slots, hardlink-dedup) + health-check + rollback;
