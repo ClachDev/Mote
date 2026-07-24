@@ -9,7 +9,9 @@ trials run strictly sequentially.
 
 Process management mirrors the smoke test and ``map_world.sh``: each launch runs
 in its own session (``start_new_session=True`` == ``setsid``) so the whole
-process group can be killed on teardown, with a name-matched ``pkill`` backstop.
+process group is SIGTERM'd then SIGKILL'd on teardown — force-killing the group
+reaps slow-exiting Nav2 lifecycle nodes that would otherwise pile up across the
+sequential trials of a parameter sweep — with a repo-scoped ``pkill`` backstop.
 Readiness is gated on the launch log, not a fixed sleep. The per-trial ROS work
 lives in ``record.py`` (run as a fresh subprocess per trial for a clean rclpy
 context); metric maths lives in ``metrics.py`` (ROS-free, reused offline).
@@ -54,10 +56,10 @@ def popen_group(cmd, log_path):
     return p, f
 
 
-def kill_group(p):
+def kill_group(p, sig=signal.SIGTERM):
     if p and p.poll() is None:
         try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            os.killpg(os.getpgid(p.pid), sig)
         except (ProcessLookupError, PermissionError):
             pass
 
@@ -81,11 +83,20 @@ def wait_for_line(log_path, needle, sim_proc, timeout_s):
 
 
 def teardown(procs, files):
+    # Graceful stop, then force-kill each launch's *whole* process group. Nav2
+    # lifecycle nodes (controller_server, amcl, planner_server, ...) catch
+    # SIGTERM and can outlive a short grace period; a name-matched pkill missed
+    # them, so across many sequential trials (a parameter sweep) they piled up
+    # and starved later runs until Nav2 bringup timed out. SIGKILL on the group
+    # reaps them regardless of node name, and stays scoped to our own launches.
     for p in procs:
-        kill_group(p)
-    time.sleep(2)
-    for pat in ("gz sim", "parameter_bridge", "controller_manager"):
-        subprocess.run(["pkill", "-9", "-f", pat], stderr=subprocess.DEVNULL)
+        kill_group(p, signal.SIGTERM)
+    time.sleep(3)
+    for p in procs:
+        kill_group(p, signal.SIGKILL)
+    # Backstop for a gz server that escaped its group, scoped to THIS repo's
+    # world path so a benchmark never kills another worktree's concurrent sim.
+    subprocess.run(["pkill", "-9", "-f", f"gz sim.*{REPO}"], stderr=subprocess.DEVNULL)
     subprocess.run(
         ["ros2", "daemon", "stop"], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL
     )

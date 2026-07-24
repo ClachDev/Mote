@@ -4,17 +4,22 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node, SetParameter
 from launch_ros.substitutions import FindPackageShare
 
+from mote_bringup import param_overrides
+
 
 def generate_launch_description():
     # true when running against the simulation (sim_launch.py)
     use_sim_time = LaunchConfiguration("use_sim_time")
 
-    slam_params = PathJoinSubstitution(
-        [
-            FindPackageShare("mote_bringup"),
-            "config",
-            "slam_toolbox_params.yaml",
-        ]
+    slam_params = param_overrides.override_path(
+        "slam",
+        PathJoinSubstitution(
+            [
+                FindPackageShare("mote_bringup"),
+                "config",
+                "slam_toolbox_params.yaml",
+            ]
+        ),
     )
 
     slam_toolbox = Node(

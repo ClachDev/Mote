@@ -10,7 +10,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node, SetParameter
 from launch_ros.substitutions import FindPackageShare
 
-from mote_bringup import sites
+from mote_bringup import param_overrides, sites
 
 LOCALIZATION_NODES = [
     "map_server",
@@ -52,12 +52,15 @@ def generate_launch_description():
     localisation = LaunchConfiguration("localisation")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
-    nav2_params = PathJoinSubstitution(
-        [
-            FindPackageShare("mote_bringup"),
-            "config",
-            "nav2_params.yaml",
-        ]
+    nav2_params = param_overrides.override_path(
+        "nav2",
+        PathJoinSubstitution(
+            [
+                FindPackageShare("mote_bringup"),
+                "config",
+                "nav2_params.yaml",
+            ]
+        ),
     )
 
     # The WheelSpeedLimit critic's wheel_separation and max_wheel_speed come from
