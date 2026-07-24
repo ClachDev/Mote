@@ -1,10 +1,12 @@
 """Teach a zone by driving to it: capture the robot's current map-frame pose
 into the active site's zones.yaml (legacy ~/.mote/zones.yaml if no site).
 
-    ros2 run mote_tasks save_zone <name> [base_frame]
+    ros2 run mote_tasks save_zone <name> [--radius R] [base_frame]
 
-Poses taught this way are reachable by construction. Re-teaching an existing
-name replaces it.
+Poses taught this way are reachable by construction. ``--radius`` (metres)
+gives the zone a circular area footprint, so it answers "am I in it" and reads
+as a room rather than a bare waypoint; omit it for a plain navigation target.
+Re-teaching an existing name replaces it.
 """
 
 import sys
@@ -21,11 +23,26 @@ LOOKUP_TIMEOUT = 10.0
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
-    if not args:
-        sys.exit("usage: save_zone <name> [base_frame]")
-    name = args[0]
-    base_frame = args[1] if len(args) > 1 else "base_link"
+    radius = None
+    positional = []
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--radius":
+            i += 1
+            if i >= len(argv):
+                sys.exit("--radius needs a value")
+            radius = float(argv[i])
+        elif arg.startswith("--radius="):
+            radius = float(arg.split("=", 1)[1])
+        elif not arg.startswith("-"):
+            positional.append(arg)
+        i += 1
+    if not positional:
+        sys.exit("usage: save_zone <name> [--radius R] [base_frame]")
+    name = positional[0]
+    base_frame = positional[1] if len(positional) > 1 else "base_link"
 
     rclpy.init()
     node = Node("save_zone")
@@ -44,9 +61,12 @@ def main():
     yaw = yaw_from_quaternion(q.x, q.y, q.z, q.w)
 
     path = sites.zones_for_write()
-    replaced = append_zone(path, name, t.x, t.y, yaw)
+    replaced = append_zone(path, name, t.x, t.y, yaw, radius)
     verb = "replaced" if replaced else "added"
-    print(f"{verb} zone '{name}': x={t.x:.3f} y={t.y:.3f} yaw={yaw:.3f} in {path}")
+    extra = f" radius={radius:.3f}" if radius is not None else ""
+    print(
+        f"{verb} zone '{name}': x={t.x:.3f} y={t.y:.3f} yaw={yaw:.3f}{extra} in {path}"
+    )
     node.destroy_node()
 
 

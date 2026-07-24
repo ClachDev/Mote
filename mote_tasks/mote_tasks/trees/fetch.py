@@ -15,8 +15,8 @@ import py_trees
 from mote_tasks.behaviours.manipulation import TimedStub
 from mote_tasks.behaviours.nav import DriveTo
 from mote_tasks.behaviours.perception import AcquireObject
+from mote_tasks.trees.common import WaitForTask
 
-TASK_KEY = "task"
 OBJECT_POSE_KEY = "object_pose"
 OBJECT_LABEL_KEY = "object_label"
 DROP_POSE_KEY = "drop_pose"
@@ -39,22 +39,8 @@ def parse_command(zones: dict, words: list):
     if drop not in zones:
         raise ValueError(f"unknown drop zone '{drop}', have {sorted(zones)}")
     if target in zones:
-        return zones[target], None, zones[drop]
-    return None, target.replace("_", " "), zones[drop]
-
-
-class WaitForTask(py_trees.behaviour.Behaviour):
-    """Idle (RUNNING) until the task server writes a task to the blackboard."""
-
-    def __init__(self, name: str = "wait_for_task"):
-        super().__init__(name)
-        self.blackboard = self.attach_blackboard_client(name=name)
-        self.blackboard.register_key(TASK_KEY, access=py_trees.common.Access.READ)
-
-    def update(self):
-        if self.blackboard.exists(TASK_KEY) and self.blackboard.get(TASK_KEY):
-            return py_trees.common.Status.SUCCESS
-        return py_trees.common.Status.RUNNING
+        return zones[target].pose, None, zones[drop].pose
+    return None, target.replace("_", " "), zones[drop].pose
 
 
 def create_fetch_tree(
