@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # Install the mote systemd services for the invoking user.
-# Run via: pixi run install-systemd (uses sudo; @USER@/@HOME@ are filled in here).
+# Run via: pixi run install-systemd (uses sudo; @USER@/@HOME@/@DDS_IFACE@ are
+# filled in here). Override the DDS interface with:
+#   MOTE_DDS_INTERFACE=eth0 pixi run install-systemd
 set -euo pipefail
 
 MOTE_USER="${SUDO_USER:-$USER}"
 MOTE_HOME="$(getent passwd "$MOTE_USER" | cut -d: -f6)"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# The interface the ROS graph should live on: the one carrying the default
+# route. cyclonedds.xml treats it as optional, so a wrong guess degrades to a
+# loopback-only graph rather than stopping the robot from booting.
+DDS_IFACE="${MOTE_DDS_INTERFACE:-$(ip -o route show default | awk '{print $5; exit}')}"
+DDS_IFACE="${DDS_IFACE:-wlan0}"
+echo "DDS interface: $DDS_IFACE"
+
 for unit in "$SRC_DIR"/*.service; do
-    sed "s|@USER@|$MOTE_USER|g; s|@HOME@|$MOTE_HOME|g" "$unit" \
+    sed "s|@USER@|$MOTE_USER|g; s|@HOME@|$MOTE_HOME|g; s|@DDS_IFACE@|$DDS_IFACE|g" "$unit" \
         | sudo tee "/etc/systemd/system/$(basename "$unit")" > /dev/null
 done
 

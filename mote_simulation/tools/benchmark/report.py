@@ -49,6 +49,7 @@ def build_markdown(run) -> str:
         f"- **trials per world:** {p['trials']}",
         f"- **goal order:** {p['order']}",
         f"- **nav2 params:** `{p['nav2_params']}`",
+        f"- **ROS_DOMAIN_ID:** {p.get('ros_domain_id', 'unset')}",
         "",
     ]
     for world in run["worlds"]:
