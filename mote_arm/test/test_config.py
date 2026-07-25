@@ -179,3 +179,31 @@ def test_real_robot_yaml_parses():
     assert len(cfg.joints) >= 1
     for j in cfg.joints:
         assert j.min_rad <= j.max_rad
+
+
+def test_gains_default_when_absent():
+    cfg = ArmConfig.from_dict(BASE)
+    assert (cfg.gains.kp, cfg.gains.kd, cfg.gains.ki) == (32, 32, 0)
+
+
+def test_gains_parsed():
+    doc = {"arm": dict(BASE["arm"], gains={"kp": 48, "kd": 20, "ki": 3})}
+    cfg = ArmConfig.from_dict(doc)
+    assert (cfg.gains.kp, cfg.gains.kd, cfg.gains.ki) == (48, 20, 3)
+
+
+def test_gain_out_of_servo_range_rejected():
+    doc = {"arm": dict(BASE["arm"], gains={"kp": 300})}
+    with pytest.raises(ValueError, match="outside servo range"):
+        ArmConfig.from_dict(doc)
+
+
+def test_real_robot_yaml_gains_are_sane():
+    from pathlib import Path
+
+    here = Path(__file__).resolve()
+    robot_yaml = here.parents[2] / "mote_description" / "config" / "robot.yaml"
+    if not robot_yaml.exists():
+        pytest.skip("robot.yaml not found in source tree")
+    g = ArmConfig.from_yaml_file(str(robot_yaml)).gains
+    assert 0 < g.kp <= 254

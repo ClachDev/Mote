@@ -170,17 +170,19 @@ section. Contains:
   `SystemInterface` so one process owns the bus.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
-- **Joints settle short of target (proportional droop, NOT a power problem):**
-  measured on elbow_flex, commanded -0.200 rad -> reached -0.129 rad (error
-  0.071, load 196/1000); with Kp raised 16->32 -> reached -0.167 rad (error
-  0.033, load 176). Error halves as Kp doubles at ~constant load, and `Kp x
-  error` stays constant — the servo settles where proportional output balances
-  the holding torque, nowhere near the load ~1000 that saturation would show.
-  Causes, both in servo EEPROM: arm servos ship `Kp = 16` (drive wheels and the
-  STS3215 default are 32) and `Ki = 0`, so droop is never integrated away.
-  Not applied — an EEPROM write is a persistent hardware-config change. Gotcha:
-  the Kp read-back races the relock; wait ~150 ms and read twice, or a single
-  read can return a garbled 250.
+- `arm_gains` (`pixi run arm-gains show|apply`) — the servos' position-loop
+  gains live in EEPROM, i.e. invisible config a servo swap would silently
+  revert, so `robot.yaml`'s `arm.gains` is the source of truth and this tool
+  reconciles hardware with it. The arm shipped `Kp=16`, which left permanent
+  droop under load (the servo settles where `Kp x error` balances the holding
+  torque; `Ki=0` never integrates it away). Measured on elbow at -0.200 rad:
+  Kp=16 -> error 0.071 at load 196/1000; Kp=32 -> error 0.033 at load 176 —
+  error halves as Kp doubles at ~constant load, so it was droop, NOT torque
+  saturation, and the 5 V supply was never the binding constraint. **Kp=32
+  (wheel/STS3215 default) is applied**; the arm now completes the full 3.19 rad
+  home<->reachy move both ways with 0.02-0.06 rad residual. Gotcha: an EEPROM
+  read-back races the relock — wait ~150 ms and read twice, or a single read can
+  return a garbled 250 and make a successful write look failed.
 - **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
   an unresolved mechanical clash, tracked separately, not addressed here.
   `mote_arm` is not part of the mission bringup; run it explicitly.

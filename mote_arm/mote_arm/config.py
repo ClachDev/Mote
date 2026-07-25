@@ -59,6 +59,26 @@ class JointSpec:
 
 
 @dataclass(frozen=True)
+class ServoGains:
+    """Position-loop gains held in servo EEPROM (registers 21/22/23).
+
+    Recorded in robot.yaml so they survive a servo swap; `arm-gains apply`
+    writes them to the hardware. kp too low leaves a permanent steady-state
+    error under load, since ki=0 never integrates the droop away.
+    """
+
+    kp: int = 32
+    kd: int = 32
+    ki: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("kp", "kd", "ki"):
+            value = getattr(self, name)
+            if not 0 <= value <= 254:
+                raise ValueError(f"gain {name}={value} outside servo range 0-254")
+
+
+@dataclass(frozen=True)
 class ArmConfig:
     """The arm bus and its joints, in servo-command order."""
 
@@ -68,6 +88,7 @@ class ArmConfig:
     # Gentle defaults for jog moves; steps/s and 0-254 accel units.
     moving_speed: int = 600
     moving_acc: int = 20
+    gains: ServoGains = ServoGains()
 
     @property
     def ids(self) -> list[int]:
@@ -135,12 +156,20 @@ class ArmConfig:
                     "servos (see mote_hardware setup_ids)"
                 )
 
+        raw_gains = arm.get("gains") or {}
+        gains = ServoGains(
+            kp=int(raw_gains.get("kp", 32)),
+            kd=int(raw_gains.get("kd", 32)),
+            ki=int(raw_gains.get("ki", 0)),
+        )
+
         return ArmConfig(
             port=str(arm["port"]),
             baud_rate=int(arm["baud_rate"]),
             joints=tuple(joints),
             moving_speed=int(arm.get("moving_speed", 600)),
             moving_acc=int(arm.get("moving_acc", 20)),
+            gains=gains,
         )
 
     @staticmethod

@@ -10,8 +10,13 @@ it never opens the serial bus and cannot contend with the driver.
 
 ``save`` is read-only — pose the limp arm by hand, then capture it. ``go`` is
 the only command that moves the arm: it reports the distance each joint will
-travel and requires confirmation unless ``--yes`` is given. Goals are clamped to
-the robot.yaml soft limits here *and* in the driver.
+travel, requires confirmation unless ``--yes`` is given, and refuses moves whose
+largest single-joint travel exceeds ``--max-travel``. Goals are clamped to the
+robot.yaml soft limits here *and* in the driver.
+
+``go`` streams setpoints at a fixed rate rather than commanding the destination
+in one jump, so the arm moves continuously at ``--speed`` instead of lurching,
+and it stops if the arm falls behind its setpoint by more than ``--max-lag``.
 """
 
 from __future__ import annotations
@@ -187,32 +192,7 @@ def _cmd_go(node: PoseClient, args) -> None:
             print("aborted; nothing sent")
             return
 
-    waypoints = poses.interpolate(current, goals, args.step)
-    print(f"\nwalking there in {len(waypoints)} step(s) of <= {args.step} rad")
-
-    for i, waypoint in enumerate(waypoints, 1):
-        node.send(waypoint)
-        settled, stalled = _await_waypoint(node, waypoint, args)
-        now = node.current()
-        worst = max(
-            (abs(now.get(n, waypoint[n]) - waypoint[n]) for n in waypoint),
-            default=0.0,
-        )
-        flag = "ok" if settled else ("STALLED" if stalled else "slow")
-        print(
-            f"  step {i}/{len(waypoints)}  err {worst:.4f} rad  [{flag}]  "
-            + " ".join(
-                f"{n.split('_')[0]}={now.get(n, float('nan')):+.3f}"
-                for n in sorted(waypoint)
-            )
-        )
-        if stalled:
-            print(
-                "\nSTOPPED: the arm stopped making progress while still "
-                f"{worst:.4f} rad from this waypoint. Holding here rather than "
-                "straining against the load (see README: underpowered at 5 V)."
-            )
-            break
+    _stream(node, current, goals, args)
 
     final = node.current()
     print("\nfinal pose:")
@@ -225,33 +205,70 @@ def _cmd_go(node: PoseClient, args) -> None:
             )
 
 
-def _await_waypoint(node: PoseClient, waypoint: dict, args) -> tuple[bool, bool]:
-    """Wait for a waypoint. Returns (settled, stalled).
+SETPOINT_RATE_HZ = 20.0
 
-    Stalled means the arm stopped closing on the target while still short of it
-    — the signature of a servo that cannot overcome its load. Detecting that is
-    what keeps a large move from becoming a long stall against gravity.
+
+def _stream(node: PoseClient, start: dict, goals: dict, args) -> None:
+    """Walk to ``goals`` by streaming setpoints at a fixed rate.
+
+    Waiting for each waypoint to *settle* before issuing the next makes the arm
+    move in visible stop-start hops. Streaming a fresh setpoint every tick keeps
+    the servo's target always just ahead of where it is, so the motion is
+    continuous and its speed is set by ``--speed`` rather than by how quickly
+    each hop happens to converge.
+
+    Supervision is by *lag*: how far the arm trails the setpoint it was given.
+    Lag that stays above ``--max-lag`` means the arm is no longer keeping up —
+    the same stall condition as before, detected without pausing.
     """
-    deadline = time.time() + args.timeout
-    last_err = None
-    stagnant = 0.0
-    while time.time() < deadline:
-        time.sleep(0.2)
+    period = 1.0 / SETPOINT_RATE_HZ
+    stream = poses.interpolate(start, goals, max(1e-4, args.speed / SETPOINT_RATE_HZ))
+    print(
+        f"\nstreaming {len(stream)} setpoints at {SETPOINT_RATE_HZ:.0f} Hz "
+        f"({args.speed:.2f} rad/s), stopping if lag exceeds {args.max_lag:.2f} rad"
+    )
+
+    lagging = 0.0
+    report_every = max(1, len(stream) // 8)
+    for i, setpoint in enumerate(stream, 1):
+        node.send(setpoint)
+        time.sleep(period)
         now = node.current()
-        err = max(
-            (abs(now.get(n, waypoint[n]) - waypoint[n]) for n in waypoint),
+        lag = max(
+            (abs(now.get(n, setpoint[n]) - setpoint[n]) for n in setpoint),
             default=0.0,
         )
-        if err < args.tolerance:
-            return True, False
-        if last_err is not None and last_err - err < 0.002:
-            stagnant += 0.2
-            if stagnant >= args.stall_time:
-                return False, True
+        if lag > args.max_lag:
+            lagging += period
+            if lagging >= args.stall_time:
+                print(
+                    f"\nSTOPPED at setpoint {i}/{len(stream)}: the arm trailed by "
+                    f"{lag:.3f} rad for {args.stall_time:.1f}s. Holding here rather "
+                    "than driving against a load it is not overcoming."
+                )
+                return
         else:
-            stagnant = 0.0
-        last_err = err
-    return False, False
+            lagging = 0.0
+        if i % report_every == 0 or i == len(stream):
+            print(
+                f"  {i:>4}/{len(stream)}  lag {lag:.4f} rad   "
+                + " ".join(
+                    f"{n.split('_')[0]}={now.get(n, float('nan')):+.3f}"
+                    for n in sorted(setpoint)
+                )
+            )
+
+    # The stream ends exactly on target; give the servo a moment to close the
+    # remaining proportional droop before reporting the final pose.
+    deadline = time.time() + args.timeout
+    while time.time() < deadline:
+        time.sleep(0.1)
+        now = node.current()
+        err = max((abs(now.get(n, goals[n]) - goals[n]) for n in goals), default=0.0)
+        if err < args.tolerance:
+            print(f"  settled within {err:.4f} rad")
+            return
+    print(f"  holding at {err:.4f} rad of residual droop")
 
 
 def main() -> None:
@@ -290,24 +307,31 @@ def main() -> None:
         help="refuse if any joint would move more than this many rad (default 0.35)",
     )
     p_go.add_argument(
-        "--step",
+        "--speed",
         type=float,
-        default=0.20,
-        help="max radians any joint moves per supervised increment (default 0.20)",
+        default=0.5,
+        help="radians per second the streamed setpoint advances (default 0.5)",
     )
     p_go.add_argument(
-        "--tolerance",
+        "--max-lag",
         type=float,
-        default=0.03,
-        help="radians of error treated as having reached a waypoint",
+        default=0.15,
+        help="radians the arm may trail its setpoint before it counts as not "
+        "keeping up (default 0.15)",
     )
     p_go.add_argument(
         "--stall-time",
         type=float,
         default=1.5,
-        help="seconds without progress before declaring a stall and stopping",
+        help="seconds of sustained lag before stopping (default 1.5)",
     )
-    p_go.add_argument("--timeout", type=float, default=8.0)
+    p_go.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.06,
+        help="radians of residual error treated as settled (default 0.06)",
+    )
+    p_go.add_argument("--timeout", type=float, default=5.0)
     p_go.set_defaults(func=_cmd_go)
 
     args = parser.parse_args()

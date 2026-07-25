@@ -96,9 +96,17 @@ poses. Joints that barely moved between poses get a correspondingly tight band �
 that is the design, not a defect: nothing may travel further than a human has
 demonstrated is safe. Widen it by teaching another pose and re-running `limits`.
 
-`arm-pose go` additionally refuses any move whose largest single-joint travel
-exceeds `--max-travel` (0.35 rad by default), so a stale pose or a bad limit
-change cannot turn into a large unexpected swing.
+`arm-pose go` refuses any move whose largest single-joint travel exceeds
+`--max-travel` (0.35 rad by default), so a stale pose or a bad limit change
+cannot turn into a large unexpected swing. Raise it deliberately for a known-long
+move (`--max-travel 4.0` for the full `home` <-> `reachy` swing).
+
+It **streams** setpoints at 20 Hz rather than commanding the destination in one
+jump, so the arm moves continuously at `--speed` (0.5 rad/s default) instead of
+lurching between waypoints. Supervision is by *lag* — how far the arm trails the
+setpoint it was given: sustained lag beyond `--max-lag` (0.15 rad) for
+`--stall-time` means it is no longer keeping up, and the move stops where it is.
+Measured lag on the full swing is a steady 0.07-0.10 rad.
 
 Because `arm_driver` and `arm_check` both open the serial port, run **one at a
 time**, never both.
@@ -160,45 +168,52 @@ Run against the real arm on 2026-07-25:
 | Jog motion | `elbow_flex` jogged −0.05 rad per step and returned; `/joint_states` tracked |
 | Soft-limit clamp | repeated `+` past the limit held at `+0.103` — no further motion |
 | Shutdown | SIGINT exits 0, no traceback, torque off, port released |
-| Pose replay | `go home` reached target within 0.006 rad; `go reachy` stopped itself after ~0.13 rad when the joint stopped progressing |
+| Pose replay | full `home` <-> `reachy` move (3.19 rad / 183 deg) completed both ways, streamed at 0.5 rad/s, lag steady 0.07-0.10 rad, settling within 0.026-0.041 rad |
+| Servo gains | `arm-gains apply` wrote and verified Kp=32 on all six servos; temps unchanged at 27-30 C after the full move |
 
-`arm-pose go` walks a move in bounded increments (`--step`, 0.20 rad default)
-and stops on a stall rather than holding against a load it cannot overcome —
-which is what halted the `reachy` replay, correctly, given the droop above.
+`arm-pose go` streams setpoints continuously (see above) and stops when the arm stops keeping up, rather than holding against a load it
+cannot overcome. At the shipped `Kp = 16` that guard correctly halted the
+`reachy` replay after ~0.13 rad; with `Kp = 32` applied the same move runs to
+completion.
 
-## Known limitation: joints settle short of their target (proportional droop)
+## Position accuracy and the servo gains
 
-A commanded position is approached, not reached. Measured on `elbow_flex`,
-commanded -0.200 rad from rest:
+The arm shipped with `Kp = 16` on every servo, which left a permanent
+steady-state error under load: the servo settles where `Kp x error` balances the
+holding torque, and `Ki = 0` never integrates that droop away. Measured on
+`elbow_flex`, commanded -0.200 rad from rest:
 
 | Kp | reached | steady error | load (of 1000) | Kp x error |
 |----|---------|--------------|----------------|------------|
 | 16 (as shipped) | -0.129 rad | 0.071 rad | 196 | 1.14 |
-| 32 (wheel/factory default) | -0.167 rad | 0.033 rad | 176 | 1.05 |
+| 32 (applied) | -0.167 rad | 0.033 rad | 176 | 1.05 |
 
-**This is a tuning problem, not a power problem.** Doubling Kp halved the error
-while the load stayed near 180-196 — nowhere near the 1000 that torque
-saturation would pin it to, and `Kp x error` stayed essentially constant. The
-servo is settling exactly where its proportional output balances the holding
-torque. With `Ki = 0` (as shipped) there is no integral term to erase that
-droop, so the error is permanent for as long as the load is present.
+That is droop, **not** torque saturation: error halves as Kp doubles while load
+stays near 180-196, nowhere near the 1000 that saturation would pin it to, and
+`Kp x error` stays constant. The servo was using about a fifth of the effort
+available to it, so the 5.1-5.2 V supply was never the binding constraint.
 
-Two contributing factors, both in servo EEPROM:
+`Kp = 32` (matching the drive wheels and the STS3215 factory default) is now
+applied to all six servos and recorded in `robot.yaml`'s `arm.gains`. With it,
+the arm completes the full 3.19 rad (183 deg) `home` <-> `reachy` move in both
+directions without stalling, holding a residual error of 0.02-0.06 rad
+(1-3.5 deg) — the remaining proportional droop.
 
-- **`Kp = 16` on every arm servo**, against `Kp = 32` on the drive wheels and
-  the STS3215 factory default. Half the gain is double the droop.
-- **`Ki = 0`**, so steady-state error is never integrated away.
+Gains live in servo EEPROM, so they are invisible config that a servo swap would
+silently revert. `robot.yaml` is the source of truth and `pixi run arm-gains`
+reconciles hardware with it:
 
-Not yet applied — changing them writes to servo EEPROM, which is a persistent
-hardware-config change and is deliberately left as an explicit decision. Read
-the current values with `pixi run arm-check` plus the register probes described
-in the bring-up notes. When changing Kp, note that the EEPROM read-back races
-the relock: unlock, write, relock, wait ~150 ms, then read twice and trust the
-value only when the two reads agree (a single read has been observed returning
-a garbled 250).
+```
+pixi run arm-gains show     # read-only comparison against robot.yaml
+pixi run arm-gains apply    # write and verify (asks first; EEPROM is persistent)
+```
 
-Supply voltage measures 5.1-5.2 V against the STS3215's 7.4 V rating, so headroom
-is genuinely limited and may still cap what the arm can lift once the gains are
-right — but the measurements above show the servo is currently using only about
-a fifth of the effort available to it, so voltage is not what is stopping it
-today.
+`apply` reports success only when a confirmed read-back matches, because an
+EEPROM read-back races the relock: a single read taken too soon returns a
+garbled value (observed: 250) and makes a successful write look failed. The bus
+layer reads twice and trusts the value only when both agree.
+
+Closing the residual 1-3.5 deg would mean a small `Ki`, which is left alone for
+now: integral windup on an arm risks a lunge when a load is removed, so it wants
+a deliberate test on an unloaded joint first. Supply voltage is worth revisiting
+only after that, since the arm still has not demanded full torque.

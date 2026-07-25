@@ -28,6 +28,7 @@ setup(
             "jog = mote_arm.jog:main",
             "arm_check = mote_arm.arm_check:main",
             "arm_pose = mote_arm.arm_pose:main",
+            "arm_gains = mote_arm.arm_gains:main",
         ],
     },
 )

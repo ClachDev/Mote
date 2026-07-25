@@ -20,8 +20,10 @@ any rewiring or recalibration. What is still open:
 - **Steps 5–6 for the other five joints** — only `elbow_flex` was jogged and
   clamp-tested. The rest have a deliberately tight envelope until you pose the
   arm somewhere that widens it.
-- **The 5 V torque limit** (see README) — joints stall a few degrees short under
-  load. A power fix, not a software one.
+- Nothing power-related: the earlier "5 V torque limit" was a misdiagnosis. It
+  was proportional droop from `Kp=16`; `Kp=32` is now applied (see README) and
+  the arm completes the full home<->reachy move. A small `Ki` would close the
+  remaining 1-3.5 deg, but wants a deliberate windup test first.
 
 ## Step 0 — wiring (settled)
 
@@ -39,9 +41,8 @@ pixi run arm-check
 
 **Expected:** a table with all six joints — `shoulder_pan`, `shoulder_lift`,
 `elbow_flex`, `wrist_flex`, `wrist_roll`, `gripper` — each showing a raw
-position (0–4095), the supply voltage (measures 5.1–5.2 V today — see README's note on
-underpowered servos), a
-temperature (< 55 °C), and a load near 0 while limp. Any `NO RESPONSE` row means
+position (0–4095), the supply voltage (measures 5.1–5.2 V today), a temperature
+(< 55 °C), and a load near 0 while limp. Any `NO RESPONSE` row means
 a wiring/ID problem — fix IDs with `pixi run setup-ids` / `ros2 run
 mote_hardware servo_debug` before continuing.
 
@@ -158,9 +159,12 @@ Already verified on the robot (2026-07-25):
 - [x] soft limits clamp during a real jog (repeated `+` held at the limit)
 - [x] enabling torque holds the current pose instead of snapping
 - [x] `min`/`max` in `robot.yaml` derived from taught poses, not guessed
+- [x] servo gains applied and verified (`pixi run arm-gains`), full
+      home<->reachy move completed both ways
 
 Still open:
 
 - [ ] the other five joints jogged and direction-checked (`invert`)
 - [ ] `home:` taught at a true mechanical zero (optional — re-teach poses after)
-- [ ] arm supply raised toward 7.4 V so joints reach commanded positions
+- [ ] optional: small `Ki` to remove the residual 1-3.5 deg droop (test windup
+      on an unloaded joint first)

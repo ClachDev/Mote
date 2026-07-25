@@ -24,6 +24,9 @@ _GOAL_POSITION = 42
 _GOAL_SPEED = 46
 _LOCK = 55
 _MODE = 33
+_KP = 21
+_KD = 22
+_KI = 23
 _PRESENT_POSITION = 56
 _PRESENT_LOAD = 60
 _PRESENT_VOLTAGE = 62
@@ -206,6 +209,48 @@ class FeetechBus:
         time.sleep(0.01)
         self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 1)
         time.sleep(0.01)
+
+    def read_gains(self, servo_id: int) -> tuple[int, int, int] | None:
+        """Return (kp, kd, ki) from EEPROM, or None if the reads disagree.
+
+        Reads twice and trusts the value only when both agree: a single read
+        taken soon after an EEPROM write or a torque cycle has been observed
+        returning a garbled byte on this bus, which makes a successful write
+        look like a failure.
+        """
+        for _ in range(5):
+            first = [self._read_gain_reg(servo_id, r) for r in (_KP, _KD, _KI)]
+            time.sleep(0.05)
+            second = [self._read_gain_reg(servo_id, r) for r in (_KP, _KD, _KI)]
+            if None not in first and first == second:
+                return tuple(first)  # type: ignore[return-value]
+            time.sleep(0.1)
+        return None
+
+    def _read_gain_reg(self, servo_id: int, addr: int) -> int | None:
+        value, comm, err = self._packet.read1ByteTxRx(self._port, servo_id, addr)
+        return value if self._ok(comm, err) else None
+
+    def write_gains(self, servo_id: int, kp: int, kd: int, ki: int) -> bool:
+        """Write the position-loop gains to EEPROM and verify they took.
+
+        Retries because the write does not always land. Returns True only once
+        a confirmed read-back matches all three values, so callers never report
+        success on an unverified change to persistent servo config.
+        """
+        want = (kp, kd, ki)
+        for _ in range(4):
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 0)
+            time.sleep(0.05)
+            for addr, value in zip((_KP, _KD, _KI), want):
+                self._packet.write1ByteTxRx(self._port, servo_id, addr, value)
+                time.sleep(0.05)
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 1)
+            # The read-back races the relock; give the servo time to settle.
+            time.sleep(0.15)
+            if self.read_gains(servo_id) == want:
+                return True
+        return False
 
     def write_goal(self, servo_id: int, counts: int, speed: int, acc: int) -> None:
         """Command an absolute position (0-4095) at the given speed/accel."""

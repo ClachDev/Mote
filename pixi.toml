@@ -50,6 +50,8 @@ arm = "ros2 launch mote_arm arm_launch.py"
 arm-jog = "ros2 run mote_arm jog"
 # Teach/replay named arm poses (save is read-only; go asks before moving).
 arm-pose = "ros2 run mote_arm arm_pose"
+# Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
+arm-gains = "ros2 run mote_arm arm_gains"
 
 #### The below tasks are tied to specific features and environments however they
 #### can be run like any other task.
