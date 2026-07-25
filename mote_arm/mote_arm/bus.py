@@ -13,6 +13,7 @@ is only needed at runtime on the robot.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 
@@ -46,6 +47,45 @@ class BusError(RuntimeError):
     pass
 
 
+def port_holders(path: str) -> list[tuple[int, str]]:
+    """Return (pid, cmdline) for every *other* process holding ``path`` open.
+
+    The arm shares its serial bus with the drive wheels, so a second opener is
+    not merely a conflict — it interleaves packets on the bus that moves the
+    robot. Serial ports carry no kernel-level exclusion, so we scan /proc for
+    the real device behind the symlink. Processes we cannot inspect (other
+    users) are skipped: this is a footgun guard, not a security boundary.
+    """
+    real = os.path.realpath(path)
+    self_pid = os.getpid()
+    holders: list[tuple[int, str]] = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid == self_pid:
+            continue
+        fd_dir = f"/proc/{entry}/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink(f"{fd_dir}/{fd}") != real:
+                    continue
+            except OSError:
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as f:
+                    cmd = f.read().replace(b"\0", b" ").decode(errors="replace").strip()
+            except OSError:
+                cmd = "?"
+            holders.append((pid, cmd or "?"))
+            break
+    return holders
+
+
 class FeetechBus:
     """Position-mode control of Feetech STS servos over one serial bus."""
 
@@ -56,7 +96,24 @@ class FeetechBus:
         self._packet = None
         self._comm_success = 0
 
-    def open(self) -> None:
+    def open(self, allow_shared: bool = False) -> None:
+        """Open the bus, refusing if another process already holds the port.
+
+        On Mote the arm shares the wheel bus, so a concurrent opener (the
+        ros2_control node from `pixi run launch`/`mapping`/`robot`) would
+        interleave packets with drive-wheel traffic. Refusing is the safe
+        default; pass allow_shared=True only to override deliberately.
+        """
+        if not allow_shared:
+            holders = port_holders(self._port_name)
+            if holders:
+                listed = "; ".join(f"pid {pid}: {cmd}" for pid, cmd in holders)
+                raise BusError(
+                    f"{self._port_name} is already open by another process "
+                    f"({listed}). The arm shares the drive-wheel bus, so two "
+                    "openers would corrupt wheel traffic. Stop the robot base "
+                    "(e.g. `pixi run kill`) before running the arm."
+                )
         try:
             from scservo_sdk import COMM_SUCCESS, PacketHandler, PortHandler
         except ImportError as exc:  # pragma: no cover - runtime-only dependency

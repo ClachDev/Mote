@@ -36,6 +36,26 @@ Everything hardware lives in `mote_description/config/robot.yaml` (`arm:`
 section): the single source of truth for the port, baud, servo IDs, per-joint
 soft limits, home offsets, and direction.
 
+## Wiring: the arm shares the drive-wheel bus
+
+Verified on the robot: arm servos are IDs **1–6**, the drive wheels are **7**
+and **9**, and all eight are on the one `/dev/mote_servos` (CH343) bus. The arm
+needs no udev rule of its own. Two consequences are enforced in code, not just
+documented:
+
+- **ID collision** — an arm ID equal to a wheel ID would send arm commands to a
+  wheel. `mote_arm.config` rejects that at load time when both share a port.
+- **One opener only** — a serial port has no kernel-level exclusion, so a second
+  process would interleave packets on the bus that *moves the robot*.
+  `mote_arm.bus.FeetechBus.open()` scans `/proc` and refuses to open a port
+  another process already holds, naming the offending PID. In practice: the arm
+  driver cannot run at the same time as the robot base (`pixi run launch`,
+  `mapping`, `robot`) — stop the base first (`pixi run kill`).
+
+Lifting that restriction means moving arm control into the `mote_hardware`
+ros2_control `SystemInterface`, so one process owns the bus. That is the natural
+next step once the arm needs to move *during* a mission.
+
 ## Components
 
 All bus I/O is isolated in `bus.py`; the config maths in `config.py` is
@@ -83,10 +103,32 @@ part of the mission bringup; run it explicitly with `pixi run arm`.
 
 ## Calibration
 
+The committed `home:` values are the arm's **as-found resting counts** read off
+the robot, not taught mechanical zeros. So "0 rad" currently means "the pose it
+was parked in". That is a deliberately safe reference — jog steps stay small
+because they start from the measured position — but it is not yet a real zero.
+
 See `BENCH.md` for the full runbook. In short:
 
 1. `pixi run arm-check` — confirm every joint responds; note IDs.
-2. Move each joint to its mechanical zero, run `pixi run arm-check -- --save-home`,
+2. Pose each joint at its mechanical zero, run `pixi run arm-check -- --save-home`,
    paste the printed `home:` counts into `robot.yaml`.
 3. Jog each joint to its safe extremes and set `min`/`max` (rad) in `robot.yaml`;
    flip `invert` if a joint moves opposite the expected sign.
+
+## Verified on hardware
+
+Read-only and zero-motion checks run against the real arm (2026-07-25):
+
+| Check | Result |
+|-------|--------|
+| Bus enumeration | all 6 joints respond; 5.1–5.2 V, 26–29 °C, load 0 |
+| `/joint_states` | 6 arm joints at a steady 20.0 Hz, no jitter while limp |
+| Startup torque | driver comes up limp; `TORQUE_ENABLE` reads 0 on every joint |
+| Port guard | `arm_check` refused the bus while the driver held it, naming its PID |
+| Soft-limit clamp | goal 5.0 rad clamped to the limit, logged, **0.00000 rad moved** |
+| Shutdown | SIGINT exits 0, no traceback, torque off, port released |
+
+The clamp was proven without moving the arm by pinning the soft limits to the
+arm's current pose, so the clamped goal *was* the present position. Jogging each
+joint through a real range is still a human bench step (`BENCH.md` steps 5–6).

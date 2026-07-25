@@ -16,6 +16,7 @@ import threading
 import time
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
@@ -171,7 +172,21 @@ def _repl(node: JogClient) -> None:
 def main() -> None:
     rclpy.init()
     node = JogClient()
-    spin = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+
+    def _spin() -> None:
+        # SIGINT surfaces here as ExternalShutdownException; the REPL thread
+        # owns the exit path, so this one just stops quietly.
+        try:
+            rclpy.spin(node)
+        except (KeyboardInterrupt, ExternalShutdownException):
+            pass
+        except Exception:  # noqa: BLE001
+            # Context torn down by SIGINT (see arm_driver.main); a real error
+            # is one that happened while the context was still valid.
+            if rclpy.ok():
+                raise
+
+    spin = threading.Thread(target=_spin, daemon=True)
     spin.start()
     try:
         _repl(node)

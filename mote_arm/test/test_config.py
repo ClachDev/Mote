@@ -87,6 +87,45 @@ def test_duplicate_names_rejected():
         ArmConfig.from_dict(bad)
 
 
+def test_wheel_id_collision_rejected_on_shared_bus():
+    """The arm shares the wheel bus, so a clashing ID must not load."""
+    bad = {
+        "servos": {"port": "/dev/mote_servos", "left_id": 7, "right_id": 9},
+        "arm": {
+            "port": "/dev/mote_servos",
+            "baud_rate": 1000000,
+            "joints": [{"name": "j", "id": 7, "min": -1, "max": 1}],
+        },
+    }
+    with pytest.raises(ValueError, match="collide"):
+        ArmConfig.from_dict(bad)
+
+
+def test_wheel_id_collision_allowed_on_separate_bus():
+    """Same ID on a different port is fine — they are different buses."""
+    ok = {
+        "servos": {"port": "/dev/mote_servos", "left_id": 7, "right_id": 9},
+        "arm": {
+            "port": "/dev/mote_arm",
+            "baud_rate": 1000000,
+            "joints": [{"name": "j", "id": 7, "min": -1, "max": 1}],
+        },
+    }
+    assert ArmConfig.from_dict(ok).ids == [7]
+
+
+def test_shared_bus_without_collision_loads():
+    ok = {
+        "servos": {"port": "/dev/mote_servos", "left_id": 7, "right_id": 9},
+        "arm": {
+            "port": "/dev/mote_servos",
+            "baud_rate": 1000000,
+            "joints": [{"name": "j", "id": 1, "min": -1, "max": 1}],
+        },
+    }
+    assert ArmConfig.from_dict(ok).ids == [1]
+
+
 def test_clamp_within_and_outside():
     j = JointSpec("j", 1, min_rad=-1.0, max_rad=1.0)
     assert j.clamp_rad(0.5) == 0.5

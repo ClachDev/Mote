@@ -155,6 +155,14 @@ section. Contains:
 - The arm links/joints are added to `mote.urdf.xacro` behind an `arm:=true`
   default (the sim passes `arm:=false`); joint names match `robot.yaml` and
   `/joint_states` so robot_state_publisher animates the arm in TF.
+- **The arm shares the drive-wheel bus** (verified: arm IDs 1-6, wheels 7/9, all
+  on `/dev/mote_servos`), so it needs no udev rule. Two guards enforce this
+  rather than merely documenting it: `config.py` rejects an arm ID colliding
+  with a wheel ID on a shared port, and `bus.py` refuses to open a port another
+  process already holds (naming the PID). Consequence: the arm driver cannot run
+  concurrently with the robot base — stop it first (`pixi run kill`). Lifting
+  that means folding arm control into `mote_hardware`'s ros2_control
+  `SystemInterface` so one process owns the bus.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
 - **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —

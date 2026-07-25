@@ -20,6 +20,7 @@ Because it owns the port, run the driver *or* the standalone ``arm_check`` /
 from __future__ import annotations
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
@@ -127,22 +128,39 @@ class ArmDriver(Node):
         return response
 
     def shutdown(self) -> None:
+        """Leave the arm limp and release the bus.
+
+        Safety-critical and best-effort: a failure to drop torque on one joint
+        must not stop us trying the rest, or leave the port held.
+        """
         try:
             self._set_all_torque(False)
+        except Exception as exc:  # noqa: BLE001 - never mask the port close
+            self.get_logger().error(f"failed to disable torque on shutdown: {exc}")
         finally:
             self.bus.close()
 
 
 def main() -> None:
     rclpy.init()
-    node = ArmDriver()
+    node = None
     try:
+        node = ArmDriver()
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except Exception:  # noqa: BLE001 - see below
+        # SIGINT tears the rcl context down underneath spin(), which surfaces
+        # as an ExternalShutdownException or a bare RCLError depending on how
+        # the node was launched (`ros2 run` vs directly). Neither is publicly
+        # catchable as one type, so treat "the context is gone" as the ordinary
+        # stop it is, and re-raise anything that failed while it was still up.
+        if rclpy.ok():
+            raise
     finally:
-        node.shutdown()
-        node.destroy_node()
+        if node is not None:
+            node.shutdown()
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 

@@ -121,6 +121,20 @@ class ArmConfig:
                 f"duplicate joint names in arm config: {sorted(dup_names)}"
             )
 
+        # The arm shares the serial bus with the drive wheels, so an arm servo
+        # ID colliding with a wheel ID would send arm commands to a wheel (and
+        # vice versa). Reject it here rather than discover it by driving away.
+        drive = cfg.get("servos") or {}
+        wheel_ids = {int(drive[key]) for key in ("left_id", "right_id") if key in drive}
+        if wheel_ids and str(arm["port"]) == str(drive.get("port")):
+            collisions = sorted(wheel_ids.intersection(s.id for s in joints))
+            if collisions:
+                raise ValueError(
+                    f"arm servo IDs {collisions} collide with the drive wheel "
+                    f"IDs on the shared bus {arm['port']} — reassign the arm "
+                    "servos (see mote_hardware setup_ids)"
+                )
+
         return ArmConfig(
             port=str(arm["port"]),
             baud_rate=int(arm["baud_rate"]),

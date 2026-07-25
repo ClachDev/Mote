@@ -24,28 +24,36 @@ servos:
 # Consumed by mote_arm (driver, jog CLI, arm_check) and by the arm section of
 # mote.urdf.xacro. There is no leader arm — this is the follower only.
 #
-# CALIBRATION STATUS: min/max are conservative placeholders and home/invert are
-# defaults. Measure them at the bench (see mote_arm/BENCH.md) and update here —
-# robot.yaml is the single source of truth, so nothing else needs editing.
+# CALIBRATION STATUS: min/max are conservative placeholders and `home` values
+# are the arm's as-found resting counts, NOT taught mechanical zeros. Pose each
+# joint at its true zero and re-run `pixi run arm-check -- --save-home` (see
+# mote_arm/BENCH.md), then update here — robot.yaml is the single source of
+# truth, so nothing else needs editing.
 #
-# WIRING: `port` assumes the arm has its own USB-serial adapter symlinked to
-# /dev/mote_arm (udev rule in mote_bringup/udev/99-mote.rules). If the arm
-# instead shares the wheel driver board, set port to /dev/mote_servos and give
-# every arm servo an ID that does not collide with the wheels (7, 9).
+# WIRING: the arm SHARES the drive-wheel bus (verified on the robot: IDs 1-6
+# for the arm, 7/9 for the wheels, all on /dev/mote_servos). Consequences:
+#   * arm IDs must never collide with the wheel IDs — mote_arm.config rejects
+#     that at load time;
+#   * only one process may open this port, so the arm driver cannot run at the
+#     same time as the robot base (mote_launch and friends). mote_arm.bus
+#     refuses to open a port another process already holds.
 arm:
-  port: /dev/mote_arm
+  port: /dev/mote_servos
   baud_rate: 1000000
   moving_speed: 500      # jog move speed cap, servo steps/s (gentle)
   moving_acc: 20         # 0-254, units of 100 steps/s^2
-  # min/max are soft limits in radians about each joint's mechanical zero.
-  # home is the raw encoder count (0-4095) at that zero; 2048 = servo mid-point.
+  # min/max are soft limits in radians about each joint's zero. home is the raw
+  # encoder count (0-4095) at that zero. The home values below are the arm's
+  # as-found resting pose read off the robot, so "0 rad" currently means "the
+  # pose it was parked in" — a safe reference that keeps jog moves small, but
+  # not yet a true mechanical zero. Retach at the bench (BENCH.md step 3).
   joints:
-    - {name: shoulder_pan,  id: 1, min: -1.90, max: 1.90, home: 2048, invert: false}
-    - {name: shoulder_lift, id: 2, min: -1.75, max: 1.75, home: 2048, invert: false}
-    - {name: elbow_flex,    id: 3, min: -1.60, max: 1.60, home: 2048, invert: false}
-    - {name: wrist_flex,    id: 4, min: -1.75, max: 1.75, home: 2048, invert: false}
-    - {name: wrist_roll,    id: 5, min: -2.70, max: 2.70, home: 2048, invert: false}
-    - {name: gripper,       id: 6, min:  0.00, max: 1.50, home: 2048, invert: false}
+    - {name: shoulder_pan,  id: 1, min: -1.90, max: 1.90, home: 3013, invert: false}
+    - {name: shoulder_lift, id: 2, min: -1.75, max: 1.75, home: 1483, invert: false}
+    - {name: elbow_flex,    id: 3, min: -1.60, max: 1.60, home: 2931, invert: false}
+    - {name: wrist_flex,    id: 4, min: -1.75, max: 1.75, home: 2767, invert: false}
+    - {name: wrist_roll,    id: 5, min: -2.70, max: 2.70, home:  731, invert: false}
+    - {name: gripper,       id: 6, min:  0.00, max: 1.50, home: 2056, invert: false}
 
 # Sensors
 lidar:

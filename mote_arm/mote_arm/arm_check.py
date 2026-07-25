@@ -1,11 +1,12 @@
 """Standalone arm bus enumeration + health check (first-contact bench tool).
 
 Opens the arm bus directly (no ROS node), pings every configured joint, and
-prints position / voltage / temperature / load. It also prints a ready-to-paste
-udev line for the arm's USB-serial adapter, and can dump a robot.yaml ``home:``
-snippet from the arm's current pose (``--save-home``) for calibration.
+prints position / voltage / temperature / load. It can also dump a robot.yaml
+``home:`` snippet from the arm's current pose (``--save-home``) for calibration.
 
-Run this with the driver NOT running (it owns the same port):
+Read-only: it never enables torque or commands a goal, so it is the safe first
+contact with the arm. Run it with the driver NOT running — the arm shares the
+drive-wheel bus, so only one process may hold the port:
     pixi run arm-check
     pixi run arm-check -- --save-home
 """
@@ -14,47 +15,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 
 from mote_arm import config
-from mote_arm.bus import BusError, FeetechBus
+from mote_arm.bus import BusError, FeetechBus, port_holders
 
 
 def _resolve_device(port: str) -> str:
-    """Follow a symlink like /dev/mote_arm to its real /dev/tty* node."""
+    """Follow a symlink like /dev/mote_servos to its real /dev/tty* node."""
     return os.path.realpath(port)
-
-
-def _udev_hint(port: str) -> None:
-    dev = _resolve_device(port)
-    print(f"\nudev helper for {port} (-> {dev}):")
-    try:
-        out = subprocess.run(
-            ["udevadm", "info", "-a", "-n", dev],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout
-    except FileNotFoundError:
-        print("  udevadm not found; run on the robot to read the adapter IDs")
-        return
-
-    def first(attr: str) -> str:
-        for line in out.splitlines():
-            line = line.strip()
-            if line.startswith(f"ATTRS{{{attr}}}=="):
-                return line.split("==", 1)[1].strip().strip('"')
-        return "????"
-
-    vid, pid, serial = first("idVendor"), first("idProduct"), first("serial")
-    print(f"  idVendor={vid}  idProduct={pid}  serial={serial}")
-    print("  paste into mote_bringup/udev/99-mote.rules (pin by serial if the")
-    print("  wheel board shares this VID:PID):")
-    print(
-        f'  SUBSYSTEM=="tty", ATTRS{{idVendor}}=="{vid}", '
-        f'ATTRS{{idProduct}}=="{pid}", ATTRS{{serial}}=="{serial}", '
-        'SYMLINK+="mote_arm", MODE="0666"'
-    )
 
 
 def main() -> None:
@@ -65,7 +33,6 @@ def main() -> None:
         action="store_true",
         help="print a robot.yaml home: snippet from the current pose",
     )
-    parser.add_argument("--no-udev", action="store_true", help="skip the udev hint")
     args = parser.parse_args()
 
     cfg = (
@@ -74,8 +41,18 @@ def main() -> None:
         else config.load()
     )
 
-    print(f"arm bus: {cfg.port} @ {cfg.baud_rate}")
+    print(f"arm bus: {cfg.port} (-> {_resolve_device(cfg.port)}) @ {cfg.baud_rate}")
     print(f"expected joints: {cfg.names}")
+
+    holders = port_holders(cfg.port)
+    if holders:
+        print("\nport is already open by:")
+        for pid, cmd in holders:
+            print(f"  pid {pid}: {cmd}")
+        raise SystemExit(
+            "refusing to share the bus — stop the arm driver / robot base first "
+            "(`pixi run kill`)."
+        )
 
     try:
         bus = FeetechBus(cfg.port, cfg.baud_rate)
@@ -115,13 +92,10 @@ def main() -> None:
         print("\nall configured joints responded.")
 
     if args.save_home and homes:
-        print("\ncalibration snapshot — set each joint to its mechanical zero, then")
-        print("re-run with --save-home and paste these 'home:' values into robot.yaml:")
+        print("\ncalibration snapshot — pose each joint at its mechanical zero,")
+        print("then paste these 'home:' values into robot.yaml's arm.joints:")
         for name, counts in homes:
-            print(f"  # {name}: home: {counts}")
-
-    if not args.no_udev:
-        _udev_hint(cfg.port)
+            print(f"    # {name}: home: {counts}")
 
 
 if __name__ == "__main__":

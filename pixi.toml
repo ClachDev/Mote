@@ -25,7 +25,10 @@ setup = { depends-on = ["udev", "wifi-powersave", "install-systemd"] }
 
 # Dev tasks
 kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
-sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
+# '.git' has no trailing slash on purpose: a submodule's .git is a *file*
+# holding a path into this checkout's .git/modules, and '.git/' (directory-only)
+# would ship it to the robot and break the robot's submodule refs.
+sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
 save-map = "ros2 run mote_bringup site save-map"
 clean-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.cli"
 save-zone = "ros2 run mote_tasks save_zone"
