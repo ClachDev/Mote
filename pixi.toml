@@ -21,6 +21,12 @@ wifi-powersave = "bash mote_bringup/networkmanager/install.sh"
 install-systemd = "bash mote_bringup/systemd/install.sh"
 setup = { depends-on = ["udev", "wifi-powersave", "install-systemd"] }
 
+# Fleet: overlay + identity (docs/fleet/README.md)
+identity = "ros2 run mote_bringup identity"      # this robot's id/name/site
+tailnet = "bash mote_bringup/tailscale/install.sh"  # join the Tailscale overlay
+provision = "ros2 run mote_bringup provision"    # render cloud-init for a new Pi
+dds-check = "ros2 run mote_bringup dds_participants"  # participant-slot headroom
+
 # Dev tasks
 kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
 sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
@@ -42,6 +48,12 @@ tasks = "ros2 launch mote_tasks tasks_launch.py"
 
 #### The below tasks are tied to specific features and environments however they
 #### can be run like any other task.
+
+# Development is the one workflow that wants a graph spanning machines (RViz on
+# the LAN, camera calibration against the robot's camera), so the dev environment
+# opts back out of the robot's localhost-pinned discovery.
+[feature.dev.activation.env]
+ROS_AUTOMATIC_DISCOVERY_RANGE = "SUBNET"
 
 [feature.dev.tasks]
 rviz = "ros2 launch mote_bringup rviz_launch.py"
@@ -222,7 +234,14 @@ pre-commit = ">=4,<5"
 
 [activation]
 scripts = ["install/setup.sh"]
-env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
+# ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST keeps DDS on the robot: nothing off-box
+# joins its graph (the fleet layer bridges over MQTT/Foxglove instead), so two
+# robots sharing a LAN can't see each other's nodes whatever their domain id, and
+# discovery floods stay on-box. rmw_cyclonedds implements it by claiming a
+# participant index per process, capped at MaxAutoParticipantIndex=32 — check the
+# headroom with `pixi run dds-check`. The `dev` feature flips it back to SUBNET
+# so a workstation can still join the robot's graph over the LAN.
+env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp", ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST" }
 
 [environments]
 dev = { features = ["dev"], solve-group = "default" }

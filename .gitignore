@@ -17,3 +17,7 @@ scratchpad*
 benchmark_results/
 # Parameter-sweep outputs (timestamped rankings/reports/merged params)
 sweep_results/
+
+# Rendered cloud-init (`pixi run provision`): carries a Tailscale auth key and a
+# wifi passphrase, so it must never be committed even by accident.
+user-data

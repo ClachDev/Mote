@@ -14,6 +14,10 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
         (os.path.join("share", package_name, "config"), glob("config/*")),
+        (
+            os.path.join("share", package_name, "provisioning"),
+            glob("provisioning/*"),
+        ),
     ],
     install_requires=["setuptools"],
     extras_require={"test": ["pytest"]},
@@ -28,6 +32,9 @@ setup(
             "system_monitor = mote_bringup.system_monitor:main",
             "bag_pruner = mote_bringup.bag_pruner:main",
             "site = mote_bringup.sites:main",
+            "identity = mote_bringup.identity:main",
+            "provision = mote_bringup.provision:main",
+            "dds_participants = mote_bringup.dds_participants:main",
         ],
     },
 )

@@ -1,0 +1,95 @@
+#cloud-config
+# Mote first-boot provisioning (Raspberry Pi OS Bookworm + cloud-init).
+#
+# Rendered by `pixi run provision` (mote_bringup/provision.py) — do not fill the
+# placeholders by hand, and never commit a rendered copy: it carries a Tailscale
+# auth key and a wifi passphrase.
+#
+# A clean Pi that boots this comes up on the tailnet under its robot_id, with its
+# identity written to $MOTE_HOME/robot.yaml, with no interactive steps.
+
+hostname: @ROBOT_ID@
+manage_etc_hosts: true
+timezone: @TIMEZONE@
+
+users:
+  - name: @USER@
+    groups: [adm, sudo, dialout, video, plugdev, i2c, spi, gpio, netdev]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "@SSH_KEY@"
+
+ssh_pwauth: false
+package_update: true
+packages: [git, curl, ca-certificates, rsync]
+
+write_files:
+  # Identity, staged as root because write_files runs before the user exists;
+  # runcmd installs it into the user's MOTE_HOME with the right ownership.
+  - path: /var/lib/mote/robot.yaml
+    permissions: "0644"
+    content: |
+      schema: 1
+      id: @ROBOT_ID@
+      name: "@ROBOT_NAME@"
+      site: "@SITE@"
+
+  # Single-use, pre-authorised, tagged Tailscale key: the provisioning-time
+  # secret that lets the robot reach the tailnet before it can reach anything
+  # else. Shredded by runcmd once it has been redeemed.
+  - path: /var/lib/mote/tailscale.authkey
+    permissions: "0600"
+    content: "@TS_AUTHKEY@"
+
+# >>> wifi
+  - path: /etc/NetworkManager/system-connections/mote-wifi.nmconnection
+    permissions: "0600"
+    content: |
+      [connection]
+      id=mote-wifi
+      type=wifi
+      autoconnect=true
+      [wifi]
+      mode=infrastructure
+      ssid=@WIFI_SSID@
+      [wifi-security]
+      key-mgmt=wpa-psk
+      psk=@WIFI_PSK@
+      [ipv4]
+      method=auto
+      [ipv6]
+      method=auto
+# <<< wifi
+
+runcmd:
+  - [bash, -c, "set -x; exec >> /var/log/mote-provision.log 2>&1; echo provisioning @ROBOT_ID@"]
+
+# >>> wifi
+  - [bash, -c, "rfkill unblock wifi || true; nmcli connection reload || true; nmcli connection up mote-wifi || true"]
+# <<< wifi
+
+  # 1. Identity first: everything downstream is keyed by robot_id.
+  - [bash, -c, "install -d -o @USER@ -g @USER@ -m 0755 /home/@USER@/.mote"]
+  - [bash, -c, "install -o @USER@ -g @USER@ -m 0644 /var/lib/mote/robot.yaml /home/@USER@/.mote/robot.yaml"]
+
+  # 2. The overlay: join the tailnet, then destroy the key.
+  - [bash, -c, "curl -fsSL https://tailscale.com/install.sh | sh"]
+  - [bash, -c, "systemctl enable --now tailscaled"]
+  - [bash, -c, "tailscale up --auth-key file:/var/lib/mote/tailscale.authkey --hostname @ROBOT_ID@ --advertise-tags=tag:robot --accept-dns=true"]
+  - [bash, -c, "shred -u /var/lib/mote/tailscale.authkey || rm -f /var/lib/mote/tailscale.authkey"]
+
+  # 3. The software. Until the prefix.dev channel ships a robot package (M5),
+  #    this is the same source checkout + pixi build the robot runs today.
+  - [bash, -c, "sudo -u @USER@ -H bash -lc 'curl -fsSL https://pixi.sh/install.sh | bash'"]
+  - [bash, -c, "sudo -u @USER@ -H bash -lc 'git clone @REPO@ ~/Mote'"]
+  - [bash, -c, "sudo -u @USER@ -H bash -lc 'cd ~/Mote && ~/.pixi/bin/pixi run build'"]
+
+  # 4. Host-level setup the package cannot carry: udev rules, wifi power save,
+  #    and the systemd units (they read the identity written in step 1).
+  - [bash, -c, "sudo -u @USER@ -H bash -lc 'cd ~/Mote && ~/.pixi/bin/pixi run setup'"]
+
+  - [bash, -c, "echo 'mote provisioning complete: '$(tailscale ip -4 2>/dev/null) >> /var/log/mote-provision.log"]
+
+final_message: "mote @ROBOT_ID@ provisioned in $UPTIME seconds — reachable at @ROBOT_ID@ on the tailnet"
