@@ -170,11 +170,17 @@ section. Contains:
   `SystemInterface` so one process owns the bus.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
-- **Underpowered at 5 V:** the supply measures 5.1-5.2 V against the STS3215's
-  7.4 V rating, so gravity-loaded joints stall a few degrees short of a
-  commanded position (measured: elbow held a 0.071 rad error at ~20% load) and
-  fall back when torque is released. Software cannot work around it; it must be
-  fixed before pick/place is trustworthy.
+- **Joints settle short of target (proportional droop, NOT a power problem):**
+  measured on elbow_flex, commanded -0.200 rad -> reached -0.129 rad (error
+  0.071, load 196/1000); with Kp raised 16->32 -> reached -0.167 rad (error
+  0.033, load 176). Error halves as Kp doubles at ~constant load, and `Kp x
+  error` stays constant — the servo settles where proportional output balances
+  the holding torque, nowhere near the load ~1000 that saturation would show.
+  Causes, both in servo EEPROM: arm servos ship `Kp = 16` (drive wheels and the
+  STS3215 default are 32) and `Ki = 0`, so droop is never integrated away.
+  Not applied — an EEPROM write is a persistent hardware-config change. Gotcha:
+  the Kp read-back races the relock; wait ~150 ms and read twice, or a single
+  read can return a garbled 250.
 - **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
   an unresolved mechanical clash, tracked separately, not addressed here.
   `mote_arm` is not part of the mission bringup; run it explicitly.

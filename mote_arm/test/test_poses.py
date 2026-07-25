@@ -89,3 +89,38 @@ def test_envelope_omits_untaught_joints():
 def test_envelope_rejects_negative_margin():
     with pytest.raises(ValueError):
         poses.envelope({"a": {"j": 1.0}}, margin=-0.1)
+
+
+def test_interpolate_bounds_each_hop():
+    steps = poses.interpolate({"j": 0.0}, {"j": 1.0}, 0.25)
+    assert len(steps) == 4
+    prev = 0.0
+    for s in steps:
+        assert abs(s["j"] - prev) <= 0.25 + 1e-9
+        prev = s["j"]
+
+
+def test_interpolate_ends_exactly_on_target():
+    steps = poses.interpolate({"a": 0.0, "b": 1.0}, {"a": -3.19, "b": 1.2}, 0.2)
+    assert steps[-1] == pytest.approx({"a": -3.19, "b": 1.2})
+
+
+def test_interpolate_paces_on_largest_joint():
+    """A small-moving joint gets the same hop count as the big one."""
+    steps = poses.interpolate({"a": 0.0, "b": 0.0}, {"a": 1.0, "b": 0.01}, 0.25)
+    assert len(steps) == 4
+    assert steps[-1]["b"] == pytest.approx(0.01)
+
+
+def test_interpolate_short_move_is_one_hop():
+    assert poses.interpolate({"j": 0.0}, {"j": 0.05}, 0.2) == [{"j": 0.05}]
+
+
+def test_interpolate_ignores_joints_not_in_start():
+    steps = poses.interpolate({"a": 0.0}, {"a": 0.1, "ghost": 5.0}, 0.2)
+    assert all("ghost" not in s for s in steps)
+
+
+def test_interpolate_rejects_nonpositive_step():
+    with pytest.raises(ValueError):
+        poses.interpolate({"j": 0.0}, {"j": 1.0}, 0.0)

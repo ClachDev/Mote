@@ -187,23 +187,71 @@ def _cmd_go(node: PoseClient, args) -> None:
             print("aborted; nothing sent")
             return
 
-    node.send(goals)
-    print("goal sent; watching for settle...")
-    deadline = time.time() + args.timeout
-    while time.time() < deadline:
-        time.sleep(0.25)
+    waypoints = poses.interpolate(current, goals, args.step)
+    print(f"\nwalking there in {len(waypoints)} step(s) of <= {args.step} rad")
+
+    for i, waypoint in enumerate(waypoints, 1):
+        node.send(waypoint)
+        settled, stalled = _await_waypoint(node, waypoint, args)
         now = node.current()
-        worst = max((abs(now.get(n, goals[n]) - goals[n]) for n in goals), default=0.0)
-        if worst < 0.02:
-            print(f"settled (max error {worst:.4f} rad)")
+        worst = max(
+            (abs(now.get(n, waypoint[n]) - waypoint[n]) for n in waypoint),
+            default=0.0,
+        )
+        flag = "ok" if settled else ("STALLED" if stalled else "slow")
+        print(
+            f"  step {i}/{len(waypoints)}  err {worst:.4f} rad  [{flag}]  "
+            + " ".join(
+                f"{n.split('_')[0]}={now.get(n, float('nan')):+.3f}"
+                for n in sorted(waypoint)
+            )
+        )
+        if stalled:
+            print(
+                "\nSTOPPED: the arm stopped making progress while still "
+                f"{worst:.4f} rad from this waypoint. Holding here rather than "
+                "straining against the load (see README: underpowered at 5 V)."
+            )
             break
-    else:
-        now = node.current()
-        worst = max((abs(now.get(n, goals[n]) - goals[n]) for n in goals), default=0.0)
-        print(f"did NOT settle within {args.timeout}s (max error {worst:.4f} rad)")
+
+    final = node.current()
+    print("\nfinal pose:")
     for name in node.cfg.names:
         if name in goals:
-            print(f"  {name:<14} {node.current().get(name, float('nan')):+.4f} rad")
+            err = final.get(name, float("nan")) - goals[name]
+            print(
+                f"  {name:<14} {final.get(name, float('nan')):+.4f} rad "
+                f"(target {goals[name]:+.4f}, err {err:+.4f})"
+            )
+
+
+def _await_waypoint(node: PoseClient, waypoint: dict, args) -> tuple[bool, bool]:
+    """Wait for a waypoint. Returns (settled, stalled).
+
+    Stalled means the arm stopped closing on the target while still short of it
+    — the signature of a servo that cannot overcome its load. Detecting that is
+    what keeps a large move from becoming a long stall against gravity.
+    """
+    deadline = time.time() + args.timeout
+    last_err = None
+    stagnant = 0.0
+    while time.time() < deadline:
+        time.sleep(0.2)
+        now = node.current()
+        err = max(
+            (abs(now.get(n, waypoint[n]) - waypoint[n]) for n in waypoint),
+            default=0.0,
+        )
+        if err < args.tolerance:
+            return True, False
+        if last_err is not None and last_err - err < 0.002:
+            stagnant += 0.2
+            if stagnant >= args.stall_time:
+                return False, True
+        else:
+            stagnant = 0.0
+        last_err = err
+    return False, False
 
 
 def main() -> None:
@@ -241,7 +289,25 @@ def main() -> None:
         default=0.35,
         help="refuse if any joint would move more than this many rad (default 0.35)",
     )
-    p_go.add_argument("--timeout", type=float, default=10.0)
+    p_go.add_argument(
+        "--step",
+        type=float,
+        default=0.20,
+        help="max radians any joint moves per supervised increment (default 0.20)",
+    )
+    p_go.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.03,
+        help="radians of error treated as having reached a waypoint",
+    )
+    p_go.add_argument(
+        "--stall-time",
+        type=float,
+        default=1.5,
+        help="seconds without progress before declaring a stall and stopping",
+    )
+    p_go.add_argument("--timeout", type=float, default=8.0)
     p_go.set_defaults(func=_cmd_go)
 
     args = parser.parse_args()

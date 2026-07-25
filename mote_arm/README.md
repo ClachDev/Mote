@@ -160,23 +160,45 @@ Run against the real arm on 2026-07-25:
 | Jog motion | `elbow_flex` jogged −0.05 rad per step and returned; `/joint_states` tracked |
 | Soft-limit clamp | repeated `+` past the limit held at `+0.103` — no further motion |
 | Shutdown | SIGINT exits 0, no traceback, torque off, port released |
+| Pose replay | `go home` reached target within 0.006 rad; `go reachy` stopped itself after ~0.13 rad when the joint stopped progressing |
 
-## Known limitation: the servos are underpowered at 5 V
+`arm-pose go` walks a move in bounded increments (`--step`, 0.20 rad default)
+and stops on a stall rather than holding against a load it cannot overcome —
+which is what halted the `reachy` replay, correctly, given the droop above.
 
-Measured on the elbow: commanding −0.200 rad drove the joint to −0.129 rad,
-where it **stalled** at a constant load of ~196 (≈20 %) with a steady 0.071 rad
-(≈4°) error, and snapped back to exactly its start count the moment torque was
-released. The command path is correct — the actuator simply cannot close the
-last few degrees against gravity.
+## Known limitation: joints settle short of their target (proportional droop)
 
-The supply measures 5.1–5.2 V; STS3215 servos are rated 7.4 V (some variants
-12 V), so they are producing well under their rated torque. Consequences:
+A commanded position is approached, not reached. Measured on `elbow_flex`,
+commanded -0.200 rad from rest:
 
-- commanded positions are approached, not reached — expect a few degrees of
-  steady-state error on gravity-loaded joints;
-- the arm will not hold a loaded pose once torque is released;
-- **this must be resolved before pick/place can be trusted**, since grasping
-  depends on reaching a commanded pose accurately.
+| Kp | reached | steady error | load (of 1000) | Kp x error |
+|----|---------|--------------|----------------|------------|
+| 16 (as shipped) | -0.129 rad | 0.071 rad | 196 | 1.14 |
+| 32 (wheel/factory default) | -0.167 rad | 0.033 rad | 176 | 1.05 |
 
-Nothing in this package works around it; raising the arm's supply voltage is a
-hardware change and is tracked separately.
+**This is a tuning problem, not a power problem.** Doubling Kp halved the error
+while the load stayed near 180-196 — nowhere near the 1000 that torque
+saturation would pin it to, and `Kp x error` stayed essentially constant. The
+servo is settling exactly where its proportional output balances the holding
+torque. With `Ki = 0` (as shipped) there is no integral term to erase that
+droop, so the error is permanent for as long as the load is present.
+
+Two contributing factors, both in servo EEPROM:
+
+- **`Kp = 16` on every arm servo**, against `Kp = 32` on the drive wheels and
+  the STS3215 factory default. Half the gain is double the droop.
+- **`Ki = 0`**, so steady-state error is never integrated away.
+
+Not yet applied — changing them writes to servo EEPROM, which is a persistent
+hardware-config change and is deliberately left as an explicit decision. Read
+the current values with `pixi run arm-check` plus the register probes described
+in the bring-up notes. When changing Kp, note that the EEPROM read-back races
+the relock: unlock, write, relock, wait ~150 ms, then read twice and trust the
+value only when the two reads agree (a single read has been observed returning
+a garbled 250).
+
+Supply voltage measures 5.1-5.2 V against the STS3215's 7.4 V rating, so headroom
+is genuinely limited and may still cap what the arm can lift once the gains are
+right — but the measurements above show the servo is currently using only about
+a fifth of the effort available to it, so voltage is not what is stopping it
+today.

@@ -13,6 +13,7 @@ ROS-free so the file handling is unit-testable without hardware.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -78,6 +79,34 @@ def envelope(
             lo, hi = spans.get(name, (value, value))
             spans[name] = (min(lo, value), max(hi, value))
     return {n: (lo - margin, hi + margin) for n, (lo, hi) in spans.items()}
+
+
+def interpolate(
+    start: dict[str, float],
+    target: dict[str, float],
+    step: float,
+) -> list[dict[str, float]]:
+    """Waypoints from ``start`` to ``target``, no joint moving > ``step`` per hop.
+
+    Commanding a large move as one goal hands the whole trajectory to the servo
+    and leaves nothing to supervise. Walking it in bounded increments keeps the
+    caller in the loop, so a stall can be caught partway instead of being
+    discovered at the end (or held indefinitely against a load).
+
+    Only joints present in both dicts move. The final waypoint is exactly
+    ``target``, so interpolation never changes the destination.
+    """
+    if step <= 0:
+        raise ValueError("step must be positive")
+    shared = [n for n in target if n in start]
+    if not shared:
+        return []
+    largest = max(abs(target[n] - start[n]) for n in shared)
+    hops = max(1, math.ceil(largest / step))
+    return [
+        {n: start[n] + (target[n] - start[n]) * (i / hops) for n in shared}
+        for i in range(1, hops + 1)
+    ]
 
 
 def delete_pose(name: str, path: Path | str | None = None) -> bool:
