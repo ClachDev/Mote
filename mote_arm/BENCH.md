@@ -9,11 +9,19 @@ Prerequisites: servos wired and enumerated, robot powered, repo built
 
 ---
 
-**Steps 0–2 and 4 are already done** — they were run against the robot on
-2026-07-25 and their results are recorded in `README.md`. They are kept here
-because they are the right first checks after any rewiring. The work that still
-genuinely needs a human is **step 3** (teach true mechanical zeros) and
-**steps 5–6** (jog each joint, confirm direction and range).
+**Steps 0, 2 and 4–7 have been run against the robot** (2026-07-25); results
+are in `README.md`. They are kept here because they are the right checks after
+any rewiring or recalibration. What is still open:
+
+- **Step 3** — the taught poses ("home", "reachy") define the working envelope,
+  but `home:` in robot.yaml is still the as-found parked count rather than a
+  deliberately taught mechanical zero. Optional; do it if you want "0 rad" to
+  mean something specific.
+- **Steps 5–6 for the other five joints** — only `elbow_flex` was jogged and
+  clamp-tested. The rest have a deliberately tight envelope until you pose the
+  arm somewhere that widens it.
+- **The 5 V torque limit** (see README) — joints stall a few degrees short under
+  load. A power fix, not a software one.
 
 ## Step 0 — wiring (settled)
 
@@ -31,12 +39,13 @@ pixi run arm-check
 
 **Expected:** a table with all six joints — `shoulder_pan`, `shoulder_lift`,
 `elbow_flex`, `wrist_flex`, `wrist_roll`, `gripper` — each showing a raw
-position (0–4095), a plausible voltage (~6–12 V depending on supply), a
+position (0–4095), the supply voltage (measures 5.1–5.2 V today — see README's note on
+underpowered servos), a
 temperature (< 55 °C), and a load near 0 while limp. Any `NO RESPONSE` row means
 a wiring/ID problem — fix IDs with `pixi run setup-ids` / `ros2 run
 mote_hardware servo_debug` before continuing.
 
-## Step 3 — teach home offsets (calibration) — **NEEDS A HUMAN**
+## Step 3 — teach home offsets (calibration) — optional, needs a human
 
 The committed `home:` values are the arm's as-found resting counts, so "0 rad"
 currently means "the pose it was parked in". Replace them with true mechanical
@@ -70,7 +79,7 @@ pixi run -- ros2 topic echo /joint_states
 updating as you move the (still limp) arm by hand. **This is acceptance
 criterion 1.**
 
-## Step 5 — jog each joint through a small range — **NEEDS A HUMAN**
+## Step 5 — jog each joint through a small range (done for `elbow_flex`)
 
 Leave `pixi run arm` running in Terminal A. Terminal C:
 
@@ -89,7 +98,8 @@ For **each** joint in turn (arm supported, ready to cut power):
      `robot.yaml`, rebuild, and repeat.
 4. `home` returns it to 0 rad.
 
-(The clamp path itself is already proven on hardware — see README's "Verified on hardware". What is unproven is that each joint moves the *right way* through a *real* range.)
+Only `elbow_flex` has been done this way; the remaining five are open. See
+README's "Verified on hardware" for what the elbow run showed.
 
 **Expected observations per joint:**
 
@@ -99,7 +109,26 @@ For **each** joint in turn (arm supported, ready to cut power):
 | `/joint_states` value follows the jog | feedback + conversion OK |
 | Direction matches the `+` sign | `invert` correct |
 
-## Step 6 — demonstrate the soft-limit clamp — **NEEDS A HUMAN**
+## Step 5b — teach the working envelope
+
+Soft limits come from poses you vet physically, not from guesses:
+
+1. `pixi run arm` in one terminal.
+2. Pose the limp arm by hand somewhere useful, then
+   `pixi run arm-pose save <name>` (read-only capture).
+3. Repeat for each pose worth reaching.
+4. `pixi run arm-pose limits` prints a `robot.yaml` `joints:` block spanning
+   every taught pose plus a 0.10 rad margin, and sanity-checks that each taught
+   pose falls inside it. Paste it into `robot.yaml` and rebuild.
+5. `pixi run arm-pose go <name>` moves between taught poses. It prints per-joint
+   travel and asks before moving; it refuses any move over `--max-travel`
+   (0.35 rad default).
+
+The committed limits came from two poses, `home` and `reachy`. Joints that
+barely differ between them have a tight band by construction — teach a pose that
+exercises them to widen it.
+
+## Step 6 — demonstrate the soft-limit clamp (done for `elbow_flex`)
 
 With a joint selected, jog `+` repeatedly toward its upper limit. **Expected:**
 motion stops at the configured `max` and the driver logs
@@ -125,9 +154,13 @@ Already verified on the robot (2026-07-25):
 - [x] driver starts limp and leaves the arm limp on shutdown
 - [x] the soft-limit clamp rejects an out-of-range goal (proven zero-motion)
 
-Still needs a human at the bench:
+- [x] `elbow_flex` jogs in the commanded direction; `/joint_states` tracks it
+- [x] soft limits clamp during a real jog (repeated `+` held at the limit)
+- [x] enabling torque holds the current pose instead of snapping
+- [x] `min`/`max` in `robot.yaml` derived from taught poses, not guessed
 
-- [ ] home offsets taught at true mechanical zero; neutral pose reads ~0 rad
-- [ ] every joint jogs in the correct direction through a small range
-- [ ] soft limits clamp at both ends of a *real* range
-- [ ] `min`/`max`/`home`/`invert` in `robot.yaml` updated from what you measured
+Still open:
+
+- [ ] the other five joints jogged and direction-checked (`invert`)
+- [ ] `home:` taught at a true mechanical zero (optional — re-teach poses after)
+- [ ] arm supply raised toward 7.4 V so joints reach commanded positions

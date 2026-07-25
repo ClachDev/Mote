@@ -27,6 +27,7 @@ setup(
             "arm_driver = mote_arm.arm_driver:main",
             "jog = mote_arm.jog:main",
             "arm_check = mote_arm.arm_check:main",
+            "arm_pose = mote_arm.arm_pose:main",
         ],
     },
 )

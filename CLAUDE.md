@@ -21,7 +21,8 @@ pixi run teleop         # Keyboard teleoperation
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
 pixi run arm            # SO-101 arm driver: joint states + safe jog control
 pixi run arm-jog        # Interactive per-joint jog CLI (needs `pixi run arm`)
-pixi run arm-check      # Standalone arm bus enumeration + health + udev helper
+pixi run arm-check      # Standalone arm bus enumeration + health (read-only)
+pixi run arm-pose       # Teach/replay named arm poses; derive soft limits
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi-powersave + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -149,9 +150,13 @@ section. Contains:
   and goes limp on shutdown — nothing moves without an explicit command.
 - `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client* of the
   driver (publishes clamped `arm/goal`, torque-off on exit). No bus contention.
-- `arm_check` (`pixi run arm-check`) — standalone enumeration/health + a
-  ready-to-paste udev line + `--save-home` calibration snapshot. Run with the
-  driver stopped (it owns the same port).
+- `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
+  + `--save-home` calibration snapshot. Run with the driver stopped (same port).
+- `poses.py` + `arm_pose` (`pixi run arm-pose`) — teach/replay named poses
+  (`~/.mote/arm_poses.yaml`, `MOTE_HOME`-overridable), the arm's analogue of
+  `save-zone`. **The committed soft limits are the envelope of physically vetted
+  poses** (`arm-pose limits`), not guesses; `go` refuses moves over
+  `--max-travel`. Changing `home` invalidates stored poses.
 - The arm links/joints are added to `mote.urdf.xacro` behind an `arm:=true`
   default (the sim passes `arm:=false`); joint names match `robot.yaml` and
   `/joint_states` so robot_state_publisher animates the arm in TF.
@@ -165,6 +170,11 @@ section. Contains:
   `SystemInterface` so one process owns the bus.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
+- **Underpowered at 5 V:** the supply measures 5.1-5.2 V against the STS3215's
+  7.4 V rating, so gravity-loaded joints stall a few degrees short of a
+  commanded position (measured: elbow held a 0.071 rad error at ~20% load) and
+  fall back when torque is released. Software cannot work around it; it must be
+  fixed before pick/place is trustworthy.
 - **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
   an unresolved mechanical clash, tracked separately, not addressed here.
   `mote_arm` is not part of the mission bringup; run it explicitly.

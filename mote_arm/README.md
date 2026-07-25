@@ -68,7 +68,37 @@ conversions are verified without hardware.
 | `bus.py` | `FeetechBus` — thin `scservo_sdk` wrapper (ping, read position/health, torque, position goal). Lazy SDK import. |
 | `arm_driver` (node) | **Single bus owner.** Publishes `/joint_states` for the arm, accepts absolute goals on `arm/goal`, exposes `arm/set_torque`. `pixi run arm`. |
 | `jog` (CLI) | Interactive per-joint jog. A *client* of the driver — publishes clamped `arm/goal`, calls `arm/set_torque`. `pixi run arm-jog`. |
-| `arm_check` (tool) | Standalone enumeration + health + udev-line helper + home snapshot. Run with the driver stopped. `pixi run arm-check`. |
+| `arm_check` (tool) | Standalone enumeration + health + home snapshot. Read-only; run with the driver stopped. `pixi run arm-check`. |
+| `poses.py` / `arm_pose` | Teach and replay named poses, and derive soft limits from them. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
+
+## Named poses, and where the soft limits come from
+
+The base layer teaches map positions by driving there and running
+`pixi run save-zone`; the arm's analogue is `pixi run arm-pose`. Pose the limp
+arm by hand, capture it, and later command it back:
+
+```
+pixi run arm-pose save reachy     # read-only capture of the current pose
+pixi run arm-pose list            # taught poses, and how far the arm is from each
+pixi run arm-pose go reachy       # the only command that moves; asks first
+pixi run arm-pose limits          # emit robot.yaml limits spanning the taught poses
+```
+
+Poses live in `~/.mote/arm_poses.yaml` (`MOTE_HOME` overrides `~/.mote`) —
+per-robot data, since a pose only means anything for one physical arm and its
+calibration. **Changing `home` invalidates stored poses** (they are recorded in
+radians about it), so re-teach after any re-home.
+
+The committed soft limits are **not guesses**: they are the envelope of poses a
+human physically posed the arm into and vetted, widened by a 0.10 rad margin
+(`arm-pose limits`). Every position inside the band lies between two vetted
+poses. Joints that barely moved between poses get a correspondingly tight band —
+that is the design, not a defect: nothing may travel further than a human has
+demonstrated is safe. Widen it by teaching another pose and re-running `limits`.
+
+`arm-pose go` additionally refuses any move whose largest single-joint travel
+exceeds `--max-travel` (0.35 rad by default), so a stale pose or a bad limit
+change cannot turn into a large unexpected swing.
 
 Because `arm_driver` and `arm_check` both open the serial port, run **one at a
 time**, never both.
@@ -118,7 +148,7 @@ See `BENCH.md` for the full runbook. In short:
 
 ## Verified on hardware
 
-Read-only and zero-motion checks run against the real arm (2026-07-25):
+Run against the real arm on 2026-07-25:
 
 | Check | Result |
 |-------|--------|
@@ -126,9 +156,27 @@ Read-only and zero-motion checks run against the real arm (2026-07-25):
 | `/joint_states` | 6 arm joints at a steady 20.0 Hz, no jitter while limp |
 | Startup torque | driver comes up limp; `TORQUE_ENABLE` reads 0 on every joint |
 | Port guard | `arm_check` refused the bus while the driver held it, naming its PID |
-| Soft-limit clamp | goal 5.0 rad clamped to the limit, logged, **0.00000 rad moved** |
+| Torque engage | seeding goals before enabling moved the arm **0.00000 rad** |
+| Jog motion | `elbow_flex` jogged −0.05 rad per step and returned; `/joint_states` tracked |
+| Soft-limit clamp | repeated `+` past the limit held at `+0.103` — no further motion |
 | Shutdown | SIGINT exits 0, no traceback, torque off, port released |
 
-The clamp was proven without moving the arm by pinning the soft limits to the
-arm's current pose, so the clamped goal *was* the present position. Jogging each
-joint through a real range is still a human bench step (`BENCH.md` steps 5–6).
+## Known limitation: the servos are underpowered at 5 V
+
+Measured on the elbow: commanding −0.200 rad drove the joint to −0.129 rad,
+where it **stalled** at a constant load of ~196 (≈20 %) with a steady 0.071 rad
+(≈4°) error, and snapped back to exactly its start count the moment torque was
+released. The command path is correct — the actuator simply cannot close the
+last few degrees against gravity.
+
+The supply measures 5.1–5.2 V; STS3215 servos are rated 7.4 V (some variants
+12 V), so they are producing well under their rated torque. Consequences:
+
+- commanded positions are approached, not reached — expect a few degrees of
+  steady-state error on gravity-loaded joints;
+- the arm will not hold a loaded pose once torque is released;
+- **this must be resolved before pick/place can be trusted**, since grasping
+  depends on reaching a commanded pose accurately.
+
+Nothing in this package works around it; raising the arm's supply voltage is a
+hardware change and is tracked separately.

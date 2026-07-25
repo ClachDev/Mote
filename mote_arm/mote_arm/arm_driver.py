@@ -82,10 +82,37 @@ class ArmDriver(Node):
                 self.get_logger().warn(str(exc))
         self._torque_on = enable
 
+    def _engage_torque(self) -> None:
+        """Enable torque without moving anything.
+
+        A servo drives to whatever its GOAL_POSITION register holds the instant
+        torque is enabled, and that register may be stale (a previous session, or
+        the factory default). So seed every joint's goal with its *present*
+        position first, then enable — order matters: enabling first is what makes
+        an arm snap to a pose nobody asked for.
+        """
+        for joint in self.cfg.joints:
+            counts = self.bus.read_position(joint.id)
+            if counts is None:
+                self.get_logger().warn(
+                    f"joint '{joint.name}': cannot read position, leaving it limp "
+                    "rather than enabling torque against an unknown goal"
+                )
+                continue
+            try:
+                self.bus.write_goal(
+                    joint.id, counts, self.cfg.moving_speed, self.cfg.moving_acc
+                )
+                self.bus.set_torque(joint.id, True)
+            except BusError as exc:
+                self.get_logger().warn(str(exc))
+        self._torque_on = True
+
     def _on_goal(self, msg: JointState) -> None:
         if not self._torque_on:
-            # An explicit command has arrived: hold current pose, then move.
-            self._set_all_torque(True)
+            # An explicit command has arrived: take hold of the current pose
+            # first, then move only the joints named in the goal.
+            self._engage_torque()
         for name, rad in zip(msg.name, msg.position):
             try:
                 joint = self.cfg.joint(name)
@@ -107,19 +134,7 @@ class ArmDriver(Node):
 
     def _on_set_torque(self, request, response):
         if request.data:
-            # Seed each goal with the present position so enabling torque holds
-            # the current pose rather than snapping to a stale target.
-            for joint in self.cfg.joints:
-                counts = self.bus.read_position(joint.id)
-                if counts is not None:
-                    try:
-                        self.bus.set_torque(joint.id, True)
-                        self.bus.write_goal(
-                            joint.id, counts, self.cfg.moving_speed, self.cfg.moving_acc
-                        )
-                    except BusError as exc:
-                        self.get_logger().warn(str(exc))
-            self._torque_on = True
+            self._engage_torque()
             response.message = "torque enabled (holding current pose)"
         else:
             self._set_all_torque(False)

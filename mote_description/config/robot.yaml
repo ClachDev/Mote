@@ -42,18 +42,29 @@ arm:
   baud_rate: 1000000
   moving_speed: 500      # jog move speed cap, servo steps/s (gentle)
   moving_acc: 20         # 0-254, units of 100 steps/s^2
-  # min/max are soft limits in radians about each joint's zero. home is the raw
-  # encoder count (0-4095) at that zero. The home values below are the arm's
-  # as-found resting pose read off the robot, so "0 rad" currently means "the
-  # pose it was parked in" — a safe reference that keeps jog moves small, but
-  # not yet a true mechanical zero. Retach at the bench (BENCH.md step 3).
+  # min/max are soft limits in radians about each joint's zero; home is the raw
+  # encoder count (0-4095) at that zero (the arm's as-found parked pose, which
+  # measured within 0.003 rad of the taught "home" pose on every joint but pan).
+  #
+  # These limits are NOT guesses — they are the envelope of poses a human
+  # physically posed the arm into and vetted ("home" and "reachy", taught
+  # 2026-07-25), widened by a 0.10 rad margin, as emitted by
+  # `pixi run arm-pose limits`. Every position inside the band therefore lies
+  # between two vetted poses. Joints that barely moved between the two poses get
+  # a correspondingly tight band — that is the point, not a bug: nothing may
+  # travel further than a human has demonstrated is safe.
+  #
+  # To widen the envelope, pose the arm somewhere new, `arm-pose save <name>`,
+  # then re-run `arm-pose limits` and paste the result here. Changing `home`
+  # invalidates stored poses (they are recorded in radians about it), so re-teach
+  # poses after any re-home.
   joints:
-    - {name: shoulder_pan,  id: 1, min: -1.90, max: 1.90, home: 3013, invert: false}
-    - {name: shoulder_lift, id: 2, min: -1.75, max: 1.75, home: 1483, invert: false}
-    - {name: elbow_flex,    id: 3, min: -1.60, max: 1.60, home: 2931, invert: false}
-    - {name: wrist_flex,    id: 4, min: -1.75, max: 1.75, home: 2767, invert: false}
-    - {name: wrist_roll,    id: 5, min: -2.70, max: 2.70, home:  731, invert: false}
-    - {name: gripper,       id: 6, min:  0.00, max: 1.50, home: 2056, invert: false}
+    - {name: shoulder_pan,  id: 1, min:  0.010, max: 0.229, home: 3013, invert: false}
+    - {name: shoulder_lift, id: 2, min: -0.102, max: 0.100, home: 1483, invert: false}
+    - {name: elbow_flex,    id: 3, min: -3.291, max: 0.103, home: 2931, invert: false}
+    - {name: wrist_flex,    id: 4, min: -3.226, max: 0.097, home: 2767, invert: false}
+    - {name: wrist_roll,    id: 5, min: -0.098, max: 0.102, home:  731, invert: false}
+    - {name: gripper,       id: 6, min: -0.102, max: 0.098, home: 2056, invert: false}
 
 # Sensors
 lidar:
