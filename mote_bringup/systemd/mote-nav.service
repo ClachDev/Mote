@@ -2,18 +2,24 @@
 Description=Mote Navigation
 After=mote-slam.service
 Requires=mote-slam.service
+BindsTo=mote-slam.service
+PartOf=mote-slam.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=@USER@
-WorkingDirectory=@HOME@/Mote
-ExecStart=@HOME@/.pixi/bin/pixi run nav
-Restart=on-failure
-RestartSec=5
+WorkingDirectory=@REPO@
 Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run nav
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+
 # Pin DDS to the robot's one real interface and drop non-discovery multicast
 # (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
-Environment=CYCLONEDDS_URI=file://@HOME@/Mote/mote_bringup/config/cyclonedds.xml
+Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
 
 [Install]

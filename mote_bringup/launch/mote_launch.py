@@ -4,18 +4,15 @@ import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (
-    DeclareLaunchArgument,
-    IncludeLaunchDescription,
-    RegisterEventHandler,
-)
-from launch.event_handlers import OnProcessStart
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
 from mote_bringup import mote_home, param_overrides
+from mote_bringup.launch_utils import controller_spawn_handler
 
 
 def generate_launch_description():
@@ -55,28 +52,25 @@ def generate_launch_description():
     )
     wheel_params_file.close()
 
+    # respawn=True gives per-node recovery: if a driver process crashes, the
+    # launch system relaunches it within respawn_delay. This is the inner layer;
+    # systemd restarts the whole service only if `pixi run launch` itself dies.
+    # The controllers are re-spawned on each controller_manager start by
+    # controller_spawn_handler (see launch_utils for why that indirection).
+    respawn = {"respawn": True, "respawn_delay": 2.0}
+
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
         parameters=[robot_description],
+        **respawn,
     )
 
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[robot_description, controller_config, wheel_params_file.name],
-    )
-
-    joint_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["joint_state_broadcaster"],
-    )
-
-    diff_drive_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["diff_drive_controller"],
+        **respawn,
     )
 
     lidar = cfg["lidar"]
@@ -94,6 +88,7 @@ def generate_launch_description():
                 "scan_mode": "Standard",
             }
         ],
+        **respawn,
     )
 
     laser_filter = Node(
@@ -104,6 +99,7 @@ def generate_launch_description():
             ("scan", "/scan"),
             ("scan_filtered", "/scan_filtered"),
         ],
+        **respawn,
     )
 
     cam = cfg["camera"]
@@ -128,11 +124,26 @@ def generate_launch_description():
         executable="v4l2_camera_node",
         name="camera",
         parameters=[camera_params],
+        **respawn,
     )
 
     system_monitor = Node(
         package="mote_bringup",
         executable="system_monitor",
+        **respawn,
+    )
+
+    # The health monitor runs with the base by default, so *any* way of starting
+    # the robot — `pixi run launch`/`robot`/`mapping` on a desk as much as the
+    # systemd path — publishes /health and /diagnostics_agg. mote-bringup.service
+    # passes health:=false because mote-health.service runs it separately there,
+    # with a watchdog and its own lifecycle (it must outlive a bringup restart to
+    # report one); two copies would both publish /health.
+    health_monitor = Node(
+        package="mote_bringup",
+        executable="health_monitor",
+        condition=IfCondition(LaunchConfiguration("health")),
+        **respawn,
     )
 
     localization = IncludeLaunchDescription(
@@ -145,19 +156,21 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument(
+                "health",
+                default_value="true",
+                description="Run the health monitor alongside the base. Set "
+                "false when mote-health.service already runs it.",
+            ),
             SetParameter(name="use_sim_time", value=use_sim_time),
             robot_state_publisher,
             controller_manager,
-            RegisterEventHandler(
-                event_handler=OnProcessStart(
-                    target_action=controller_manager,
-                    on_start=[joint_state_broadcaster_spawner, diff_drive_spawner],
-                )
-            ),
+            controller_spawn_handler(controller_manager),
             rplidar,
             laser_filter,
             camera,
             system_monitor,
+            health_monitor,
             localization,
         ]
     )

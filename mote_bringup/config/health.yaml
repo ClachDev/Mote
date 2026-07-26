@@ -1,0 +1,73 @@
+# Health monitor liveness expectations.
+#
+# The health_monitor node checks each entry for freshness (a message seen within
+# `timeout` seconds) and, when `min_rate` is set, for sustained rate over the
+# reporting window. `severity` says how much a missing/stale subsystem degrades
+# the robot-level summary:
+#   critical  -> FAULT     (the robot cannot safely drive without it)
+#   degraded  -> DEGRADED  (capability lost, driving still safe)
+#   info      -> reported, but never degrades the summary (legitimately absent
+#                in a healthy state)
+# A per-robot $MOTE_HOME/health.yaml overrides this packaged default (same pattern
+# as perception.yaml).
+
+# Aggregation + publish period, seconds.
+period: 1.0
+
+topics:
+  - name: scan
+    topic: /scan
+    type: sensor_msgs/msg/LaserScan
+    min_rate: 5.0
+    timeout: 2.0
+    severity: critical
+  - name: scan_filtered
+    topic: /scan_filtered
+    type: sensor_msgs/msg/LaserScan
+    min_rate: 5.0
+    timeout: 2.0
+    severity: critical
+  # controller_manager runs at 50 Hz (controllers.yaml), so the broadcaster
+  # publishes far above this floor. 5 Hz is deliberately loose: it detects a
+  # control loop that is overrunning, not an off-spec rate. An unresponsive
+  # servo bus blocks each read() ~200 ms per servo, collapsing the loop to
+  # ~1.6 Hz.
+  - name: joint_states
+    topic: /joint_states
+    type: sensor_msgs/msg/JointState
+    min_rate: 5.0
+    timeout: 2.0
+    severity: critical
+  # Camera feeds perception, not the safety-critical drive loop, so a camera
+  # dropout is DEGRADED. The compressed stream is subscribed to avoid pulling
+  # the full raw image just to measure liveness.
+  - name: camera
+    topic: /image_raw/compressed
+    type: sensor_msgs/msg/CompressedImage
+    min_rate: 5.0
+    timeout: 5.0
+    severity: degraded
+
+# TF edges to watch. odom->base_footprint is the live odometry corrector
+# (kinematic_icp) and is required to drive.
+tf:
+  - name: odometry
+    parent: odom
+    child: base_footprint
+    timeout: 2.0
+    severity: critical
+  # map->odom exists only once a mission localises (slam_toolbox when mapping,
+  # AMCL when navigating). The hardware base alone legitimately has no map
+  # frame, so its absence is reported but never degrades the robot: mission
+  # localisation health belongs to the nav2 lifecycle, not to this monitor.
+  - name: localization
+    parent: map
+    child: odom
+    timeout: 5.0
+    severity: info
+
+# Fold the host status published by system_monitor on /diagnostics (CPU, temp,
+# under-voltage) into the robot-level summary so a brown-out shows as DEGRADED.
+# Matched by exact status name ("system"): /diagnostics is shared, and
+# controller_manager's own statuses must not be mistaken for the host's.
+subscribe_diagnostics: true

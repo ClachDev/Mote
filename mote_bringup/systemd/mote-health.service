@@ -1,0 +1,42 @@
+[Unit]
+Description=Mote Health Monitor
+# Ordering only — deliberately no Wants= and no PartOf=:
+#   * Wants= would make this unit *pull* bringup. A restart loop here then fires
+#     a start request for bringup on every cycle, and a requested start bypasses
+#     bringup's own RestartSec backoff ("Scheduled restart job immediately on
+#     client request"), so bringup restarts at this unit's rate rather than its
+#     own backoff.
+#   * PartOf= would restart the monitor whenever bringup restarts, losing
+#     observation exactly when something is going wrong.
+# The monitor's whole job is to keep watching and report a broken robot, so it
+# runs independently and is started at boot by its own WantedBy below.
+After=mote-bringup.service
+StartLimitIntervalSec=0
+
+[Service]
+# Type=notify + WatchdogSec is the watchdog integration point. The health
+# monitor sends READY=1 once its executor is up and pets the watchdog on every
+# publish; if the monitor itself hangs and stops publishing, systemd kills and
+# restarts it (a safe, isolated restart — it does not touch the drive stack).
+# The monitor is deliberately the feeder rather than the mission services: it is
+# the process whose whole job is to stay alive and observe, so watching *it* is
+# the low-risk place to bind a watchdog.
+Type=notify
+NotifyAccess=all
+WatchdogSec=15
+User=@USER@
+WorkingDirectory=@REPO@
+Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run health
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+
+# Pin DDS to the robot's one real interface and drop non-discovery multicast
+# (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
+Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
+Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
+
+[Install]
+WantedBy=multi-user.target

@@ -57,6 +57,9 @@ teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p sta
 perception = "ros2 launch mote_perception perception_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
+health = "ros2 run mote_bringup health_monitor"
+self-check = "ros2 run mote_bringup self_check"
+chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
 # SO-101 arm driver (joint states + safe jog target control); run alongside a
 # mission like perception. Jog it interactively with `pixi run arm-jog`.
 arm = "ros2 launch mote_arm arm_launch.py"

@@ -1,19 +1,30 @@
 [Unit]
 Description=Mote Data Recording
 After=mote-bringup.service
-Wants=mote-bringup.service
+# PartOf so a bringup restart starts a fresh recording session, and so a
+# recorder crash can never take the drive stack down with it.
+#
+# Deliberately NOT Wants=: that would make this unit pull bringup, and a restart
+# loop here then fires a start request for bringup every cycle, which bypasses
+# bringup's own RestartSec backoff (see mote-health.service). Boot start comes
+# from WantedBy below.
+PartOf=mote-bringup.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=@USER@
-WorkingDirectory=@HOME@/Mote
-ExecStart=@HOME@/.pixi/bin/pixi run record
-Restart=on-failure
-RestartSec=5
+WorkingDirectory=@REPO@
 Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run record
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+
 # Pin DDS to the robot's one real interface and drop non-discovery multicast
 # (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
-Environment=CYCLONEDDS_URI=file://@HOME@/Mote/mote_bringup/config/cyclonedds.xml
+Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
 
 [Install]

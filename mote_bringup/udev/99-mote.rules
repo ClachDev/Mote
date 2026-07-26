@@ -8,11 +8,15 @@
 # disambiguate. Find a device's serial with:
 #   udevadm info -a -n /dev/ttyUSB0 | grep '{serial}'
 
+# TAG+="systemd" makes systemd synthesise dev-mote_servos.device /
+# dev-mote_lidar.device units so mote-bringup.service can order after the
+# hardware is actually present (see the unit's After=/Wants=).
+
 # Waveshare Serial Bus Servo Driver (CH343)
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", SYMLINK+="mote_servos", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", SYMLINK+="mote_servos", MODE="0666", TAG+="systemd"
 
 # SLAMTEC RPLIDAR C1 (Silicon Labs CP2102N)
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="mote_lidar", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="mote_lidar", MODE="0666", TAG+="systemd"
 
 # The SO-101 arm shares the servo bus above (arm IDs 1-6, wheels 7/9), so it
 # needs no rule of its own — robot.yaml points arm.port at /dev/mote_servos.

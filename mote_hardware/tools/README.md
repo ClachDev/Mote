@@ -30,6 +30,19 @@ ros2 run mote_hardware servo_debug [port] [baud]
 Commands: `mv <id> <speed>`, `stop <id>`, `stopall`, `r <id>`, `m <id> [hz]`,
 `ping <lo> <hi>`. Type `help` for the full list.
 
+## servo_ping
+
+Non-interactive counterpart of `servo_debug`'s `ping` — pings a fixed set of
+servo IDs and exits `0` if every one responded, `1` otherwise. Used by the
+startup self-check (`mote_bringup` `self_check.py`) to gate bringup on the drive
+servos actually answering. Run the bus free (before bringup opens it).
+
+```
+ros2 run mote_hardware servo_ping [port] [baud] [id ...]
+```
+
+Defaults: `/dev/mote_servos 1000000`, IDs `7 9` (the drive IDs in `robot.yaml`).
+
 ## velocity_cal
 
 Measures `velocity_scale` (the rad/s → raw servo units conversion factor) by
