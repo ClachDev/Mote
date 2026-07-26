@@ -33,8 +33,20 @@ pixi run chaos          # on the robot
 Logs go to `/tmp/mote_chaos_log.txt` (override with `CHAOS_LOG`).
 
 It aborts safely (exit 2, nothing killed) if the stack is not running, so it is
-harmless to invoke on a workstation. Nodes are matched by executable name and
-the script excludes its own PID, so `pkill`-style self-matching cannot happen.
+harmless to invoke on a workstation. Nodes are matched by the basename of
+`/proc/<pid>/exe` and the script excludes its own PID, so `pkill`-style
+self-matching cannot happen.
+
+Note that matching this way only finds compiled nodes: a Python node's `exe` is
+the interpreter (`python3.12`), not the node. All three targets here are C++
+binaries. If you add a Python target, match on the cmdline instead — and if a
+target is never found, the precondition check aborts the run rather than
+reporting a false recovery failure.
+
+**Tearing down afterwards**: `pixi run robot` also starts the rosbag recorders,
+and killing a launch's nodes does not stop them. Sweep for leftover
+`ros2 bag record` processes (and any `~/.mote/bags/<stream>/<timestamp>` they
+left behind) after a chaos session, or they keep recording.
 
 **Benched on auldbot** (3/3 recovered, see `chaos_log.txt`). It is not part of CI
 because it needs the live hardware stack.
