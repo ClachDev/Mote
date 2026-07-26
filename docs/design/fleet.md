@@ -923,6 +923,17 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   *Accept:* the "minimum lovable" operator view works for one robot, fully off-LAN;
   the **dispatch API is documented as a versioned spec** and the browser holds no
   broker publish rights. *Depends on:* M1. **← end of v0.**
+  **Built** as `mote_fleet/server/ui/` + the dispatch routes on the existing
+  fleet server; the HTTP contract shipped as
+  [`fleet-api.md`](../fleet/fleet-api.md) alongside M1's MQTT one, and the
+  measurements as [`m3-verification.md`](../fleet/m3-verification.md). Three
+  notes for later milestones: M1's **websockets question is settled in favour of
+  a container mosquitto** (`pixi run fleet-broker-ws`), which is the fleet
+  server's own deployment shape and therefore Ms's problem too; the dashboard's
+  basemaps are read from **site bundles on the fleet box** through routes M4
+  keeps while replacing where the bytes come from; and the **operator token is
+  one credential on one path**, not the auth story M7 owes — the read routes and
+  the broker are still open on the tailnet.
 
 ### v1 — second robot enrolled, plus shared infrastructure
 

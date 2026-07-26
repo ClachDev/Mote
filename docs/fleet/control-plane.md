@@ -288,13 +288,15 @@ not mistaken for a finished story:
 - **The broker is anonymous.** Any client that can reach it may publish or
   subscribe anywhere in the tree. WireGuard is the authentication boundary;
   nothing here is reachable from the public internet.
-- **The fleet API has no auth** on its read routes. The enrollment token is the
-  only credential in the system, and it is single-use by default.
-- **`fleetctl dispatch` publishes straight to the broker.** Right for a CLI in
-  M1, wrong for M3: once dispatch comes from a browser it must be mediated by
-  the fleet API so it can be authorized and audited, and the browser's broker
-  credential becomes subscribe-only (`fleet.md` Q5/Q7). **The topic tree does
-  not change when that happens** — only who may publish to it.
+- **The fleet API has no auth** on its read routes. Enrollment tokens and, since
+  M3, operator tokens are the only credentials in the system.
+- **Dispatch is mediated, as of M3.** M1's `fleetctl` published straight to the
+  broker; now it and the dashboard both POST to `/v1/robots/<id>/dispatch`,
+  which authorizes an operator token and writes an audit row before publishing
+  ([`fleet-api.md`](fleet-api.md)). As this section promised, **the topic tree
+  did not change** — only who publishes to it. The browser holds no broker
+  credential that can publish; making that structural on the broker side, with a
+  subscribe-only credential, is still M7's.
 
 M7 adds per-robot broker credentials (username = `robot_id`, publish confined to
 its own prefix), operator auth on the API, and the Tailscale ACLs that stop

@@ -1,13 +1,16 @@
-# Fleet — overlay, identity, and the control plane
+# Fleet — overlay, identity, control plane, and the operator view
 
 The operator runbook for the fleet layer: a network where the LAN/internet
-distinction has disappeared (**M0**), a stable name for each robot (**M0**), and
-a server that hands out those names and carries tasks and telemetry to and from
-every robot (**M1**). The architecture and the milestones after these are in
+distinction has disappeared (**M0**), a stable name for each robot (**M0**), a
+server that hands out those names and carries tasks and telemetry to and from
+every robot (**M1**), and a browser you watch and drive the fleet from
+(**M3**). The architecture and the milestones after these are in
 [`docs/design/fleet.md`](../design/fleet.md); the measurements are in
-[`m0-verification.md`](m0-verification.md) and
-[`m1-verification.md`](m1-verification.md); the wire between robot and server is
-specified in [`control-plane.md`](control-plane.md).
+[`m0-verification.md`](m0-verification.md),
+[`m1-verification.md`](m1-verification.md) and
+[`m3-verification.md`](m3-verification.md); the two wires are specified in
+[`control-plane.md`](control-plane.md) (MQTT) and [`fleet-api.md`](fleet-api.md)
+(HTTP).
 
 | | |
 |---|---|
@@ -15,16 +18,17 @@ specified in [`control-plane.md`](control-plane.md).
 | `pixi run tailnet` | join this machine to the Tailscale overlay |
 | `pixi run provision` | render cloud-init user-data for a clean Pi |
 | `pixi run dds-check` | DDS participant-slot headroom on this host |
-| `pixi run fleet-broker` | the MQTT control plane (fleet box) |
-| `pixi run fleet-server` | enrollment + registry API (fleet box) |
-| `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, watch |
+| `pixi run fleet-broker-ws` | the MQTT control plane, with WebSockets (fleet box) |
+| `pixi run fleet-broker` | the same, from conda — no WebSockets, no dashboard |
+| `pixi run fleet-server` | fleet API + operator dashboard (fleet box) |
+| `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, audit, watch |
 | `pixi run enroll` | ask the server for this robot's identity |
 | `pixi run agent` | the robot's bridge to the fleet |
 
 **First time through**, in order: §1a (create the tailnet — browser, once, for
 the whole fleet) → §1b (join your workstation and the fleet box) → §6 (stand up
-the fleet server) → §7 (enroll a robot and start its agent) → §5 (every robot
-after this one, unattended from a card).
+the fleet server) → §7 (enroll a robot and start its agent) → §9 (open the
+dashboard) → §5 (every robot after this one, unattended from a card).
 
 §2 (typing an id by hand) is the M0 path, kept because it is what a robot with
 no fleet server does; §7 supersedes it and adopts an already-set id rather than
@@ -380,24 +384,36 @@ are ROS-free, so the box needs no robot software; the `fleet` pixi environment
 carries nothing but a broker and Python.
 
 ```bash
-pixi run -e fleet fleet-broker    # MQTT control plane, port 1883
-pixi run fleet-server -- --broker-host fleet-box   # enrollment + registry, port 8080
+pixi run -e fleet fleet-broker-ws                     # MQTT: 1883, WebSockets: 9001
+pixi run -e fleet fleet-server -- --broker-host fleet-box   # API + UI, port 8080
 ```
 
+**Why the broker runs in a container.** The dashboard (§9) subscribes to the
+control plane straight from the browser, and a browser cannot speak raw MQTT —
+it needs the broker's WebSocket listener. conda-forge's mosquitto is built
+without one, so `fleet-broker-ws` runs `eclipse-mosquitto` under Docker with the
+same `mosquitto.conf` this repo ships. `pixi run -e fleet fleet-broker` is still
+there for a box with no Docker: robots and `fleetctl` work exactly as before,
+and it tells you on startup that the dashboard will not. The reasoning and the
+measurement are in [`m3-verification.md`](m3-verification.md) §1.
+
 State lives in **`$MOTE_FLEET_HOME`** (default `~/.mote-fleet`) — the registry
-database and the broker's retained messages. That is the server-side analogue of
-the robot's `MOTE_HOME`: redeploying the server software replaces code around
-it and never the fleet's memory of who is in it.
+database, the broker's retained messages, and the site bundles the dashboard
+draws robots on. That is the server-side analogue of the robot's `MOTE_HOME`:
+redeploying the server software replaces code around it and never the fleet's
+memory of who is in it.
 
 `--broker-host` is the address **robots** should dial, so on a tailnet it is the
 fleet box's MagicDNS name (`fleet-box`), not `localhost` — it is handed out
 verbatim in every enrollment answer. It defaults to the box's hostname.
 
-**Security, plainly:** the broker is anonymous and the API is unauthenticated.
-That is proportionate only because the tailnet is the boundary — WireGuard
-authenticates, and nothing here is exposed to the internet. Do not put either on
-a network the robots are not already trusted on. Per-robot broker credentials
-and operator auth are M7; the shape of what changes is in
+**Security, plainly:** the broker is anonymous and the API's *read* routes are
+unauthenticated. Dispatch is not — it needs an operator token (§8) — but that is
+one credential on one path, not an auth story. It is proportionate only because
+the tailnet is the boundary: WireGuard authenticates, and nothing here is
+exposed to the internet. Do not put either on a network the robots are not
+already trusted on. Per-robot broker credentials and operator auth everywhere
+are M7; the shape of what changes is in
 [`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
 
 To run it unattended, wrap the two commands in systemd units on that box. They
@@ -460,11 +476,26 @@ it logs and retries — enrolling later brings it up without a restart.
 ## 8. Operating the fleet
 
 ```bash
+# [fleet box] mint yourself an operator credential, once
+pixi run -e fleet fleetctl -- operator new --name michael
+export MOTE_FLEET_TOKEN=<that token>
+
 pixi run fleetctl -- robots                             # the registry roster
 pixi run fleetctl -- watch                              # live: presence, health, pose, status
 pixi run fleetctl -- dispatch mote-01 fetch lab kitchen # send a task, follow it
 pixi run fleetctl -- dispatch mote-01 goto kitchen
+pixi run fleetctl -- audit                              # who dispatched what
 ```
+
+**Dispatch goes through the fleet API, not to the broker.** Since M3 the API is
+the single write path: it authorizes the operator token, writes an audit row,
+and only then publishes to `task/command`. The topic tree did not change — only
+who may publish to it — so `watch`, and the status half of `dispatch`, still
+read straight from the broker with nothing in the middle. A token is minted
+against the registry file while you are sitting on the fleet box, never over the
+network; the **name on it is what the audit log records**, which is why an
+unnamed one is refused. `fleetctl operator list|revoke` are the other two verbs,
+and the route contract is [`fleet-api.md`](fleet-api.md).
 
 `dispatch` exits 0 only if the task **succeeded**, so it composes into scripts.
 The command grammar is the task layer's own, unchanged (`fetch <target>
@@ -497,3 +528,52 @@ state of the fleet the instant it connects, with no polling and nothing replayed
 on request. A robot that loses power is marked offline by the broker itself,
 within the keepalive, via its Last Will — not after somebody notices the
 heartbeats stopped.
+
+---
+
+## 9. The dashboard
+
+`fleet-server` serves the operator view at `http://<fleet-box>:8080/`. It is the
+fleet-wide picture — who is out there, where they are, what they are doing, and
+sending one of them somewhere — and nothing else: the deep single-robot view
+(3D, sensors, teleop) is Foxglove's job (M2), which each robot row deep-links to.
+
+![The fleet dashboard](../images/fleet-ui.webp)
+
+**Nothing on the page is polled.** The browser subscribes to
+`mote/v1/+/{presence,health,pose,task/status}` over MQTT-over-WebSockets, and
+because every one of those is retained, the whole fleet's current state is on
+screen within a second of the page loading — no "wait for the next heartbeat",
+no request/response loop, and no service between the broker and the browser.
+That is the read path in [`fleet.md`](../design/fleet.md) Q5, and it is why the
+broker needs the WebSocket listener from §6.
+
+**Paste an operator token to dispatch.** Without one the page is read-only,
+which is a perfectly good wall display. The token is kept in the browser's local
+storage and sent to the fleet API as a bearer credential; the page holds **no
+broker credential that can publish**, and its MQTT client implements no PUBLISH
+packet at all.
+
+**The map.** A floor's PNG basemap with live robot markers on it: pan by
+dragging, zoom with the wheel, click a robot to select it, `follow` to keep the
+selected one centred, `fit` to see the whole floor. The scale bar is metres.
+Only robots on the *same* site and floor as the selected one are drawn — a pose
+from another floor is a different map frame, and drawing it here would place a
+robot somewhere it is not.
+
+The server reads basemaps from `--maps-dir` (default `$MOTE_FLEET_HOME/sites`),
+which is the **site bundle layout `sites.py` already writes**. Until M4 makes
+the fleet server the canonical registry, seed it from a robot:
+
+```bash
+rsync -aL --delete michael@mote-01:~/.mote/sites/home ~/.mote-fleet/sites/
+```
+
+(`-L` because the published revision is reached through a symlink.) A robot with
+no basemap on the server still appears in the roster with its health and its
+task; the map pane says so rather than drawing an empty grid.
+
+**What it does not do**, deliberately: no marker clustering, no basemap tiling,
+no 3D, no camera, no teleop. The first two are what `fleet.md` Q5 describes for
+large sites and would be unmeasured complexity at this fleet size; the last
+three are Foxglove's half of the split.
