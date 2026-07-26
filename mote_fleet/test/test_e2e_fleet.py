@@ -453,7 +453,7 @@ def test_dispatch_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api
     robot_id = identity.robot_id()
     operator_token = fleet_api.registry.new_operator(name="michael")
 
-    rclpy.init()
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
     zones_file = tmp_path / "zones.yaml"
     zones_file.write_text(ZONES)
 
