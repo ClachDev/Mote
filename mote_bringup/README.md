@@ -105,6 +105,32 @@ backoff, so replugging the lidar recovers on its own. The verdict is written to
 Runtime data-flow liveness (is `/scan` *publishing*?) is deliberately **not**
 checked here — the drivers are not up yet. That is the health monitor's job.
 
+## Host monitor — `system_monitor.py`
+
+Started by `mote_launch.py`, so every mission bag carries the compute context:
+CPU busy/load, memory, SoC temperature, fan RPM, and the Pi firmware's
+`get_throttled` bitfield, published on `/diagnostics` as the `system` status.
+
+**Throttle flags come from `vcgencmd get_throttled`, not sysfs.** The Pi 4
+device-tree node (`/sys/devices/platform/soc/soc:firmware/get_throttled`) does
+not exist on a Pi 5, so the sysfs read this monitor used to do was dead code —
+the robot spent a whole nav mission at 85 °C without the ERROR ever firing. The
+binary needs the invoking user in the `video` group (the `mote-*` service user
+is). Off a Pi, `shutil.which` finds nothing and throttle reporting is skipped.
+
+Four conditions are reported, each as a `_now` and a latched `_ever` key
+(firmware bits 0–3 and their has-occurred latches at 16–19):
+`undervoltage`, `freq_capped`, `throttled`, `soft_temp_limit`. Any `_now` bit
+raises **ERROR** with a `power: …` message naming the conditions; the `_ever`
+keys and the raw `throttled_flags` hex are informational. `soft_temp_limit` is
+the sustained-85 °C case specifically — hard throttling (bit 2) is not always
+asserted at the instant you sample, so keying only off it misses the event.
+
+`fan_rpm` is the Active Cooler's tachometer, found by scanning
+`/sys/class/hwmon/*/name` for `pwmfan` (hwmon indices are not stable across
+boots). With no cooler fitted the key is simply absent. Measured on `auldbot`:
+idle 48 °C / 0 RPM, 4-core load 61 °C / ~4900 RPM with no throttle bits set.
+
 ## Health monitor — `health_monitor.py`
 
 Runs as `mote-health.service` (or `pixi run health`). Watches subsystem liveness

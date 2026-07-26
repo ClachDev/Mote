@@ -64,16 +64,26 @@ Suggested order:
 3. **Caster.** Fit the front `Caster` to the underside of the base for the third
    contact point (provisional — see Printing notes).
 4. **Sensors.** Mount the camera in the `Camera Mount`.
-5. **Top plate.** Attach the `Pi Bottom` holder and the `Camera/Camera Mount` to
+5. **Pi cooler.** Fit the Active Cooler to the Pi *before* the Pi goes into the
+   `Pi Bottom` holder: peel the thermal pad backing, press the spring push-pins
+   through the Pi's two mounting holes until they click, and plug the fan cable
+   into the 4-pin `FAN` header next to the USB-C socket. The pins are awkward to
+   reach once the Pi is in its holder.
+6. **Top plate.** Attach the `Pi Bottom` holder and the `Camera/Camera Mount` to
    the `Chassis Top`.
-6. **Close it up.** Fix the `Chassis Top` onto the standoffs.
-7. **Power bank.** Seat the power bank in the `Battery Mount` between the
+7. **Close it up.** Fix the `Chassis Top` onto the standoffs.
+8. **Power bank.** Seat the power bank in the `Battery Mount` between the
    plates.
-8. **Wire it.** Follow [WIRING.md](WIRING.md): bank Out1 → servo board (barrel),
+9. **Wire it.** Follow [WIRING.md](WIRING.md): bank Out1 → servo board (barrel),
    bank Out2 → Pi, servo board USB → Pi, lidar/camera USB → Pi. Route cables
    through the standoff gap and keep the lidar's 360° view clear.
-9. **(Optional) SO-101 arm.** The `SO Base ORP` adapter mounts the
-   [SO-101 follower arm](https://github.com/TheRobotStudio/SO-ARM100) on the ORP
-   grid.
+10. **(Optional) SO-101 arm.** The `SO Base ORP` adapter mounts the
+    [SO-101 follower arm](https://github.com/TheRobotStudio/SO-ARM100) on the ORP
+    grid.
+
+> ⚠️ **Cooler clearance is unverified.** The `Pi Top` part was designed around a
+> bare Pi; the Active Cooler's heatsink and fan add height that may foul it.
+> Check the fit physically before printing a batch — if it clashes, the `Pi Top`
+> needs a taller or vented profile (CAD is maintained by hand in Fusion 360).
 
 Then bring the software up per the [main README](../README.md#5-launch).
