@@ -49,12 +49,6 @@ tasks = "ros2 launch mote_tasks tasks_launch.py"
 #### The below tasks are tied to specific features and environments however they
 #### can be run like any other task.
 
-# Development is the one workflow that wants a graph spanning machines (RViz on
-# the LAN, camera calibration against the robot's camera), so the dev environment
-# opts back out of the robot's localhost-pinned discovery.
-[feature.dev.activation.env]
-ROS_AUTOMATIC_DISCOVERY_RANGE = "SUBNET"
-
 [feature.dev.tasks]
 rviz = "ros2 launch mote_bringup rviz_launch.py"
 # Same RViz, but joined to the sim's host-local DDS graph (the sim pins
@@ -246,14 +240,11 @@ pre-commit = ">=4,<5"
 
 [activation]
 scripts = ["install/setup.sh"]
-# ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST keeps DDS on the robot: nothing off-box
-# joins its graph (the fleet layer bridges over MQTT/Foxglove instead), so two
-# robots sharing a LAN can't see each other's nodes whatever their domain id, and
-# discovery floods stay on-box. rmw_cyclonedds implements it by claiming a
-# participant index per process, capped at MaxAutoParticipantIndex=32 — check the
-# headroom with `pixi run dds-check`. The `dev` feature flips it back to SUBNET
-# so a workstation can still join the robot's graph over the LAN.
-env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp", ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST" }
+# Discovery range is deliberately left at the ROS default here: the robot must
+# stay discoverable by an operator's RViz until Foxglove gives it an off-box path
+# (fleet M2). Sims/benchmarks pin themselves to LOCALHOST above; the robot's DDS
+# is scoped instead by config/cyclonedds.xml under systemd.
+env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
 
 [environments]
 dev = { features = ["dev"], solve-group = "default" }

@@ -48,17 +48,11 @@ and the board is centred with a white border.
 `cameracalibrator` is an interactive GUI tool, so run it on the **workstation**
 (it is a `dev` dependency, not installed on the robot) against the Pi's live
 camera over the ROS 2 network. Both machines must be on the same LAN and
-`ROS_DOMAIN_ID`, and the robot has to let discovery off-box — it does not by
-default (`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`, see
-[`docs/fleet/README.md`](../../docs/fleet/README.md)). This is the one workflow
-that needs it, so open it up for the run rather than changing the robot default.
-The workstation's `dev` environment already uses `SUBNET`, so the calibrator side
-needs no change.
+`ROS_DOMAIN_ID`.
 
 1. Print and mount the target above.
-2. On the **Pi**, start the camera so it publishes `/image_raw`
-   (`ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET pixi run launch`, or just the
-   `v4l2_camera` node).
+2. On the **Pi**, start the camera so it publishes `/image_raw` (`pixi run
+   launch`, or just the `v4l2_camera` node).
 3. On the **workstation** run the calibrator:
 
    ```bash

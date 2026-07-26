@@ -129,33 +129,31 @@ site selection, calibration, maps or bags.**
 
 ---
 
-## 4. DDS stays on the robot
+## 4. DDS: measured now, pinned to the robot at M2
 
-The default environment pins ROS 2 discovery to the local host:
+The end state is that DDS never leaves a robot
+(`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`): nothing off-box joins its ROS graph
+because the fleet layer bridges over MQTT and Foxglove instead, so two robots
+parked on the same LAN cannot see each other's nodes whatever their
+`ROS_DOMAIN_ID` and there is no domain-id allocation problem at any fleet size.
 
-```toml
-[activation]
-env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp", ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST" }
-```
+**M0 does not flip that switch on the robot, deliberately.** Nothing on-robot
+replaces an operator's RViz yet, so pinning the robot today would break the one
+remote workflow that exists. The pin lands with **M2**, when `foxglove_bridge`
+gives the off-box path — this is what the milestone in
+[`fleet.md`](../design/fleet.md) now says. Until then the scoping in place is the
+one from PR #54:
 
-Nothing off-box joins a robot's ROS graph — the fleet layer bridges over MQTT and
-Foxglove instead — so two robots parked on the same LAN cannot see each other's
-nodes whatever their `ROS_DOMAIN_ID`, discovery floods stay on-box, and there is
-no domain-id allocation problem to solve at any fleet size.
+- sims and benchmarks pin *themselves* (`[feature.sim.activation.env]`), so a sim
+  is invisible to the LAN and to other machines;
+- the robot stays LAN-discoverable but is narrowed by
+  [`mote_bringup/config/cyclonedds.xml`](../../mote_bringup/config/cyclonedds.xml)
+  under systemd — one interface, SPDP-only multicast.
 
-**Developing against a robot still works**, two ways:
+What M0 contributes here is the **measurement**, because the pin has a ceiling
+worth knowing before we walk into it.
 
-- The `dev` environment sets `ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET`, so
-  `pixi run rviz` on the workstation reaches a LAN robot as before.
-- On the robot, opt out per-run when you need it (camera calibration is the one
-  workflow that does):
-  `ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET pixi run launch`.
-
-A localhost node and a subnet node **on the same machine still find each other**
-(measured — see [m0-verification.md](m0-verification.md)), so a `dev` RViz and a
-localhost-pinned sim on one workstation are unaffected.
-
-### The participant cap is real — check it before adding processes
+### The participant cap — check it before adding processes
 
 Under `LOCALHOST`, rmw_cyclonedds hands CycloneDDS
 `<ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>32</MaxAutoParticipantIndex>`:
@@ -167,12 +165,13 @@ means node creation fails.**
 pixi run dds-check          # or: --json for a machine-readable report
 ```
 
-Measured on the sim nav mission: **17 of 33 slots**, stable for the whole run.
-The projected robot stack — nav mission with real drivers, plus perception, plus
-M1's agent and `foxglove_bridge` — lands around **24**, so there is headroom, but
-not an unlimited amount. Re-run `dds-check` whenever a milestone adds processes;
-if it runs out, raise `MaxAutoParticipantIndex` with a `CYCLONEDDS_URI` config
-(there is no CycloneDDS XML in the repo today — that would be the first).
+Measured on the sim nav mission: **17 of 33 slots**, stable for the whole run —
+and the same 17 under stock discovery, so the tool reads correctly on the robot
+as it runs today. The projected robot stack — nav mission with real drivers, plus
+perception, plus M1's agent and `foxglove_bridge` — lands around **24**. That is
+headroom, but not an unlimited amount, and it is spent *before* M2 arrives to
+claim it. Re-run `dds-check` whenever a milestone adds processes; if it runs out,
+raise `MaxAutoParticipantIndex` in the robot's existing `cyclonedds.xml`.
 
 Indices are released when a process exits, so what matters is the *concurrent*
 peak; transient helpers (controller spawners, `ros2` CLI calls, the ROS daemon)

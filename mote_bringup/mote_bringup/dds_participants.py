@@ -14,10 +14,15 @@ pair of UDP ports derived from it (RTPS port mapping, PB=7400, DG=250, PG=2)::
     user port      = 7400 + 250*domain + 11 + 2*index
 
 Past index 32 participant creation fails, which means *node* creation fails —
-so the cap is a real ceiling on how many ROS processes can run on one robot.
+so the cap is a real ceiling on how many ROS processes can run on one host.
 rmw_cyclonedds creates one participant per context, i.e. one per process for a
 normal launch, so the full stack (bringup + Nav2 + SLAM + perception + task
 server + the fleet agent + foxglove_bridge) has to fit under it.
+
+Today that binds on sims and benchmarks, which pin themselves to ``LOCALHOST``;
+the robot is still LAN-discoverable and inherits CycloneDDS' own (higher) default
+instead, until fleet M2 makes the pin safe there. The indexed ports are claimed
+either way, so the count is meaningful now and the cap is what changes.
 
 This tool answers "how close are we?" from ``/proc/net/udp`` alone (no ROS, no
 CycloneDDS tooling, nothing to install on the Pi): it lists the claimed indices
@@ -26,9 +31,9 @@ with the process holding each one, and reports the headroom left.
     ros2 run mote_bringup dds_participants          # pixi run dds-check
     ros2 run mote_bringup dds_participants --json
 
-If headroom ever runs out, raise ``MaxAutoParticipantIndex`` with a
-``CYCLONEDDS_URI`` config (there is no CycloneDDS XML in the repo today — that
-would be the first).
+If headroom ever runs out, raise ``MaxAutoParticipantIndex`` in the robot's
+``mote_bringup/config/cyclonedds.xml`` (already loaded via ``CYCLONEDDS_URI`` by
+the systemd units).
 """
 
 import argparse

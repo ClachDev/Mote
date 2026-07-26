@@ -179,9 +179,7 @@ pixi run tailnet --role robot --auth-key tskey-auth-...  # join the Tailscale me
 The robot is then reachable off-LAN at `mote-01` by MagicDNS, with no port
 forwarding and nothing exposed to the internet. A *new* Pi can be provisioned
 into that state unattended from a rendered cloud-init file
-(`pixi run provision`). Note that this pins the robot's ROS 2 discovery to the
-local host, so a workstation sharing the graph over the LAN needs
-`ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET`.
+(`pixi run provision`).
 
 See [`docs/fleet/README.md`](docs/fleet/README.md) for the runbook and
 [`docs/design/fleet.md`](docs/design/fleet.md) for where this is going.

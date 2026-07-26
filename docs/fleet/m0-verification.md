@@ -60,6 +60,16 @@ Two things this measurement teaches:
   a stack starting on top of a dying one can climb much closer to the cap than its
   steady-state count suggests.
 
+**The same count under stock discovery.** Re-run with
+`ROS_AUTOMATIC_DISCOVERY_RANGE` unset — what the robot actually runs today, since
+M0 does not pin it (§4) — the same 17 processes claim the same indexed ports
+(7410–7445), plus the multicast discovery ports 7400/7401 that `LOCALHOST`
+suppresses and that `dds-check` reports as `multicast discovery port bound: yes`.
+So the tool reads correctly on a LAN-discoverable robot; what changes with the
+pin is that the 32 cap starts binding. (Stock mode's ceiling is CycloneDDS's own
+default rather than the RMW's 32, and was not measured — it is demonstrably above
+17, and `dds-check --max-index` takes another value if that ever matters.)
+
 Verdict: headroom is real but finite. `pixi run dds-check` exists so every
 milestone that adds processes can check rather than assume.
 
@@ -76,18 +86,45 @@ subscriber, 12 s timeout, `rmw_cyclonedds_cpp`):
 | SUBNET | LOCALHOST | received |
 | SUBNET | SUBNET | received |
 
-So a `dev`-environment RViz (`SUBNET`) and a localhost-pinned sim or robot stack
-on the *same* machine still see each other. Note the LOCALHOST→SUBNET case took
-noticeably longer to discover (~8 s vs <2 s) — the subnet node has to wait for the
-localhost node's periodic announcement rather than meeting it on multicast. Only
+So a default-range RViz and a localhost-pinned sim on the *same* machine still see
+each other. Note the LOCALHOST-publisher → SUBNET-subscriber case took noticeably
+longer to discover (~8 s vs <2 s) — the subnet node has to wait for the localhost
+node's periodic announcement rather than meeting it on multicast. Only
 *cross-machine* discovery is actually cut off, which is the intent.
+
+This is worth flagging because PR #54 documents the visibility as *one-way* ("a
+`LOCALHOST` participant still finds same-host default-range ones, not the
+reverse"), which is the stated reason `pixi run rviz-sim` exists. Measured here it
+works in both directions, just slowly one way — so `rviz-sim` may be papering over
+slow discovery rather than absent discovery. One pub/sub pair is weaker evidence
+than RViz's full topic set, so nothing was changed on the strength of it; it is
+recorded as a cheap thing to re-check.
 
 The mission-level check is the same sim-nav run as §2: under `LOCALHOST` the Nav2
 stack configured, activated and bonded normally (`lifecycle_manager_navigation:
 Managed nodes are active`), so pinning discovery does not disturb a stack whose
 processes all live on one host — which is every mission the robot runs.
 
-## 4. Not verified here — needs the hardware
+## 4. Why the localhost pin is not in M0 after all
+
+M0 was written against a milestone that said "pin DDS to localhost". PR #54
+landed first and amended that milestone: the robot stays LAN-discoverable and is
+narrowed by `mote_bringup/config/cyclonedds.xml` (one interface, SPDP-only
+multicast) instead, "because nothing on-robot replaces an operator's RViz yet —
+M2 is what makes the localhost pin safe there".
+
+That is the right call and this branch follows it, so the pin was dropped from
+this work. The reasoning matters more than the setting: a localhost pin on the
+robot cannot be worked around from the operator's side. `dev` set to `SUBNET`
+does nothing, because it is the *robot's* participants that stop announcing —
+the only escape is remembering an environment variable on the Pi. So the pin is
+only safe once Foxglove gives the operator a path that isn't DDS.
+
+What survives from the original plan is everything that made the pin decidable:
+the cap is confirmed (§1), the budget is measured (§2), and the interop
+behaviour is known (§3). M2 flips one line with the numbers already in hand.
+
+## 5. Not verified here — needs the hardware
 
 - **Clean-Pi → reachable by MagicDNS off-LAN.** The cloud-init template is
   rendered, schema-checked and unit-tested (`mote_bringup/test/test_provision.py`
