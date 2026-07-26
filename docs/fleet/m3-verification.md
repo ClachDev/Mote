@@ -228,14 +228,52 @@ tailnet → agent → `/task/command` → behaviour tree → Nav2 → wheels —
 whole read path back, are confirmed against hardware. The correlation id
 survives every hop in both directions.
 
+### Off-LAN, from a phone on cellular
+
+The acceptance criterion's "fully off-LAN", which M0 and M1 both had to leave
+open. An Android phone with wifi **off** — mobile data only, behind carrier
+NAT — joined the tailnet and browsed to `http://mini-pc:8080/`. The dashboard
+loaded and the operator dispatched from it, against a token minted for the
+occasion:
+
+```
+2026-07-26T20:29:25Z  michael-phone  mote-01  Test  published  100.77.53.71
+```
+
+`remote` is the phone's tailnet address — neither the workstation
+(`100.76.13.93`) nor the robot (`100.111.38.42`) — which is what makes this row
+evidence rather than an anecdote. The robot answered:
+
+```json
+{"id":"0ae1ec60998440c2","command":"Test","state":"rejected",
+ "detail":"unknown command, have: fetch, goto","source":"fleet","terminal":true}
+```
+
+A rejection proves the round trip exactly as well as a success would: the
+command was authorized against an operator token, written to the audit log,
+published, carried over WireGuard to a robot on a different network, forwarded
+onto its ROS graph, judged by the behaviour tree, and the verdict came back to
+the browser. Nothing was exposed to the public internet at any point, and no
+port was forwarded.
+
+**Both transports crossed the carrier NAT, not just the API.** The header
+reported `broker connected` and the health roll-up rendered — and health,
+subsystems and pose exist *only* on the broker. The roster alone would prove
+less, since it also populates from `/v1/robots` over HTTP; the health panel is
+what can only have arrived over MQTT-over-WebSockets. So the read path — the
+half that makes the dashboard live rather than polled — works from a phone on
+mobile data, which is the claim `fleet.md` Q5 makes and the reason the broker
+needs a WebSocket listener at all.
+
+The one thing the run did not enjoy is the small screen: the layout stacks below
+1100 px but was reported as awkward on a phone. Tracked separately — the network
+property is what this run was for.
+
 ## 7. Not verified here
 
-- **A browser on a different physical network.** §6 crossed the tailnet for the
-  robot↔fleet-box hop, but the two were also on one LAN and the browser was on
-  the fleet box itself. What remains is the last hop: browse to
-  `http://<fleet-box>:8080/` from a tethered laptop and dispatch. The thing to
-  watch there is the **WS listener's bind address** — the same lever as the MQTT
-  listener, commented in `mosquitto.conf`.
+- **A phone-sized layout.** The panes stack below 1100 px, which is not the same
+  as being usable one-handed on a 390 px screen — and the map canvas is the part
+  that suffers. Observed, not designed for.
 - **The Foxglove deep link.** The button is rendered from the configured
   template and opens `foxglove://…`, which needs both the Foxglove desktop app
   on the operator's machine and a `foxglove_bridge` on the robot. Neither exists
