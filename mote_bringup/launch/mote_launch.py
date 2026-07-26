@@ -4,16 +4,13 @@ import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (
-    DeclareLaunchArgument,
-    IncludeLaunchDescription,
-    RegisterEventHandler,
-)
-from launch.event_handlers import OnProcessStart
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
+
+from mote_bringup.launch_utils import controller_spawn_handler
 
 
 def generate_launch_description():
@@ -54,8 +51,8 @@ def generate_launch_description():
     # respawn=True gives per-node recovery: if a driver process crashes, the
     # launch system relaunches it within respawn_delay. This is the inner layer;
     # systemd restarts the whole service only if `pixi run launch` itself dies.
-    # The spawners are one-shot and re-run via the OnProcessStart handler when
-    # controller_manager respawns, so they are not marked respawn.
+    # The controllers are re-spawned on each controller_manager start by
+    # controller_spawn_handler (see launch_utils for why that indirection).
     respawn = {"respawn": True, "respawn_delay": 2.0}
 
     robot_state_publisher = Node(
@@ -70,18 +67,6 @@ def generate_launch_description():
         executable="ros2_control_node",
         parameters=[robot_description, controller_config, wheel_params_file.name],
         **respawn,
-    )
-
-    joint_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["joint_state_broadcaster"],
-    )
-
-    diff_drive_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["diff_drive_controller"],
     )
 
     lidar = cfg["lidar"]
@@ -157,12 +142,7 @@ def generate_launch_description():
             SetParameter(name="use_sim_time", value=use_sim_time),
             robot_state_publisher,
             controller_manager,
-            RegisterEventHandler(
-                event_handler=OnProcessStart(
-                    target_action=controller_manager,
-                    on_start=[joint_state_broadcaster_spawner, diff_drive_spawner],
-                )
-            ),
+            controller_spawn_handler(controller_manager),
             rplidar,
             laser_filter,
             camera,
