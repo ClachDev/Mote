@@ -21,6 +21,12 @@ wifi-powersave = "bash mote_bringup/networkmanager/install.sh"
 install-systemd = "bash mote_bringup/systemd/install.sh"
 setup = { depends-on = ["udev", "wifi-powersave", "install-systemd"] }
 
+# Fleet: overlay + identity (docs/fleet/README.md)
+identity = "ros2 run mote_bringup identity"      # this robot's id/name/site
+tailnet = "bash mote_bringup/tailscale/install.sh"  # join the Tailscale overlay
+provision = "ros2 run mote_bringup provision"    # render cloud-init for a new Pi
+dds-check = "ros2 run mote_bringup dds_participants"  # participant-slot headroom
+
 # Dev tasks
 kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
 sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
@@ -241,6 +247,10 @@ pre-commit = ">=4,<5"
 
 [activation]
 scripts = ["install/setup.sh"]
+# Discovery range is deliberately left at the ROS default here: the robot must
+# stay discoverable by an operator's RViz until Foxglove gives it an off-box path
+# (fleet M2). Sims/benchmarks pin themselves to LOCALHOST above; the robot's DDS
+# is scoped instead by config/cyclonedds.xml under systemd.
 env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
 
 [environments]

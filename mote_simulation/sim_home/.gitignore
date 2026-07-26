@@ -2,6 +2,9 @@
 # in (maps + zones), but per-run mutable state is not.
 active.yaml
 bags/
+# Identity is per-machine state; a `pixi run identity set` from the sim
+# environment lands here because MOTE_HOME points at this directory.
+robot.yaml
 
 # The slam posegraph exists only to *continue* mapping in the same frame later;
 # the sim always maps a world fresh (tools/map_world.sh), so it is never loaded
