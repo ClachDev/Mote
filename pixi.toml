@@ -29,6 +29,13 @@ clean-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.cli"
 save-zone = "ros2 run mote_tasks save_zone"
 site = "ros2 run mote_bringup site"
 
+# Replay a recorded real-robot mapping bag through SLAM (or kinematic_icp) under
+# N parameter sets and score them with truth-free proxies -> comparison report
+# (metrics table + rendered maps). The reality check that complements `bench`
+# (which needs Gazebo ground truth). Needs no sim/gz. Example:
+#   pixi run bag-replay -- --bag ~/.mote/bags/mapping/<ts> --params a.yaml b.yaml
+bag-replay = "python mote_simulation/tools/bag_replay/replay.py"
+
 # Quick launch commands
 launch = "ros2 launch mote_bringup mote_launch.py"
 mapping = "ros2 launch mote_bringup mapping_launch.py"
