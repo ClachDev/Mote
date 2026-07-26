@@ -36,9 +36,8 @@ It aborts safely (exit 2, nothing killed) if the stack is not running, so it is
 harmless to invoke on a workstation. Nodes are matched by executable name and
 the script excludes its own PID, so `pkill`-style self-matching cannot happen.
 
-**This half must be benched on the robot with Michael** — it is not part of CI
-because it needs the live hardware stack. Capture its `chaos_log.txt` from that
-run for the record.
+**Benched on auldbot** (3/3 recovered, see `chaos_log.txt`). It is not part of CI
+because it needs the live hardware stack.
 
 ## Two layers of recovery
 

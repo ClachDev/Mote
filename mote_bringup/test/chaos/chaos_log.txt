@@ -85,10 +85,31 @@ Scenario C — re-run after the fix
   launch SIGINT-storm lines:             0
 
 
+--- 4. the committed chaos script vs the full nav stack (auldbot) ------------
+
+`pixi run robot` (bringup + nav2, no goals sent, so the robot never drives),
+then `pixi run chaos`. This exercises the nav2 respawn path too: a relaunched
+controller_server is re-adopted by its lifecycle manager.
+
+[11:45:56] === mote chaos restart test on auldbot ===
+[11:45:56] bound=30s, targets: ros2_control_node sllidar_node controller_server
+[11:45:57] killing 'ros2_control_node' (pids: 28926 )
+[11:46:02] PASS 'ros2_control_node' recovered in ~1.0s (pids: 32364 )
+[11:46:05] killing 'sllidar_node' (pids: 28928 )
+[11:46:11] PASS 'sllidar_node' recovered in ~2.0s (pids: 35890 )
+[11:46:14] killing 'controller_server' (pids: 28954 )
+[11:46:18] PASS 'controller_server' recovered in ~1.0s (pids: 38595 )
+[11:46:21] === done: 3/3 recovered ===
+exit=0
+
+An earlier attempt reported 0/3 — a harness bug, not a product failure: `bc` is
+not installed on the Pi, so the float comparison in wait_recovery failed and
+every target was declared dead after ~1s instead of waiting the 30s bound.
+
+
 --- Not yet verified on the robot -------------------------------------------
 
 * Service-level restart of the installed units, and the journald drop-in:
   needs `pixi run install-systemd` (root). The units pass
   `systemd-analyze verify`, and their restart policy is proven in run 1 above.
 * A true USB unplug rather than a node kill, which also needs root.
-* chaos_restart.sh against the full nav stack including controller_server.
