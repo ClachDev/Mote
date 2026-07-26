@@ -15,6 +15,8 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
+from mote_bringup import param_overrides
+
 
 def generate_launch_description():
     description_share = get_package_share_directory("mote_description")
@@ -31,7 +33,9 @@ def generate_launch_description():
         "robot_description": ParameterValue(robot_description_content, value_type=str)
     }
 
-    controller_config = os.path.join(bringup_share, "config", "controllers.yaml")
+    controller_config = param_overrides.override_path(
+        "controllers", os.path.join(bringup_share, "config", "controllers.yaml")
+    )
     # Must be a params *file* keyed by node name: a plain dict gets flattened to
     # "diff_drive_controller.ros__parameters.wheel_separation" on the
     # controller_manager node and never reaches the diff_drive_controller node.

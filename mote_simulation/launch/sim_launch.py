@@ -31,6 +31,8 @@ from launch.substitutions import (
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
+from mote_bringup import param_overrides
+
 
 def generate_launch_description():
     description_share = get_package_share_directory("mote_description")
@@ -44,7 +46,10 @@ def generate_launch_description():
     # loads parameters from a single file referenced in the URDF, so merge
     # controllers.yaml + wheel geometry from robot.yaml + use_sim_time into one
     # temp file (same single-source-of-truth injection as mote_launch.py).
-    with open(os.path.join(bringup_share, "config", "controllers.yaml")) as f:
+    controllers_file = param_overrides.override_path(
+        "controllers", os.path.join(bringup_share, "config", "controllers.yaml")
+    )
+    with open(controllers_file) as f:
         controller_params = yaml.safe_load(f)
     controller_params["controller_manager"]["ros__parameters"]["use_sim_time"] = True
     controller_params["diff_drive_controller"]["ros__parameters"].update(

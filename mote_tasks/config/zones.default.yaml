@@ -11,3 +11,7 @@ zones:
   pickup: {x: 1.8, y: -1.5, yaw: 0.0}
   dropoff: {x: -1.8, y: 1.5, yaw: 3.14}
   home: {x: 0.0, y: 0.0, yaw: 0.0}
+  # Room zones (a radius footprint) reachable by `goto <name>`, mirroring
+  # mote_world.zones.yaml so `goto kitchen` works out of the box.
+  kitchen: {x: 2.0, y: 2.0, yaw: 0.0, radius: 1.0}
+  lounge: {x: -2.0, y: 2.0, yaw: 3.14, radius: 1.0}

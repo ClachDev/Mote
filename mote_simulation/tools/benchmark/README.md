@@ -3,9 +3,9 @@
 Runs scripted nav missions in the headless Gazebo sim and scores them against
 **Gazebo ground truth**, so Nav2 / SLAM / localization config changes can be
 *proven* with numbers instead of eyeballed in RViz. This is the runner the
-planned parameter-sweep tool and the future IMU-justification study build on;
-the metric maths lives in a ROS-free module (`metrics.py`) so an offline
-bag-replay scorer can reuse it unchanged.
+[parameter-sweep tool](sweep/README.md) (`pixi run bench-sweep`) and the future
+IMU-justification study build on; the metric maths lives in a ROS-free module
+(`metrics.py`) so an offline bag-replay scorer can reuse it unchanged.
 
 ## Usage
 
@@ -58,6 +58,28 @@ The robot's true pose is bridged out of Gazebo with `ros_gz_bridge`
 `/world/<world>/pose/info` was the obvious source but loses model frame names
 through the bridge; `PosePublisher` populates them. The bridge is started and torn
 down by the harness, so the mission under test is unperturbed.
+
+## Graph isolation
+
+A benchmark is only meaningful if the graph it measures is its own, so each run
+is fenced off twice:
+
+- **Off this machine.** The `sim` pixi environment exports
+  `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`, so every sim/benchmark participant
+  confines DDS discovery to this host. A robot or another workstation on the LAN
+  can neither be discovered by nor discover a benchmark run.
+- **From other runs on this machine.** `bench.py` claims a free `ROS_DOMAIN_ID`
+  per invocation (probing which CycloneDDS discovery ports are already bound)
+  plus a matching `GZ_PARTITION` for Gazebo's own transport, and records both in
+  `run.json` / `report.md`. An inherited `ROS_DOMAIN_ID` is respected instead —
+  that is how [the sweep](sweep/README.md) pins all of its sets to one domain.
+
+Two benchmarks can therefore run at once, but should be started from separate
+worktrees: teardown's `pkill` backstop for an escaped `gz sim` is scoped to the
+repo path, so same-repo concurrent runs would still reap each other's server.
+
+To watch a running sim in RViz, use `pixi run rviz-sim` — a default-range RViz
+cannot see a `LOCALHOST`-only participant (the reverse direction does work).
 
 ## Outputs
 

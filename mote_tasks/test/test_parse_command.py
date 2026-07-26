@@ -1,8 +1,15 @@
+from types import SimpleNamespace
+
 import pytest
 
 from mote_tasks.trees.fetch import parse_command
 
-ZONES = {"pickup": "PICKUP_POSE", "dropoff": "DROPOFF_POSE"}
+# parse_command reads each match's `.pose`; a SimpleNamespace stands in for a
+# Zone without needing a real PoseStamped.
+ZONES = {
+    "pickup": SimpleNamespace(pose="PICKUP_POSE"),
+    "dropoff": SimpleNamespace(pose="DROPOFF_POSE"),
+}
 
 
 def test_zone_target_yields_pose_and_no_label():
