@@ -13,10 +13,13 @@ import threading
 import numpy as np
 
 from mote_perception.depth_wire import (
+    HEALTH_MAGIC,
     DepthClient,
     recv_image,
     recvall,
+    repo_revision,
     send_depth,
+    send_health,
     send_rejection,
 )
 
@@ -189,3 +192,60 @@ def test_depth_client_reconnects_after_server_drop():
         assert any("reconnect" in w for w in warnings)
     finally:
         server.close()
+
+
+class _HealthServer:
+    """Server that mirrors the real loop: branch on the health sentinel, else echo."""
+
+    def __init__(self, info):
+        self.info = info
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        conn, _ = self.sock.accept()
+        with conn:
+            while True:
+                hdr = recvall(conn, 4)
+                if hdr is None:
+                    return
+                (n,) = struct.unpack(">I", hdr)
+                if n == HEALTH_MAGIC:
+                    send_health(conn, self.info)
+                    continue
+                blob = recvall(conn, n)
+                if blob is None:
+                    return
+                send_depth(conn, np.ones((2, 2), np.float32))
+
+    def close(self):
+        self.sock.close()
+
+
+def test_health_round_trip_and_interleaves_with_infer():
+    info = {"service": "depth", "model": "m", "device": "cuda", "torch": "2.11"}
+    server = _HealthServer(info)
+    try:
+        client = DepthClient("127.0.0.1", port=server.port, warn=lambda m: None)
+        assert client.health() == info
+        # health and infer share the one persistent socket, in any order.
+        np.testing.assert_array_equal(client.infer(b"img"), np.ones((2, 2), np.float32))
+        assert client.health() == info
+        client.close()
+    finally:
+        server.close()
+
+
+def test_health_returns_none_when_unreachable():
+    client = DepthClient("127.0.0.1", port=1, timeout=0.5, warn=lambda m: None)
+    assert client.health() is None
+
+
+def test_repo_revision_is_a_string_or_none():
+    # Best-effort: a git checkout reports a revision, a tree without git reports
+    # None. Either is valid; it must never raise, since it runs at server start.
+    rev = repo_revision()
+    assert rev is None or (isinstance(rev, str) and rev)

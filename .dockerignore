@@ -1,0 +1,13 @@
+# The inference image needs only the wire package and tools (see
+# mote_perception/deploy/Dockerfile); everything else is build-context weight the
+# daemon would upload for nothing. pixi.lock alone is ~2 MB, .pixi/ and build/ are
+# gigabytes.
+*
+!mote_perception/mote_perception/__init__.py
+!mote_perception/mote_perception/depth_wire.py
+!mote_perception/mote_perception/detect_wire.py
+!mote_perception/tools/depth_server.py
+!mote_perception/tools/detect_server.py
+!mote_perception/tools/inference_server.py
+!mote_perception/tools/model_host.py
+!mote_perception/tools/prefetch_models.py

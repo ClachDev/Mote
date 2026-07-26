@@ -1,14 +1,18 @@
 """Round-trip the detection wire protocol over a real socket, no torch/ROS."""
 
 import socket
+import struct
 import threading
 
 import pytest
 
+from mote_perception.depth_wire import recvall
 from mote_perception.detect_wire import (
+    HEALTH_MAGIC,
     DetectClient,
     recv_request,
     send_detections,
+    send_health,
     send_rejection,
 )
 
@@ -78,3 +82,26 @@ def test_empty_and_rejection():
 def test_unreachable_server():
     client = DetectClient("127.0.0.1", 1, timeout=0.2, warn=lambda m: None)
     assert client.infer(b"x", ["thing"]) is None
+
+
+def test_health_round_trip():
+    info = {"service": "detect", "model": "owlv2", "device": "cuda"}
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def run():
+        conn, _ = srv.accept()
+        with conn:
+            hdr = recvall(conn, 4)
+            (n,) = struct.unpack(">I", hdr)
+            if n == HEALTH_MAGIC:
+                send_health(conn, info)
+        srv.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    client = DetectClient("127.0.0.1", port, warn=lambda m: None)
+    assert client.health() == info
+    client.close()

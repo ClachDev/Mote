@@ -68,6 +68,10 @@ arm-jog = "ros2 run mote_arm jog"
 arm-pose = "ros2 run mote_arm arm_pose"
 # Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
 arm-gains = "ros2 run mote_arm arm_gains"
+# Robot-side inference diagnostics (torch-free — run in the default/robot env):
+# probe the inference machine's health/version, or benchmark round-trip latency.
+inference-health = "python -u mote_perception/tools/inference_health.py"
+inference-bench = "python -u mote_perception/tools/inference_bench.py"
 
 #### The below tasks are tied to specific features and environments however they
 #### can be run like any other task.
@@ -198,7 +202,6 @@ watchexec = ">=2.5,<3"
 [feature.dev.target.linux-64.dependencies]
 ros-jazzy-rviz-teleop-panel = ">=0.1.0"
 
-
 [feature.sim.dependencies]
 ros-jazzy-ros-gz-sim = "*"
 ros-jazzy-ros-gz-bridge = "*"
@@ -218,10 +221,12 @@ transformers = ">=4,<5"
 # redirection to a file (block buffering otherwise holds them indefinitely)
 [feature.inference.tasks]
 # Both servers together — the usual way to run a dedicated inference machine.
-inference = "bash mote_perception/tools/inference_server.sh"
+inference = "python -u mote_perception/tools/inference_server.py"
 # Or one model at a time (e.g. depth-server --metric, or to save VRAM).
 depth-server = "python -u mote_perception/tools/depth_server.py"
 detect-server = "python -u mote_perception/tools/detect_server.py"
+# Warm the HuggingFace cache so the first request doesn't block on a download.
+inference-prefetch = "python -u mote_perception/tools/prefetch_models.py"
 
 # GPU-accelerated sibling of the `inference` feature (env `inference-rocm`). Same
 # depth/detect servers, but torch comes from the pytorch.org ROCm wheel index
@@ -258,9 +263,10 @@ HSA_OVERRIDE_GFX_VERSION = "11.0.0"
 # stay unambiguous; `inference-rocm` runs both servers on the GPU (the servers'
 # --device auto picks the GPU when present), the single-server variants save VRAM.
 [feature.inference-rocm.tasks]
-inference-rocm = "bash mote_perception/tools/inference_server.sh"
+inference-rocm = "python -u mote_perception/tools/inference_server.py"
 depth-server-rocm = "python -u mote_perception/tools/depth_server.py"
 detect-server-rocm = "python -u mote_perception/tools/detect_server.py"
+inference-prefetch-rocm = "python -u mote_perception/tools/prefetch_models.py"
 
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
