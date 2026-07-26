@@ -123,7 +123,7 @@ and publishes, every second:
   ```
 
 **Severity → roll-up**, set per subsystem in `config/health.yaml`
-(overridable per-robot at `~/.mote/health.yaml`):
+(overridable per-robot at `$MOTE_HOME/health.yaml`, resolved through `mote_home`):
 
 | `severity` | Missing/stale means | Used for |
 |-----------|---------------------|----------|

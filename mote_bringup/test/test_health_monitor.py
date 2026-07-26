@@ -139,3 +139,31 @@ def test_sd_notify_noop_without_socket(monkeypatch):
 def test_sd_notify_watchdog_period(monkeypatch):
     monkeypatch.setenv("WATCHDOG_USEC", "15000000")  # 15 s
     assert SdNotifier.watchdog_period_s() == 7.5
+
+
+def test_health_config_override_honours_mote_home(tmp_path, monkeypatch):
+    """The per-robot override must resolve through MOTE_HOME, not a literal ~/.mote.
+
+    CLAUDE.md makes mote_home the one place that rule lives, so MOTE_HOME is
+    honoured everywhere. This module originally hardcoded ~/.mote/health.yaml,
+    which silently ignored MOTE_HOME — invisible on a robot (where they are the
+    same path) but wrong for the sim and for tests.
+    """
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
+    override = tmp_path / "health.yaml"
+    override.write_text("period: 9.5\ntopics: []\ntf: []\n")
+
+    from mote_bringup import health_monitor
+
+    cfg = health_monitor._load_config()
+    assert cfg["period"] == 9.5, "override under MOTE_HOME was not picked up"
+
+
+def test_health_config_falls_back_to_the_packaged_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path))  # empty: no override present
+
+    from mote_bringup import health_monitor
+
+    cfg = health_monitor._load_config()
+    # The packaged default defines the real subsystems.
+    assert {t["name"] for t in cfg["topics"]} >= {"scan", "joint_states"}

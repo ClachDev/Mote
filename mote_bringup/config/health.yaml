@@ -8,7 +8,7 @@
 #   degraded  -> DEGRADED  (capability lost, driving still safe)
 #   info      -> reported, but never degrades the summary (legitimately absent
 #                in a healthy state)
-# A per-robot ~/.mote/health.yaml overrides this packaged default (same pattern
+# A per-robot $MOTE_HOME/health.yaml overrides this packaged default (same pattern
 # as perception.yaml).
 
 # Aggregation + publish period, seconds.

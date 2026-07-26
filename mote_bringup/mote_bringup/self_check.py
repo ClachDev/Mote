@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 import yaml
 from ament_index_python.packages import get_package_share_directory
 
-from mote_bringup import serial_bus
+from mote_bringup import mote_home, serial_bus
 
 CRITICAL = "CRITICAL"
 ADVISORY = "advisory"
@@ -73,10 +73,6 @@ def _load_robot_cfg():
     share = get_package_share_directory("mote_description")
     with open(os.path.join(share, "config", "robot.yaml")) as f:
         return yaml.safe_load(f)
-
-
-def _mote_home():
-    return os.environ.get("MOTE_HOME", os.path.expanduser("~/.mote"))
 
 
 def _check_device(result, name, path, severity):
@@ -135,8 +131,8 @@ def _check_servos(result, cfg, do_ping):
 
 
 def _check_disk(result):
-    home = _mote_home()
-    target = home if os.path.exists(home) else os.path.expanduser("~")
+    home = mote_home.mote_dir()
+    target = home if home.exists() else os.path.expanduser("~")
     free_mb = shutil.disk_usage(target).free / (1024 * 1024)
     detail = f"{free_mb:.0f} MB free on {target}"
     if free_mb < DISK_CRITICAL_MB:
@@ -175,15 +171,15 @@ def _check_config(result, cfg):
 
 
 def _write_status(result):
-    home = _mote_home()
+    home = mote_home.mote_dir()
     try:
-        os.makedirs(home, exist_ok=True)
+        home.mkdir(parents=True, exist_ok=True)
         payload = {
             "ok": result.ok,
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "checks": result.checks,
         }
-        with open(os.path.join(home, "self_check_status.yaml"), "w") as f:
+        with open(home / "self_check_status.yaml", "w") as f:
             yaml.safe_dump(payload, f, sort_keys=False)
     except OSError as exc:
         print(f"[WARN] could not write self_check_status.yaml: {exc}")

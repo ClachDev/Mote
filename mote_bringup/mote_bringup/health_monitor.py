@@ -14,7 +14,7 @@ Every ``period`` seconds it publishes:
 Criticality decides the roll-up: a stale *critical* subsystem is a FAULT
 (ERROR), a stale non-critical one is DEGRADED (WARN), and a fresh-but-slow
 subsystem is DEGRADED. Expectations live in ``config/health.yaml`` (overridable
-at ``~/.mote/health.yaml``).
+at ``$MOTE_HOME/health.yaml``).
 
 Runs as its own ``mote-health.service`` (``Type=notify`` + ``WatchdogSec``): it
 sends ``READY=1`` once spun up and pets the systemd watchdog on every publish,
@@ -35,6 +35,7 @@ from std_msgs.msg import String
 
 import tf2_ros
 
+from mote_bringup import mote_home
 from mote_bringup.sd_notify import SdNotifier
 
 LEVEL_NAME = {
@@ -81,9 +82,7 @@ def _load_config():
     default = os.path.join(
         get_package_share_directory("mote_bringup"), "config", "health.yaml"
     )
-    override = os.path.expanduser("~/.mote/health.yaml")
-    path = override if os.path.exists(override) else default
-    with open(path) as f:
+    with open(mote_home.override("health.yaml", default)) as f:
         return yaml.safe_load(f)
 
 
@@ -170,8 +169,7 @@ class HealthMonitor(Node):
                 DiagnosticArray, "diagnostics", self._on_diagnostics, 10
             )
 
-        home = os.environ.get("MOTE_HOME", os.path.expanduser("~/.mote"))
-        self._selfcheck_path = os.path.join(home, "self_check_status.yaml")
+        self._selfcheck_path = mote_home.path("self_check_status.yaml")
         self._selfcheck_mtime = None
         self._selfcheck_status = None
 
