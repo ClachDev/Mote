@@ -69,6 +69,10 @@ robot = "ros2 launch mote_bringup robot_launch.py"
 slam = "ros2 launch mote_bringup slam_launch.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
 perception = "ros2 launch mote_perception perception_launch.py"
+# Remote observability + teleop (docs/fleet/README.md §10). Included in the base
+# by default, so this is for running it on its own — or under systemd, where
+# mote-foxglove.service keeps it up across a bringup restart.
+foxglove = "ros2 launch mote_bringup foxglove_launch.py"
 record = "ros2 launch mote_bringup record_launch.py"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
 health = "ros2 run mote_bringup health_monitor"
@@ -183,6 +187,10 @@ ros-jazzy-rosbag2-transport = ">=0.26.0"
 ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
 ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
+# The robot's off-box observability path (docs/fleet/README.md §10): the operator's
+# Foxglove connects to this over the tailnet, so it runs on the robot alongside
+# the mission rather than on the workstation.
+ros-jazzy-foxglove-bridge = ">=3.3.0,<4"
 ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
 ros-jazzy-vision-msgs = ">=4.1.0"
 ros-jazzy-xacro = ">=2.0.0"
@@ -213,6 +221,10 @@ ros-jazzy-nav2-rviz-plugins = ">=1.3.0"
 ros-jazzy-camera-calibration = "*"
 semver = ">=3,<4"
 watchexec = ">=2.5,<3"
+# Speaks the Foxglove WebSocket protocol in test_foxglove_teleop.py, which drives
+# the real bridge the way the Teleop panel does. Test-only, and dev-only for the
+# same reason the real-broker fleet test is: the robot env carries no test rig.
+websockets = ">=12,<16"
 
 # Desktop-only GUI teleop panel (ClachDev/rviz_teleop_panel), published to the
 # mote channel for linux-64 only — the aarch64 robot never runs RViz.
@@ -307,6 +319,8 @@ fleetctl = "python -u mote_fleet/server/fleetctl.py"
 # skips without mosquitto, so the same file is the CI unit run and the local
 # end-to-end run (see mote_fleet/test/test_e2e_fleet.py).
 test-fleet = "pytest mote_fleet/test -q"
+# M2's teleop path against the real bridge; needs the dev env's WebSocket client.
+test-foxglove = "pytest mote_bringup/test/test_foxglove_teleop.py -q"
 
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"

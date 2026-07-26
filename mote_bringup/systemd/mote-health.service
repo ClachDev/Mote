@@ -37,6 +37,12 @@ RestartMaxDelaySec=30
 # (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
 Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
+# Keep the ROS graph on the robot: from M2 the off-box view is foxglove_bridge
+# (mote-foxglove.service), so nothing off-machine joins DDS and two robots on
+# one LAN cannot see each other whatever their ROS_DOMAIN_ID. Systemd only —
+# interactive `pixi run` keeps stock discovery for bench work with RViz.
+# docs/fleet/README.md §4.
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 [Install]
 WantedBy=multi-user.target

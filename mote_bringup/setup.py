@@ -18,6 +18,7 @@ setup(
             os.path.join("share", package_name, "provisioning"),
             glob("provisioning/*"),
         ),
+        (os.path.join("share", package_name, "foxglove"), glob("foxglove/*.json")),
     ],
     install_requires=["setuptools"],
     extras_require={"test": ["pytest"]},
@@ -29,6 +30,7 @@ setup(
     entry_points={
         "console_scripts": [
             "odom_tf_relay = mote_bringup.odom_tf_relay:main",
+            "twist_relay = mote_bringup.twist_relay:main",
             "system_monitor = mote_bringup.system_monitor:main",
             "health_monitor = mote_bringup.health_monitor:main",
             "self_check = mote_bringup.self_check:main",

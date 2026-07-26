@@ -37,11 +37,18 @@ separate self-check service; gating bringup gates everything downstream.
 
 | Service          | Runs                | Notes |
 |------------------|---------------------|-------|
-| `mote-bringup`   | `pixi run launch health:=false` | Hardware base. `ExecStartPre` runs the self-check gate first; `health:=false` because `mote-health` runs the monitor separately here. |
+| `mote-bringup`   | `pixi run launch health:=false foxglove:=false` | Hardware base. `ExecStartPre` runs the self-check gate first; the two `false`s are because `mote-health` and `mote-foxglove` run those separately here. |
 | `mote-slam`      | `pixi run slam`     | `BindsTo`/`PartOf` bringup — restarts with it. |
 | `mote-nav`       | `pixi run nav`      | `BindsTo`/`PartOf` slam. |
 | `mote-record`    | `pixi run record`   | `After`/`PartOf` bringup (no `Wants` — see below); a recorder crash never takes down the drive stack. |
 | `mote-health`    | `pixi run health`   | Health monitor; `Type=notify` + `WatchdogSec` watchdog. `After=` only, so it keeps observing across a bringup restart. |
+| `mote-foxglove`  | `pixi run foxglove` | The operator's remote view + teleop (`docs/fleet/README.md` §10). `After=` only, for the same reason as the monitor: a crash-looping mission is when someone needs to look at it. |
+| `mote-agent`     | `pixi run agent`    | Fleet bridge (`docs/fleet/README.md` §7). `After=` only. |
+
+All of these also pin DDS to the robot
+(`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`), so a robot running under systemd is
+not visible to a workstation's ROS graph — `mote-foxglove` is the replacement.
+An interactive `pixi run` keeps stock discovery.
 
 **Hardening** (all services):
 
