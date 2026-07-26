@@ -10,7 +10,7 @@ submodules = "git submodule update --init"
 build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5", depends-on = [
     "submodules",
 ] }
-test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_perception mote_tasks mote_arm --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_perception mote_tasks mote_arm mote_fleet --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
 
@@ -28,6 +28,15 @@ identity = "ros2 run mote_bringup identity"      # this robot's id/name/site
 tailnet = "bash mote_bringup/tailscale/install.sh"  # join the Tailscale overlay
 provision = "ros2 run mote_bringup provision"    # render cloud-init for a new Pi
 dds-check = "ros2 run mote_bringup dds_participants"  # participant-slot headroom
+
+# Fleet control plane (docs/fleet/control-plane.md). The agent and enroll run on
+# the robot; the server and fleetctl are off-board but ROS-free, so they run in
+# any environment — the dedicated `fleet` env below is the deployable role, and
+# it is the only one that carries the broker.
+agent = "ros2 launch mote_fleet agent_launch.py"   # robot -> fleet bridge
+enroll = "ros2 run mote_fleet enroll"              # ask the server for an id
+fleet-server = "python -u mote_fleet/server/fleet_server.py"  # enrollment + registry
+fleetctl = "python -u mote_fleet/server/fleetctl.py"          # operator CLI
 
 # Dev tasks
 kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
@@ -174,6 +183,9 @@ ros-jazzy-vision-msgs = ">=4.1.0"
 ros-jazzy-xacro = ">=2.0.0"
 scservo-linux = "==1.0.0"
 ros-jazzy-ament-cmake-gtest = ">=2.5"
+# MQTT client for the fleet agent (mote_fleet). On the robot because the agent
+# runs there; the broker itself is a fleet-server dependency, not a robot one.
+paho-mqtt = ">=2,<3"
 
 # Pure-Python behaviour-tree library for mote_tasks; not packaged on
 # robostack/conda-forge, so it comes from PyPI.
@@ -268,6 +280,24 @@ depth-server-rocm = "python -u mote_perception/tools/depth_server.py"
 detect-server-rocm = "python -u mote_perception/tools/detect_server.py"
 inference-prefetch-rocm = "python -u mote_perception/tools/prefetch_models.py"
 
+# The fleet-server role: an MQTT broker and the enrollment/registry API, with no
+# ROS at all. Its own env (no-default-feature) because the fleet box is not a
+# robot and should not have to solve the robot's stack to run a broker and a
+# stdlib HTTP server — the same separation the inference env makes for the GPU
+# box. The dev env folds this feature in as well, so a workstation can run the
+# whole control plane (broker included) next to a sim or a real robot.
+[feature.fleet.dependencies]
+mosquitto = ">=2.0,<3"
+paho-mqtt = ">=2,<3"
+pytest = ">=8,<9"
+
+[feature.fleet.tasks]
+fleet-broker = "bash mote_fleet/server/broker.sh"
+# Runs everywhere the deps allow: rclpy tests skip without ROS, the broker test
+# skips without mosquitto, so the same file is the CI unit run and the local
+# end-to-end run (see mote_fleet/test/test_e2e_fleet.py).
+test-fleet = "pytest mote_fleet/test -q"
+
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
 
@@ -280,7 +310,11 @@ scripts = ["install/setup.sh"]
 env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
 
 [environments]
-dev = { features = ["dev"], solve-group = "default" }
+# dev also carries the fleet feature: a workstation is where the whole control
+# plane gets exercised at once (broker + server + agent + a real behaviour tree).
+dev = { features = ["dev", "fleet"], solve-group = "default" }
+# The fleet-server role: broker + registry API, no ROS. Own solve.
+fleet = { features = ["fleet"], no-default-feature = true }
 # Own solve (no solve-group) so sim deps can never shift the robot/Pi env
 sim = { features = ["sim"] }
 inference = { features = ["inference"], no-default-feature = true }

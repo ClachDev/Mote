@@ -46,6 +46,13 @@ sudo systemctl daemon-reload
 #   sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
 #   sudo systemctl disable mote-bringup mote-health        # back to manual
 #
+# mote-agent is the exception worth enabling on its own: it draws nothing and
+# drives nothing, and a robot that is not reporting to the fleet is a robot the
+# operator cannot see (it needs `pixi run enroll` first — docs/fleet/README.md).
+#
+#   sudo systemctl enable --now mote-agent
+#
 echo
 echo "Units installed (not enabled). Start a session with 'pixi run robot'."
 echo "For unattended boot: sudo systemctl enable --now mote-bringup mote-health"
+echo "To join the fleet:   pixi run enroll ... && sudo systemctl enable --now mote-agent"

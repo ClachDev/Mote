@@ -1,0 +1,31 @@
+[Unit]
+Description=Mote Fleet Agent
+# Ordering only, and deliberately no Wants=/PartOf= — the same reasoning as
+# mote-health.service. The agent's value is highest exactly when the mission is
+# broken: it is the thing that tells the fleet a robot is unhealthy, so it must
+# not be restarted by, or capable of restarting, the stack it reports on.
+After=mote-bringup.service
+# The broker is reached over the tailnet, so wait for a network rather than
+# fail-fast; a robot that boots in a cupboard still comes up and reconnects on
+# its own once there is one (paho retries with backoff, forever).
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=@USER@
+WorkingDirectory=@REPO@
+Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run agent
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+
+# Pin DDS to the robot's one real interface and drop non-discovery multicast
+# (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
+Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
+Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
+
+[Install]
+WantedBy=multi-user.target

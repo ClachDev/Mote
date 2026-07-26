@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mote.clach.dev/schema/v1/pose.schema.json",
+  "title": "Robot Pose",
+  "description": "The robot's last known pose in its map frame.",
+  "type": "object",
+  "required": ["schema", "robot_id", "stamp", "frame_id", "x", "y", "yaw"],
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "const": 1,
+      "description": "The payload format version."
+    },
+    "robot_id": {
+      "type": "string",
+      "description": "Unique lowercase DNS label identifier for the robot."
+    },
+    "stamp": {
+      "type": "string",
+      "description": "RFC 3339 UTC timestamp with millisecond precision."
+    },
+    "frame_id": {
+      "type": "string",
+      "description": "Reference frame ID, typically 'map'."
+    },
+    "x": {
+      "type": "number",
+      "description": "X coordinate in meters, rounded to 3 decimal places."
+    },
+    "y": {
+      "type": "number",
+      "description": "Y coordinate in meters, rounded to 3 decimal places."
+    },
+    "yaw": {
+      "type": "number",
+      "description": "Heading in radians in the map frame, rounded to 4 decimal places."
+    },
+    "site": {
+      "type": ["string", "null"],
+      "description": "Site name this pose is valid within."
+    },
+    "floor": {
+      "type": ["string", "null"],
+      "description": "Floor name this pose is valid within."
+    }
+  }
+}

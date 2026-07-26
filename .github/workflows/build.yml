@@ -28,3 +28,10 @@ jobs:
 
       - name: Test
         run: pixi run test
+
+      # The fleet server is meant to run on a box with no ROS and no checkout of
+      # the robot software. Running its tests in the ROS-free `fleet` env is what
+      # keeps that true: a stray `import rclpy` in the server fails here rather
+      # than on the fleet box. Cheap — the env is a broker and Python.
+      - name: Test fleet server (no ROS)
+        run: pixi run -e fleet test-fleet

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mote.clach.dev/schema/v1/health.schema.json",
+  "title": "Robot Health",
+  "description": "Rolled-up robot health snapshot including subsystem states and current task.",
+  "type": "object",
+  "required": ["schema", "robot_id", "stamp", "state", "summary", "subsystems"],
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "const": 1,
+      "description": "The payload format version."
+    },
+    "robot_id": {
+      "type": "string",
+      "description": "Unique lowercase DNS label identifier for the robot."
+    },
+    "stamp": {
+      "type": "string",
+      "description": "RFC 3339 UTC timestamp with millisecond precision."
+    },
+    "state": {
+      "type": "string",
+      "enum": ["ok", "degraded", "fault", "stale", "unknown"],
+      "description": "Overall health state aggregated from subsystems."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Human-readable summary of the robot's current health status."
+    },
+    "subsystems": {
+      "type": "array",
+      "description": "Array of subsystem health states.",
+      "items": {
+        "type": "object",
+        "required": ["name", "state", "message"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Subsystem name."
+          },
+          "state": {
+            "type": "string",
+            "enum": ["ok", "degraded", "fault", "stale", "unknown"],
+            "description": "Health state of this subsystem."
+          },
+          "message": {
+            "type": "string",
+            "description": "Diagnostic message from the subsystem."
+          }
+        }
+      }
+    },
+    "task": {
+      "type": ["object", "null"],
+      "description": "Current task being executed, if any.",
+      "properties": {
+        "id": {
+          "type": ["string", "null"],
+          "description": "Correlation id of the command."
+        },
+        "command": {
+          "type": "string",
+          "description": "The task command text."
+        },
+        "state": {
+          "type": "string",
+          "enum": ["dispatched", "accepted", "rejected", "succeeded", "failed"],
+          "description": "Current state of the task."
+        }
+      }
+    },
+    "site": {
+      "type": ["string", "null"],
+      "description": "Active site name, if any."
+    },
+    "floor": {
+      "type": ["string", "null"],
+      "description": "Active floor name, if any."
+    },
+    "version": {
+      "type": ["string", "null"],
+      "description": "Software version string."
+    },
+    "uptime_s": {
+      "type": ["number", "null"],
+      "description": "Uptime in seconds with one decimal place precision."
+    },
+    "battery": {
+      "type": ["object", "null"],
+      "description": "Battery status object, reserved for future use and always null."
+    }
+  }
+}
