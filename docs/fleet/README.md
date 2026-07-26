@@ -1,15 +1,13 @@
-# Fleet M0 — overlay + identity
+# Fleet — overlay, identity, and the control plane
 
-The foundation every other fleet milestone stands on: a network where the
-LAN/internet distinction has disappeared, a stable name for each robot, and a
-sharp line between what ships in the package and what belongs to one machine.
-The architecture and the milestones after this one are in
-[`docs/design/fleet.md`](../design/fleet.md); the measurements behind the
-choices here are in [`m0-verification.md`](m0-verification.md).
-
-M0 deliberately has **no fleet server**: identity is operator-set, not
-server-allocated. M1 replaces the operator with an enrollment endpoint without
-changing the file's shape.
+The operator runbook for the fleet layer: a network where the LAN/internet
+distinction has disappeared (**M0**), a stable name for each robot (**M0**), and
+a server that hands out those names and carries tasks and telemetry to and from
+every robot (**M1**). The architecture and the milestones after these are in
+[`docs/design/fleet.md`](../design/fleet.md); the measurements are in
+[`m0-verification.md`](m0-verification.md) and
+[`m1-verification.md`](m1-verification.md); the wire between robot and server is
+specified in [`control-plane.md`](control-plane.md).
 
 | | |
 |---|---|
@@ -17,10 +15,20 @@ changing the file's shape.
 | `pixi run tailnet` | join this machine to the Tailscale overlay |
 | `pixi run provision` | render cloud-init user-data for a clean Pi |
 | `pixi run dds-check` | DDS participant-slot headroom on this host |
+| `pixi run fleet-broker` | the MQTT control plane (fleet box) |
+| `pixi run fleet-server` | enrollment + registry API (fleet box) |
+| `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, watch |
+| `pixi run enroll` | ask the server for this robot's identity |
+| `pixi run agent` | the robot's bridge to the fleet |
 
 **First time through**, in order: §1a (create the tailnet — browser, once, for
-the whole fleet) → §2 (give this robot an id) → §1b (join it and your
-workstation) → §5 (every robot after this one, unattended from a card).
+the whole fleet) → §1b (join your workstation and the fleet box) → §6 (stand up
+the fleet server) → §7 (enroll a robot and start its agent) → §5 (every robot
+after this one, unattended from a card).
+
+§2 (typing an id by hand) is the M0 path, kept because it is what a robot with
+no fleet server does; §7 supersedes it and adopts an already-set id rather than
+renumbering it.
 
 ---
 
@@ -152,6 +160,10 @@ The per-device cost curve at fleet scale, and the self-hosted escape hatch
 
 ## 2. Identity: `robot_id` is the fleet's primary key
 
+> Since M1 the **server allocates the id** — see [§7](#7-enrolling-a-robot).
+> `identity set` remains the way to give a robot an id with no fleet server in
+> the picture, and enrollment adopts whatever it finds rather than renumbering.
+
 ```bash
 pixi run identity set --id mote-01 --name "Scout" --site home
 pixi run identity show
@@ -256,6 +268,9 @@ headroom, but not an unlimited amount, and it is spent *before* M2 arrives to
 claim it. Re-run `dds-check` whenever a milestone adds processes; if it runs out,
 raise `MaxAutoParticipantIndex` in the robot's existing `cyclonedds.xml`.
 
+M1's agent has since been measured at **exactly one slot**, as projected
+([`m1-verification.md` §3](m1-verification.md)), so the budget is unchanged.
+
 Indices are released when a process exits, so what matters is the *concurrent*
 peak; transient helpers (controller spawners, `ros2` CLI calls, the ROS daemon)
 each take a slot while they run.
@@ -348,3 +363,137 @@ Note that step 6 builds from source because the prefix.dev `mote` channel does
 not ship a robot package yet; when it does (M5), that step becomes a pinned
 `pixi install` and first boot gets much shorter. The template is the only thing
 that changes.
+
+The template still writes an **operator-set** identity, as it did at M0. Now
+that there is an enrollment endpoint, first boot should call `pixi run enroll`
+with a token instead — a template change that is deliberately left until the
+next real Pi provisioning, so the change and its verification land together
+([`m1-verification.md` §5](m1-verification.md)). Nothing breaks meanwhile:
+enrolling a robot that already has an id adopts that id.
+
+---
+
+## 6. The fleet server
+
+Two processes on one always-on box — a VPS, a home server, or a spare Pi. Both
+are ROS-free, so the box needs no robot software; the `fleet` pixi environment
+carries nothing but a broker and Python.
+
+```bash
+pixi run -e fleet fleet-broker    # MQTT control plane, port 1883
+pixi run fleet-server -- --broker-host fleet-box   # enrollment + registry, port 8080
+```
+
+State lives in **`$MOTE_FLEET_HOME`** (default `~/.mote-fleet`) — the registry
+database and the broker's retained messages. That is the server-side analogue of
+the robot's `MOTE_HOME`: redeploying the server software replaces code around
+it and never the fleet's memory of who is in it.
+
+`--broker-host` is the address **robots** should dial, so on a tailnet it is the
+fleet box's MagicDNS name (`fleet-box`), not `localhost` — it is handed out
+verbatim in every enrollment answer. It defaults to the box's hostname.
+
+**Security, plainly:** the broker is anonymous and the API is unauthenticated.
+That is proportionate only because the tailnet is the boundary — WireGuard
+authenticates, and nothing here is exposed to the internet. Do not put either on
+a network the robots are not already trusted on. Per-robot broker credentials
+and operator auth are M7; the shape of what changes is in
+[`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
+
+To run it unattended, wrap the two commands in systemd units on that box. They
+are deliberately *not* part of `pixi run setup`, which provisions robots.
+
+---
+
+## 7. Enrolling a robot
+
+The server owns the id space. A robot presents a token and a hardware
+fingerprint and is told who it is and where its broker lives.
+
+```bash
+# [fleet box] mint a token — single-use by default, one token per robot
+pixi run fleetctl -- token new
+
+# [robot] exchange it for an identity
+pixi run enroll -- --server http://fleet-box:8080 --token tskey… --name Scout --site home
+```
+
+That writes both files the agent needs, and nothing else:
+
+```yaml
+# $MOTE_HOME/robot.yaml                # $MOTE_HOME/fleet.yaml
+schema: 1                              schema: 1
+id: mote-01                            server: http://fleet-box:8080
+name: Scout                            broker:
+site: home                               host: fleet-box
+                                         port: 1883
+```
+
+Three properties make this safe to run unattended, or twice, or after a mistake:
+
+- **Idempotent.** The registry keys on a stable hardware id (the Pi's SoC
+  serial, else `/etc/machine-id`, else the MAC), so re-enrolling — after wiping
+  `~/.mote`, after a failed attempt — returns the *same* robot, not a second
+  one.
+- **It adopts an existing id.** A robot with an M0 operator-set id offers it and
+  the server records it. Upgrading a fleet to M1 registers it; it does not
+  renumber it.
+- **It refuses to re-key silently.** If the server answers with a different id
+  from the one on disk, `enroll` writes nothing and says so. `--force` is the
+  deliberate override.
+
+Then start the bridge:
+
+```bash
+pixi run agent                                    # by hand
+sudo systemctl enable --now mote-agent            # or as a service
+```
+
+The agent is *not* part of `pixi run robot` / `mapping`. It reports on the
+mission and carries commands to it; folding it into bringup would mean a robot
+that cannot reach the fleet server takes its own bringup down with it. It runs
+alongside, like the health monitor. If it starts before the robot has enrolled,
+it logs and retries — enrolling later brings it up without a restart.
+
+---
+
+## 8. Operating the fleet
+
+```bash
+pixi run fleetctl -- robots                             # the registry roster
+pixi run fleetctl -- watch                              # live: presence, health, pose, status
+pixi run fleetctl -- dispatch mote-01 fetch lab kitchen # send a task, follow it
+pixi run fleetctl -- dispatch mote-01 goto kitchen
+```
+
+`dispatch` exits 0 only if the task **succeeded**, so it composes into scripts.
+The command grammar is the task layer's own, unchanged (`fetch <target>
+<drop_zone>`, `goto <zone>` — see `mote_tasks`); the fleet adds no second
+grammar.
+
+What comes back is the task's transitions, tagged with the correlation id the
+command went out with:
+
+```console
+-> mote-01: fetch lab kitchen  (id 3e99cf44d1294ab5)
+2026-07-26T16:15:35.961Z  dispatched
+2026-07-26T16:15:35.963Z  accepted
+2026-07-26T16:15:38.305Z  succeeded
+```
+
+**One command at a time, per robot.** A second command sent while one is in
+flight is rejected by the agent with the running command named — the robot never
+sees two. Re-sending the *same* command id is safe and re-states its current
+status rather than running it again. The full state machine, and why the agent
+rather than the task layer enforces it, is in
+[`control-plane.md`](control-plane.md#task-state-machine).
+
+A task started **on the robot** (a `ros2 topic pub`, a bench script) appears in
+`watch` too, tagged `source: local` with a null id — the fleet should see a
+robot that is busy, whoever asked it to be.
+
+Everything except commands is **retained**, so `watch` shows you the current
+state of the fleet the instant it connects, with no polling and nothing replayed
+on request. A robot that loses power is marked offline by the broker itself,
+within the keepalive, via its Last Will — not after somebody notices the
+heartbeats stopped.

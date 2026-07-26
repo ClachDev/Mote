@@ -901,6 +901,14 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   off-LAN, over MQTT; the **MQTT topic tree + health payload are published as a
   versioned schema**. *Depends on:* M0. *Blocks:* M3, M4, M5, M6. *Parallel with:*
   M2, Ms. *Seams:* `task_server.py:67-68`, `:1-15`; `mote_bringup/systemd/`.
+  **Built** as `mote_fleet`; the contract shipped as
+  [`docs/fleet/control-plane.md`](../fleet/control-plane.md) (topic root carries
+  the major version, `mote/v1/<robot_id>/…`) and the measurements as
+  [`m1-verification.md`](../fleet/m1-verification.md). Two findings land on
+  later milestones: the agent costs exactly one DDS participant slot, so the M2
+  budget above is unchanged; and **conda-forge's mosquitto has no websockets
+  support**, which M3's browser-subscribes-to-the-broker plan depends on — the
+  options (a libwebsockets build, or EMQX early) are in §4 of that ledger.
 
 - **M2 · Foxglove observability + teleop.** `foxglove_bridge` on the robot; a
   Foxglove layout for pose-on-PNG-map + camera peek + teleop.
