@@ -1,0 +1,22 @@
+<?xml version="1.0" ?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mote_arm</name>
+  <version>0.0.0</version>
+  <description>SO-101 follower arm bring-up: joint states, safe jog control, and bench tools</description>
+  <maintainer email="michael@clach.dev">Michael Johnson</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>mote_description</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- feetech-servo-sdk (imports as scservo_sdk) is a PyPI dep declared in
+       pixi.toml; pyserial is its transport. -->
+  <exec_depend>python3-serial</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

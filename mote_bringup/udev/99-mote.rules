@@ -18,6 +18,9 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", SYMLINK+="m
 # SLAMTEC RPLIDAR C1 (Silicon Labs CP2102N)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="mote_lidar", MODE="0666", TAG+="systemd"
 
+# The SO-101 arm shares the servo bus above (arm IDs 1-6, wheels 7/9), so it
+# needs no rule of its own — robot.yaml points arm.port at /dev/mote_servos.
+
 # UGREEN USB Camera — UVC cameras expose both a capture and a metadata video
 # node; ID_V4L_CAPABILITIES pins the symlink to the capture node.
 SUBSYSTEM=="video4linux", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="2283", KERNEL=="video[0-9]*", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", SYMLINK+="mote_camera"

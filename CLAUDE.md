@@ -19,6 +19,10 @@ pixi run save-zone <n>  # Teach a zone: capture current robot pose (+ optional -
 pixi run site           # Site CLI: create / add-floor / use / use-map / list / info
 pixi run teleop         # Keyboard teleoperation
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
+pixi run arm            # SO-101 arm driver: joint states + safe jog control
+pixi run arm-jog        # Interactive per-joint jog CLI (needs `pixi run arm`)
+pixi run arm-check      # Standalone arm bus enumeration + health (read-only)
+pixi run arm-pose       # Teach/replay named arm poses; derive soft limits
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi-powersave + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -139,6 +143,61 @@ The task layer: py_trees behaviour trees on top of Nav2 (synced to the Pi). py_t
 - `behaviours/` — `DriveTo` (Nav2 NavigateToPose action client as a behaviour; cancels in-flight goals on preemption), `AcquireObject` (label missions: publishes the label to `detect/labels`, waits for a matching `detected_objects` detection, writes a standoff goal — 0.4 m short of the object, facing it — to `object_pose`; zone missions pass through), and `TimedStub` (placeholder pick/place until the SO-101 arm is actuated).
 - `trees/` — `common.py` (shared `WaitForTask` + the `task` blackboard key), `fetch.py` (wait → acquire object → drive to object → pick stub → drive to drop → place stub; blackboard keys `task`/`object_pose`/`object_label`/`drop_pose` are the seam between the command grammar and perception), and `goto.py` (wait → drive to the zone's pose; success == Nav2 success).
 - `test/` — mock-`navigate_to_pose` tree ticks (`test_fetch_tree.py`, `test_fetch_object.py` against a mock detector, `test_goto_tree.py`) plus pure parser/loader tests (`test_parse_command.py`, `test_goto_command.py`, `test_zones.py` — which covers zone footprints and `containing`), no Gazebo/Nav2 needed, run by `pixi run test`.
+
+### `mote_arm` (Python/ament)
+SO-101 **follower** arm bring-up (synced to the Pi). There is no leader arm.
+Uses **direct Feetech control** (not LeRobot): the arm servos are the same
+STS-class Feetech bus as the drive wheels, so it reuses the servo stack rather
+than pulling `torch` onto the lean Pi env — the sole new dep is the pure-Python
+`feetech-servo-sdk` (`scservo_sdk`). All arm config (port, baud, servo IDs,
+per-joint soft limits, home offsets, direction) lives in `robot.yaml`'s `arm:`
+section. Contains:
+- `config.py` — parses `arm:`; encoder<->radian conversion + soft-limit clamping
+  (ROS-free, unit-tested in `test/`).
+- `bus.py` — `FeetechBus`, a thin `scservo_sdk` wrapper (lazy import so
+  build/lint/test stay hardware-free); register map matches `mote_hardware`.
+- `arm_driver` (node, `pixi run arm`) — the **single bus owner**: publishes
+  `/joint_states` for the arm, accepts absolute goals on `arm/goal`
+  (soft-clamped), exposes `arm/set_torque` (`std_srvs/SetBool`). Starts **limp**
+  and goes limp on shutdown — nothing moves without an explicit command.
+- `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client* of the
+  driver (publishes clamped `arm/goal`, torque-off on exit). No bus contention.
+- `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
+  + `--save-home` calibration snapshot. Run with the driver stopped (same port).
+- `poses.py` + `arm_pose` (`pixi run arm-pose`) — teach/replay named poses
+  (`~/.mote/arm_poses.yaml`, `MOTE_HOME`-overridable), the arm's analogue of
+  `save-zone`. **The committed soft limits are the envelope of physically vetted
+  poses** (`arm-pose limits`), not guesses; `go` refuses moves over
+  `--max-travel`. Changing `home` invalidates stored poses.
+- The arm links/joints are added to `mote.urdf.xacro` behind an `arm:=true`
+  default (the sim passes `arm:=false`); joint names match `robot.yaml` and
+  `/joint_states` so robot_state_publisher animates the arm in TF.
+- **The arm shares the drive-wheel bus** (verified: arm IDs 1-6, wheels 7/9, all
+  on `/dev/mote_servos`), so it needs no udev rule. Two guards enforce this
+  rather than merely documenting it: `config.py` rejects an arm ID colliding
+  with a wheel ID on a shared port, and `bus.py` refuses to open a port another
+  process already holds (naming the PID). Consequence: the arm driver cannot run
+  concurrently with the robot base — stop it first (`pixi run kill`). Lifting
+  that means folding arm control into `mote_hardware`'s ros2_control
+  `SystemInterface` so one process owns the bus.
+- Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
+  the human bench runbook in `mote_arm/BENCH.md`.
+- `arm_gains` (`pixi run arm-gains show|apply`) — the servos' position-loop
+  gains live in EEPROM, i.e. invisible config a servo swap would silently
+  revert, so `robot.yaml`'s `arm.gains` is the source of truth and this tool
+  reconciles hardware with it. The arm shipped `Kp=16`, which left permanent
+  droop under load (the servo settles where `Kp x error` balances the holding
+  torque; `Ki=0` never integrates it away). Measured on elbow at -0.200 rad:
+  Kp=16 -> error 0.071 at load 196/1000; Kp=32 -> error 0.033 at load 176 —
+  error halves as Kp doubles at ~constant load, so it was droop, NOT torque
+  saturation, and the 5 V supply was never the binding constraint. **Kp=32
+  (wheel/STS3215 default) is applied**; the arm now completes the full 3.19 rad
+  home<->reachy move both ways with 0.02-0.06 rad residual. Gotcha: an EEPROM
+  read-back races the relock — wait ~150 ms and read twice, or a single read can
+  return a garbled 250 and make a successful write look failed.
+- **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
+  an unresolved mechanical clash, tracked separately, not addressed here.
+  `mote_arm` is not part of the mission bringup; run it explicitly.
 
 ### Third-party submodules (`third_party/`)
 - `sllidar_ros2` — SLAMTEC RPLIDAR C1 ROS 2 driver
