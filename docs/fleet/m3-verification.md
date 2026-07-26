@@ -35,8 +35,9 @@ Two things fell out of running it:
   is not detected still runs, just without WS).
 - **`log_type` replaces mosquitto's default set rather than adding to it.** The
   M1 config named `warning` and `notice`, which silently dropped `error` — which
-  is exactly how the port clash above was found: the broker exited with *no
-  message at all*, and the missing WS listener looked like a websockets problem
+  is exactly how the port clash above was found: a *second* broker was already
+  holding 1883 (the M1 conda one, serving a live robot), and the new one exited
+  with **no message at all**, so a failed bind looked like a websockets problem
   for twenty minutes. The config no longer sets `log_type`; the default set
   includes errors and the listener lines, which are the direct answer to both
   "why did it stop?" and "is the WS listener up?".
@@ -150,23 +151,100 @@ M0 asks that `dds-check` be re-run whenever a milestone adds processes. M3 adds
 none on the robot: everything here runs on the fleet box or in a browser. The
 budget is still M1's ~23 of 33 with `foxglove_bridge` (M2) unclaimed.
 
-## 6. Not verified here
+## 6. Against the real robot — **confirmed, over the tailnet**
 
-- **Off-LAN.** As in M1, the acceptance criterion's "fully off-LAN" is a
-  property of the M0 tailnet rather than of this code — the dashboard fetching
-  `/v1/config` and opening a WebSocket over a WireGuard interface is the same
-  fetch and the same WebSocket. Everything above ran on one machine. To close
-  it: run the broker and `fleet-server` on the fleet box, browse to
-  `http://<fleet-box>:8080/` from a tethered laptop, and dispatch. The one thing
-  to watch for is the **WS listener's bind address** — the same lever as the
-  MQTT listener, commented in `mosquitto.conf`.
+Run on `mote-01` (a Raspberry Pi on the tailnet, reached direct rather than via
+a DERP relay) with the dashboard and the fleet server on the workstation. The
+robot was running `pixi run robot` — bringup plus Nav2 — and `mote-agent.service`
+under systemd, which is the first time that unit has been started by systemd
+rather than by hand (an M1 gap, `m1-verification.md` §5).
+
+**The broker swap is undisruptive, and the agent heals itself.** The M1 conda
+broker was replaced in place by the container one on the same port, over the
+same `$MOTE_FLEET_HOME`, while the robot was connected:
+
+```
+20:21:56  [mote_agent] disconnected from broker; paho will retry
+20:22:27  [mote_agent] connected to broker as mote-01
+```
+
+Nothing on the robot was touched or restarted, and nothing about the mission
+noticed: the agent is a bridge, not part of the control loop.
+
+**A live health monitor's payload, at last** — the other M1 gap. Every health
+state seen before this was `unknown` or a fixture; this is the real
+`/diagnostics_agg` roll-up forwarded verbatim, and it is what the dashboard's
+subsystem list renders:
+
+```json
+{"state":"ok","summary":"OK","subsystems":[
+  {"name":"scan","state":"ok"},{"name":"scan_filtered","state":"ok"},
+  {"name":"joint_states","state":"ok"},{"name":"camera","state":"ok"},
+  {"name":"odometry","state":"ok"},{"name":"localization","state":"ok"},
+  {"name":"system","state":"ok"},{"name":"self_check","state":"ok","message":"ready"}],
+ "site":"home","floor":"ground","version":"b950358","uptime_s":21230.2,"battery":null}
+```
+
+**The basemap is a real robot's map, and the transform lands.** The `home/ground`
+bundle rsynced off the robot serves as `234x166` px at `0.05 m/px` with origin
+`[-5.98, -4.84]`; the reported pose `(0.432, 0.210)` puts the marker at pixel
+`(128, 65)` — mid-room, where the robot was.
+
+**Dispatch, twice, and the failure is the informative one.** The first attempt
+went out to a robot whose *task layer was not running* — `pixi run tasks` is
+deliberately not part of `pixi run robot`, so a nav mission has no `task_server`
+unless one is started. The command reached the ROS graph and nothing answered:
+
+```
+20:34:35  [mote_agent] dispatching 'goto office' (id 407eb9b4393c4064)
+20:34:56  [mote_agent] command 407eb9b4393c4064: no verdict from the task server within 20s
+```
+
+which is exactly the state machine's documented behaviour for that case
+(`control-plane.md`) — observed on hardware for the first time, having only been
+unit-tested. `ros2 topic info -v /task/command` confirmed the diagnosis: one
+publisher (`mote_agent`), one subscriber, and it was the **bag recorder**.
+
+With `pixi run tasks` started, the same command ran, and the dashboard's status
+feed shows both attempts as the operator saw them:
+
+```
+19:42:32  succeeded  goto office                                              fleet
+19:41:33  accepted   goto office                                              fleet
+19:41:33  dispatched goto office                                              fleet
+19:34:56  failed     goto office — no verdict from the task server within 20s  fleet
+19:34:35  dispatched goto office                                              fleet
+```
+
+with both attempts in the audit log under the operator who sent them:
+
+```
+2026-07-26T19:34:35Z  michael  mote-01  goto office  407eb9b4393c4064  published
+2026-07-26T19:41:33Z  michael  mote-01  goto office  7d679cf267f14058  published
+```
+
+So the whole write path — dashboard → fleet API (authorized, audited) → broker →
+tailnet → agent → `/task/command` → behaviour tree → Nav2 → wheels — and the
+whole read path back, are confirmed against hardware. The correlation id
+survives every hop in both directions.
+
+## 7. Not verified here
+
+- **A browser on a different physical network.** §6 crossed the tailnet for the
+  robot↔fleet-box hop, but the two were also on one LAN and the browser was on
+  the fleet box itself. What remains is the last hop: browse to
+  `http://<fleet-box>:8080/` from a tethered laptop and dispatch. The thing to
+  watch there is the **WS listener's bind address** — the same lever as the MQTT
+  listener, commented in `mosquitto.conf`.
 - **The Foxglove deep link.** The button is rendered from the configured
-  template and opens `foxglove://…`, but there is no `foxglove_bridge` on a
-  robot until M2, so nothing has been observed on the other end of it.
+  template and opens `foxglove://…`, which needs both the Foxglove desktop app
+  on the operator's machine and a `foxglove_bridge` on the robot. Neither exists
+  until M2, so nothing has been observed on the other end of it. `--foxglove-url
+  ""` hides the button meanwhile.
 - **More than two robots.** The roster, the map and the per-floor filter were
-  exercised with two. Marker clustering and basemap tiling, which `fleet.md` Q5
-  describes for large sites, are not built — at this fleet size they would be
-  unmeasured complexity.
-- **A real robot.** The browser run used scripted robots. The agent, the tree
-  and a real Nav2 goal are covered by §4's automated end-to-end test, but the
-  dashboard has not yet had a Raspberry Pi on the other end of it.
+  exercised with two (scripted), and with one real robot. Marker clustering and
+  basemap tiling, which `fleet.md` Q5 describes for large sites, are not built —
+  at this fleet size they would be unmeasured complexity.
+- **A robot dropping off while the dashboard watches.** The Last Will is tested
+  against a real broker (`m1-verification.md` §2) and the UI renders `offline`
+  from the same retained payload, but the two have not been observed together.

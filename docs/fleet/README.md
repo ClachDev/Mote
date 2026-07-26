@@ -512,6 +512,21 @@ command went out with:
 2026-07-26T16:15:38.305Z  succeeded
 ```
 
+**Dispatch needs the task layer running on the robot**, and `pixi run tasks` is
+deliberately not part of `pixi run robot` — so a robot happily navigating, in
+the roster, reporting `ok`, can still have nothing subscribed to
+`task/command`. What that looks like is a 20-second wait and then:
+
+```
+failed  goto office  — no verdict from the task server within 20s
+```
+
+That is the state machine working, not a fault: the agent forwarded the command,
+nothing answered, and it freed the slot rather than wedging. The fix is `pixi run
+tasks` on the robot alongside the mission; `ros2 topic info -v /task/command`
+confirms it — a healthy robot has the task server among its subscribers, not
+just the bag recorder.
+
 **One command at a time, per robot.** A second command sent while one is in
 flight is rejected by the agent with the running command named — the robot never
 sees two. Re-sending the *same* command id is safe and re-states its current
