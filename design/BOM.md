@@ -17,6 +17,7 @@ build uses a single USB camera.
 | Part                                                           | Qty | Unit price | Link                                                                                                  |
 | -------------------------------------------------------------- | --- | ---------- | ----------------------------------------------------------------------------------------------------- |
 | Raspberry Pi 5 (4GB)                                           | 1   | ~£99       | [CPC Farnell](https://cpc.farnell.com/raspberry-pi/rpi5-4gb-single/raspberry-pi-5-4gb/dp/SC20210)     |
+| Raspberry Pi 5 Active Cooler                                   | 1   | ~£4.80     | [The Pi Hut](https://thepihut.com/products/active-cooler-for-raspberry-pi-5)                          |
 | Waveshare Serial Bus Servo Driver Board                        | 1   | ~£15       | [Amazon UK](https://www.amazon.co.uk/dp/B0CJ6TP3TP)                                                   |
 | Feetech STS3215 7.4V servo — 1/191 gear (C044)                 | 2   | ~£12       | [Alibaba](https://www.alibaba.com/product-detail/Low-Cost-Feetech-STS3215-Servo-7_1601611431055.html) |
 | UGREEN Nexode 140W Power Bank 25000mAh, 2× USB-C (160×81×27mm) | 1   | ~£50       | [Amazon UK](https://www.amazon.co.uk/dp/B0BJQ7F16T)                                                   |
@@ -31,7 +32,7 @@ build uses a single USB camera.
 | UGREEN 1080p/30fps USB Webcam 85° FOV   | 1   | ~£15       | [Amazon UK](https://www.amazon.co.uk/dp/B0C76ZD7KV)                 |
 | SLAMTEC RPLIDAR C1 360° DTOF, 10Hz, 12m | 1   | ~£56       | [AliExpress](https://www.aliexpress.com/item/1005006641728089.html) |
 
-**Base total (excluding print cost): ~£292**
+**Base total (excluding print cost): ~£297**
 
 ---
 
