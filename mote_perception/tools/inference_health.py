@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mote_perception.depth_wire import DepthClient  # noqa: E402
+from mote_perception.depth_wire import DepthClient, repo_revision  # noqa: E402
 from mote_perception.detect_wire import DetectClient  # noqa: E402
 
 
@@ -66,10 +66,15 @@ def main():
         results[name] = client.health()
         client.close()
 
+    local = repo_revision()
     if args.json:
-        print(json.dumps({"host": host, "services": results}, indent=2))
+        print(
+            json.dumps(
+                {"host": host, "local_version": local, "services": results}, indent=2
+            )
+        )
     else:
-        print(f"inference host: {host}")
+        print(f"inference host: {host}   (this machine: {local or 'unknown'})")
         for name, info in results.items():
             if info is None:
                 print(f"  {name:7} DOWN (no response)")
@@ -79,8 +84,22 @@ def main():
                 where = f"{dev} ({gpu})" if gpu else dev
                 print(
                     f"  {name:7} UP   {info.get('model', '?')}  on {where}"
-                    f"  torch {info.get('torch', '?')}"
+                    f"  torch {info.get('torch', '?')}  @ {info.get('version') or '?'}"
                 )
+        # Robot and server share the wire protocol, so a revision mismatch is
+        # worth flagging before it shows up as a confusing protocol error.
+        stale = {
+            n: i.get("version")
+            for n, i in results.items()
+            if i and local and i.get("version") and i["version"] != local
+        }
+        if stale:
+            print(
+                f"\nWARNING: version skew — this machine is at {local}, but "
+                + ", ".join(f"{n} is at {v}" for n, v in stale.items())
+                + ".\n         Update the inference machine "
+                "(deploy/windows/update.ps1) so both ends match."
+            )
 
     return 0 if all(v is not None for v in results.values()) else 1
 

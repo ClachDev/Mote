@@ -29,6 +29,7 @@ from mote_perception.detect_wire import (  # noqa: E402
     DEFAULT_PORT,
     HEALTH_MAGIC,
     recvall,
+    repo_revision,
     send_detections,
     send_health,
     send_rejection,
@@ -109,6 +110,7 @@ def main():
         "threshold": args.threshold,
         "torch": torch.__version__,
         "cuda_available": torch.cuda.is_available(),
+        "version": repo_revision(),
     }
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -17,6 +17,7 @@ from mote_perception.depth_wire import (
     DepthClient,
     recv_image,
     recvall,
+    repo_revision,
     send_depth,
     send_health,
     send_rejection,
@@ -241,3 +242,10 @@ def test_health_round_trip_and_interleaves_with_infer():
 def test_health_returns_none_when_unreachable():
     client = DepthClient("127.0.0.1", port=1, timeout=0.5, warn=lambda m: None)
     assert client.health() is None
+
+
+def test_repo_revision_is_a_string_or_none():
+    # Best-effort: a git checkout reports a revision, a tree without git reports
+    # None. Either is valid; it must never raise, since it runs at server start.
+    rev = repo_revision()
+    assert rev is None or (isinstance(rev, str) and rev)

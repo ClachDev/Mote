@@ -32,6 +32,8 @@ talking to?" over the existing link (see WireClient.health).
 import json
 import socket
 import struct
+import subprocess
+from pathlib import Path
 
 import numpy as np
 
@@ -84,6 +86,35 @@ def send_health(conn, info):
     """
     body = json.dumps(info).encode("utf-8")
     conn.sendall(struct.pack(">I", len(body)) + body)
+
+
+def repo_revision():
+    """The server's checkout revision, for the health blob, or None if unknown.
+
+    Robot and server share this protocol module, so they must be updated
+    together; reporting the revision each side is running makes a stale
+    inference machine visible from the robot (`pixi run inference-health`)
+    instead of surfacing later as a confusing protocol error. Best-effort: git
+    may be absent on the inference machine, so failure is not an error.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(Path(__file__).resolve().parent),
+                "describe",
+                "--always",
+                "--dirty",
+                "--tags",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return out.stdout.strip() or None if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 class WireClient:

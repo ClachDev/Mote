@@ -30,12 +30,14 @@ from mote_perception.depth_wire import (
     HEALTH_MAGIC,
     WireClient,
     recvall,
+    repo_revision,
     send_health,
 )
 
 __all__ = [
     "HEALTH_MAGIC",
     "send_health",
+    "repo_revision",
     "recv_request",
     "send_detections",
     "send_rejection",

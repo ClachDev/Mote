@@ -290,5 +290,9 @@ role and [`benchmarks/`](benchmarks/README.md) for numbers.
   latency/fps benchmark against a server; writes JSON for the benchmarks dir.
 - `tools/prefetch_models.py` (`pixi run inference-prefetch[-cuda|-rocm]`) — warm the
   HuggingFace cache so the first request doesn't block on a download.
-- `deploy/windows/` — PowerShell setup + boot auto-start for the NVIDIA Windows
-  inference PC (`setup.ps1`, `install_service.ps1`, `run_inference.ps1`).
+- `deploy/windows/` — PowerShell setup, boot auto-start, and update for the NVIDIA
+  Windows inference PC (`setup.ps1`, `install_service.ps1`, `run_inference.ps1`,
+  `update.ps1`). That machine is a git clone and updates by pulling
+  (`update.ps1`), unlike the Pi which is pushed to by `pixi run sync`; the servers
+  report their checkout revision in the health blob so `inference-health` warns on
+  version skew.

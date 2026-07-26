@@ -15,25 +15,44 @@ health, the multi-service pattern, the fallback matrix, and how to measure it.
 
 ---
 
-## Host decision: native Windows, not WSL2
+## Host decision: native Windows
 
 The target is a Windows gaming PC with an NVIDIA GPU that also stays a gaming PC.
-Two ways to host a Linux-flavoured torch stack there — native Windows or WSL2 —
-were weighed against the things that actually matter for this role:
+Three ways to host a torch stack there — native Windows, WSL2, and Docker — were
+weighed against the things that actually matter for this role:
 
-| Criterion | Native Windows (chosen) | WSL2 |
-|---|---|---|
-| **CUDA torch in a pixi env** | ✅ `win-64` feature, torch `cu128` wheel from pytorch.org solves cleanly (verified: `torch-2.11.0+cu128-cp312-cp312-win_amd64.whl`) | ✅ `linux-64`, torch `cu128` linux wheel |
-| **LAN reachability from the robot** | ✅ server binds `0.0.0.0` straight onto the PC's LAN IP; robot connects directly | ⚠️ WSL2 is NAT'd behind the host — needs `netsh interface portproxy` or mirrored-networking mode to expose the socket to the LAN |
-| **Auto-start on boot** | ✅ Task Scheduler "at startup" runs the runner in session 0; CUDA compute needs no desktop | ⚠️ needs WSL auto-launch + systemd-in-WSL + the host waking the distro; more moving parts |
-| **Stays a gaming PC** | ✅ a background scheduled task; no VM | ✅ but a running WSL VM alongside |
-| **Operational simplicity** | ✅ one pixi env, one task, logs in `%LOCALAPPDATA%` | ⚠️ two OSes to reason about when something breaks |
+| Criterion | Native Windows (chosen) | WSL2 | Docker Desktop |
+|---|---|---|---|
+| **CUDA torch in a pixi env** | ✅ `win-64` feature, torch `cu128` wheel from pytorch.org solves cleanly (verified: `torch-2.11.0+cu128-cp312-cp312-win_amd64.whl`) | ✅ `linux-64`, torch `cu128` linux wheel | ✅ but in an image, not a pixi env |
+| **GPU access** | ✅ direct | ✅ via WSL2 CUDA driver | ⚠️ **requires the WSL2 backend anyway** — CUDA in a Linux container on Windows goes through WSL2, so Docker is WSL2 *plus* a container layer |
+| **LAN reachability from the robot** | ✅ binds `0.0.0.0` straight onto the PC's LAN IP | ⚠️ NAT'd behind the host — needs `netsh interface portproxy` or mirrored networking | ✅ `-p 5601:5601` publishes on the host interface (Docker's port proxy solves what raw WSL2 doesn't) |
+| **Auto-start on boot** | ✅ Task Scheduler "at startup", session 0, no desktop needed | ⚠️ WSL auto-launch + systemd-in-WSL + waking the distro | ✅ `--restart unless-stopped`, but Docker Desktop itself must auto-start (and it starts on *login*, not boot, unless run as a service) |
+| **Toolchain count** | ✅ pixi only — the same tool the whole project already uses | ✅ pixi only | ❌ pixi **and** Docker: a second dependency system, plus a ~6 GB CUDA image, a registry to host it, and a build pipeline to produce it |
+| **Reproducibility** | ⚠️ `pixi.lock` pins deps exactly, but the OS/driver layer is the machine's own | ⚠️ same | ✅ frozen image is the strongest answer |
+| **Update story** | ✅ `git pull` + `pixi install` (see below) | ✅ same | ✅ pull a new tag — but only after CI builds and pushes it |
+| **Stays a gaming PC** | ✅ a background scheduled task | ✅ a running VM | ⚠️ Docker Desktop resident; licensing terms apply to commercial use |
 
-Native Windows wins on the two that bite in practice — the robot reaching the
-socket, and the servers coming back after a reboot — without giving up the easy
-CUDA torch path. WSL2's only real edge (matching the existing Linux tooling) is
-outweighed by its NAT layer sitting between the robot and the server. Dual-boot
-Linux was out of scope and unnecessary since both options solved.
+**Docker was ruled out for this deployment, not on capability but on cost/benefit
+at this scale.** Its real advantage is reproducibility — a frozen image makes "a
+rebuild of the PC could follow it" trivially true. But buying that means adding a
+second dependency-management system to a project whose stated rule is *everything
+runs through pixi*, standing up a registry for a ~6 GB CUDA image, and building
+that image in CI — all for **one machine**, and on Windows the container still
+sits on WSL2 underneath, so it doesn't even remove the layer WSL2 was penalised
+for. The `pixi.lock` already pins every dependency exactly; what an image would
+add on top is the OS/driver layer, which is the part that changes least.
+
+**Revisit Docker when there is more than one inference box.** At fleet scale
+(task 166) the image-plus-registry cost amortises across machines and the
+reproducibility argument flips — that is the trigger, and this section is the
+record of the trade so the decision can be re-made on evidence rather than
+re-litigated from scratch.
+
+So native Windows wins: it takes the two criteria that bite in practice — the
+robot reaching the socket and the servers returning after a reboot — without
+adding tooling. WSL2's only real edge (matching Linux tooling) is outweighed by
+its NAT layer; Docker's (reproducibility) doesn't yet pay for its overhead.
+Dual-boot Linux was out of scope and unnecessary since the other options solved.
 
 **So: the inference PC runs native Windows, pixi's `inference-cuda` env, torch
 from the CUDA wheel index.** The pixi feature declares `platforms = ["win-64"]`
@@ -126,6 +145,53 @@ Ports are per-service and fixed (depth 5601, detect 5602); the robot node for ea
 service carries its own port, so services are independent.
 
 ---
+
+## Deploy and update
+
+The robot is *pushed* to (`pixi run sync` rsyncs the tree to the Pi). The
+inference PC is **pulled**: it is a plain git clone with no ROS, needing only the
+repo plus the `inference-cuda` env, and it is a machine you occasionally sit at
+anyway. Pulling also keeps the reported revision honest — the servers report
+`git describe` in their health blob, which a push-based deploy of a tree without
+`.git` could not do.
+
+To update the PC:
+
+```powershell
+cd C:\mote
+.\mote_perception\deploy\windows\update.ps1
+```
+
+That stops the servers, `git pull --ff-only`s (add `-Branch <name>` to switch;
+by default it follows whatever branch the checkout is on, so it tracks a feature
+branch during bring-up and `main` afterwards), re-runs `pixi install -e
+inference-cuda` so a changed `pixi.lock` takes effect, pre-fetches any newly
+referenced models, and restarts the boot task. It prints the revision before and
+after.
+
+**Version skew is visible, not silent.** The robot and the server share the wire
+protocol modules, so they must move together. Each server reports its checkout
+revision in the health blob, and `pixi run inference-health` compares it against
+the robot's own and warns when they differ:
+
+```
+inference host: mote-gpu   (this machine: a1b2c3d)
+  depth   UP   ...  @ 6aa919f
+  detect  UP   ...  @ 6aa919f
+
+WARNING: version skew — this machine is at a1b2c3d, but depth is at 6aa919f, ...
+         Update the inference machine (deploy/windows/update.ps1) so both ends match.
+```
+
+In practice the protocol changes rarely and additively (the health request was
+added without breaking existing clients — an unknown leading `uint32` was already
+impossible to confuse with an image length). But when it does change, this turns
+a confusing protocol error into a one-line diagnosis.
+
+**Rebuilding the PC from scratch** is: install git, clone the repo, run
+`setup.ps1`, then `install_service.ps1`. No state lives on that machine other than
+the repo, the pixi env, and the HuggingFace model cache — all reproducible from
+the checkout, which is what makes the guide repeatable.
 
 ## Production behaviors
 
