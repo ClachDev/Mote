@@ -17,6 +17,12 @@
   <xacro:arg name="arm" default="true"/>
   <xacro:property name="arm" value="$(arg arm)"/>
 
+  <!-- Wheel-ground friction (Gazebo only). Default 1.0 reproduces gz's own
+       default surface friction; lowering it makes the velocity-controlled
+       wheels slip, so wheel odometry over-reads while the true pose lags. -->
+  <xacro:arg name="wheel_mu" default="1.0"/>
+  <xacro:property name="wheel_mu" value="$(arg wheel_mu)"/>
+
 
   <!-- ===================== MEASUREMENTS ===================== -->
   <!--
@@ -375,6 +381,16 @@
     <gazebo reference="caster_link">
       <mu1>0.0</mu1>
       <mu2>0.0</mu2>
+    </gazebo>
+
+    <!-- Drive-wheel friction; wheel_mu defaults to 1.0 (gz default) -->
+    <gazebo reference="left_wheel_link">
+      <mu1>${wheel_mu}</mu1>
+      <mu2>${wheel_mu}</mu2>
+    </gazebo>
+    <gazebo reference="right_wheel_link">
+      <mu1>${wheel_mu}</mu1>
+      <mu2>${wheel_mu}</mu2>
     </gazebo>
 
     <xacro:property name="lidar_sim" value="${cfg['lidar']['sim']}"/>

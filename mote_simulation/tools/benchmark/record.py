@@ -56,7 +56,8 @@ class Recorder(Node):
         self.set_parameters([rclpy.parameter.Parameter("use_sim_time", value=True)])
         self.base_frame = base_frame
         self.truth = []  # [t, x, y, yaw]
-        self.est = []  # [t, x, y, yaw]
+        self.est = []  # [t, x, y, yaw]  (map->base: full localization estimate)
+        self.odom_est = []  # [t, x, y, yaw]  (odom->base: dead-reckoning only)
         self.scan_min = []  # [t, min_range]
         self.cmd = []  # [t, vx, wz]
         self.recovery_ids = {a: set() for a in RECOVERY_ACTIONS}
@@ -107,15 +108,30 @@ class Recorder(Node):
         self.truth.append([t, p.x, p.y, yaw_of(msg.pose.orientation)])
 
     def sample_est(self):
+        # map->base: the full localization estimate (AMCL + kinematic_icp). This
+        # is what nav actually uses; AMCL's map correction can mask an odometry
+        # change, so it is sampled alongside — not instead of — odom->base below.
         try:
             tf = self.tf_buffer.lookup_transform(
                 "map", self.base_frame, rclpy.time.Time()
             )
+            t = tf.header.stamp.sec + tf.header.stamp.nanosec * 1e-9
+            tr = tf.transform.translation
+            self.est.append([t, tr.x, tr.y, yaw_of(tf.transform.rotation)])
         except tf2_ros.TransformException:
-            return
-        t = tf.header.stamp.sec + tf.header.stamp.nanosec * 1e-9
-        tr = tf.transform.translation
-        self.est.append([t, tr.x, tr.y, yaw_of(tf.transform.rotation)])
+            pass
+        # odom->base: pure dead-reckoning (wheel odom refined by kinematic_icp)
+        # with no map correction. This isolates odometry quality from the map
+        # correction that would otherwise hide a change in it.
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                "odom", self.base_frame, rclpy.time.Time()
+            )
+            t = tf.header.stamp.sec + tf.header.stamp.nanosec * 1e-9
+            tr = tf.transform.translation
+            self.odom_est.append([t, tr.x, tr.y, yaw_of(tf.transform.rotation)])
+        except tf2_ros.TransformException:
+            pass
 
     def on_scan(self, msg):
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
@@ -199,6 +215,7 @@ class Recorder(Node):
         return {
             "truth": self.truth,
             "est": self.est,
+            "odom_est": self.odom_est,
             "scan_min": self.scan_min,
             "cmd": self.cmd,
             "goals": goals,
