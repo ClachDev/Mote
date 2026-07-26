@@ -254,9 +254,14 @@ depth:  { enabled: true, server_port: 5601 }
 detect: { enabled: true, server_port: 5602 }
 ```
 
-Override per-robot in `~/.mote/perception.yaml` (same precedence as the camera
-calibration). This lives here, not in `robot.yaml`: `robot.yaml` is
-hardware/description, `perception.yaml` is perception runtime. No discovery
+Override per-robot in `$MOTE_HOME/perception.yaml` (`~/.mote` by default), the
+per-robot state root M0 formalised — same precedence as the camera calibration,
+resolved through `mote_bringup.mote_home.override()` so an update can never
+clobber it. `pixi run inference-health` resolves the same way, so the probe always
+reads the file the nodes were launched with. This lives here, not in `robot.yaml`:
+`robot.yaml` is shared hardware description, `perception.yaml` is perception
+runtime (and `$MOTE_HOME/robot.yaml` is a third thing again — this robot's
+identity). No discovery
 protocol is invented — a stable hostname is the contract.
 
 **Use the machine's MagicDNS name.** Since M0 every robot, workstation and GPU box

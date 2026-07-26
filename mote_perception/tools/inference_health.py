@@ -24,15 +24,33 @@ from mote_perception.depth_wire import DepthClient, repo_revision  # noqa: E402
 from mote_perception.detect_wire import DetectClient  # noqa: E402
 
 
+def _perception_yaml():
+    """The perception.yaml this robot actually uses.
+
+    Resolved through `mote_bringup.mote_home`, the single place the per-robot
+    state rule lives, so this probe reads the same file `perception_launch.py`
+    launched the nodes with — including when MOTE_HOME points somewhere other
+    than ~/.mote (the sim's in-repo bundle, or a test tmpdir). Falls back to
+    resolving MOTE_HOME directly when mote_bringup isn't importable (running
+    this from an unbuilt workspace), rather than silently reverting to ~/.mote.
+    """
+    packaged = str(Path(__file__).resolve().parents[1] / "config" / "perception.yaml")
+    try:
+        from mote_bringup import mote_home
+
+        return mote_home.override("perception.yaml", packaged)
+    except ImportError:
+        root = Path(os.environ.get("MOTE_HOME", "~/.mote")).expanduser()
+        user = root / "perception.yaml"
+        return str(user) if user.exists() else packaged
+
+
 def _default_host():
-    """The inference_host from perception.yaml (user override, then packaged)."""
-    user = os.path.expanduser("~/.mote/perception.yaml")
-    packaged = Path(__file__).resolve().parents[1] / "config" / "perception.yaml"
-    path = user if os.path.exists(user) else packaged
+    """The inference_host the robot is configured to use."""
     try:
         import yaml
 
-        with open(path) as f:
+        with open(_perception_yaml()) as f:
             return yaml.safe_load(f).get("inference_host", "127.0.0.1")
     except Exception:
         return "127.0.0.1"

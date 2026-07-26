@@ -45,7 +45,7 @@ concern, not by machine — which machine each half lands on is a deployment cho
   Every variant runs the same supervisor (`tools/inference_server.py`).
 
 The only knob is **`inference_host`** in `config/perception.yaml` (with the same
-`~/.mote/perception.yaml` override as the camera calibration): leave it
+`$MOTE_HOME/perception.yaml` override as the camera calibration): leave it
 `127.0.0.1` to run everything on one machine, or point it at the GPU box to
 offload just inference. The same file's `depth.enabled` / `detect.enabled` toggle
 each node — turn one off if the Pi can't carry its per-frame CPU cost. Nothing is
