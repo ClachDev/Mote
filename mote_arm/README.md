@@ -36,6 +36,39 @@ Everything hardware lives in `mote_description/config/robot.yaml` (`arm:`
 section): the single source of truth for the port, baud, servo IDs, per-joint
 soft limits, home offsets, and direction.
 
+### Why not an existing ROS 2 SO-101 stack?
+
+Several exist and were reviewed (July 2026):
+
+- [`legalaspro/so101-ros-physical-ai`](https://github.com/legalaspro/so101-ros-physical-ai)
+  — the fullest arm stack: Feetech ros2_control driver, MoveIt 2, episode
+  recording with LeRobot dataset export, torch isolated off the control path.
+  Jazzy. But it is a **standalone arm on its own bus** and its teleop assumes a
+  leader arm; we have neither.
+- [`brukg/so_arm_100_hardware`](https://github.com/brukg/so_arm_100_hardware)
+  — SO-100 ros2_control hardware interface; same standalone-arm shape.
+- [`adityakamath/lekiwi_ros2`](https://github.com/adityakamath/lekiwi_ros2) —
+  the closest platform to Mote (the LeKiwi mounts an SO-101 on a mobile base,
+  and our servo IDs — arm 1-6, wheels 7/9 — follow its convention). As of this
+  writing it drives the base and a pan-tilt payload only; its SO-101
+  integration is planned, not shipped.
+
+None of them address what dominates this package: the arm **sharing a serial
+bus with the drive wheels** — bus ownership, ID collision, and the single-opener
+guard. That problem has no shipped public solution, which is why `mote_arm`
+exists rather than a dependency.
+
+We are not outside this ecosystem either: `mote_hardware` builds on our fork of
+[`adityakamath/SCServo_Linux`](https://github.com/adityakamath/SCServo_Linux)
+(packaging fixes upstreamed, v1.0 packaged on the mote prefix.dev channel) —
+the same SDK LeRobot and the stacks above sit on. When arm control folds into
+`mote_hardware`'s ros2_control interface (task 231), evaluate
+[`adityakamath/sts_hardware_interface`](https://github.com/adityakamath/sts_hardware_interface)
+first: same SDK underneath, and it already supports mixed position/velocity
+modes on one bus — though it targets Kilted (we run Jazzy), is not on
+rosdistro, and is a fast-moving single-maintainer WIP, so the honest case for
+it is upstream convergence, not saved effort.
+
 ## Wiring: the arm shares the drive-wheel bus
 
 Verified on the robot: arm servos are IDs **1–6**, the drive wheels are **7**
