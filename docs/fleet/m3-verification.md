@@ -20,9 +20,10 @@ broker: eclipse-mosquitto:2 (docker)   state: ~/.mote-fleet   config: …/mosqui
 1785092291: Opening ipv4 listen socket on port 19001.
 ```
 
-(The ports are shifted by 10000 in this run and everywhere below: the
-workstation it was measured on already runs Home Assistant's own MQTT broker on
-1883. The shipped config uses 1883/9001.)
+(The ports are shifted by 10000 in this run and in §2: the workstation already
+had the M1 conda broker on 1883, serving a live robot, and taking it down to
+measure a replacement was not the point. The shipped config uses 1883/9001, and
+§6 runs on those.)
 
 Two things fell out of running it:
 
@@ -118,14 +119,14 @@ and `accepted` can arrive before the HTTP response has been parsed, and they
 were being discarded. It now collects every status and filters when it knows
 what to filter for.
 
-## 4. The whole loop, automated — **132 tests, 0 failures**
+## 4. The whole loop, automated — **133 tests, 0 failures**
 
 ```console
 $ pixi run -e dev test-fleet
-132 passed in 41.79s
+133 passed in 41.19s
 
 $ pixi run -e fleet test-fleet          # no ROS on a fleet box
-110 passed, 3 skipped in 19.71s
+111 passed, 3 skipped
 ```
 
 New coverage, in the tiers `mote_fleet/README.md` describes:
@@ -269,7 +270,52 @@ The one thing the run did not enjoy is the small screen: the layout stacks below
 1100 px but was reported as awkward on a phone. Tracked separately — the network
 property is what this run was for.
 
-## 7. Not verified here
+## 7. Two bugs the operator found by using it
+
+Both surfaced within an hour of the dashboard going live against the real robot,
+and neither was reachable from a test that did not involve a person watching.
+
+**Retained health kept reading as current after a robot went offline.** The
+roster marked the robot `offline` — presence beats health, as designed — and then
+the detail pane went on showing `ok — OK` with eight green subsystem dots,
+because retained health is the last thing the robot said. Pose already had a
+staleness rule; health had none. A dashboard whose job is situational awareness
+must not show green for a robot that is not there.
+
+Now: presence-offline *or* health older than 30 s (six missed heartbeats) drains
+the subsystem dots to grey, dims the block, annotates the health line `(last
+known)`, replaces the roster's summary line with `offline (last will) — last
+seen 2m ago`, hollows the map marker, and puts a `NOT CURRENT` banner at the top
+of the pane naming the reason. Verified in a browser against a fleet killed
+without a clean disconnect, so the offline state came from the broker's Last
+Will rather than from a tidy shutdown — 5/5 assertions, including that the
+subsystem dots really are `rgb(72, 79, 88)` and not the OK green.
+
+**`fleetctl watch` went permanently silent after a broker restart.** Reported as
+"is it expected that watch stops when a robot ends?" — it is not, and it was not
+about the robot. Both `watch` and `dispatch` subscribed *once*, beside the
+connect. MQTT subscriptions belong to a session and paho's default session is a
+clean one, so paho's automatic reconnect brought the client back **subscribed to
+nothing**: still connected, still running, silent forever. Indistinguishable
+from a quiet fleet.
+
+A/B against the same broker, restarting it under both:
+
+| | before restart | after restart |
+|---|---|---|
+| M1's `fleetctl watch` | 7 lines | **7** — silent, process alive |
+| fixed | 48 lines | **366** — resumed |
+
+The subscribe now lives in `on_connect` (the arrangement `agent.py` always had),
+so every reconnect resubscribes, and `subscriber()` is a named function so the
+property has a unit test rather than only this measurement.
+
+Worth noting what *is* expected: a dead robot publishes nothing, so `watch` does
+fall quiet when a fleet goes offline — after printing the Last Will. That is the
+tail of a live stream doing its job, and it looks the same as the bug, which is
+why the bug survived M1.
+
+## 8. Not verified here
 
 - **A phone-sized layout.** The panes stack below 1100 px, which is not the same
   as being usable one-handed on a 390 px screen — and the map canvas is the part

@@ -419,3 +419,36 @@ def test_an_unknown_floor_is_404(server):
 def test_a_site_name_cannot_escape_the_maps_directory(server):
     expect_error(lambda: get(server, "/v1/maps/..%2F..%2Fetc/ground/map.json"), 400)
     expect_error(lambda: get(server, "/v1/maps/home/ground/../map.yaml"), 404)
+
+
+# ---- fleetctl's subscriptions survive a broker restart ----------------------
+
+
+def test_a_reconnecting_client_resubscribes_every_time():
+    """The bug this exists for: MQTT subscriptions belong to a session, and
+    paho's default session is a clean one — so a client that subscribes once at
+    startup comes back from a broker restart subscribed to nothing. It stays
+    connected and silent, which looks exactly like a quiet fleet.
+
+    Measured against the unfixed version: 7 lines before a broker restart, 7
+    after, process still alive (docs/fleet/m3-verification.md §7).
+    """
+    import fleetctl
+
+    class FakeClient:
+        def __init__(self):
+            self.subscribed = []
+
+        def subscribe(self, topic, qos=0):
+            self.subscribed.append((topic, qos))
+
+    topics = ["mote/v1/+/health", "mote/v1/+/pose"]
+    on_connect = fleetctl.subscriber(topics)
+    client = FakeClient()
+
+    on_connect(client, None, {}, 0)
+    assert [t for t, _ in client.subscribed] == topics
+    # ...and again, because this is what a reconnect calls.
+    on_connect(client, None, {}, 0)
+    assert [t for t, _ in client.subscribed] == topics + topics
+    assert {qos for _, qos in client.subscribed} == {protocol.QOS}

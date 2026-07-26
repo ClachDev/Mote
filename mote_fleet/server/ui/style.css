@@ -383,3 +383,29 @@ main {
     border-bottom: 1px solid var(--line);
   }
 }
+
+/* -- state that is no longer current ----------------------------------- */
+
+/* Retained state is the last thing a robot said, not a claim about now. An
+   offline or silent robot keeps its numbers on screen — they are still the best
+   information available — but they stop looking live. */
+
+.stale-banner {
+  margin: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--degraded);
+  border-radius: 6px;
+  color: var(--degraded);
+  font-size: 12px;
+}
+
+.subsystems.stale,
+.robot-sub.stale {
+  opacity: 0.55;
+}
+
+/* Green dots are the specific lie to avoid, so drain the colour out of them
+   rather than only dimming the block. */
+.subsystems.stale .dot {
+  background: var(--offline);
+}

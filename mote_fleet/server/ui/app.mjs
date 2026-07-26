@@ -21,6 +21,12 @@ const TOKEN_KEY = 'mote.operator.token';
 // position, which is not the same claim as "the robot is there now".
 const POSE_STALE_S = 20;
 
+// The same rule for health, and it matters more: an offline robot's retained
+// health is whatever it last claimed, and eight green subsystems next to a robot
+// that is not there is the one lie this view must not tell. The agent publishes
+// every 5 s by default, so this is several missed heartbeats rather than a blip.
+const HEALTH_STALE_S = 30;
+
 const state = {
   config: null,
   robots: new Map(),
@@ -75,12 +81,36 @@ function robotRecord(robotId) {
 function robotState(record) {
   if (record.presence && record.presence.online === false) return 'offline';
   if (!record.health) return 'unknown';
+  // Health that has stopped arriving is reported as stale rather than as the
+  // last thing it said — the contract has a state for exactly this.
+  if (!healthIsCurrent(record)) return 'stale';
   return record.health.state || 'unknown';
 }
 
 function robotLabel(record) {
   const name = record.registry && record.registry.name;
   return name && name !== record.id ? `${record.id} · ${name}` : record.id;
+}
+
+// Is what we know about this robot's health still a claim about *now*? Offline
+// robots and silent ones both fail this, and the answer drives every green dot
+// on the page.
+function healthIsCurrent(record) {
+  if (!record.health) return false;
+  if (record.presence && record.presence.online === false) return false;
+  const age = ageSeconds(record.health.stamp);
+  return age === null || age <= HEALTH_STALE_S;
+}
+
+// What to say instead of a health summary when it is not current.
+function staleReason(record) {
+  if (record.presence && record.presence.online === false) {
+    return `offline (${record.presence.reason || 'no reason given'}) — last seen ${ageText(
+      record.presence.stamp,
+    )}`;
+  }
+  if (!record.health) return 'never reported';
+  return `no health for ${ageText(record.health.stamp).replace(' ago', '')}`;
 }
 
 // -- data in -------------------------------------------------------------
@@ -190,7 +220,9 @@ function render() {
         yaw: record.pose.yaw,
         state: robotState(record),
         label: record.id,
-        stale: (ageSeconds(record.pose.stamp) || 0) > POSE_STALE_S,
+        stale:
+          (ageSeconds(record.pose.stamp) || 0) > POSE_STALE_S ||
+          !healthIsCurrent(record),
       })),
   );
 }
@@ -233,8 +265,12 @@ function renderRoster(records) {
             text: record.registry ? record.registry.name : 'not enrolled here',
           }),
           el('div', {
-            class: 'robot-sub',
-            text: task ? `${task.state}: ${task.command}` : health.summary || '—',
+            class: `robot-sub ${healthIsCurrent(record) ? '' : 'stale'}`,
+            text: healthIsCurrent(record)
+              ? task
+                ? `${task.state}: ${task.command}`
+                : health.summary || '—'
+              : staleReason(record),
           }),
         ],
       );
@@ -254,6 +290,7 @@ function renderDetail(record) {
     dom.subsystems.replaceChildren();
     dom.statusLog.replaceChildren();
     dom.dispatch.hidden = true;
+    dom.detailStale.hidden = true;
     return;
   }
   dom.dispatch.hidden = false;
@@ -261,9 +298,21 @@ function renderDetail(record) {
 
   const health = record.health || {};
   const pose = record.pose;
+  const current = healthIsCurrent(record);
+  // Everything below is retained state, i.e. the last thing the robot said. When
+  // that is no longer a claim about now, say so once, loudly, at the top —
+  // rather than letting eight green dots imply otherwise.
+  dom.detailStale.textContent = current ? '' : `NOT CURRENT — ${staleReason(record)}`;
+  dom.detailStale.hidden = current;
+  dom.subsystems.className = `subsystems ${current ? '' : 'stale'}`;
   const facts = [
     ['presence', record.presence ? (record.presence.online ? 'online' : `offline (${record.presence.reason || '—'})`) : 'never seen'],
-    ['health', health.state ? `${health.state} — ${health.summary}` : '—'],
+    [
+      'health',
+      health.state
+        ? `${health.state} — ${health.summary}${current ? '' : '  (last known)'}`
+        : '—',
+    ],
     ['task', health.task ? `${health.task.state}: ${health.task.command}` : 'idle'],
     ['site', health.site || (pose && pose.site) ? `${health.site || pose.site}/${health.floor || pose.floor}` : '—'],
     ['pose', pose ? `x ${pose.x.toFixed(2)}  y ${pose.y.toFixed(2)}  yaw ${pose.yaw.toFixed(2)}  (${ageText(pose.stamp)})` : 'not localised'],
@@ -376,6 +425,7 @@ function bind() {
     roster: 'roster',
     detailName: 'detail-name',
     detailMeta: 'detail-meta',
+    detailStale: 'detail-stale',
     subsystems: 'subsystems',
     statusLog: 'status-log',
     dispatch: 'dispatch',

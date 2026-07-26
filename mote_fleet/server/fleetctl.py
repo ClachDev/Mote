@@ -74,13 +74,41 @@ def _get(server: str, path: str, token: str = "") -> dict:
     return _request(server, path, token=token)
 
 
-def _client(broker: str, port: int, client_id: str):
+def subscriber(subscriptions):
+    """An ``on_connect`` callback that subscribes to ``subscriptions``.
+
+    A named function rather than a closure inline so the property it exists for
+    — that every *re*-connect resubscribes — is testable without a broker.
+    """
+
+    def on_connect(client, _userdata, *_args):
+        for topic in subscriptions:
+            client.subscribe(topic, qos=protocol.QOS)
+
+    return on_connect
+
+
+def _client(broker: str, port: int, client_id: str, subscriptions=()):
+    """A connected client that **re-subscribes every time it connects**.
+
+    Subscriptions belong to an MQTT session, and paho's default session is a
+    clean one — so a client that subscribes once, at startup, and then survives
+    a broker restart comes back subscribed to *nothing*. It stays connected and
+    goes silent forever, which is indistinguishable from a quiet fleet. That is
+    why the subscribe lives in ``on_connect`` rather than beside the connect,
+    the same arrangement the agent uses (``agent.py:_on_connect``).
+    """
     import paho.mqtt.client as mqtt
 
     try:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     except AttributeError:  # paho 1.x
         client = mqtt.Client(client_id=client_id)
+
+    client.on_connect = subscriber(subscriptions)
+    # Reconnect forever with backoff: an operator's terminal should outlive a
+    # fleet-server redeploy without them noticing.
+    client.reconnect_delay_set(min_delay=1, max_delay=30)
     client.connect(broker, port, keepalive=30)
     return client
 
@@ -205,11 +233,15 @@ def cmd_dispatch(args):
                 done.append(status["state"])
 
     token = _token(args)
-    client = _client(args.broker, args.port, f"fleetctl-{os.getpid()}")
-    client.on_message = on_message
     # Subscribe before dispatching: the first transition can arrive in
     # milliseconds, and a status nobody was listening for is a status lost.
-    client.subscribe(protocol.topic(args.robot_id, protocol.STATUS), qos=protocol.QOS)
+    client = _client(
+        args.broker,
+        args.port,
+        f"fleetctl-{os.getpid()}",
+        subscriptions=[protocol.topic(args.robot_id, protocol.STATUS)],
+    )
+    client.on_message = on_message
     client.loop_start()
     time.sleep(0.2)
     answer = _request(
@@ -252,10 +284,21 @@ def cmd_watch(args):
             return
         print(f"{robot_id:10} {leaf:12} {_summarise(leaf, payload)}", flush=True)
 
-    client = _client(args.broker, args.port, "fleetctl-watch")
+    client = _client(
+        args.broker,
+        args.port,
+        "fleetctl-watch",
+        subscriptions=[
+            f"{protocol.ROOT}/{protocol.VERSION}/{robot}/{leaf}"
+            for leaf in (
+                protocol.PRESENCE,
+                protocol.HEALTH,
+                protocol.POSE,
+                protocol.STATUS,
+            )
+        ],
+    )
     client.on_message = on_message
-    for leaf in (protocol.PRESENCE, protocol.HEALTH, protocol.POSE, protocol.STATUS):
-        client.subscribe(f"{protocol.ROOT}/{protocol.VERSION}/{robot}/{leaf}", qos=1)
     print(f"watching {robot} on {args.broker}:{args.port} (ctrl-c to stop)")
     try:
         client.loop_forever()
