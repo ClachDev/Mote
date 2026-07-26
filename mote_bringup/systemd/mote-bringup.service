@@ -22,7 +22,9 @@ Environment=HOME=@HOME@
 # opening the hardware. A non-zero exit fails the start; Restart re-runs this
 # (with backoff) until it passes, so replugging the lidar recovers on its own.
 ExecStartPre=@HOME@/.pixi/bin/pixi run self-check
-ExecStart=@HOME@/.pixi/bin/pixi run launch
+# health:=false — mote-health.service runs the monitor here, independently, so it
+# survives a bringup restart and can report one. Manual runs get it in-launch.
+ExecStart=@HOME@/.pixi/bin/pixi run launch health:=false
 Restart=always
 RestartSec=2
 # Back off on repeated failures: 2s, stepping up to a 30s ceiling, instead of a

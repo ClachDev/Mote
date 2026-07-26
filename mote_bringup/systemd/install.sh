@@ -35,4 +35,17 @@ sudo cp "$SRC_DIR/journald-mote.conf" /etc/systemd/journald.conf.d/journald-mote
 sudo systemctl restart systemd-journald
 
 sudo systemctl daemon-reload
-sudo systemctl enable mote-bringup mote-slam mote-nav mote-record mote-health
+
+# Installed but deliberately NOT enabled: starting the drive stack (and the
+# recorder) on every boot drains the battery whenever the robot is just sitting
+# on a desk, and the recorder's pruner trims older bags while it runs. Start a
+# session by hand instead -- `pixi run robot` / `pixi run mapping`, which now
+# include the health monitor -- and enable the units only for a robot meant to
+# come up unattended:
+#
+#   sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
+#   sudo systemctl disable mote-bringup mote-health        # back to manual
+#
+echo
+echo "Units installed (not enabled). Start a session with 'pixi run robot'."
+echo "For unattended boot: sudo systemctl enable --now mote-bringup mote-health"

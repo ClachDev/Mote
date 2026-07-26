@@ -5,6 +5,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
@@ -132,6 +133,19 @@ def generate_launch_description():
         **respawn,
     )
 
+    # The health monitor runs with the base by default, so *any* way of starting
+    # the robot — `pixi run launch`/`robot`/`mapping` on a desk as much as the
+    # systemd path — publishes /health and /diagnostics_agg. mote-bringup.service
+    # passes health:=false because mote-health.service runs it separately there,
+    # with a watchdog and its own lifecycle (it must outlive a bringup restart to
+    # report one); two copies would both publish /health.
+    health_monitor = Node(
+        package="mote_bringup",
+        executable="health_monitor",
+        condition=IfCondition(LaunchConfiguration("health")),
+        **respawn,
+    )
+
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(bringup_share, "launch", "localization_launch.py")
@@ -142,6 +156,12 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument(
+                "health",
+                default_value="true",
+                description="Run the health monitor alongside the base. Set "
+                "false when mote-health.service already runs it.",
+            ),
             SetParameter(name="use_sim_time", value=use_sim_time),
             robot_state_publisher,
             controller_manager,
@@ -150,6 +170,7 @@ def generate_launch_description():
             laser_filter,
             camera,
             system_monitor,
+            health_monitor,
             localization,
         ]
     )

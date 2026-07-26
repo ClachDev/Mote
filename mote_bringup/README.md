@@ -5,10 +5,26 @@ for the robot. The package layout and launch hierarchy are documented in the
 top-level `CLAUDE.md`; this README covers the **on-robot reliability stack** —
 how the robot survives unattended operation.
 
+## Starting the robot
+
+**By hand (the normal way):** `pixi run robot` (nav) or `pixi run mapping`. Both
+include the health monitor, so `/health` and `/diagnostics_agg` are published on
+any manual run — one command, nothing else to start.
+
+**Unattended:** the systemd units below. They are installed by `pixi run setup`
+but **not enabled**, because starting the drive stack and recorder on every boot
+drains the battery of a robot that is just sitting on a desk, and the recorder's
+pruner trims older bags whenever it runs. Opt in per robot:
+
+```bash
+sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
+sudo systemctl disable mote-bringup mote-health        # back to manual
+```
+
 ## systemd services
 
 Installed by `pixi run setup` (→ `systemd/install.sh`), which fills in the
-invoking user/home and enables them. Boot order:
+invoking user/home/repo. Boot order once enabled:
 
 ```
 mote-bringup  →  mote-slam  →  mote-nav
@@ -21,11 +37,11 @@ separate self-check service; gating bringup gates everything downstream.
 
 | Service          | Runs                | Notes |
 |------------------|---------------------|-------|
-| `mote-bringup`   | `pixi run launch`   | Hardware base. `ExecStartPre` runs the self-check gate first. |
+| `mote-bringup`   | `pixi run launch health:=false` | Hardware base. `ExecStartPre` runs the self-check gate first; `health:=false` because `mote-health` runs the monitor separately here. |
 | `mote-slam`      | `pixi run slam`     | `BindsTo`/`PartOf` bringup — restarts with it. |
 | `mote-nav`       | `pixi run nav`      | `BindsTo`/`PartOf` slam. |
-| `mote-record`    | `pixi run record`   | `Wants`/`PartOf` bringup — a recorder crash never takes down the drive stack. |
-| `mote-health`    | `pixi run health`   | Health monitor; `Type=notify` + `WatchdogSec` watchdog. |
+| `mote-record`    | `pixi run record`   | `After`/`PartOf` bringup (no `Wants` — see below); a recorder crash never takes down the drive stack. |
+| `mote-health`    | `pixi run health`   | Health monitor; `Type=notify` + `WatchdogSec` watchdog. `After=` only, so it keeps observing across a bringup restart. |
 
 **Hardening** (all services):
 
