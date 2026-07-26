@@ -113,6 +113,135 @@ def path_length(traj) -> float:
     return float(np.sum(np.linalg.norm(np.diff(a[:, 1:3], axis=0), axis=1)))
 
 
+# ---------------------------------------------------------------------------
+# Truth-free metrics (no ground truth needed)
+#
+# The metrics above compare an estimate against a known-true series — available
+# in the sim, where Gazebo publishes the robot's true pose. On a real recorded
+# bag there is no truth, so these functions instead score *self-consistency*:
+# how tight a loop closes, and how crisp the resulting map is. They are proxies,
+# not error measures — see loop_drift/map_quality docstrings for what each can
+# and cannot prove. Same numpy-only, ROS-free contract as everything else here.
+# ---------------------------------------------------------------------------
+
+
+def loop_drift(traj) -> dict:
+    """Odometry self-consistency from a single estimated trajectory.
+
+    ``traj`` is ``list[[t, x, y, yaw]]``. Reports the straight-line distance
+    between the first and last pose and its ratio to the path travelled. On a
+    bag where the robot physically returns to its start (a closed loop), a small
+    ``start_end_dist_m`` means the estimator drifted little over the whole run;
+    ``drift_ratio`` normalises that by path length so runs of different sizes
+    compare. This is only meaningful when the trajectory is actually a loop —
+    it cannot tell an open A→B traverse (legitimately large end distance) from a
+    drifting loop, so the caller must know the bag's shape. Truth-free: it never
+    sees a true pose, only the estimate's own consistency.
+    """
+    a = _arr(traj)
+    if a.shape[0] < 2:
+        return {"n": int(a.shape[0]), "note": "insufficient trajectory samples"}
+    start, end = a[0, 1:3], a[-1, 1:3]
+    dist = float(np.linalg.norm(end - start))
+    plen = path_length(traj)
+    return {
+        "n": int(a.shape[0]),
+        "start_end_dist_m": dist,
+        "path_length_m": plen,
+        "drift_ratio": float(dist / plen) if plen > 1e-6 else 0.0,
+        "duration_s": float(a[-1, 0] - a[0, 0]),
+    }
+
+
+def _erode4(mask: np.ndarray) -> np.ndarray:
+    """One 4-connectivity binary erosion, numpy-only (border cells erode away).
+    A True cell survives only if its N/S/E/W neighbours are all True."""
+    out = np.zeros_like(mask)
+    out[1:-1, 1:-1] = (
+        mask[1:-1, 1:-1]
+        & mask[:-2, 1:-1]
+        & mask[2:, 1:-1]
+        & mask[1:-1, :-2]
+        & mask[1:-1, 2:]
+    )
+    return out
+
+
+def _occ_neighbor_count(mask: np.ndarray) -> np.ndarray:
+    """Number of 4-connected True neighbours per cell (0..4), numpy-only."""
+    n = np.zeros(mask.shape, dtype=np.int8)
+    n[1:, :] += mask[:-1, :]
+    n[:-1, :] += mask[1:, :]
+    n[:, 1:] += mask[:, :-1]
+    n[:, :-1] += mask[:, 1:]
+    return n
+
+
+def map_quality(
+    grid, resolution: float, occ_thresh=65, free_thresh=25, max_iter=30
+) -> dict:
+    """Crispness/coverage proxies for a finished occupancy grid.
+
+    ``grid`` is a 2-D array in ROS ``OccupancyGrid`` convention: 0 (free) .. 100
+    (occupied), -1 unknown. ``resolution`` is metres per cell. No ground truth is
+    used — these are structural proxies for "did the map come out clean":
+
+    * ``unknown_frac`` / ``free_frac`` / ``occ_frac`` — cell mix. A more complete
+      map has more decided (non-unknown) cells.
+    * ``explored_area_m2`` — decided cells x cell area.
+    * ``mean_wall_thickness_m`` — mean thickness of occupied structure, from
+      iterated 4-connectivity erosion (each occupied cell's erosion depth is its
+      distance to the nearest free/unknown cell; thickness ~= 2*depth+1). A
+      double-walled or smeared map from a bad scan-match reads thicker than a
+      crisp single-cell wall. Lower is crisper.
+    * ``speckle_frac`` — fraction of occupied cells with no occupied neighbour,
+      i.e. isolated specks. Poor odometry/scan-matching sprays these; lower is
+      cleaner.
+
+    Truth-free caveat: a crisp map is not necessarily a *correct* one — a
+    confidently wrong map (e.g. a mis-closed loop drawn sharply) can still score
+    well here. These proxies catch blur, incompleteness, and noise, not global
+    metric error, which needs a surveyed reference the bag does not carry.
+    """
+    g = np.asarray(grid)
+    total = int(g.size)
+    if total == 0:
+        return {"n_cells": 0, "note": "empty grid"}
+    unknown = g < 0
+    occ = g >= occ_thresh
+    free = (g >= 0) & (g <= free_thresh)
+    n_occ = int(occ.sum())
+
+    thickness_m = 0.0
+    if n_occ:
+        depth_sum = 0
+        m = occ.copy()
+        for _ in range(max_iter):
+            m = _erode4(m)
+            s = int(m.sum())
+            if s == 0:
+                break
+            depth_sum += s
+        mean_depth = depth_sum / n_occ
+        thickness_m = float((2.0 * mean_depth + 1.0) * resolution)
+
+    speckle_frac = 0.0
+    if n_occ:
+        isolated = occ & (_occ_neighbor_count(occ) == 0)
+        speckle_frac = float(int(isolated.sum()) / n_occ)
+
+    decided = total - int(unknown.sum())
+    return {
+        "n_cells": total,
+        "unknown_frac": float(int(unknown.sum()) / total),
+        "free_frac": float(int(free.sum()) / total),
+        "occ_frac": float(n_occ / total),
+        "explored_area_m2": float(decided * resolution * resolution),
+        "mean_wall_thickness_m": thickness_m,
+        "speckle_frac": speckle_frac,
+    }
+
+
 def goal_stats(goals) -> dict:
     """Success rate and time-to-goal over the scripted goal sequence."""
     goals = list(goals or [])

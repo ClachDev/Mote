@@ -1,8 +1,9 @@
 # mote_tasks
 
 The task layer: behaviour trees ([py_trees](https://py-trees.readthedocs.io))
-that sit on top of Nav2 and sequence missions. The first mission is *fetch* —
-the skeleton of "pick things up off the floor and take them somewhere":
+that sit on top of Nav2 and sequence missions. Two missions today — *fetch*,
+the skeleton of "pick things up off the floor and take them somewhere", and
+*goto*, place-based navigation ("go to the kitchen"):
 
 ```
 fetch (Sequence)
@@ -12,7 +13,15 @@ fetch (Sequence)
 ├── pick               stub — the SO-101 arm slots in here
 ├── drive_to_drop      Nav2 NavigateToPose to the drop pose
 └── place              stub
+
+goto (Sequence)
+├── wait_for_task      idle until a command arrives
+└── drive_to_zone      Nav2 NavigateToPose to the zone's pose
 ```
+
+`task_server.py` hosts both trees and dispatches on the command's first word
+(`fetch` / `goto`); an unknown word is rejected. `WaitForTask` and the shared
+`task` blackboard key live in `trees/common.py`.
 
 py_trees is pure Python (a pixi PyPI dependency); the ROS glue is ours and
 deliberately small: `task_server.py` ticks the tree on a timer, and
@@ -41,14 +50,48 @@ poses are reachable by construction. `tasks_launch.py` resolves the active
 site's zones automatically, falling back to the committed
 `config/zones.default.yaml` (which also documents the format).
 
+## Zones, and "go to the kitchen"
+
+A **zone** is the one named-place concept: a taught pose in the map frame that
+the robot can navigate to. `fetch` uses zones as its `pickup`/`dropoff`
+waypoints, and `goto <zone>` drives to any of them — `goto kitchen`,
+`goto home`, whatever is in the table. A zone can *optionally* carry an **area
+footprint** (a `radius`), which turns it from a bare waypoint into something
+that also answers "am I inside it?". That footprint is just optional metadata
+on the single zone concept — not a second kind of thing — so there's one YAML
+section, one loader, one teach command:
+
+```yaml
+frame_id: map
+zones:
+  pickup:  {x: 1.8, y: -1.5, yaw: 0.0}      # bare waypoint
+  kitchen: {x: 2.0, y: 2.0, radius: 1.5}    # room: pose + circular footprint
+```
+
+`goto kitchen` navigates to the pose; success is exactly Nav2 reaching it —
+the footprint isn't needed for `goto`. `zones.load_zones(path)` returns
+`{name: Zone(name, pose, footprint)}`, and `zones.containing(zones, x, y)`
+answers "which zone am I in?" (nearest-pose first) using the footprints. Teach
+a zone by driving there: `pixi run save-zone <name>` for a waypoint, or
+`pixi run save-zone <name> --radius R` to give it a footprint; it writes into
+the active site's floor (`site info` shows the zone count and how many have a
+footprint), or the legacy `~/.mote/zones.yaml` when no site is active.
+
+The footprint is deliberately extensible: today it's a circle (`radius`); a
+`polygon:` (explicit vertices, e.g. from map room-detection) slots into the
+same `Zone.footprint` seam, and auto-segmenting a saved map into room zones are
+the tracked follow-ups.
+
 ## Interface
 
-- `task/command` (std_msgs/String): `fetch <target> <drop_zone>`. A `target`
-  matching a zone name drives straight there; anything else is an
-  **open-vocabulary object label** (underscores become spaces, so
-  `fetch red_box dropoff` looks for "red box") resolved by the perception
-  stack's detector — run `pixi run perception` (the node) and `pixi run inference`
-  (its server) alongside the mission (see mote_perception's README, L2).
+- `task/command` (std_msgs/String):
+  - `fetch <target> <drop_zone>` — a `target` matching a zone name drives
+    straight there; anything else is an **open-vocabulary object label**
+    (underscores become spaces, so `fetch red_box dropoff` looks for "red box")
+    resolved by the perception stack's detector — run `pixi run perception`
+    (the node) and `pixi run inference` (its server) alongside the mission (see
+    mote_perception's README, L2).
+  - `goto <zone>` — drive to any named zone's pose.
 - `task/status` (std_msgs/String): `accepted:` / `rejected:` / `succeeded:` /
   `failed:` plus the task text
 - A task in progress rejects new commands; a failure anywhere (Nav2 abort,
@@ -75,7 +118,9 @@ detector idles between missions.
 
 ## Testing
 
-`pixi run test` runs `test/test_fetch_tree.py` — a full tick of the tree
-against a mock `navigate_to_pose` action server — and `test/test_fetch_object.py`,
-the fetch-by-label round trip against a mock detector as well. No Gazebo,
-Nav2, or detection server needed.
+`pixi run test` runs the tree tests against a mock `navigate_to_pose` action
+server — `test/test_fetch_tree.py` (a full fetch tick), `test/test_fetch_object.py`
+(fetch-by-label against a mock detector), and `test/test_goto_tree.py` (a goto
+tick, plus command dispatch) — and the pure parser/loader tests
+(`test_parse_command.py`, `test_goto_command.py`, `test_zones.py`, which covers
+zone footprints and `containing`). No Gazebo, Nav2, or detection server needed.

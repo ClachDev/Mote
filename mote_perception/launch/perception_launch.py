@@ -7,15 +7,16 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
 
+from mote_bringup import mote_home
+
 
 def _load_perception_config():
-    """Perception runtime config: a per-deployment ~/.mote/perception.yaml
-    overrides the packaged default (same precedence as the camera calibration)."""
-    user = os.path.expanduser("~/.mote/perception.yaml")
+    """Perception runtime config: a per-robot $MOTE_HOME/perception.yaml overrides
+    the packaged default (same precedence as the camera calibration)."""
     default = os.path.join(
         get_package_share_directory("mote_perception"), "config", "perception.yaml"
     )
-    with open(user if os.path.exists(user) else default) as f:
+    with open(mote_home.override("perception.yaml", default)) as f:
         return yaml.safe_load(f)
 
 

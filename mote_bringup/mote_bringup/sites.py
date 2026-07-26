@@ -34,7 +34,8 @@ A floor is one SLAM session (one frame); a site groups floors that share a
 location. The whole bundle is plain files + YAML so it can be zipped,
 synced, or served by a web API without translation.
 
-``MOTE_HOME`` overrides ``~/.mote`` (used by tests).
+Site bundles are per-robot state, so they live under ``MOTE_HOME`` (``~/.mote``
+by default) with the rest of it — see :mod:`mote_bringup.mote_home`.
 
 Console script ``site`` (pixi tasks: site, save-map):
     site create <name> [--floor ground]   new site (+ becomes active if none)
@@ -56,12 +57,10 @@ from pathlib import Path
 
 import yaml
 
+from mote_bringup.mote_home import mote_dir
+
 SCHEMA = 1
 KEEP_REVISIONS = 3
-
-
-def mote_dir() -> Path:
-    return Path(os.environ.get("MOTE_HOME", "~/.mote")).expanduser()
 
 
 def sites_dir() -> Path:
@@ -212,8 +211,14 @@ def cmd_info():
         return
     fdir = floor_dir(*act)
     print(f"active: {act[0]}/{act[1]}  ({fdir})")
-    zones_state = "ok" if (fdir / "zones.yaml").exists() else "missing"
-    print(f"  zones.yaml   {zones_state}")
+    zones_yaml = fdir / "zones.yaml"
+    if zones_yaml.exists():
+        zones = (yaml.safe_load(zones_yaml.read_text()) or {}).get("zones") or {}
+        with_fp = sum(1 for z in zones.values() if "radius" in z or "polygon" in z)
+        fp_note = f", {with_fp} with a footprint" if with_fp else ""
+        print(f"  zones.yaml   ok ({len(zones)} zones{fp_note})")
+    else:
+        print("  zones.yaml   missing")
     current = current_revision(fdir)
     if not current:
         print("  map          none (run: pixi run save-map during mapping)")

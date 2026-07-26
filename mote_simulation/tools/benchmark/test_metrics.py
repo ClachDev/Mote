@@ -75,6 +75,52 @@ def test_smoothness_counts_reversals():
     assert s["linear_jerk_rms"] > 0.0
 
 
+def test_loop_drift_closes_and_ratio():
+    # A closed square loop: start == end -> ~zero drift, small ratio.
+    pts = [(0, 0), (2, 0), (2, 2), (0, 2), (0, 0)]
+    traj = []
+    for i in range(len(pts) - 1):
+        (x0, y0), (x1, y1) = pts[i], pts[i + 1]
+        for s in np.linspace(0, 1, 20, endpoint=False):
+            traj.append([i + s, x0 + s * (x1 - x0), y0 + s * (y1 - y0), 0.0])
+    traj.append([len(pts), 0.0, 0.0, 0.0])
+    d = metrics.loop_drift(traj)
+    assert d["start_end_dist_m"] < 1e-6
+    assert abs(d["path_length_m"] - 8.0) < 0.1
+    assert d["drift_ratio"] < 1e-6
+
+
+def test_loop_drift_open_traverse():
+    traj = [[i * 0.1, i * 0.1, 0.0, 0.0] for i in range(50)]
+    d = metrics.loop_drift(traj)
+    assert d["start_end_dist_m"] > 4.0  # A->B, honestly large
+    assert 0.9 < d["drift_ratio"] <= 1.0  # straight line: dist ~= path length
+
+
+def test_map_quality_crisp_vs_blurred():
+    # Crisp: a single-cell-thick wall on an otherwise-free field.
+    crisp = np.zeros((60, 60), dtype=int)
+    crisp[30, 5:55] = 100
+    # Blurred/smeared: a thick 5-cell wall (bad scan-match proxy).
+    blurred = np.zeros((60, 60), dtype=int)
+    blurred[28:33, 5:55] = 100
+    qc = metrics.map_quality(crisp, 0.05)
+    qb = metrics.map_quality(blurred, 0.05)
+    assert qc["mean_wall_thickness_m"] < qb["mean_wall_thickness_m"]
+    assert abs(qc["mean_wall_thickness_m"] - 0.05) < 1e-6  # 1 cell => ~1*res
+    assert qc["unknown_frac"] == 0.0
+
+
+def test_map_quality_speckle_and_unknown():
+    grid = np.full((40, 40), -1, dtype=int)  # all unknown
+    grid[10:30, 10:30] = 0  # a free box
+    grid[0, 0] = 100  # one isolated occupied speck inside unknown
+    q = metrics.map_quality(grid, 0.05)
+    assert q["speckle_frac"] == 1.0  # the lone occupied cell is a speck
+    assert 0.0 < q["unknown_frac"] < 1.0
+    assert q["explored_area_m2"] > 0.0
+
+
 def test_summarize_and_aggregate():
     truth, est = _synthetic_run()
     series = {

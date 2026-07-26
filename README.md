@@ -166,6 +166,24 @@ pixi run mapping # = launch + slam  (build/extend a map)
 pixi run robot   # = launch + nav   (drive a saved map at ~/.mote/map.yaml)
 ```
 
+### Fleet: remote operation (optional)
+
+A robot works standalone with nothing above, but it can also join a fleet
+overlay so it is reachable and identifiable from anywhere:
+
+```bash
+pixi run identity set --id mote-01 --name "Scout"   # this robot's fleet id
+pixi run tailnet --role robot --auth-key tskey-auth-...  # join the Tailscale mesh
+```
+
+The robot is then reachable off-LAN at `mote-01` by MagicDNS, with no port
+forwarding and nothing exposed to the internet. A *new* Pi can be provisioned
+into that state unattended from a rendered cloud-init file
+(`pixi run provision`).
+
+See [`docs/fleet/README.md`](docs/fleet/README.md) for the runbook and
+[`docs/design/fleet.md`](docs/design/fleet.md) for where this is going.
+
 ### Simulation (no hardware required)
 
 A Gazebo (gz-sim) simulation of Mote runs entirely on a workstation — same

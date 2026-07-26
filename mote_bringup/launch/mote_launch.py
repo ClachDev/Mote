@@ -10,6 +10,7 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
+from mote_bringup import mote_home, param_overrides
 from mote_bringup.launch_utils import controller_spawn_handler
 
 
@@ -28,7 +29,9 @@ def generate_launch_description():
         "robot_description": ParameterValue(robot_description_content, value_type=str)
     }
 
-    controller_config = os.path.join(bringup_share, "config", "controllers.yaml")
+    controller_config = param_overrides.override_path(
+        "controllers", os.path.join(bringup_share, "config", "controllers.yaml")
+    )
     # Must be a params *file* keyed by node name: a plain dict gets flattened to
     # "diff_drive_controller.ros__parameters.wheel_separation" on the
     # controller_manager node and never reaches the diff_drive_controller node.
@@ -109,9 +112,9 @@ def generate_launch_description():
         # the label, e.g. the RViz Camera display.
         "output_encoding": "bgr8",
     }
-    # A per-robot calibration in ~/.mote overrides the packaged default fallback.
-    user_calibration = os.path.expanduser("~/.mote/camera_calibration.yaml")
-    if os.path.exists(user_calibration):
+    # A per-robot calibration in MOTE_HOME overrides the packaged default fallback.
+    user_calibration = mote_home.path("camera_calibration.yaml")
+    if user_calibration.exists():
         camera_params["camera_info_url"] = f"file://{user_calibration}"
     elif "default_info_url" in cam:
         camera_params["camera_info_url"] = cam["default_info_url"]

@@ -15,3 +15,11 @@ scratchpad*
 
 # Sim benchmark outputs (timestamped metrics/reports)
 benchmark_results/
+# Bag-replay scoring outputs (timestamped metrics/reports/maps)
+bag_replay_results/
+# Parameter-sweep outputs (timestamped rankings/reports/merged params)
+sweep_results/
+
+# Rendered cloud-init (`pixi run provision`): carries a Tailscale auth key and a
+# wifi passphrase, so it must never be committed even by accident.
+user-data
