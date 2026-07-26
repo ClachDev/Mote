@@ -40,15 +40,29 @@ class ArmDriver(Node):
 
         self.bus = FeetechBus(self.cfg.port, self.cfg.baud_rate)
         self.bus.open()
-        self._torque_on = False
+        # Joints confirmed present and in position mode; only these may be
+        # commanded. A servo whose mode cannot be verified might be in wheel
+        # mode, where a position goal spins it continuously.
+        self._ready: set[str] = set()
+        # Joints currently holding torque. Engagement is per-joint so one
+        # failed engage is retried on the next command instead of a single
+        # flag marking the whole arm engaged and leaving that joint limp.
+        self._engaged: set[str] = set()
         for joint in self.cfg.joints:
             if not self.bus.ping(joint.id):
                 self.get_logger().warn(
                     f"servo for joint '{joint.name}' (id {joint.id}) did not respond"
                 )
                 continue
-            self.bus.ensure_position_mode(joint.id)
+            in_position_mode = self.bus.ensure_position_mode(joint.id)
             self.bus.set_torque(joint.id, False)  # start limp
+            if not in_position_mode:
+                self.get_logger().warn(
+                    f"joint '{joint.name}' (id {joint.id}) not confirmed in "
+                    "position mode — excluded from control (state reads only)"
+                )
+                continue
+            self._ready.add(joint.name)
 
         self._pub = self.create_publisher(JointState, "joint_states", 10)
         self.create_subscription(JointState, "arm/goal", self._on_goal, 10)
@@ -74,50 +88,66 @@ class ArmDriver(Node):
         if msg.name:
             self._pub.publish(msg)
 
-    def _set_all_torque(self, enable: bool) -> None:
+    def _disengage_all(self) -> None:
         for joint in self.cfg.joints:
             try:
-                self.bus.set_torque(joint.id, enable)
+                self.bus.set_torque(joint.id, False)
             except BusError as exc:
                 self.get_logger().warn(str(exc))
-        self._torque_on = enable
+        self._engaged.clear()
 
-    def _engage_torque(self) -> None:
-        """Enable torque without moving anything.
+    def _engage_joint(self, joint) -> bool:
+        """Enable torque on one joint without moving it; True on success.
 
         A servo drives to whatever its GOAL_POSITION register holds the instant
         torque is enabled, and that register may be stale (a previous session, or
-        the factory default). So seed every joint's goal with its *present*
+        the factory default). So seed the joint's goal with its *present*
         position first, then enable — order matters: enabling first is what makes
         an arm snap to a pose nobody asked for.
         """
+        counts = self.bus.read_position(joint.id)
+        if counts is None:
+            self.get_logger().warn(
+                f"joint '{joint.name}': cannot read position, leaving it limp "
+                "rather than enabling torque against an unknown goal"
+            )
+            return False
+        try:
+            self.bus.write_goal(
+                joint.id, counts, self.cfg.moving_speed, self.cfg.moving_acc
+            )
+            self.bus.set_torque(joint.id, True)
+        except BusError as exc:
+            self.get_logger().warn(str(exc))
+            return False
+        self._engaged.add(joint.name)
+        return True
+
+    def _engage_all(self) -> None:
+        """Take hold of the current pose on every controllable joint.
+
+        Joints already holding are left alone; joints that fail stay limp and
+        are retried on the next command.
+        """
         for joint in self.cfg.joints:
-            counts = self.bus.read_position(joint.id)
-            if counts is None:
-                self.get_logger().warn(
-                    f"joint '{joint.name}': cannot read position, leaving it limp "
-                    "rather than enabling torque against an unknown goal"
-                )
-                continue
-            try:
-                self.bus.write_goal(
-                    joint.id, counts, self.cfg.moving_speed, self.cfg.moving_acc
-                )
-                self.bus.set_torque(joint.id, True)
-            except BusError as exc:
-                self.get_logger().warn(str(exc))
-        self._torque_on = True
+            if joint.name in self._ready and joint.name not in self._engaged:
+                self._engage_joint(joint)
 
     def _on_goal(self, msg: JointState) -> None:
-        if not self._torque_on:
-            # An explicit command has arrived: take hold of the current pose
-            # first, then move only the joints named in the goal.
-            self._engage_torque()
+        # An explicit command has arrived: take hold of the current pose
+        # first, then move only the joints named in the goal.
+        self._engage_all()
         for name, rad in zip(msg.name, msg.position):
             try:
                 joint = self.cfg.joint(name)
             except KeyError:
                 self.get_logger().warn(f"ignoring goal for unknown joint '{name}'")
+                continue
+            if name not in self._engaged:
+                self.get_logger().warn(
+                    f"ignoring goal for joint '{name}' — not holding torque "
+                    "(failed enumeration, mode check, or engage)"
+                )
                 continue
             clamped = joint.clamp_rad(rad)
             if clamped != rad:
@@ -134,12 +164,17 @@ class ArmDriver(Node):
 
     def _on_set_torque(self, request, response):
         if request.data:
-            self._engage_torque()
-            response.message = "torque enabled (holding current pose)"
+            self._engage_all()
+            limp = [j.name for j in self.cfg.joints if j.name not in self._engaged]
+            response.success = not limp
+            if limp:
+                response.message = f"torque enabled; left limp: {', '.join(limp)}"
+            else:
+                response.message = "torque enabled (holding current pose)"
         else:
-            self._set_all_torque(False)
+            self._disengage_all()
+            response.success = True
             response.message = "torque disabled (limp)"
-        response.success = True
         return response
 
     def shutdown(self) -> None:
@@ -149,7 +184,7 @@ class ArmDriver(Node):
         must not stop us trying the rest, or leave the port held.
         """
         try:
-            self._set_all_torque(False)
+            self._disengage_all()
         except Exception as exc:  # noqa: BLE001 - never mask the port close
             self.get_logger().error(f"failed to disable torque on shutdown: {exc}")
         finally:

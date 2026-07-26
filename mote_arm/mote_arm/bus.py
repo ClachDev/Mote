@@ -98,6 +98,8 @@ class FeetechBus:
         self._port = None
         self._packet = None
         self._comm_success = 0
+        # Last (speed, acc) confirmed written per servo; see write_goal.
+        self._rates: dict[int, tuple[int, int]] = {}
 
     def open(self, allow_shared: bool = False) -> None:
         """Open the bus, refusing if another process already holds the port.
@@ -135,6 +137,7 @@ class FeetechBus:
             )
         if not self._port.setBaudRate(self._baud):
             raise BusError(f"failed to set baud {self._baud} on {self._port_name}")
+        self._rates.clear()
 
     def close(self) -> None:
         if self._port is not None:
@@ -196,11 +199,21 @@ class FeetechBus:
         if not self._ok(comm, err):
             raise BusError(f"servo {servo_id}: torque write failed")
 
-    def ensure_position_mode(self, servo_id: int) -> None:
-        """Put the servo in position (servo) mode, writing EEPROM only if needed."""
-        mode, comm, err = self._packet.read1ByteTxRx(self._port, servo_id, _MODE)
-        if self._ok(comm, err) and mode == _MODE_POSITION:
-            return
+    def ensure_position_mode(self, servo_id: int) -> bool:
+        """Ensure the servo is in position (servo) mode; True once confirmed.
+
+        A servo whose mode cannot be read is left untouched — this bus has been
+        observed returning garbled bytes (see ``read_gains``), and a blind
+        EEPROM write on a glitch could mis-configure a servo that was fine. A
+        servo confirmed in another mode is rewritten and then verified by
+        read-back: wheel mode obeys GOAL_SPEED, so position goals sent to an
+        unverified servo would spin it continuously.
+        """
+        mode = self._read_mode(servo_id)
+        if mode == _MODE_POSITION:
+            return True
+        if mode is None:
+            return False
         # EEPROM writes: unlock, set mode, re-lock, with brief settle delays
         # between (mirrors the vendored C++ SDK usage in mote_hardware).
         self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 0)
@@ -209,6 +222,16 @@ class FeetechBus:
         time.sleep(0.01)
         self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 1)
         time.sleep(0.01)
+        return self._read_mode(servo_id) == _MODE_POSITION
+
+    def _read_mode(self, servo_id: int, attempts: int = 3) -> int | None:
+        for attempt in range(attempts):
+            mode, comm, err = self._packet.read1ByteTxRx(self._port, servo_id, _MODE)
+            if self._ok(comm, err):
+                return mode
+            if attempt + 1 < attempts:
+                time.sleep(0.05)
+        return None
 
     def read_gains(self, servo_id: int) -> tuple[int, int, int] | None:
         """Return (kp, kd, ki) from EEPROM, or None if the reads disagree.
@@ -253,9 +276,21 @@ class FeetechBus:
         return False
 
     def write_goal(self, servo_id: int, counts: int, speed: int, acc: int) -> None:
-        """Command an absolute position (0-4095) at the given speed/accel."""
-        self._packet.write1ByteTxRx(self._port, servo_id, _ACC, acc)
-        self._packet.write2ByteTxRx(self._port, servo_id, _GOAL_SPEED, speed)
+        """Command an absolute position (0-4095) at the given speed/accel.
+
+        Speed and acceleration are RAM registers that hold their value for the
+        session, so they are rewritten only when they change: a 20 Hz setpoint
+        stream then costs one goal write per tick instead of three transactions
+        on the bus the drive wheels share.
+        """
+        if self._rates.get(servo_id) != (speed, acc):
+            comm, err = self._packet.write1ByteTxRx(self._port, servo_id, _ACC, acc)
+            acc_ok = self._ok(comm, err)
+            comm, err = self._packet.write2ByteTxRx(
+                self._port, servo_id, _GOAL_SPEED, speed
+            )
+            if acc_ok and self._ok(comm, err):
+                self._rates[servo_id] = (speed, acc)
         comm, err = self._packet.write2ByteTxRx(
             self._port, servo_id, _GOAL_POSITION, counts
         )

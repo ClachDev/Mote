@@ -47,6 +47,8 @@ class FakeBus:
     def __init__(self, *_a, **_kw):
         self.calls: list[tuple] = []
         self.positions = {1: 2100, 6: 1900}
+        self.unreadable: set[int] = set()
+        self.wrong_mode: set[int] = set()
         self.closed = False
 
     def open(self, allow_shared=False):
@@ -61,8 +63,11 @@ class FakeBus:
 
     def ensure_position_mode(self, servo_id):
         self.calls.append(("mode", servo_id))
+        return servo_id not in self.wrong_mode
 
     def read_position(self, servo_id):
+        if servo_id in self.unreadable:
+            return None
         return self.positions.get(servo_id)
 
     def set_torque(self, servo_id, enable):
@@ -73,19 +78,41 @@ class FakeBus:
 
 
 @pytest.fixture
-def driver(monkeypatch):
-    monkeypatch.setattr(arm_driver_mod, "FeetechBus", FakeBus)
-    monkeypatch.setattr(arm_driver_mod.config, "load", lambda: CFG)
-    rclpy.init()
-    node = arm_driver_mod.ArmDriver()
-    yield node
-    node.destroy_node()
-    rclpy.shutdown()
+def make_driver(monkeypatch):
+    """Build an ArmDriver over a FakeBus, optionally prepared to misbehave.
+
+    The bus must be prepared *before* the driver constructs, since enumeration
+    and the mode check happen in __init__.
+    """
+    state = {}
+
+    def factory(prepare=None):
+        class PreparedBus(FakeBus):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                if prepare is not None:
+                    prepare(self)
+
+        monkeypatch.setattr(arm_driver_mod, "FeetechBus", PreparedBus)
+        monkeypatch.setattr(arm_driver_mod.config, "load", lambda: CFG)
+        rclpy.init()
+        state["node"] = arm_driver_mod.ArmDriver()
+        return state["node"]
+
+    yield factory
+    if "node" in state:
+        state["node"].destroy_node()
+        rclpy.shutdown()
+
+
+@pytest.fixture
+def driver(make_driver):
+    return make_driver()
 
 
 def test_starts_limp(driver):
     """Every joint is explicitly torque-disabled at startup."""
-    assert driver._torque_on is False
+    assert not driver._engaged
     disables = [c for c in driver.bus.calls if c[0] == "torque" and c[2] is False]
     assert {c[1] for c in disables} == {1, 6}
     assert not [c for c in driver.bus.calls if c[0] == "torque" and c[2] is True]
@@ -148,9 +175,63 @@ def test_unknown_joint_is_ignored(driver):
 
 
 def test_shutdown_disables_torque_and_closes(driver):
-    driver._engage_torque()
+    driver._engage_all()
     driver.bus.calls.clear()
     driver.shutdown()
     disables = [c for c in driver.bus.calls if c[0] == "torque" and c[2] is False]
     assert {c[1] for c in disables} == {1, 6}
     assert driver.bus.closed
+
+
+def test_failed_engage_is_retried_on_next_goal(make_driver):
+    """A joint whose engage fails stays limp but is not abandoned.
+
+    A single arm-wide torque flag would mark the arm engaged after the first
+    goal and never retry the joint that failed its position read — leaving it
+    silently limp for the rest of the session.
+    """
+    driver = make_driver(lambda bus: bus.unreadable.add(6))
+    msg = JointState()
+    msg.name = ["shoulder_pan"]
+    msg.position = [0.2]
+    driver._on_goal(msg)
+
+    assert driver._engaged == {"shoulder_pan"}
+    assert not [c for c in driver.bus.calls if c == ("torque", 6, True)]
+
+    driver.bus.unreadable.clear()
+    driver.bus.calls.clear()
+    driver._on_goal(msg)
+
+    assert driver._engaged == {"shoulder_pan", "gripper"}
+    seed = driver.bus.calls.index(("goal", 6, driver.bus.positions[6]))
+    enable = driver.bus.calls.index(("torque", 6, True))
+    assert seed < enable
+
+
+def test_unverified_mode_is_never_commanded(make_driver):
+    """A servo not confirmed in position mode gets no goals and no torque.
+
+    In wheel mode a position goal is obeyed as a speed, so the joint would
+    spin continuously; excluding it from control is the only safe answer.
+    """
+    driver = make_driver(lambda bus: bus.wrong_mode.add(6))
+    assert driver._ready == {"shoulder_pan"}
+
+    msg = JointState()
+    msg.name = ["gripper"]
+    msg.position = [0.2]
+    driver._on_goal(msg)
+
+    assert not [c for c in driver.bus.calls if c[0] == "goal" and c[1] == 6]
+    assert not [c for c in driver.bus.calls if c == ("torque", 6, True)]
+
+
+def test_set_torque_service_reports_limp_joints(make_driver):
+    driver = make_driver(lambda bus: bus.unreadable.add(6))
+    request = SetBool.Request()
+    request.data = True
+    response = driver._on_set_torque(request, SetBool.Response())
+
+    assert response.success is False
+    assert "gripper" in response.message

@@ -117,11 +117,19 @@ Nothing moves without an explicit command.
 
 - **Startup (`arm_driver`):** torque **OFF** — the arm is limp/back-drivable.
   Have the arm physically supported or resting in a stable pose before power.
+  A servo that fails enumeration, or cannot be *confirmed* in position mode
+  (mode changes are verified by read-back, never blind-written to EEPROM), is
+  excluded from control entirely: its state is still published, but it accepts
+  no goals — in wheel mode a position goal is obeyed as a speed.
 - **First goal:** a goal on `arm/goal` (or `jog`'s `+`/`-`/`home`) enables
-  torque (holding the current pose) and then moves. Goals are soft-clamped to
-  the per-joint limits from `robot.yaml` in the driver — the authoritative
-  clamp — and again client-side in `jog` for immediate feedback.
-- **`arm/set_torque false`** (or quitting `jog`): torque OFF — limp.
+  torque (holding the current pose) and then moves. Torque is engaged
+  per-joint: a joint whose position cannot be read at that instant stays limp,
+  receives no goals, and is retried on the next command rather than silently
+  abandoned. Goals are soft-clamped to the per-joint limits from `robot.yaml`
+  in the driver — the authoritative clamp — and again client-side in `jog` for
+  immediate feedback.
+- **`arm/set_torque false`** (or quitting `jog`): torque OFF — limp. The
+  enable direction reports `success: false` and names any joints left limp.
 - **Shutdown (`arm_driver`):** torque OFF — the arm is left safely limp.
 
 ## Control interfaces
