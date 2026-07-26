@@ -16,6 +16,12 @@ Readiness is gated on the launch log, not a fixed sleep. The per-trial ROS work
 lives in ``record.py`` (run as a fresh subprocess per trial for a clean rclpy
 context); metric maths lives in ``metrics.py`` (ROS-free, reused offline).
 
+Each invocation claims a free ``ROS_DOMAIN_ID`` (and a matching ``GZ_PARTITION``)
+unless one is inherited, so two benchmarks running at once on one machine cannot
+see each other's graph — see ``pick_domain_id``. The sim pixi environment also
+pins DDS discovery to this host (``ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST``),
+so a run is invisible to the LAN.
+
     pixi run bench                                   # default worlds, 2 trials
     pixi run bench -- --worlds mote_world.sdf --trials 3
     pixi run bench -- --worlds mote_world.sdf,hospital_world.sdf
@@ -26,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -42,10 +49,62 @@ SIM = REPO / "mote_simulation"
 WORLDS = SIM / "worlds"
 CONTROLLERS_READY = "Configured and activated diff_drive_controller"
 PLUGIN_FAIL = "Failed to load system plugin"
+# Domain 0 is the everything-else default; ROS 2 documents 0-101 as the range
+# whose DDS ports stay clear of the Linux ephemeral port range.
+DOMAIN_CANDIDATES = range(1, 102)
+# Every DDS port for domain N falls in [7400 + 250*N, +250): multicast discovery
+# at the base, per-participant unicast ports above it. Which of those are bound
+# depends on the discovery mode — under ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+# CycloneDDS binds only the unicast ports — so the whole block is what tells us
+# whether a domain is in use.
+DDS_PORT_BASE, DDS_PORT_STEP = 7400, 250
 
 
 def log(msg):
     print(f"[bench] {msg}", flush=True)
+
+
+def bound_udp_ports():
+    """Local UDP ports currently bound on this host, from /proc (no ss needed)."""
+    ports = set()
+    for path in ("/proc/net/udp", "/proc/net/udp6"):
+        try:
+            lines = Path(path).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) > 1 and ":" in fields[1]:
+                try:
+                    ports.add(int(fields[1].split(":")[1], 16))
+                except ValueError:
+                    pass
+    return ports
+
+
+def pick_domain_id():
+    """(domain_id, how) for this benchmark's ROS graph.
+
+    An inherited ROS_DOMAIN_ID wins — the parameter sweep already assigns one per
+    invocation, and a caller who set it meant it. Otherwise claim a domain whose
+    DDS port block is unused on this host, so two benchmarks started at the same
+    time (or a sim left running in another worktree) land on different graphs
+    instead of silently sharing goals, /clock and TF. The port probe is a
+    best-effort filter, not a lock: it cannot see a domain that is
+    claimed-but-not-yet-running, so the candidate order is randomised to make
+    that race unlikely.
+    """
+    inherited = os.environ.get("ROS_DOMAIN_ID", "").strip()
+    if inherited:
+        return int(inherited), "inherited"
+    busy = bound_udp_ports()
+    candidates = list(DOMAIN_CANDIDATES)
+    random.shuffle(candidates)
+    for domain in candidates:
+        base = DDS_PORT_BASE + DDS_PORT_STEP * domain
+        if not any(port in busy for port in range(base, base + DDS_PORT_STEP)):
+            return domain, "claimed"
+    return 0, "fallback (no free domain found)"
 
 
 def popen_group(cmd, log_path):
@@ -254,6 +313,17 @@ def main():
     )
     args = ap.parse_args()
 
+    domain, how = pick_domain_id()
+    os.environ["ROS_DOMAIN_ID"] = str(domain)
+    # Gazebo transport has its own discovery, independent of DDS; partition it
+    # too or two concurrent benchmarks would still share one gz graph.
+    os.environ.setdefault("GZ_PARTITION", f"mote-bench-{domain}")
+    log(
+        f"ROS_DOMAIN_ID={domain} ({how}), "
+        f"GZ_PARTITION={os.environ['GZ_PARTITION']}, "
+        f"discovery range={os.environ.get('ROS_AUTOMATIC_DISCOVERY_RANGE', 'default')}"
+    )
+
     worlds = [w.strip() for w in args.worlds.split(",") if w.strip()]
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = Path(args.out) / ts
@@ -268,6 +338,8 @@ def main():
         "goal_timeout_s": args.goal_timeout,
         "nav2_params": str(BRINGUP / "config" / "nav2_params.yaml"),
         "worlds": worlds,
+        "ros_domain_id": domain,
+        "gz_partition": os.environ["GZ_PARTITION"],
     }
 
     world_results = []

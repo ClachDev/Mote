@@ -430,8 +430,10 @@ concept, [docs](https://docs.ros.org/en/jazzy/Concepts/Intermediate/About-Domain
 > `MaxAutoParticipantIndex` to ~32 — roughly 32 discoverable ROS processes per host.
 > A full stack (bringup + Nav2 + SLAM + perception + task server + agent +
 > foxglove_bridge) could approach that. Count participants on the robot and, if
-> needed, raise it via a `CYCLONEDDS_URI` config (there is no CycloneDDS XML today —
-> this would be the first). Q3's answer leans on this setting.
+> needed, raise it via a `CYCLONEDDS_URI` config — since this was written, the
+> robot's systemd units load `mote_bringup/config/cyclonedds.xml` (single-interface
+> pin + SPDP-only multicast), so that is a setting to add, not a file to create.
+> Q3's answer leans on this setting.
 
 **Identity is server-allocated.** The robot cannot know its `id` before it
 registers, so the server owns the id space: `mote enroll` presents a bootstrap token
@@ -880,8 +882,11 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
 - **M0 · Overlay + identity foundation.** Tailscale on robot + workstation + fleet
   box; `~/.mote/robot.yaml` with an **operator-set `id`/`name`** (no server yet — the
   cloud-init provisioning path of Q3); pin DDS to localhost
-  (`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`); formalise per-robot (`~/.mote`) vs
-  shared (package) config.
+  (`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` — already the default for sims and
+  benchmarks; the robot is still LAN-discoverable and only pinned to its one
+  interface by `config/cyclonedds.xml`, because nothing on-robot replaces an
+  operator's RViz yet — M2 is what makes the localhost pin safe there); formalise
+  per-robot (`~/.mote`) vs shared (package) config.
   *Accept:* clean-Pi → reachable by MagicDNS off-LAN; `robot_id` stable across
   reboots. *Depends on:* nothing. *Blocks:* M1, M2, Ms.
   *Seams:* `sites.py:63-104`, `pixi.toml:219-221`.
