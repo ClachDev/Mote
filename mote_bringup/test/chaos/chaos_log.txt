@@ -107,9 +107,59 @@ not installed on the Pi, so the float comparison in wait_recovery failed and
 every target was declared dead after ~1s instead of waiting the 30s bound.
 
 
+--- 5. the installed systemd units (auldbot, after install + reboot) ---------
+
+Two defects surfaced the moment the units were installed for real and the robot
+rebooted; both are fixed, and the evidence below is from after the fix.
+
+  (a) install.sh hardcoded WorkingDirectory=@HOME@/Mote, so units installed from
+      the worktree pointed at ~/Mote — a checkout on main with no `self-check`
+      task. ExecStartPre exited 127 and bringup looped 69+ times. The gate did
+      behave correctly throughout: ExecMainStatus=0, i.e. ExecStart never ran
+      and the robot stayed idle. Fixed with @REPO@, derived by install.sh from
+      its own location.
+
+  (b) mote-health/mote-record declared Wants=mote-bringup.service. While they
+      were themselves looping, each cycle fired a start request for bringup, and
+      a requested start BYPASSES RestartSec:
+
+        1785069721.238107  mote-health:  Scheduled restart job, counter at 1.
+        1785069721.238835  mote-bringup: Scheduled restart job immediately on
+                                         client request, counter at 67.
+
+      0.7 ms apart. bringup hammered every ~3.5 s while its own
+      RestartUSecNext already read 30s — the backoff was fully defeated. Fixed
+      by dropping Wants= (After= for ordering, own WantedBy= for boot start).
+
+Gate + startup, real hardware under systemd:
+  [PASS] servo_ping: id=7 OK (pos=3927); id=9 OK (pos=3767); all 2 responded
+  [PASS] lidar, camera, disk_space, clock, robot_yaml, active_site
+  self-check: READY
+  Started mote-bringup.service.
+  mote-bringup + mote-health: active/running, NRestarts=0, /health = OK
+
+Service-level recovery — SIGKILL the unit's MainPID:
+  NRestarts 0 -> 1; the gate re-ran on the way back up (servo_ping PASS,
+  self-check: READY), Started mote-bringup.service, /health back to OK.
+
+Watchdog, live rather than merely configured:
+  WatchdogUSec=15s, WatchdogTimestamp advancing, NotifyAccess=all,
+  StatusText="health monitor up" — sd_notify READY/status/watchdog all land.
+
+The RestartSec ramp, measured (transient unit that always fails). Run 1 above
+only ever measured the first restart; this is the whole curve:
+  NRestarts=0  next=2s
+  NRestarts=1  next=3.437543s      actual gaps: 2, 4, 6, 10, 18, 30, 30 s
+  NRestarts=2  next=5.908353s
+  NRestarts=3  next=10.155112s     geometric, ratio (30/2)^(1/5) ~ 1.72
+  NRestarts=4  next=17.454322s
+  NRestarts=5  next=30s            ceiling reached at step 5
+  NRestarts=6  next=30s            and held
+  Exactly RestartSec=2 + RestartSteps=5 + RestartMaxDelaySec=30.
+
+
 --- Not yet verified on the robot -------------------------------------------
 
-* Service-level restart of the installed units, and the journald drop-in:
-  needs `pixi run install-systemd` (root). The units pass
-  `systemd-analyze verify`, and their restart policy is proven in run 1 above.
-* A true USB unplug rather than a node kill, which also needs root.
+* A true USB unplug rather than a node kill (needs root).
+* The journald drop-in's effect over time (installed and journald restarted;
+  the size cap has not yet been reached).
