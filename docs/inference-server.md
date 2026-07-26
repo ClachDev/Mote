@@ -149,20 +149,45 @@ for anyone without an NVIDIA machine. Two things change, and both matter:
 
 **1. The wire protocol is unauthenticated and unencrypted.** That was a
 deliberate choice for one hop on a trusted LAN, and it is documented as such in
-`depth_wire.py`. On a public cloud instance, publishing 5601/5602 to the internet
-means anyone who finds the port can use your GPU and read the images your robot
-sends. **Do not publish these ports publicly.** Put the robot and the instance on
-the same private network — Tailscale, WireGuard, or an SSH tunnel — and bind the
-published ports to that interface only:
+`depth_wire.py`. On a public cloud instance, publishing 5601/5602 means anyone
+who finds the port can use your GPU and read the images your robot sends. The
+tailnet is what makes "trusted network" true again off-LAN — but on a rented box
+the safest shape is to **put the container itself on the tailnet and publish
+nothing on the host**, using a Tailscale sidecar:
 
+```yaml
+# docker-compose.yml — the inference container has no ports of its own; it shares
+# the sidecar's network namespace, so it is reachable *only* over the tailnet.
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}          # tagged, e.g. tag:inference
+      TS_HOSTNAME: mote-inference        # becomes the MagicDNS name
+      TS_STATE_DIR: /var/lib/tailscale   # persist, or every restart makes a new node
+      TS_USERSPACE: "true"
+    volumes: [ts-state:/var/lib/tailscale]
+    restart: unless-stopped
+  inference:
+    image: ghcr.io/clachdev/mote-inference:latest
+    network_mode: service:tailscale      # no `ports:` — nothing on the host
+    deploy:
+      resources: {reservations: {devices: [{driver: nvidia, count: all, capabilities: [gpu]}]}}
+    restart: unless-stopped
+volumes: {ts-state: {}}
 ```
-# only reachable over the VPN interface, not the public one
-docker run -d --gpus all -p 100.x.y.z:5601:5601 -p 100.x.y.z:5602:5602 ...
-```
+
+This is stronger than binding to the tailnet address by hand: there is no
+host-published port to get wrong, no bind-ordering race at boot, and the instance
+never has to be permanently enrolled — the *container* is the tagged
+`tag:inference` node with its own MagicDNS name, which is exactly the identity
+model M0 defines. Set `inference_host` to `TS_HOSTNAME` and the robot is
+unchanged. (The same pattern works on a Linux GPU box; on a personal Windows PC
+the simpler host-Tailscale route above is usually the better trade.)
 
 Adding a shared-secret token to the handshake would be the next step if the
-socket ever needs to face a hostile network; it is deliberately not built yet,
-because a private network solves the problem without complicating a protocol
+socket ever needed to face a hostile network directly; it is deliberately not
+built, because the tailnet solves the problem without complicating a protocol
 whose value is that you can debug it with a hexdump.
 
 **2. Bandwidth, not latency, is the limit.** Each frame sends ~50 KB up but the
@@ -173,6 +198,12 @@ broadband it dominates the round trip. Note that the pipeline stamps clouds at
 If cloud use becomes routine, sending float16 depth would halve the payload for
 no meaningful precision loss at these ranges; `pixi run inference-bench` measures
 exactly this, so the decision can be made on numbers.
+
+This is why `docs/design/fleet.md` sets the placement rule: **keep the inference
+server on the same LAN as the robots it serves**, and treat the tailnet as what
+makes an *occasional* cross-site fallback possible rather than the normal path.
+Per-robot `inference_host` already expresses that — each robot points at its
+local GPU box.
 
 ---
 
@@ -226,8 +257,49 @@ detect: { enabled: true, server_port: 5602 }
 Override per-robot in `~/.mote/perception.yaml` (same precedence as the camera
 calibration). This lives here, not in `robot.yaml`: `robot.yaml` is
 hardware/description, `perception.yaml` is perception runtime. No discovery
-protocol is invented — a stable hostname is the contract, so give the machine a
-DHCP reservation or a hosts entry.
+protocol is invented — a stable hostname is the contract.
+
+**Use the machine's MagicDNS name.** Since M0 every robot, workstation and GPU box
+joins one Tailscale tailnet (`docs/fleet/README.md`), so `inference_host` should be
+the inference machine's tailnet name rather than a LAN IP — that is what
+`docs/design/fleet.md` specifies, and it means the name stays correct whether the
+robot reaches the box over the LAN or from another site. It also removes the need
+for a DHCP reservation or a hosts entry.
+
+## The tailnet and the container
+
+Tailscale runs on the **host**; the container does not need to know it exists.
+Docker publishes the ports onto the host's interfaces, Tailscale gives the host a
+MagicDNS name, and the robot connects to that name — nothing in the image, the
+protocol, or the perception code changes. Three practical points:
+
+**1. `pixi run tailnet` is Linux-only.** `mote_bringup/tailscale/install.sh` is
+`curl | sh` plus `systemctl`, so it covers robots, a Linux GPU box and the fleet
+server — not a Windows PC. There, install the Tailscale Windows app and sign in;
+the result is the same tailnet node.
+
+**2. Leave a personal PC an untagged workstation.** The roles script offers
+`--role inference` (`tag:inference`), but advertising a tag *transfers the node
+from your account to the tailnet* — the M0 runbook already makes this call for a
+co-located dev machine, and it applies at least as strongly to a gaming PC you
+own. Nothing functional is lost: robots reach it by MagicDNS either way and
+`inference_host` is just a name. What you defer is M7's ACLs keying on
+`tag:inference` rather than your user. Tag it when the box outlives your account.
+
+**3. `-p 5601:5601` publishes on *every* interface, not just the tailnet.** On a
+home LAN behind a router that is the same trusted-network posture the wire
+protocol already assumes, so it is fine. To restrict it to the tailnet, bind the
+published port to the Tailscale address:
+
+```
+docker run -d --gpus all --restart unless-stopped \
+  -p 100.x.y.z:5601:5601 -p 100.x.y.z:5602:5602 ...
+```
+
+Note the ordering hazard: after a reboot Docker can start before Tailscale has
+assigned that address, and the bind fails. `--restart unless-stopped` retries
+with backoff so it recovers on its own, but if that bothers you, the sidecar
+pattern below avoids the problem entirely by never publishing on the host.
 
 ---
 
