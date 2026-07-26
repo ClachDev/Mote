@@ -78,3 +78,53 @@ def test_write_status_roundtrip(tmp_path, monkeypatch):
     assert data["ok"] is False
     names = {c["name"] for c in data["checks"]}
     assert names == {"servo_bus", "lidar"}
+
+
+def test_held_servo_bus_blocks_bringup_and_names_the_holder(monkeypatch):
+    """A bus held by the arm must fail the gate with an actionable reason.
+
+    Before this, the ping went ahead into the other process's traffic and the
+    gate reported "2/2 servos did not respond" — true, but it points at the
+    wrong problem and hides the fix (stop the arm driver).
+    """
+    monkeypatch.setattr(
+        self_check.serial_bus,
+        "port_holders",
+        lambda _p: [(4321, "ros2 run mote_arm jog")],
+    )
+    r = Result()
+    cfg = {
+        "servos": {
+            "port": "/dev/null",
+            "baud_rate": 1000000,
+            "left_id": 7,
+            "right_id": 9,
+        }
+    }
+    self_check._check_servos(r, cfg, do_ping=True)
+
+    assert not r.ok
+    held = [c for c in r.checks if c["name"] == "servo_bus_free"]
+    assert held and not held[0]["passed"]
+    assert "4321" in held[0]["detail"] and "mote_arm jog" in held[0]["detail"]
+    # The ping must not have run at all — that is the point.
+    assert not any(c["name"] == "servo_ping" for c in r.checks)
+
+
+def test_free_servo_bus_lets_the_ping_proceed(monkeypatch):
+    monkeypatch.setattr(self_check.serial_bus, "port_holders", lambda _p: [])
+    r = Result()
+    cfg = {
+        "servos": {
+            "port": "/dev/null",
+            "baud_rate": 1000000,
+            "left_id": 7,
+            "right_id": 9,
+        }
+    }
+    self_check._check_servos(r, cfg, do_ping=False)
+
+    free = [c for c in r.checks if c["name"] == "servo_bus_free"]
+    assert free and free[0]["passed"]
+    assert any(c["name"] == "servo_ping" for c in r.checks)
+    assert r.ok

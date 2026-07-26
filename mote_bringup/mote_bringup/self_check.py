@@ -4,6 +4,7 @@ Run as ``ExecStartPre`` of ``mote-bringup.service`` (and by hand via
 ``pixi run self-check``). It performs fast, static pre-flight checks — no ROS
 graph, so it is cheap and can gate the launch:
 
+* nothing else already holds the shared servo bus (the arm sits on it too)
 * drive servos answer a bus ping (``servo_ping``, SCServo)
 * lidar and camera devices enumerate and open
 * enough free disk for logs and bags
@@ -37,6 +38,8 @@ from datetime import datetime, timezone
 
 import yaml
 from ament_index_python.packages import get_package_share_directory
+
+from mote_bringup import serial_bus
 
 CRITICAL = "CRITICAL"
 ADVISORY = "advisory"
@@ -101,6 +104,19 @@ def _check_servos(result, cfg, do_ping):
     ids = [servos["left_id"], servos["right_id"]]
     if not _check_device(result, "servo_bus", port, CRITICAL):
         return
+
+    # The arm shares this bus with the wheels, and serial ports have no
+    # kernel-level exclusion — pinging into someone else's traffic interleaves
+    # packets on a half-duplex bus, so both sides see corrupt replies and the
+    # ping reports a misleading "servos did not respond". Refuse instead, naming
+    # the holder: the base cannot run while another process owns the bus anyway.
+    holders = serial_bus.port_holders(port)
+    if holders:
+        who = "; ".join(f"pid {pid} ({cmd[:60]})" for pid, cmd in holders)
+        result.add("servo_bus_free", False, CRITICAL, f"{port} held by {who}")
+        return
+    result.add("servo_bus_free", True, CRITICAL, f"{port} not held by another process")
+
     if not do_ping:
         result.add("servo_ping", True, ADVISORY, "skipped (--no-servo-ping)")
         return
