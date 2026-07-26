@@ -43,6 +43,20 @@ separate self-check service; gating bringup gates everything downstream.
 - **journald sizing**: `systemd/journald-mote.conf` bounds the persistent
   journal (`SystemMaxUse=500M`, `SystemKeepFree=1G`, `MaxRetentionSec=2week`) so
   always-restarting services can never fill the SD card.
+- **No `Wants=` on the dependents.** `mote-health` and `mote-record` order
+  `After=` bringup but never *pull* it. A `Wants=` dependent that is itself
+  restart-looping fires a start request for bringup every cycle, and such a
+  request **bypasses bringup's own `RestartSec` backoff** — systemd logs
+  "Scheduled restart job immediately on client request". Measured on the robot:
+  bringup hammered every ~3.5 s while systemd's `RestartUSecNext` already said
+  30 s. Each unit is started at boot by its own `WantedBy=multi-user.target`.
+  `mote-slam`/`mote-nav` keep `Requires=`/`BindsTo=` because they are genuinely
+  meaningless without bringup, and `BindsTo` holds them stopped (rather than
+  looping) while it is down.
+- **Units run from the checkout they were installed from**, via `@REPO@`
+  substituted by `install.sh` from its own location — not a hardcoded `~/Mote`.
+  Installing from a second checkout otherwise yields units pointing at a tree
+  that may not contain the tasks they invoke (`status=127`, permanent loop).
 
 **Three layers of process recovery** (see also `test/chaos/`):
 

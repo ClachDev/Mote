@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # Install the mote systemd services for the invoking user.
-# Run via: pixi run install-systemd (uses sudo; @USER@/@HOME@/@DDS_IFACE@ are
-# filled in here). Override the DDS interface with:
+# Run via: pixi run install-systemd (uses sudo; @USER@/@HOME@/@REPO@/@DDS_IFACE@
+# are filled in here). Override the DDS interface with:
 #   MOTE_DDS_INTERFACE=eth0 pixi run install-systemd
 set -euo pipefail
 
 MOTE_USER="${SUDO_USER:-$USER}"
 MOTE_HOME="$(getent passwd "$MOTE_USER" | cut -d: -f6)"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The checkout the units should run from: this script's own repo root, NOT a
+# hardcoded ~/Mote. Installing from a second checkout (a git worktree, a staging
+# clone) otherwise produces units pointing at a tree that may not even contain
+# the tasks they invoke — on the robot that gave a self-check ExecStartPre
+# failing with status=127 ("task not found") and a permanent restart loop.
+MOTE_REPO="$(cd "$SRC_DIR/../.." && pwd)"
+echo "Repo: $MOTE_REPO"
 
 # The interface the ROS graph should live on: the one carrying the default
 # route. cyclonedds.xml treats it as optional, so a wrong guess degrades to a
@@ -17,7 +24,8 @@ DDS_IFACE="${DDS_IFACE:-wlan0}"
 echo "DDS interface: $DDS_IFACE"
 
 for unit in "$SRC_DIR"/*.service; do
-    sed "s|@USER@|$MOTE_USER|g; s|@HOME@|$MOTE_HOME|g; s|@DDS_IFACE@|$DDS_IFACE|g" "$unit" \
+    sed "s|@USER@|$MOTE_USER|g; s|@HOME@|$MOTE_HOME|g; s|@REPO@|$MOTE_REPO|g; \
+         s|@DDS_IFACE@|$DDS_IFACE|g" "$unit" \
         | sudo tee "/etc/systemd/system/$(basename "$unit")" > /dev/null
 done
 

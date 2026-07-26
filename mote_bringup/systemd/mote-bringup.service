@@ -16,7 +16,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=@USER@
-WorkingDirectory=@HOME@/Mote
+WorkingDirectory=@REPO@
 Environment=HOME=@HOME@
 # Pre-flight gate: prove servos ping and the lidar/disk/clock are ready before
 # opening the hardware. A non-zero exit fails the start; Restart re-runs this
@@ -34,7 +34,7 @@ TimeoutStartSec=120
 
 # Pin DDS to the robot's one real interface and drop non-discovery multicast
 # (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
-Environment=CYCLONEDDS_URI=file://@HOME@/Mote/mote_bringup/config/cyclonedds.xml
+Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
 
 [Install]
