@@ -35,8 +35,13 @@ dds-check = "ros2 run mote_bringup dds_participants"  # participant-slot headroo
 # it is the only one that carries the broker.
 agent = "ros2 launch mote_fleet agent_launch.py"   # robot -> fleet bridge
 enroll = "ros2 run mote_fleet enroll"              # ask the server for an id
-fleet-server = "python -u mote_fleet/server/fleet_server.py"  # enrollment + registry
+fleet-server = "python -u mote_fleet/server/fleet_server.py"  # API + dashboard
 fleetctl = "python -u mote_fleet/server/fleetctl.py"          # operator CLI
+# The dashboard's read path is MQTT-over-WebSockets, which conda-forge's
+# mosquitto is not built for (docs/fleet/m1-verification.md §4) — so the broker
+# that serves a browser is a container one. No pixi environment needed, hence
+# its place here rather than in [feature.fleet.tasks].
+fleet-broker-ws = "bash mote_fleet/server/broker.sh --docker"
 
 # Dev tasks
 kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
@@ -293,6 +298,11 @@ pytest = ">=8,<9"
 
 [feature.fleet.tasks]
 fleet-broker = "bash mote_fleet/server/broker.sh"
+# Repeated from [tasks] because this environment takes no default feature: a
+# fleet box that is not a robot still has to be able to run the fleet server.
+fleet-broker-ws = "bash mote_fleet/server/broker.sh --docker"
+fleet-server = "python -u mote_fleet/server/fleet_server.py"
+fleetctl = "python -u mote_fleet/server/fleetctl.py"
 # Runs everywhere the deps allow: rclpy tests skip without ROS, the broker test
 # skips without mosquitto, so the same file is the CI unit run and the local
 # end-to-end run (see mote_fleet/test/test_e2e_fleet.py).

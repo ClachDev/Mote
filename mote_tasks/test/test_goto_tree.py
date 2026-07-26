@@ -51,10 +51,12 @@ class MockNav(Node):
 
 @pytest.fixture
 def ros():
-    # A private DDS domain so a live robot/sim session on this machine can't
-    # cross-talk with the test's task_server and mock nav server.
+    # Nothing outside this test may reach its task_server and mock nav server:
+    # a high DDS domain keeps a live robot/sim session on this machine out, and
+    # a per-process namespace keeps sibling test sessions out — colcon runs
+    # package tests in parallel, and mote_fleet drives the same topic names.
     os.environ["ROS_DOMAIN_ID"] = str(random.randint(60, 100))
-    rclpy.init()
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
     yield
     rclpy.shutdown()
 

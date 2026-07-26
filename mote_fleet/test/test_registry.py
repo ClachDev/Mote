@@ -135,3 +135,80 @@ def test_concurrent_enrollments_do_not_collide(registry):
 
     assert not errors, errors
     assert sorted(results) == [f"mote-{i:02d}" for i in range(1, 9)]
+
+
+# ---- operators and the audit log (M3) ---------------------------------------
+
+
+def test_an_operator_token_resolves_to_its_name(registry):
+    token = registry.new_operator(name="michael")
+    assert registry.operator(token)["name"] == "michael"
+    assert registry.operator("not-a-token") is None
+
+
+def test_an_operator_needs_a_name(registry):
+    """The name is what the audit log records, so an unnamed token would make
+    every line say nothing."""
+    with pytest.raises(RegistryError, match="name"):
+        registry.new_operator(name="  ")
+
+
+def test_a_revoked_token_stops_resolving(registry):
+    token = registry.new_operator(name="michael")
+    assert registry.revoke_operator(token) is True
+    assert registry.operator(token) is None
+    assert registry.revoke_operator(token) is False
+    # The row survives revocation: who *had* access is part of the record.
+    assert registry.operators()[0]["revoked_at"]
+
+
+def test_using_a_token_is_recorded(registry):
+    token = registry.new_operator(name="michael")
+    assert registry.operators()[0]["last_used_at"] is None
+    registry.operator(token)
+    assert registry.operators()[0]["last_used_at"]
+
+
+def test_audit_rows_come_back_newest_first(registry):
+    for index in range(3):
+        registry.record(actor="michael", action="dispatch", robot_id=f"mote-0{index}")
+    assert [row["robot_id"] for row in registry.audit()] == [
+        "mote-02",
+        "mote-01",
+        "mote-00",
+    ]
+
+
+def test_audit_can_be_filtered_and_limited(registry):
+    registry.record(actor="a", action="dispatch", robot_id="mote-01")
+    registry.record(actor="b", action="dispatch", robot_id="mote-02")
+    assert len(registry.audit(robot_id="mote-01")) == 1
+    assert len(registry.audit(limit=1)) == 1
+
+
+def test_an_audit_row_is_closed_with_its_outcome(registry):
+    entry = registry.record(
+        actor="michael", action="dispatch", robot_id="mote-01", result="publishing"
+    )
+    registry.finish(entry["id"], "published")
+    assert registry.audit()[0]["result"] == "published"
+
+
+def test_an_m1_registry_gains_the_new_tables(tmp_path):
+    """Every table is created IF NOT EXISTS, so opening an existing database
+    with this code is the whole migration."""
+    path = tmp_path / "registry.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE robots (robot_id TEXT PRIMARY KEY, name TEXT, site TEXT, "
+        "fingerprint TEXT UNIQUE, facts TEXT, enrolled_at TEXT, "
+        "last_enrolled_at TEXT);"
+        "INSERT INTO robots VALUES ('mote-01','Scout','home','serial:aaa','{}',"
+        "'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');"
+    )
+    old.commit()
+    old.close()
+
+    registry = Registry(path)
+    assert [r["robot_id"] for r in registry.robots()] == ["mote-01"]
+    assert registry.operator(registry.new_operator(name="michael"))["name"] == "michael"

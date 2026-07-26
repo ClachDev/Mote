@@ -215,7 +215,7 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
     assert len(fleet_api.registry.robots()) == 1
 
     # ---- the robot comes up ----
-    rclpy.init()
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
     zones_file = tmp_path / "zones.yaml"
     zones_file.write_text(ZONES)
 
@@ -352,7 +352,7 @@ def test_a_dead_agent_is_reported_offline_by_the_broker(
     enroll.main(["--server", fleet_api.url, "--token", token])
     robot_id = identity.robot_id()
 
-    rclpy.init()
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
     from mote_fleet.agent import MoteAgent
 
     agent = MoteAgent(parameter_overrides=[Parameter("keepalive", value=2)])
@@ -411,3 +411,109 @@ def test_the_registry_survives_a_server_restart(tmp_path, broker):
         assert second.registry.robot("mote-01")["name"] == "Scout"
     finally:
         second.server_close()
+
+
+def api_post(url, path, payload, token=""):
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        url + path,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def test_dispatch_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api):
+    """M3's acceptance: the *only* write path is the API.
+
+    Everything real again — a mosquitto broker, the fleet server with its own
+    paho client, the agent, and the `mote_tasks` tree — but the command is not
+    published by the test. It is POSTed to `/v1/robots/<id>/dispatch`, which
+    authorizes an operator token, writes the audit row, and publishes. The
+    browser holds no credential that can reach the broker; this proves the same
+    loop still closes when the write goes through the server (fleet.md Q5/Q7).
+    """
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path / "mote"))
+    monkeypatch.setenv("ROS_DOMAIN_ID", str(random.randint(60, 100)))
+
+    from mote_bringup import identity
+
+    from mote_fleet import enroll, protocol
+
+    enroll.main(["--server", fleet_api.url, "--token", fleet_api.registry.new_token()])
+    robot_id = identity.robot_id()
+    operator_token = fleet_api.registry.new_operator(name="michael")
+
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
+    zones_file = tmp_path / "zones.yaml"
+    zones_file.write_text(ZONES)
+
+    from mote_fleet.agent import MoteAgent
+    from mote_tasks.task_server import TaskServer
+
+    agent = MoteAgent(parameter_overrides=[Parameter("keepalive", value=2)])
+    tasks = TaskServer(
+        parameter_overrides=[
+            Parameter("zones_file", value=str(zones_file)),
+            Parameter("tick_period", value=0.05),
+        ]
+    )
+    nav = MockNav()
+    executor = SingleThreadedExecutor()
+    for node in (agent, tasks, nav):
+        executor.add_node(node)
+
+    operator = Operator(broker)
+    try:
+        assert spin_until(executor, lambda: agent.connected), "agent never connected"
+
+        # ---- a request with no operator token reaches no robot ----
+        code, body = api_post(
+            fleet_api.url, f"/v1/robots/{robot_id}/dispatch", {"command": "goto lab"}
+        )
+        assert code == 401, body
+        assert not any(topic.endswith("task/command") for topic, _ in operator.messages)
+
+        # ---- with one, it is audited and published ----
+        code, answer = api_post(
+            fleet_api.url,
+            f"/v1/robots/{robot_id}/dispatch",
+            {"schema": protocol.SCHEMA, "command": "goto kitchen"},
+            token=operator_token,
+        )
+        assert code == 202, answer
+
+        entry = fleet_api.registry.audit()[0]
+        assert (entry["actor"], entry["result"]) == ("michael", "published")
+        assert entry["command_id"] == answer["id"]
+
+        # ---- and the robot really ran it, answering on the same id ----
+        assert spin_until(
+            executor,
+            lambda: any(s["terminal"] for s in operator.statuses(answer["id"])),
+            timeout=60.0,
+        ), operator.statuses(answer["id"])
+        assert [s["state"] for s in operator.statuses(answer["id"])] == [
+            protocol.DISPATCHED,
+            protocol.ACCEPTED,
+            protocol.SUCCEEDED,
+        ]
+        assert len(nav.goals) == 1
+        assert nav.goals[0].pose.position.x == pytest.approx(-1.5)  # kitchen
+    finally:
+        agent.close()
+        operator.close()
+        fleet_api.publisher.close()
+        executor.shutdown()
+        for node in (agent, tasks, nav):
+            node.destroy_node()
+        rclpy.shutdown()

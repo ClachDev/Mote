@@ -1,4 +1,4 @@
-"""The fleet registry: one row per robot, one row per enrollment token.
+"""The fleet registry: robots, enrollment tokens, operators, and the audit log.
 
 This is the server side of "identity is server-allocated" (fleet.md Q3). M0 let
 the operator type an id into ``~/.mote/robot.yaml``; from M1 the id space has an
@@ -6,6 +6,11 @@ owner, and this module is it. SQLite because the store is a handful of rows that
 must survive a restart and be queried by exactly one process — a file the whole
 registry fits in beats a database service at this size, and the schema is small
 enough that the Regime-B/C move to a real DB is a rewrite of this file alone.
+
+M3 adds the two tables the dispatch API needs: **operators**, whose tokens are
+the credential the API authorizes a dispatch against, and **audit**, the record
+it writes before publishing. Every table is created ``IF NOT EXISTS`` on open,
+so an M1 registry file gains them by being opened by an M3 server.
 
 Two invariants are worth naming because everything else leans on them:
 
@@ -58,6 +63,27 @@ CREATE TABLE IF NOT EXISTS tokens (
     used_at    TEXT,
     used_by    TEXT
 );
+CREATE TABLE IF NOT EXISTS operators (
+    token       TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS audit (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    stamp      TEXT NOT NULL,
+    actor      TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    robot_id   TEXT NOT NULL DEFAULT '',
+    command    TEXT NOT NULL DEFAULT '',
+    command_id TEXT NOT NULL DEFAULT '',
+    result     TEXT NOT NULL DEFAULT '',
+    detail     TEXT NOT NULL DEFAULT '',
+    remote     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS audit_stamp ON audit (stamp DESC);
 """
 
 ID_PREFIX = "mote"
@@ -125,6 +151,119 @@ class Registry:
             "UPDATE tokens SET used_at = ?, used_by = ? WHERE token = ?",
             (now(), robot_id, token),
         )
+
+    # ---- operators ------------------------------------------------------
+
+    def new_operator(self, *, name: str, note: str = "") -> str:
+        """Mint an operator token. This is the credential the dispatch API
+        authorizes against, and the name it writes into the audit line."""
+        if not name.strip():
+            raise RegistryError(
+                "an operator needs a name — it is what the audit log records"
+            )
+        token = secrets.token_urlsafe(24)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO operators (token, name, note, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (token, name.strip(), note, now()),
+            )
+        return token
+
+    def operators(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM operators ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def operator(self, token: str) -> dict | None:
+        """The operator this token belongs to, or None if it is unknown or
+        revoked. Records the use, so `operator list` shows a stale credential."""
+        if not token:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM operators WHERE token = ? AND revoked_at IS NULL",
+                (token,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE operators SET last_used_at = ? WHERE token = ?",
+                (now(), token),
+            )
+        return dict(row)
+
+    def revoke_operator(self, token: str) -> bool:
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE operators SET revoked_at = ? "
+                "WHERE token = ? AND revoked_at IS NULL",
+                (now(), token),
+            ).rowcount
+        return bool(changed)
+
+    # ---- audit ----------------------------------------------------------
+
+    def record(
+        self,
+        *,
+        actor: str,
+        action: str,
+        robot_id: str = "",
+        command: str = "",
+        command_id: str = "",
+        result: str = "",
+        detail: str = "",
+        remote: str = "",
+    ) -> dict:
+        """Append one audit line. Written for refused attempts as well as
+        accepted ones: "who tried" is the half of an audit log that a dashboard
+        never shows you."""
+        row = dict(
+            stamp=now(),
+            actor=actor,
+            action=action,
+            robot_id=robot_id,
+            command=command,
+            command_id=command_id,
+            result=result,
+            detail=detail,
+            remote=remote,
+        )
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO audit (stamp, actor, action, robot_id, command, "
+                "command_id, result, detail, remote) "
+                "VALUES (:stamp, :actor, :action, :robot_id, :command, "
+                ":command_id, :result, :detail, :remote)",
+                row,
+            )
+        return {"id": cursor.lastrowid, **row}
+
+    def finish(self, entry_id: int, result: str, detail: str = "") -> None:
+        """Close an audit line with what actually happened. Separate from
+        ``record`` so the row exists *before* the side effect it describes."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE audit SET result = ?, detail = ? WHERE id = ?",
+                (result, detail, entry_id),
+            )
+
+    def audit(self, *, limit: int = 100, robot_id: str = "") -> list[dict]:
+        """Most recent first. ``id`` orders it, not ``stamp``: two dispatches in
+        the same second are still ordered."""
+        query = "SELECT * FROM audit"
+        params: list = []
+        if robot_id:
+            query += " WHERE robot_id = ?"
+            params.append(robot_id)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 1000)))
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
 
     # ---- robots ---------------------------------------------------------
 

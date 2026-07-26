@@ -17,10 +17,10 @@ is called everywhere it is visible: the node is `mote_agent`, the service is
 
 | | |
 |---|---|
-| **Interface contract** | [`docs/fleet/control-plane.md`](../docs/fleet/control-plane.md) — the versioned topic tree, payload schemas, and enrollment API |
-| **Operator runbook** | [`docs/fleet/README.md`](../docs/fleet/README.md) §6–8 |
-| **What was measured** | [`docs/fleet/m1-verification.md`](../docs/fleet/m1-verification.md) |
-| **Design** | [`docs/design/fleet.md`](../docs/design/fleet.md) — M1, and Q1/Q2/Q3 |
+| **Interface contracts** | [`control-plane.md`](../docs/fleet/control-plane.md) — the MQTT topic tree and payload schemas · [`fleet-api.md`](../docs/fleet/fleet-api.md) — the HTTP routes, dispatch and audit |
+| **Operator runbook** | [`docs/fleet/README.md`](../docs/fleet/README.md) §6–9 |
+| **What was measured** | [`m1-verification.md`](../docs/fleet/m1-verification.md) · [`m3-verification.md`](../docs/fleet/m3-verification.md) |
+| **Design** | [`docs/design/fleet.md`](../docs/design/fleet.md) — M1 and M3, and Q1/Q2/Q3/Q5 |
 
 ## On the robot
 
@@ -48,26 +48,36 @@ a design (`fleet.md` Q1/Q3).
 ## Off the robot
 
 ```bash
-pixi run -e fleet fleet-broker                     # mosquitto
-pixi run fleet-server -- --broker-host fleet-box   # enrollment + registry
-pixi run fleetctl -- dispatch mote-01 goto kitchen
+pixi run -e fleet fleet-broker-ws                          # mosquitto + WebSockets
+pixi run -e fleet fleet-server -- --broker-host fleet-box  # API + dashboard
+pixi run -e fleet fleetctl -- dispatch mote-01 goto kitchen
 ```
 
 | Script | |
 |---|---|
-| [`server/fleet_server.py`](server/fleet_server.py) | `POST /v1/enroll`, `GET /v1/robots`, `GET /healthz` — stdlib `http.server` |
-| [`server/registry.py`](server/registry.py) | the SQLite row store: robots, tokens, transactional id allocation |
-| [`server/fleetctl.py`](server/fleetctl.py) | operator CLI: tokens, roster, dispatch, watch |
-| [`server/mosquitto.conf`](server/mosquitto.conf), [`broker.sh`](server/broker.sh) | the broker, and where its state goes |
+| [`server/fleet_server.py`](server/fleet_server.py) | the fleet API: enrollment, roster, dispatch, audit, basemaps, and the UI — stdlib `http.server` |
+| [`server/registry.py`](server/registry.py) | the SQLite row store: robots, enrollment tokens, operators, the audit log, transactional id allocation |
+| [`server/fleetctl.py`](server/fleetctl.py) | operator CLI: tokens, roster, dispatch, audit, watch |
+| [`server/ui/`](server/ui/) | the dashboard: `index.html`, `app.mjs`, `map.mjs` (basemap + the Q5 transform), `mqtt.mjs` (a subscribe-only MQTT client) |
+| [`server/mosquitto.conf`](server/mosquitto.conf), [`broker.sh`](server/broker.sh) | the broker, its WebSocket listener, and where its state goes |
 
 The server imports `mote_fleet.protocol` from the source tree by path (the
 `depth_server.py` pattern) and nothing else — no ROS, no framework, no ament.
 Server state lives in `$MOTE_FLEET_HOME` (default `~/.mote-fleet`).
 
-`http.server` rather than a web framework is a floor, not an aspiration: five
-routes, no templating, no auth story yet, and one fewer dependency to solve on
-whatever the fleet box turns out to be. M3 puts the dispatch API and the
-operator UI on top, and that is where a framework earns its keep.
+`http.server` rather than a web framework stays a floor, not an aspiration: a
+dozen routes, no templating, no ORM, and one fewer dependency to solve on
+whatever the fleet box turns out to be. M3 was where a framework was expected to
+earn its keep and it did not — the UI is static files and there is nothing to
+render server-side. The same goes for the browser: no bundler, no npm, and no
+vendored MQTT library, because what the read path needs is five packet types of
+a published wire format and a minified blob nobody can review is a worse
+dependency than 200 lines that are tested.
+
+**Dispatch is mediated by the server, and only by the server.** Every write to
+`task/command` — from the dashboard or from `fleetctl` — is a POST that
+authorizes an operator token and writes an audit row first. The read path is
+unchanged and goes straight to the broker.
 
 ## Tests
 
@@ -76,14 +86,22 @@ pixi run test                 # colcon: everything except the broker tests
 pixi run -e dev test-fleet    # + the real-broker end-to-end run
 ```
 
-Three tiers, so the same files give full coverage wherever they run:
+Four tiers, so the same files give full coverage wherever they run:
 
-- **contract** (`test_protocol.py`) — the code, the JSON Schema files and the
-  doc's field tables are checked against each other, so a payload change that
-  nobody described fails here rather than in a dashboard later.
+- **contract** (`test_protocol.py`, `test_fleet_server.py`, `test_registry.py`)
+  — the code, the JSON Schema files and the doc's field tables checked against
+  each other, and every HTTP route over a real socket with an injected
+  publisher, so a payload or status-code change that nobody described fails here
+  rather than in a dashboard later.
 - **bridge** (`test_dispatch.py`, `test_agent.py`) — the single-in-flight rule
   and the full agent against an injected fake MQTT client, so CI covers it on
   both architectures without a broker.
-- **end to end** (`test_e2e_fleet.py`) — a real mosquitto, the real enrollment
-  endpoint, the `enroll` CLI, a real paho client, and the actual `mote_tasks`
-  behaviour tree driving a mock Nav2. Skips where there is no broker.
+- **browser** (`test_ui.py` → `ui_test.mjs`) — the MQTT packet codec and the
+  world→pixel transform under node, against the same `.mjs` files the browser
+  loads. Skips where there is no node. `browser_check.mjs` is the other half —
+  a real headless browser against a running stack, which needs more than CI has,
+  so it is an operator's tool rather than a test.
+- **end to end** (`test_e2e_fleet.py`) — a real mosquitto, the real fleet
+  server, the `enroll` CLI, a real paho client, and the actual `mote_tasks`
+  behaviour tree driving a mock Nav2; including a dispatch that goes out through
+  the API. Skips where there is no broker.

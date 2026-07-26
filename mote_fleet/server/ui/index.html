@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mote fleet</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>mote<span class="dim">/fleet</span></h1>
+      <span id="contract" class="pill">…</span>
+      <span id="broker-state" class="broker connecting">broker connecting…</span>
+      <form id="token-form" class="token-form">
+        <input
+          id="token"
+          type="password"
+          placeholder="operator token"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="submit">use</button>
+      </form>
+      <span id="operator" class="operator anonymous">read-only</span>
+    </header>
+
+    <main>
+      <section class="pane roster-pane">
+        <h2>roster</h2>
+        <div id="roster" class="roster"></div>
+      </section>
+
+      <section class="pane map-pane">
+        <div class="pane-head">
+          <h2>map</h2>
+          <span id="map-label" class="dim">—</span>
+          <label class="check"><input type="checkbox" id="follow" /> follow</label>
+          <button id="fit" type="button">fit</button>
+        </div>
+        <canvas id="map-canvas"></canvas>
+      </section>
+
+      <section class="pane detail-pane">
+        <div class="pane-head">
+          <h2 id="detail-name">no robot selected</h2>
+          <!-- Foxglove owns the single-robot deep view: 3D, sensors, teleop.
+               This dashboard owns the fleet-wide 2D picture and links out. -->
+          <a
+            id="foxglove"
+            class="button"
+            title="Opens the Foxglove desktop app against this robot's foxglove_bridge (M2). Needs both."
+            hidden
+            >open in Foxglove</a
+          >
+        </div>
+
+        <!-- Everything in this pane is retained state. When it has stopped
+             being a claim about now, this says so before the reader trusts a
+             green dot. -->
+        <p id="detail-stale" class="stale-banner" hidden></p>
+
+        <div id="detail-meta" class="facts"></div>
+
+        <h3>subsystems</h3>
+        <div id="subsystems" class="subsystems"></div>
+
+        <h3>dispatch</h3>
+        <form id="dispatch" class="dispatch" hidden>
+          <input
+            id="command"
+            type="text"
+            placeholder="goto kitchen — or: fetch red_box dropoff"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button type="submit">send</button>
+          <p id="dispatch-note" class="note"></p>
+        </form>
+
+        <h3>task status</h3>
+        <div id="status-log" class="status-log"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.mjs"></script>
+  </body>
+</html>
