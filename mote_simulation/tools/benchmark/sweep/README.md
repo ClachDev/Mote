@@ -131,7 +131,9 @@ defaults".
 Weights and per-world weights are overridable in the spec's `scoring` block; the
 defaults live in `score.py`. The benchmark graph runs on a dedicated
 `ROS_DOMAIN_ID` (default 42, `--ros-domain-id`) so a sim in another worktree or a
-robot on the network can't pollute it.
+robot on the network can't pollute it — `bench.py` honours that inherited domain
+instead of claiming one per set, so every set in a sweep is scored on the same
+graph configuration.
 
 ## Outputs
 

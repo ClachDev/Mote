@@ -110,6 +110,7 @@ Launch files, config, udev rules, NetworkManager drop-ins, systemd services, and
 - `nav2_params.yaml` — Nav2 parameters
 - `slam_toolbox_params.yaml` — SLAM toolbox parameters
 - `mote.rviz` — RViz2 display config
+- `cyclonedds.xml` — robot DDS tuning: pins the graph to the one real interface (`MOTE_DDS_INTERFACE`, detected by `systemd/install.sh`; declared optional plus an `lo` fallback so a network-less robot still runs) and drops multicast to SPDP discovery only, so scans/maps/images go unicast to the peers that asked. Loaded via `CYCLONEDDS_URI` from the systemd units only, so an interactive `pixi run` keeps stock DDS. Discovery is deliberately *not* localhost-confined here — an operator laptop must still see the robot
 
 ### `mote_simulation` (Python/ament)
 Workstation-only Gazebo simulation, kept separate from `mote_bringup` so it can be excluded from the robot sync (`pixi run sync` skips `mote_simulation/`). Built only in the `sim` pixi environment. Contains:
@@ -153,6 +154,8 @@ With multiple identical USB-serial adapters, pin by serial number — see commen
 ## Environment
 
 pixi activates `install/setup.sh` and sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` automatically. Dependencies come from the `mote` prefix.dev channel, robostack-jazzy, and conda-forge. The default environment is what runs on the robot (a Raspberry Pi, deployed with `pixi run sync`); the `dev` feature adds `ros-jazzy-desktop` and the `rviz` task — and flips discovery back to `SUBNET`, since sharing a graph across machines is a dev-time workflow (RViz, camera calibration), never a fleet one.
+
+**DDS scoping.** The `sim` environment additionally sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`, so sims and benchmarks are invisible to the LAN and to each other's machines; `bench.py` claims a free `ROS_DOMAIN_ID` + `GZ_PARTITION` per invocation so two runs on one machine stay separate. Discovery visibility is one-way: a `LOCALHOST` participant still finds same-host default-range ones, but not vice-versa — hence `pixi run rviz-sim` (RViz joined to the sim's host-local graph) alongside `pixi run rviz` (default range, for the robot). The robot itself keeps LAN discovery and is tuned instead by `config/cyclonedds.xml` (systemd only).
 
 Non-code directories: `design/` holds the BOM (`design/BOM.md`) and CAD files (step/stl/3mf); `docs/images/` holds README photos and the logo (webp).
 

@@ -57,6 +57,10 @@ ROS_AUTOMATIC_DISCOVERY_RANGE = "SUBNET"
 
 [feature.dev.tasks]
 rviz = "ros2 launch mote_bringup rviz_launch.py"
+# Same RViz, but joined to the sim's host-local DDS graph (the sim pins
+# discovery to LOCALHOST; a default-range RViz cannot see it). Use `rviz` for
+# the robot, `rviz-sim` for a sim running on this machine.
+rviz-sim = { cmd = "ros2 launch mote_bringup rviz_launch.py", env = { ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST" } }
 camera_calibration = "ros2 run camera_calibration cameracalibrator --size 6x9 --square 0.025 --ros-args -r image:=/image_raw -p camera:=/camera -p image_transport:=compressed"
 
 # Continuously rsync to the Pi on save (watchexec honours .gitignore, so
@@ -69,6 +73,14 @@ sync-watch = "watchexec --debounce 1s -- pixi run sync"
 # the robot's real ~/.mote. sim_launch resolves the map from the world arg.
 [feature.sim.activation.env]
 MOTE_HOME = "$PIXI_PROJECT_ROOT/mote_simulation/sim_home"
+# Confine DDS discovery to this machine for every sim/benchmark process, so a
+# run neither advertises itself to nor discovers a robot or another workstation
+# on the LAN. Same-host tooling still works: a LOCALHOST participant discovers
+# same-host SUBNET ones. The reverse does not hold, so a default-range tool
+# cannot see the sim — hence `rviz-sim` below. To deliberately expose a sim run
+# (e.g. viewing it from another machine): pixi run -e sim -- env
+# ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET ros2 launch mote_simulation sim_launch.py
+ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
 
 [feature.sim.tasks]
 sim = "ros2 launch mote_simulation sim_launch.py"
