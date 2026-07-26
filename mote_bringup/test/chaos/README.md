@@ -1,59 +1,48 @@
 # Chaos validation
 
-Two scripts prove the reliability stack actually recovers, split by what they
-need:
-
-## `chaos_policy_demo.sh` — local, no hardware
-
-Proves the **systemd layer**: a transient `--user` unit mirroring the mote
-services' `Restart=always` + `RestartSec`/`RestartSteps`/`RestartMaxDelaySec`
-policy is SIGKILLed, and systemd restarts it (new MainPID) within a bounded
-time. Runs on any workstation with a user systemd manager — no ROS, no robot.
+`chaos_restart.sh` kills the critical nodes on a running robot and checks that
+each one comes back within a bounded time. Recovery comes from `respawn=True` on
+those nodes in `mote_launch.py` / `nav2_launch.py`; this proves it end to end
+against real hardware.
 
 ```bash
-bash mote_bringup/test/chaos/chaos_policy_demo.sh
+pixi run chaos          # on the robot, with the stack up
 ```
 
-Logs go to `/tmp/mote_chaos_policy_log.txt` (override with `CHAOS_LOG`). The
-committed `chaos_log.txt` is curated evidence, not scratch output — writing into
-a tracked file on every run dirties the worktree and breaks git operations.
+Bring the stack up first (`pixi run robot` / `pixi run mapping`, or the systemd
+units if you have enabled them). The script SIGKILLs `ros2_control_node`,
+`sllidar_node` and `controller_server` in turn and waits up to 30 s for each to
+reappear. Logs go to `/tmp/mote_chaos_log.txt` — override with `CHAOS_LOG`.
 
-## `chaos_restart.sh` — on the robot
+It is not part of CI: it needs the live hardware stack, so run it by hand on the
+robot when the recovery paths change.
 
-Proves **per-node respawn**: with the stack up on `auldbot` (services active, or
-`pixi run robot` / `pixi run mapping` running), it SIGKILLs `ros2_control_node`,
-`sllidar_node`, and `controller_server` in turn and waits for each to reappear
-within 30 s. Recovery comes from `respawn=True` on those nodes in
-`mote_launch.py` / `nav2_launch.py`.
+## Safety and gotchas
 
-```bash
-pixi run chaos          # on the robot
-```
-
-Logs go to `/tmp/mote_chaos_log.txt` (override with `CHAOS_LOG`).
-
-It aborts safely (exit 2, nothing killed) if the stack is not running, so it is
-harmless to invoke on a workstation. Nodes are matched by the basename of
-`/proc/<pid>/exe` and the script excludes its own PID, so `pkill`-style
-self-matching cannot happen.
-
-Note that matching this way only finds compiled nodes: a Python node's `exe` is
-the interpreter (`python3.12`), not the node. All three targets here are C++
-binaries. If you add a Python target, match on the cmdline instead — and if a
-target is never found, the precondition check aborts the run rather than
-reporting a false recovery failure.
-
-**Tearing down afterwards**: `pixi run robot` also starts the rosbag recorders,
-and killing a launch's nodes does not stop them. Sweep for leftover
-`ros2 bag record` processes (and any `~/.mote/bags/<stream>/<timestamp>` they
-left behind) after a chaos session, or they keep recording.
-
-**Benched on auldbot** (3/3 recovered, see `chaos_log.txt`). It is not part of CI
-because it needs the live hardware stack.
+- It aborts (exit 2, nothing killed) if the stack is not running, so it is
+  harmless to invoke on a workstation.
+- Nodes are matched by the basename of `/proc/<pid>/exe`, and the script skips
+  its own PID, so `pkill -f`-style self-matching cannot happen.
+- That matching only finds **compiled** nodes: a Python node's `exe` is the
+  interpreter (`python3.12`), not the node. All three targets here are C++
+  binaries. If you add a Python target, match on the cmdline instead. A target
+  that is never found aborts the run rather than reporting a false failure.
+- `bc` is not installed on the Pi, so all timing here is integer milliseconds in
+  pure bash. Keep it that way.
+- **Tearing down afterwards**: `pixi run robot` also starts the rosbag
+  recorders, and killing a launch's nodes does not stop them. Sweep for leftover
+  `ros2 bag record` processes (and the `~/.mote/bags/<stream>/<timestamp>`
+  directories they leave) after a session, or they keep recording.
 
 ## Three layers of recovery
 
-1. **Node crash** → the launch system relaunches it (`respawn=True`, ~2 s).
-2. **Launch / process crash** → systemd restarts the whole service (backoff).
-3. **Monitor hang** → `mote-health.service` (`Type=notify` + `WatchdogSec=15`)
-   is killed and restarted by systemd when it stops petting the watchdog.
+1. **Node crash** → the launch system relaunches that node (`respawn=True`).
+2. **Launch/process crash** → systemd restarts the whole service, re-running the
+   self-check gate on the way back up.
+3. **Health-monitor hang** → `mote-health.service` (`Type=notify` +
+   `WatchdogSec=15`) is killed and restarted when it stops petting the watchdog.
+
+Layers 2 and 3 are systemd's; `mote_bringup/README.md` documents the unit
+configuration that makes them work, including the two traps found on the robot
+(a `Wants=` dependent defeating the restart backoff, and hardcoding a checkout
+path in a unit template).
