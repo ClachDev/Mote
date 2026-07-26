@@ -3,11 +3,13 @@
 The operator runbook for the fleet layer: a network where the LAN/internet
 distinction has disappeared (**M0**), a stable name for each robot (**M0**), a
 server that hands out those names and carries tasks and telemetry to and from
-every robot (**M1**), and a browser you watch and drive the fleet from
-(**M3**). The architecture and the milestones after these are in
+every robot (**M1**), a browser you watch and drive the fleet from (**M3**), and
+a deep console for one robot at a time (**M2**). The architecture and the
+milestones after these are in
 [`docs/design/fleet.md`](../design/fleet.md); the measurements are in
 [`m0-verification.md`](m0-verification.md),
-[`m1-verification.md`](m1-verification.md) and
+[`m1-verification.md`](m1-verification.md),
+[`m2-verification.md`](m2-verification.md) and
 [`m3-verification.md`](m3-verification.md); the two wires are specified in
 [`control-plane.md`](control-plane.md) (MQTT) and [`fleet-api.md`](fleet-api.md)
 (HTTP).
@@ -24,11 +26,13 @@ every robot (**M1**), and a browser you watch and drive the fleet from
 | `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, audit, watch |
 | `pixi run enroll` | ask the server for this robot's identity |
 | `pixi run agent` | the robot's bridge to the fleet |
+| `pixi run foxglove` | the robot's remote view + teleop (Foxglove WebSocket) |
 
 **First time through**, in order: §1a (create the tailnet — browser, once, for
 the whole fleet) → §1b (join your workstation and the fleet box) → §6 (stand up
 the fleet server) → §7 (enroll a robot and start its agent) → §9 (open the
-dashboard) → §5 (every robot after this one, unattended from a card).
+dashboard) → §10 (connect Foxglove and drive one) → §5 (every robot after this
+one, unattended from a card).
 
 §2 (typing an id by hand) is the M0 path, kept because it is what a robot with
 no fleet server does; §7 supersedes it and adopts an already-set id rather than
@@ -228,29 +232,42 @@ site selection, calibration, maps or bags.**
 
 ---
 
-## 4. DDS: measured now, pinned to the robot at M2
+## 4. DDS: pinned to the robot, as of M2
 
-The end state is that DDS never leaves a robot
-(`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`): nothing off-box joins its ROS graph
-because the fleet layer bridges over MQTT and Foxglove instead, so two robots
-parked on the same LAN cannot see each other's nodes whatever their
-`ROS_DOMAIN_ID` and there is no domain-id allocation problem at any fleet size.
+DDS never leaves a robot running under systemd. Nothing off-box joins its ROS
+graph, because the fleet layer bridges over MQTT (§7) and Foxglove (§10)
+instead — so two robots parked on the same LAN cannot see each other's nodes
+whatever their `ROS_DOMAIN_ID`, and there is no domain-id allocation problem at
+any fleet size.
 
-**M0 does not flip that switch on the robot, deliberately.** Nothing on-robot
-replaces an operator's RViz yet, so pinning the robot today would break the one
-remote workflow that exists. The pin lands with **M2**, when `foxglove_bridge`
-gives the off-box path — this is what the milestone in
-[`fleet.md`](../design/fleet.md) now says. Until then the scoping in place is the
-one from PR #54:
+**M0 deliberately did not flip that switch**, because nothing on-robot replaced
+an operator's RViz yet and pinning would have broken the one remote workflow
+that existed. **M2 is what earns it**: `foxglove_bridge` is that off-box path,
+and teleop was verified to work with the pin on *before* the pin was applied
+([`m2-verification.md` §2](m2-verification.md)).
 
-- sims and benchmarks pin *themselves* (`[feature.sim.activation.env]`), so a sim
-  is invisible to the LAN and to other machines;
-- the robot stays LAN-discoverable but is narrowed by
-  [`mote_bringup/config/cyclonedds.xml`](../../mote_bringup/config/cyclonedds.xml)
-  under systemd — one interface, SPDP-only multicast.
+Where it applies, and where it does not:
 
-What M0 contributes here is the **measurement**, because the pin has a ceiling
-worth knowing before we walk into it.
+- **the systemd units** carry `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` — every
+  `mote-*.service`, beside the `CYCLONEDDS_URI` they already had. A robot that
+  boots unattended is pinned. It is on all of them rather than just the new one
+  because a localhost-range participant discovers a same-host default-range one
+  but not the reverse, so a mixed set is asymmetric rather than half-safe;
+- **an interactive `pixi run` is not**, exactly as with `cyclonedds.xml`. Bench
+  work that wants a LAN graph — RViz, camera calibration, `pixi run teleop` from
+  a workstation — is untouched;
+- **sims and benchmarks pin themselves** (`[feature.sim.activation.env]`), as
+  before;
+- the robot's interface and multicast narrowing
+  ([`cyclonedds.xml`](../../mote_bringup/config/cyclonedds.xml)) is unchanged and
+  still applies under systemd.
+
+The consequence to know before enabling the units: **a workstation on the LAN can
+no longer see the ROS graph of a robot running under systemd.** That is the
+intended trade — watch it through Foxglove (§10), or run the mission by hand.
+
+The other thing M0 contributed here is the **measurement**, because the pin has a
+ceiling worth knowing before we walk into it.
 
 ### The participant cap — check it before adding processes
 
@@ -273,7 +290,10 @@ claim it. Re-run `dds-check` whenever a milestone adds processes; if it runs out
 raise `MaxAutoParticipantIndex` in the robot's existing `cyclonedds.xml`.
 
 M1's agent has since been measured at **exactly one slot**, as projected
-([`m1-verification.md` §3](m1-verification.md)), so the budget is unchanged.
+([`m1-verification.md` §3](m1-verification.md)). M2 costs **two** — the bridge
+and the teleop relay, which the projection did not know about
+([`m2-verification.md` §3](m2-verification.md)) — putting the full robot stack
+around **25 of 33**.
 
 Indices are released when a process exits, so what matters is the *concurrent*
 peak; transient helpers (controller spawners, `ros2` CLI calls, the ROS daemon)
@@ -591,4 +611,98 @@ task; the map pane says so rather than drawing an empty grid.
 **What it does not do**, deliberately: no marker clustering, no basemap tiling,
 no 3D, no camera, no teleop. The first two are what `fleet.md` Q5 describes for
 large sites and would be unmeasured complexity at this fleet size; the last
-three are Foxglove's half of the split.
+three are Foxglove's half of the split — §10.
+
+---
+
+## 10. Watching and driving one robot: Foxglove
+
+The dashboard (§9) is the fleet picture. **Foxglove is the deep console for one
+robot** — live pose on the floor map, the camera, the laser, and a teleop pad —
+and it is *adopted, not built*: `foxglove_bridge` runs on the robot and Foxglove
+connects to it. This is the other half of the split §9 describes, and the
+dashboard's per-robot **Foxglove** button deep-links straight here.
+
+```bash
+pixi run foxglove                          # by hand, or included in `pixi run robot`
+sudo systemctl enable --now mote-foxglove  # to have it always there
+```
+
+Then, in Foxglove: **Open connection → Foxglove WebSocket →
+`ws://<robot-id>:8765`** — the robot's MagicDNS name, so this works from
+anywhere on the tailnet with nothing exposed to the internet. Import
+[`mote_bringup/foxglove/mote.json`](../../mote_bringup/foxglove/mote.json) once
+— **Layouts → Import from file…** — for the map/camera/teleop/diagnostics
+layout; what is in it and why is in
+[its README](../../mote_bringup/foxglove/README.md).
+
+The bridge is **included in the base bringup by default**, so any way of starting
+the robot gives you something to connect to. Under systemd it is a separate unit
+instead — `mote-bringup.service` passes `foxglove:=false` — so the view survives
+a bringup restart, which is exactly when you want to look at a robot.
+
+### Arriving from the dashboard's button
+
+§9's roster has an **open in Foxglove** button per robot. The fleet server holds
+the template and the browser only substitutes the id, so the two halves meet at
+one string (`--foxglove-url`, `fleet_server.py`):
+
+```
+foxglove://open?ds=foxglove-websocket&ds.url=ws://<robot_id>:8765
+```
+
+That is the same connection as typing it by hand — `robot_id` is the MagicDNS
+name (§2) and 8765 is this bridge's default port — so the button needs no
+agreement beyond those two facts. Three consequences worth knowing:
+
+- **It opens the desktop app, not a browser tab.** `foxglove://` is a scheme the
+  installed Foxglove application registers with the OS; a machine without it does
+  nothing visible when the button is clicked. The hosted web app takes the same
+  parameters at `https://app.foxglove.dev/~/view?ds=…` instead, but a page served
+  over HTTPS will not open a plain `ws://` socket — browsers block that as mixed
+  content — so reaching this bridge from the web app means giving it TLS
+  (`tls`/`certfile`/`keyfile`, which `foxglove_launch.py` leaves at the node's
+  defaults). Desktop is the path that works without a certificate. *(Reasoned
+  from the mixed-content rule, not measured — see
+  [`m2-verification.md` §5](m2-verification.md).)*
+- **The link carries the data source, not the layout.** Foxglove's deep links can
+  name a layout, but only by an id from the operator's own layout store, so there
+  is no value this repo could ship. Import `mote.json` once per Foxglove install
+  and the button lands on it thereafter; skip that and it opens whatever layout
+  was last active.
+- **Change the port and you must change the template.** Running the bridge on
+  another port (`pixi run foxglove port:=9000`) leaves the dashboard pointing at
+  8765; `fleet-server --foxglove-url` is the one place to fix it, and
+  `--foxglove-url ""` hides the button entirely.
+
+### Driving it
+
+The Teleop panel's arrows drive the robot. Three things are worth knowing before
+you use it on hardware:
+
+- **It publishes `/cmd_vel_teleop`, not the controller's topic.** Foxglove can
+  only emit unstamped `geometry_msgs/Twist` and `DiffDriveController` takes
+  `TwistStamped`, so a small `twist_relay` node adds the header — on the robot,
+  which keeps your clock out of the safety path.
+- **Letting go stops the robot, and so does losing the link.** Commands simply
+  stop arriving and the controller's `cmd_vel_timeout` (0.5 s) halts the wheels.
+  There is no remote e-stop and no safety-rated teleop here — all safety
+  behaviour is local, by design.
+- **It does not pre-empt Nav2.** Both write to the drive controller, so teleop
+  during an active goal means two writers fighting. Cancel the task first.
+
+### If it will not connect
+
+- **HTTP 400 at the handshake** — the client is offering only the old
+  `foxglove.websocket.v1` subprotocol. Bridge 3.3.0 speaks `foxglove.sdk.v1`;
+  current Foxglove negotiates it automatically, older builds and hand-rolled
+  clients do not ([`m2-verification.md` §1](m2-verification.md)).
+- **Nothing on the topic list** — the bridge is up but the mission is not. The
+  bridge serves whatever graph exists, including an empty one.
+- **`ros2 topic list` on your workstation is empty, but Foxglove works** — that
+  is the DDS pin (§4) doing its job on a systemd-run robot, not a fault.
+
+Bandwidth is demand-driven: the bridge only serialises topics a panel has
+actually subscribed to, so hidden panels and unopened topics cost nothing, and
+the camera streams compressed only while you are looking at it. Over a relayed
+tailnet path the camera is still the first thing that will saturate.

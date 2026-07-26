@@ -915,6 +915,22 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   *Accept:* operator drives + watches one robot remotely.
   *Depends on:* M0 only. **Parallel with M1** (independent transport).
   *Seams:* PNG maps (`sites.py`), `/image_raw/compressed` (`CLAUDE.md`).
+  **Built** in `mote_bringup`: `foxglove_launch.py` + `mote-foxglove.service`,
+  the layout in [`mote_bringup/foxglove/`](../../mote_bringup/foxglove/), the
+  runbook as [`README.md` §10](../fleet/README.md) and the measurements as
+  [`m2-verification.md`](../fleet/m2-verification.md). Two findings carry
+  forward. **Teleop needed a node, not just a layout**: Foxglove's Teleop panel
+  emits only unstamped `geometry_msgs/Twist` while `DiffDriveController` takes
+  `TwistStamped`, so a `twist_relay` leaf bridges them — which also makes M2 cost
+  *two* participant slots rather than the one projected above (~25 of 33 for the
+  full stack). And **this milestone spends the DDS pin M0 deferred**: every
+  `mote-*.service` now sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`, verified
+  with teleop working under the pin, so a systemd-run robot no longer advertises
+  its graph to the LAN and Q3's answer above is now in force. M3's per-robot
+  deep-link (`ws://<robot_id>:8765`) lands here. Left open: teleop does not
+  pre-empt Nav2 (both write the drive topic — a `twist_mux` is the fix, filed as
+  follow-up), and the layout is structurally tested but has never been opened in
+  a Foxglove client.
 
 - **M3 · Thin fleet UI + dispatch API.** Web app: roster + health and per-robot
   map+pose overlay from the broker (**read-only**, MQTT-over-WS; coordinate transform,

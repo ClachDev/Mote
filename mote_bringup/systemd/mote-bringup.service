@@ -24,7 +24,9 @@ Environment=HOME=@HOME@
 ExecStartPre=@HOME@/.pixi/bin/pixi run self-check
 # health:=false — mote-health.service runs the monitor here, independently, so it
 # survives a bringup restart and can report one. Manual runs get it in-launch.
-ExecStart=@HOME@/.pixi/bin/pixi run launch health:=false
+# foxglove:=false for the same reason: mote-foxglove.service keeps the operator's
+# view up across a bringup restart, which is when they most need to look at it.
+ExecStart=@HOME@/.pixi/bin/pixi run launch health:=false foxglove:=false
 Restart=always
 RestartSec=2
 # Back off on repeated failures: 2s, stepping up to a 30s ceiling, instead of a
@@ -38,6 +40,12 @@ TimeoutStartSec=120
 # (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
 Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
+# Keep the ROS graph on the robot: from M2 the off-box view is foxglove_bridge
+# (mote-foxglove.service), so nothing off-machine joins DDS and two robots on
+# one LAN cannot see each other whatever their ROS_DOMAIN_ID. Systemd only —
+# interactive `pixi run` keeps stock discovery for bench work with RViz.
+# docs/fleet/README.md §4.
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 [Install]
 WantedBy=multi-user.target

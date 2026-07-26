@@ -153,6 +153,19 @@ def generate_launch_description():
         launch_arguments={"use_sim_time": use_sim_time}.items(),
     )
 
+    # The same arrangement as the health monitor, for the same reason: every way
+    # of starting the robot gives an operator a way to watch it. Under systemd
+    # mote-bringup.service passes foxglove:=false and mote-foxglove.service runs
+    # the bridge instead, because it must outlive a bringup restart — a
+    # crash-looping mission is exactly when someone needs to look at the robot.
+    foxglove = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(bringup_share, "launch", "foxglove_launch.py")
+        ),
+        launch_arguments={"use_sim_time": use_sim_time}.items(),
+        condition=IfCondition(LaunchConfiguration("foxglove")),
+    )
+
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
@@ -161,6 +174,12 @@ def generate_launch_description():
                 default_value="true",
                 description="Run the health monitor alongside the base. Set "
                 "false when mote-health.service already runs it.",
+            ),
+            DeclareLaunchArgument(
+                "foxglove",
+                default_value="true",
+                description="Run foxglove_bridge alongside the base. Set false "
+                "when mote-foxglove.service already runs it.",
             ),
             SetParameter(name="use_sim_time", value=use_sim_time),
             robot_state_publisher,
@@ -172,5 +191,6 @@ def generate_launch_description():
             system_monitor,
             health_monitor,
             localization,
+            foxglove,
         ]
     )

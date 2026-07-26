@@ -46,13 +46,21 @@ sudo systemctl daemon-reload
 #   sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
 #   sudo systemctl disable mote-bringup mote-health        # back to manual
 #
-# mote-agent is the exception worth enabling on its own: it draws nothing and
-# drives nothing, and a robot that is not reporting to the fleet is a robot the
-# operator cannot see (it needs `pixi run enroll` first — docs/fleet/README.md).
+# mote-agent and mote-foxglove are the exceptions worth enabling on their own:
+# they draw nothing and drive nothing, and a robot that is not reporting to the
+# fleet, or that an operator cannot look at, is a robot nobody can help. The
+# agent needs `pixi run enroll` first; the bridge needs nothing.
+# (docs/fleet/README.md)
 #
-#   sudo systemctl enable --now mote-agent
+#   sudo systemctl enable --now mote-agent mote-foxglove
+#
+# These units also pin DDS to the robot (ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST),
+# so a workstation on the LAN can no longer join the ROS graph of a robot running
+# under systemd — mote-foxglove is what replaces that. An interactive `pixi run`
+# keeps stock discovery, so bench work with RViz is unaffected.
 #
 echo
 echo "Units installed (not enabled). Start a session with 'pixi run robot'."
-echo "For unattended boot: sudo systemctl enable --now mote-bringup mote-health"
-echo "To join the fleet:   pixi run enroll ... && sudo systemctl enable --now mote-agent"
+echo "For unattended boot:  sudo systemctl enable --now mote-bringup mote-health"
+echo "To watch it remotely: sudo systemctl enable --now mote-foxglove"
+echo "To join the fleet:    pixi run enroll ... && sudo systemctl enable --now mote-agent"

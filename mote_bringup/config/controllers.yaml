@@ -26,6 +26,13 @@ diff_drive_controller:
         max_acceleration: 5.0
         max_deceleration: -5.0
 
+    # The deadman for remote teleop, pinned rather than left to the default: the
+    # wheels halt this long after the last command, so an operator whose link
+    # drops mid-drive stops on the robot's own clock instead of running on. A
+    # teleop source must publish faster than this or the robot stutters between
+    # commands — the shipped Foxglove layout uses 10 Hz.
+    cmd_vel_timeout: 0.5
+
     odom_frame_id: odom
     base_frame_id: base_footprint
     enable_odom_tf: false       # odom->base is owned by kinematic_icp; wheel

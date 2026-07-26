@@ -1,0 +1,36 @@
+[Unit]
+Description=Mote Foxglove Bridge
+# Ordering only — deliberately no Wants= and no PartOf=, the same reasoning as
+# mote-health.service and mote-agent.service. This unit is the operator's window
+# onto the robot, so it must not be restarted by the stack it is watching: a
+# bringup crash-loop is exactly the moment someone needs /rosout and the node
+# graph, and a PartOf= would take the view down on every cycle.
+After=mote-bringup.service
+# The bridge listens rather than dials, so it needs no network to start — but a
+# robot that boots with no interface up should still end up serving on the
+# tailnet address once there is one.
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=@USER@
+WorkingDirectory=@REPO@
+Environment=HOME=@HOME@
+ExecStart=@HOME@/.pixi/bin/pixi run foxglove
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+
+# Pin DDS to the robot's one real interface and drop non-discovery multicast
+# (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
+Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
+Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
+# Keep the ROS graph on the robot: this bridge is what replaces joining it from
+# a workstation, so from M2 the deployed robot no longer advertises DDS to the
+# LAN (docs/fleet/README.md §4). Interactive `pixi run` is unaffected.
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+
+[Install]
+WantedBy=multi-user.target
