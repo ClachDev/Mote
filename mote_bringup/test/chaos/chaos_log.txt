@@ -1,5 +1,5 @@
-[22:49:39] === systemd restart-policy demo (mirrors mote-*.service) ===
-[22:49:41] started mote-chaos-demo, MainPID=593820
-[22:49:41] killing MainPID 593820 (SIGKILL)
-[22:49:43] PASS: mote-chaos-demo restarted in ~2.0s, new MainPID=594009
-[22:49:43] === done ===
+[11:42:29] === systemd restart-policy demo (mirrors mote-*.service) ===
+[11:42:31] started mote-chaos-demo, MainPID=3254018
+[11:42:31] killing MainPID 3254018 (SIGKILL)
+[11:42:33] PASS: mote-chaos-demo restarted in ~2.0s, new MainPID=3254059
+[11:42:33] === done ===

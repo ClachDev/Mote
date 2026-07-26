@@ -14,7 +14,7 @@
 set -uo pipefail
 
 BOUND_S=30          # max seconds allowed for a node to reappear
-POLL_S=0.5
+POLL_MS=500         # integer arithmetic only: `bc` is not installed on the Pi
 SELF=$$
 LOG="$(cd "$(dirname "$0")" && pwd)/chaos_log.txt"
 
@@ -28,7 +28,19 @@ TARGETS=(
 
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
-pids_for() { pgrep -f "$1" | grep -vw "$SELF" || true; }
+# Match on the basename of the executable a process is actually running
+# (/proc/<pid>/exe), not on its command line. A cmdline regex would also match
+# this script, the `pixi run chaos` wrapper, and any editor holding the file
+# open — the classic `pkill -f` self-match foot-gun.
+pids_for() {
+    local want="$1" dir pid exe
+    for dir in /proc/[0-9]*; do
+        pid=${dir#/proc/}
+        [ "$pid" = "$SELF" ] && continue
+        exe=$(readlink "$dir/exe" 2>/dev/null) || continue
+        [ "$(basename "$exe")" = "$want" ] && echo "$pid"
+    done
+}
 
 kill_target() {
     local pat="$1" pid
@@ -37,17 +49,20 @@ kill_target() {
     done
 }
 
+# Prints elapsed seconds (one decimal) and returns 0 as soon as the process is
+# back, or non-zero once BOUND_S has passed. Times in integer milliseconds so
+# this needs nothing beyond bash.
 wait_recovery() {
-    local pat="$1" waited=0
-    while (( $(echo "$waited < $BOUND_S" | bc -l) )); do
+    local pat="$1" waited_ms=0 bound_ms=$((BOUND_S * 1000))
+    while [ "$waited_ms" -lt "$bound_ms" ]; do
         if [ -n "$(pids_for "$pat")" ]; then
-            echo "$waited"
+            printf '%d.%d\n' $((waited_ms / 1000)) $((waited_ms % 1000 / 100))
             return 0
         fi
-        sleep "$POLL_S"
-        waited=$(echo "$waited + $POLL_S" | bc -l)
+        sleep "$(printf '%d.%03d' $((POLL_MS / 1000)) $((POLL_MS % 1000)))"
+        waited_ms=$((waited_ms + POLL_MS))
     done
-    echo "$waited"
+    printf '%d.%d\n' $((waited_ms / 1000)) $((waited_ms % 1000 / 100))
     return 1
 }
 

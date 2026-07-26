@@ -44,11 +44,12 @@ log "started $UNIT, MainPID=$pid1"
 log "killing MainPID $pid1 (SIGKILL)"
 kill -9 "$pid1" 2>/dev/null
 
-waited=0
+waited_ms=0
 recovered=0
-while (( $(echo "$waited < $BOUND_S" | bc -l) )); do
+while [ "$waited_ms" -lt $((BOUND_S * 1000)) ]; do
     sleep 0.5
-    waited=$(echo "$waited + 0.5" | bc -l)
+    waited_ms=$((waited_ms + 500))
+    waited=$(printf '%d.%d' $((waited_ms / 1000)) $((waited_ms % 1000 / 100)))
     state=$(systemctl --user show -p ActiveState --value "$UNIT")
     pid2=$(systemctl --user show -p MainPID --value "$UNIT")
     if [ "$state" = "active" ] && [ -n "$pid2" ] && [ "$pid2" != "0" ] \
