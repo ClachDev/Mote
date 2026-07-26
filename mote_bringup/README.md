@@ -44,7 +44,7 @@ separate self-check service; gating bringup gates everything downstream.
   journal (`SystemMaxUse=500M`, `SystemKeepFree=1G`, `MaxRetentionSec=2week`) so
   always-restarting services can never fill the SD card.
 
-**Two layers of process recovery** (see also `test/chaos/`):
+**Three layers of process recovery** (see also `test/chaos/`):
 
 1. **Node crash** → the launch system relaunches just that node
    (`respawn=True` on the drivers in `mote_launch.py` and the nav2 servers in

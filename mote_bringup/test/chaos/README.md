@@ -39,7 +39,7 @@ the script excludes its own PID, so `pkill`-style self-matching cannot happen.
 **Benched on auldbot** (3/3 recovered, see `chaos_log.txt`). It is not part of CI
 because it needs the live hardware stack.
 
-## Two layers of recovery
+## Three layers of recovery
 
 1. **Node crash** → the launch system relaunches it (`respawn=True`, ~2 s).
 2. **Launch / process crash** → systemd restarts the whole service (backoff).
