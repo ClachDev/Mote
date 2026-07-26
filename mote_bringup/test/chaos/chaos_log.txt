@@ -158,6 +158,24 @@ only ever measured the first restart; this is the whole curve:
   Exactly RestartSec=2 + RestartSteps=5 + RestartMaxDelaySec=30.
 
 
+--- 6. one-command start, services disabled (auldbot) -----------------------
+
+The units are installed but not enabled, so a session is started by hand. This
+checks that the health monitor comes with the mission rather than only with
+systemd — `pixi run robot` and nothing else:
+
+  health_monitor:            running, pid started by the launch itself
+  /health:                   OK
+  publishers on /health:     1          (no duplicate monitor)
+  /diagnostics_agg:          mote OK; scan, scan_filtered, joint_states, camera,
+                             odometry, localization all ok
+  pixi run self-check:       still works standalone -> READY
+
+`localization` reads ok rather than informational-absent because the nav mission
+runs AMCL, which supplies map->odom. On the bare base it reports absent without
+degrading the robot, which is the reason that severity exists.
+
+
 --- Not yet verified on the robot -------------------------------------------
 
 * A true USB unplug rather than a node kill (needs root).
