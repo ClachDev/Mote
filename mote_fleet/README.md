@@ -19,8 +19,9 @@ is called everywhere it is visible: the node is `mote_agent`, the service is
 |---|---|
 | **Interface contracts** | [`control-plane.md`](../docs/fleet/control-plane.md) — the MQTT topic tree and payload schemas · [`fleet-api.md`](../docs/fleet/fleet-api.md) — the HTTP routes, dispatch and audit |
 | **Operator runbook** | [`docs/fleet/README.md`](../docs/fleet/README.md) §6–9 |
-| **What was measured** | [`m1-verification.md`](../docs/fleet/m1-verification.md) · [`m3-verification.md`](../docs/fleet/m3-verification.md) |
-| **Design** | [`docs/design/fleet.md`](../docs/design/fleet.md) — M1 and M3, and Q1/Q2/Q3/Q5 |
+| **Deploying the server** | [`server-pipelines.md`](../docs/fleet/server-pipelines.md) — the container stack, gated updates, backup/restore |
+| **What was measured** | [`m1-verification.md`](../docs/fleet/m1-verification.md) · [`m3-verification.md`](../docs/fleet/m3-verification.md) · [`ms-verification.md`](../docs/fleet/ms-verification.md) |
+| **Design** | [`docs/design/fleet.md`](../docs/design/fleet.md) — M1, M3 and Ms, and Q1/Q2/Q3/Q5 |
 
 ## On the robot
 
@@ -48,7 +49,7 @@ a design (`fleet.md` Q1/Q3).
 ## Off the robot
 
 ```bash
-pixi run -e fleet fleet-broker-ws                          # mosquitto + WebSockets
+pixi run fleet-broker                                      # mosquitto + WebSockets
 pixi run -e fleet fleet-server -- --broker-host fleet-box  # API + dashboard
 pixi run -e fleet fleetctl -- dispatch mote-01 goto kitchen
 ```
@@ -60,6 +61,7 @@ pixi run -e fleet fleetctl -- dispatch mote-01 goto kitchen
 | [`server/fleetctl.py`](server/fleetctl.py) | operator CLI: tokens, roster, dispatch, audit, watch |
 | [`server/ui/`](server/ui/) | the dashboard: `index.html`, `app.mjs`, `map.mjs` (basemap + the Q5 transform), `mqtt.mjs` (a subscribe-only MQTT client) |
 | [`server/mosquitto.conf`](server/mosquitto.conf), [`broker.sh`](server/broker.sh) | the broker, its WebSocket listener, and where its state goes |
+| [`deploy/`](deploy/) | the deployed shape: an image for the API+UI, a compose file that runs it beside the broker, and `fleet-deploy.sh` (gated update, rollback, backup, restore) |
 
 The server imports `mote_fleet.protocol` from the source tree by path (the
 `depth_server.py` pattern) and nothing else — no ROS, no framework, no ament.
@@ -101,7 +103,11 @@ Four tiers, so the same files give full coverage wherever they run:
   loads. Skips where there is no node. `browser_check.mjs` is the other half —
   a real headless browser against a running stack, which needs more than CI has,
   so it is an operator's tool rather than a test.
-- **end to end** (`test_e2e_fleet.py`) — a real mosquitto, the real fleet
-  server, the `enroll` CLI, a real paho client, and the actual `mote_tasks`
-  behaviour tree driving a mock Nav2; including a dispatch that goes out through
-  the API. Skips where there is no broker.
+- **end to end** (`test_e2e_fleet.py`, `test_fleet_outage.py`) — a real
+  mosquitto, the real fleet server, the `enroll` CLI, a real paho client, and
+  the actual `mote_tasks` behaviour tree driving a mock Nav2; including a
+  dispatch that goes out through the API. The second kills the broker under a
+  live agent: the robot finishes its task anyway and the agent reconnects by
+  itself, which is the claim the fleet server's update pipeline is allowed to
+  have downtime on. Both skip where there is no broker, and share
+  `fleet_harness.py`.

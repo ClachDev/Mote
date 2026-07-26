@@ -789,6 +789,18 @@ Net: **three pipelines, one release channel for the two ROS-software roles (robo
 inference) and normal server-deploy for the fleet server**, each with a failure
 posture that keeps robot autonomy independent of fleet infrastructure.
 
+> **As built (Ms).** Two things above are not what shipped, and
+> [`server-pipelines.md`](../fleet/server-pipelines.md) is the current runbook.
+> The inference server is **not** a pixi env from the channel and does **not**
+> run an agent: it ships as a container and the box holds no fleet identity, so
+> both non-robot roles are now *container deploys driven by their operator*
+> rather than by the fleet server. That is a smaller idea than "one roster for
+> everything", and it keeps a rented cloud GPU or somebody's gaming PC from
+> needing to be enrolled in a fleet to lend it a GPU. What survives intact is
+> the blue/green **gate** — a candidate that must serve a real frame on a shadow
+> port before it takes the served ones — and the failure posture in both rows,
+> the second of which is now a test rather than a claim.
+
 ---
 
 ## Scaling: one robot → ten thousand
@@ -944,7 +956,7 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   [`fleet-api.md`](../fleet/fleet-api.md) alongside M1's MQTT one, and the
   measurements as [`m3-verification.md`](../fleet/m3-verification.md). Three
   notes for later milestones: M1's **websockets question is settled in favour of
-  a container mosquitto** (`pixi run fleet-broker-ws`), which is the fleet
+  a container mosquitto** (`pixi run fleet-broker`), which is the fleet
   server's own deployment shape and therefore Ms's problem too; the dashboard's
   basemaps are read from **site bundles on the fleet box** through routes M4
   keeps while replacing where the bytes come from; and the **operator token is
@@ -976,6 +988,18 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   deploy). *Accept:* rebuild either server from scratch via its documented pipeline;
   robot autonomy unaffected while the fleet server is down. *Depends on:* M0.
   **Parallel with M1/M2/M4.** *Seams:* `pixi.toml` inference envs; `depth_wire.py:70-76`.
+  **Built**; the runbook is [`server-pipelines.md`](../fleet/server-pipelines.md)
+  and the measurements [`ms-verification.md`](../fleet/ms-verification.md). Three
+  things landed differently from the sketch above, each for a reason recorded
+  there: the inference server ships as a **container**, not a pixi env from the
+  channel (that changed when the role was built — `docs/inference-server.md`), so
+  "same channel, own env" applies only to the robot; its blue/green **gate** is a
+  candidate on a shadow port that must serve a real frame, while the **flip** is a
+  stop-then-start rather than a port change pushed out to robots (the latter is a
+  worse outage than the one it avoids); and the fleet server's own update is a
+  gated recreate, not blue/green, because it holds state. The deployed broker is
+  M3's container mosquitto, reading the same config file. The robot autonomy half
+  is now a test (`mote_fleet/test/test_fleet_outage.py`) rather than a claim.
 
 - **M6 · Second robot enrollment (multi-robot hardening).** Enroll `mote-02`;
   verify per-robot MQTT namespacing, localhost-pinned DDS (two robots on one LAN

@@ -50,6 +50,7 @@ are not already trusted on.
 import argparse
 import json
 import mimetypes
+import os
 import re
 import socket
 import sys
@@ -69,6 +70,13 @@ from registry import (  # noqa: E402
 )
 
 MAX_BODY = 64 * 1024
+
+#: Which build is answering. Baked into the container image at build time
+#: (deploy/Dockerfile), exactly as the inference server's is, so a deploy can
+#: gate on *the new version* being the one that came back healthy rather than on
+#: something being up. There is no git in the image, so this is the only source
+#: of that answer; running from a checkout it is simply unset.
+VERSION = os.environ.get("MOTE_VERSION", "unknown")
 
 #: Longest task string the API will forward. The grammar itself belongs to the
 #: robot's task layer (fleet.md: "the fleet adds no second grammar"), so this is
@@ -232,6 +240,7 @@ class FleetHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "service": "mote-fleet",
                     "contract": f"{protocol.ROOT}/{protocol.VERSION}",
+                    "version": VERSION,
                     "robots": len(self.server.registry.robots()),
                 },
             )
@@ -656,6 +665,8 @@ def serve(
     port=8080,
     broker_host=None,
     broker_port=1883,
+    publish_host=None,
+    publish_port=None,
     id_prefix=ID_PREFIX,
     publisher=None,
     maps_dir=None,
@@ -672,7 +683,8 @@ def serve(
         broker_host=broker_host,
         broker_port=broker_port,
         id_prefix=id_prefix,
-        publisher=publisher or BrokerLink(broker_host, broker_port),
+        publisher=publisher
+        or BrokerLink(publish_host or broker_host, publish_port or broker_port),
         maps_dir=maps_dir,
         ui_dir=ui_dir,
         broker_ws_host=broker_ws_host,
@@ -699,6 +711,14 @@ def main(argv=None):
         "should be the fleet box's MagicDNS name.",
     )
     parser.add_argument("--broker-port", type=int, default=1883)
+    parser.add_argument(
+        "--publish-host",
+        help="where THIS SERVER reaches the broker, when that is not the "
+        "address robots use (default: --broker-host). The deployed stack sets "
+        "it: inside a compose network the broker is a service name on 1883, "
+        "while robots dial the box's MagicDNS name on the published port.",
+    )
+    parser.add_argument("--publish-port", type=int, help="port for --publish-host")
     parser.add_argument(
         "--broker-ws-host",
         help="MQTT-over-WebSocket host for the browser (default: whichever host "
@@ -735,6 +755,8 @@ def main(argv=None):
         port=args.port,
         broker_host=args.broker_host,
         broker_port=args.broker_port,
+        publish_host=args.publish_host,
+        publish_port=args.publish_port,
         broker_ws_host=args.broker_ws_host,
         broker_ws_port=args.broker_ws_port,
         maps_dir=args.maps_dir,

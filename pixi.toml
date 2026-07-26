@@ -37,11 +37,22 @@ agent = "ros2 launch mote_fleet agent_launch.py"   # robot -> fleet bridge
 enroll = "ros2 run mote_fleet enroll"              # ask the server for an id
 fleet-server = "python -u mote_fleet/server/fleet_server.py"  # API + dashboard
 fleetctl = "python -u mote_fleet/server/fleetctl.py"          # operator CLI
-# The dashboard's read path is MQTT-over-WebSockets, which conda-forge's
-# mosquitto is not built for (docs/fleet/m1-verification.md §4) — so the broker
-# that serves a browser is a container one. No pixi environment needed, hence
-# its place here rather than in [feature.fleet.tasks].
-fleet-broker-ws = "bash mote_fleet/server/broker.sh --docker"
+# The broker, in a container: the dashboard's read path is MQTT-over-WebSockets,
+# which conda-forge's mosquitto is not built for (m1-verification.md §4), and
+# the container is what the deployed fleet box runs anyway. It lives here rather
+# than in [feature.fleet.tasks] because it needs docker, not an environment —
+# and because a task defined in the fleet feature lands in both the `fleet` and
+# `dev` environments (dev folds that feature in), which makes a bare
+# `pixi run <task>` ambiguous. The no-docker fallback is `fleet-broker-local`,
+# below, which does need the environment: it runs conda's binary.
+fleet-broker = "bash mote_fleet/server/broker.sh"
+
+# Server pipelines (docs/fleet/server-pipelines.md). The deployed servers need
+# docker and nothing else — these tasks are the convenience of running the same
+# scripts from a checkout; a real fleet box or GPU box has no pixi.
+fleet-deploy = "bash mote_fleet/deploy/fleet-deploy.sh"           # broker + API stack
+inference-deploy = "bash mote_perception/deploy/inference-deploy.sh"  # GPU box
+deploy-test = "bash mote_perception/deploy/test/drill.sh"  # blue/green drill, no GPU
 
 # Dev tasks
 kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
@@ -304,15 +315,22 @@ inference-prefetch-rocm = "python -u mote_perception/tools/prefetch_models.py"
 # box. The dev env folds this feature in as well, so a workstation can run the
 # whole control plane (broker included) next to a sim or a real robot.
 [feature.fleet.dependencies]
+# The broker anyone runs is the container one (`fleet-broker`), so this package
+# is here for two other jobs: the real-broker tests locate its binary in
+# $CONDA_PREFIX/sbin, and `fleet-broker-local` below is the fallback for a box
+# with no docker. It has no websockets, which is why it is neither default.
 mosquitto = ">=2.0,<3"
 paho-mqtt = ">=2,<3"
 pytest = ">=8,<9"
 
 [feature.fleet.tasks]
-fleet-broker = "bash mote_fleet/server/broker.sh"
+# The broker for a box with no docker. It belongs *here*, unlike `fleet-broker`,
+# because conda's mosquitto is what it runs and this feature is what provides
+# it. No websockets, so no dashboard — it says so on startup. Name it with the
+# environment (`pixi run -e fleet fleet-broker-local`), as with test-fleet.
+fleet-broker-local = "bash mote_fleet/server/broker.sh --local"
 # Repeated from [tasks] because this environment takes no default feature: a
 # fleet box that is not a robot still has to be able to run the fleet server.
-fleet-broker-ws = "bash mote_fleet/server/broker.sh --docker"
 fleet-server = "python -u mote_fleet/server/fleet_server.py"
 fleetctl = "python -u mote_fleet/server/fleetctl.py"
 # Runs everywhere the deps allow: rclpy tests skip without ROS, the broker test

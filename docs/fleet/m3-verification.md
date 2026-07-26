@@ -14,7 +14,7 @@ EMQX is not needed at this size, and a WS↔MQTT relay in the fleet API would pu
 a service back in the middle of the read path that Q5 argues to keep clear.
 
 ```console
-$ pixi run fleet-broker-ws        # mote_fleet/server/broker.sh --docker
+$ pixi run fleet-broker-ws        # renamed to `pixi run fleet-broker` in Ms
 broker: eclipse-mosquitto:2 (docker)   state: ~/.mote-fleet   config: …/mosquitto.conf
 1785092291: Opening ipv4 listen socket on port 11883.
 1785092291: Opening ipv4 listen socket on port 19001.
@@ -43,9 +43,10 @@ Two things fell out of running it:
   includes errors and the listener lines, which are the direct answer to both
   "why did it stop?" and "is the WS listener up?".
 
-`pixi run fleet-broker` (the conda one) still runs, prints that it has no
-websockets, names the task that does, and serves robots and `fleetctl`
-unchanged.
+The conda broker still runs, prints that it has no websockets, says what to run
+instead, and serves robots and `fleetctl` unchanged. (Ms made the container the
+default and folded the two tasks into one: that fallback is now
+`pixi run -e fleet fleet-broker-local`.)
 
 ## 2. The operator view, in a real browser — **9/9 checks, off the ROS graph**
 

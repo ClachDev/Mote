@@ -125,7 +125,12 @@ class Registry:
     # ---- tokens ---------------------------------------------------------
 
     def new_token(self, *, single_use: bool = True, note: str = "") -> str:
-        token = secrets.token_urlsafe(24)
+        # The "mt-" prefix is not decoration: token_urlsafe can start with "-",
+        # and a token that does is read as a flag by the `enroll --token …`
+        # command it exists to be pasted into. Prefixed credentials are also
+        # recognisable in a log or a paste buffer. Tokens minted before this
+        # are stored verbatim and keep working.
+        token = "mt-" + secrets.token_urlsafe(24)
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO tokens (token, single_use, note, created_at) "
@@ -161,7 +166,11 @@ class Registry:
             raise RegistryError(
                 "an operator needs a name — it is what the audit log records"
             )
-        token = secrets.token_urlsafe(24)
+        # Prefixed for the same reason enrollment tokens are (see new_token):
+        # it goes into `fleetctl --token …`, and one that starts with "-" is
+        # read as a flag. "mo-" vs "mt-" also says which kind of credential a
+        # log line or a paste buffer is holding.
+        token = "mo-" + secrets.token_urlsafe(24)
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO operators (token, name, note, created_at) "

@@ -19,6 +19,7 @@ on:
       - mote_perception/tools/inference_server.py
       - mote_perception/tools/model_host.py
       - mote_perception/tools/prefetch_models.py
+      - mote_perception/tools/probe.py
       - mote_perception/mote_perception/depth_wire.py
       - mote_perception/mote_perception/detect_wire.py
       - .github/workflows/inference-image.yml

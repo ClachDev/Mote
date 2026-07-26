@@ -1,0 +1,88 @@
+# The fleet server, as infrastructure-as-code: two containers, two volumes.
+#
+# This file *is* the fleet box's configuration — copy `mote_fleet/` to the box,
+# fill in .env, `docker compose up -d`, and the control plane exists. Rebuilding
+# the box from scratch is that plus restoring a backup (fleet-deploy.sh restore).
+#
+# The state is deliberately outside both images, in named volumes: the registry
+# database, the site bundles the UI's basemaps come from, and the broker's
+# retained messages are the fleet's memory of who is in it and where they last
+# were, and a redeploy must replace code around them.
+name: mote-fleet
+
+services:
+  # The MQTT control plane (docs/fleet/control-plane.md), including the
+  # WebSocket listener the browser dashboard subscribes on — `pixi run
+  # fleet-broker-ws` already runs mosquitto in a container for exactly that
+  # reason (conda-forge's build has no websockets, m1-verification.md §4); this
+  # is that same container as a permanent, restarting service.
+  #
+  # It mounts ../server/mosquitto.conf rather than a copy: one config for the
+  # workstation broker and the deployed one, so they cannot drift.
+  broker:
+    image: ${MOTE_BROKER_IMAGE:-eclipse-mosquitto:2}
+    restart: unless-stopped
+    ports:
+      - "${BIND_PREFIX-}${BROKER_PORT:-1883}:1883"
+      - "${BIND_PREFIX-}${BROKER_WS_PORT:-9001}:9001"
+    volumes:
+      - ../server/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - broker-data:/mosquitto/data
+    # mosquitto resolves `persistence_file` against its working directory, so
+    # this is what puts the retained state in the volume rather than in the
+    # container's filesystem. Same reason broker.sh cds to $MOTE_FLEET_HOME.
+    working_dir: /mosquitto/data
+    healthcheck:
+      # Ask the broker for its own uptime: a listener that accepts a TCP
+      # connection but cannot serve a subscription is not healthy.
+      test: ["CMD", "mosquitto_sub", "-p", "1883", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+  # The fleet API, the registry and the operator UI
+  # (mote_fleet/server/fleet_server.py).
+  server:
+    image: ${MOTE_FLEET_REF:-ghcr.io/clachdev/mote-fleet:latest}
+    # Present so the box can build its own image when GHCR is unreachable or
+    # when deploying from a checkout: `fleet-deploy.sh up --build`. Requires
+    # this repo; the pulled image needs nothing but this directory.
+    build:
+      context: ../..
+      dockerfile: mote_fleet/deploy/Dockerfile
+      args:
+        MOTE_VERSION: ${MOTE_VERSION:-local}
+    restart: unless-stopped
+    ports:
+      - "${BIND_PREFIX-}${FLEET_PORT:-8080}:8080"
+    volumes:
+      - fleet-state:/var/lib/mote-fleet
+    # Three addresses for one broker, because three clients reach it three ways:
+    #   --broker-host/--broker-port    what ROBOTS are told at enrollment: the
+    #     box's MagicDNS name and its published port. Unset is an error rather
+    #     than a default, because a wrong value here enrolls robots that can
+    #     never reach their broker.
+    #   --broker-ws-port              what the BROWSER is told to open its
+    #     WebSocket on — again the published port, not the container's 9001.
+    #   --publish-host/--publish-port  where THIS SERVER publishes mediated
+    #     dispatches: the service name on the compose network, which needs no
+    #     published port and no DNS beyond docker's own.
+    command:
+      - --broker-host
+      - ${BROKER_HOST:?set BROKER_HOST in .env to the address robots should dial}
+      - --broker-port
+      - "${BROKER_PORT:-1883}"
+      - --broker-ws-port
+      - "${BROKER_WS_PORT:-9001}"
+      - --publish-host
+      - broker
+      - --publish-port
+      - "1883"
+    depends_on:
+      broker:
+        condition: service_healthy
+
+volumes:
+  fleet-state:
+  broker-data:
