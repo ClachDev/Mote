@@ -5,7 +5,9 @@ enabled. If the driver enables torque before writing the present position, the
 arm snaps to a pose nobody commanded. These tests pin the ordering with a fake
 bus, so the property is checked without hardware.
 
-A random ROS_DOMAIN_ID keeps the test node off any live robot's graph.
+A random ROS_DOMAIN_ID keeps the test node off any live robot's graph, and a
+per-process namespace keeps it off the graph of test sessions colcon is running
+for other packages at the same time.
 """
 
 import os
@@ -95,7 +97,7 @@ def make_driver(monkeypatch):
 
         monkeypatch.setattr(arm_driver_mod, "FeetechBus", PreparedBus)
         monkeypatch.setattr(arm_driver_mod.config, "load", lambda: CFG)
-        rclpy.init()
+        rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
         state["node"] = arm_driver_mod.ArmDriver()
         return state["node"]
 

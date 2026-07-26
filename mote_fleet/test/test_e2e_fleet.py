@@ -215,7 +215,7 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
     assert len(fleet_api.registry.robots()) == 1
 
     # ---- the robot comes up ----
-    rclpy.init()
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
     zones_file = tmp_path / "zones.yaml"
     zones_file.write_text(ZONES)
 
@@ -352,7 +352,7 @@ def test_a_dead_agent_is_reported_offline_by_the_broker(
     enroll.main(["--server", fleet_api.url, "--token", token])
     robot_id = identity.robot_id()
 
-    rclpy.init()
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
     from mote_fleet.agent import MoteAgent
 
     agent = MoteAgent(parameter_overrides=[Parameter("keepalive", value=2)])

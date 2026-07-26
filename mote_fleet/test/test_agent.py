@@ -132,10 +132,13 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def fleet(home):
-    # A private DDS domain: these nodes publish task/command, and a live robot
-    # or sim on this machine must never be the thing that receives it.
+    # These nodes publish task/command, and nothing else may be what receives
+    # it. Two layers say so: a high DDS domain keeps a live robot or sim on this
+    # machine out of the graph, and a per-process namespace keeps sibling test
+    # sessions out of it — colcon runs package tests in parallel, and mote_tasks
+    # stands up a real task server on the same relative topic names.
     os.environ["ROS_DOMAIN_ID"] = str(random.randint(60, 100))
-    rclpy.init()
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
 
     from mote_fleet.agent import MoteAgent
 
