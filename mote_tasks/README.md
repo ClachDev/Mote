@@ -56,9 +56,9 @@ A **zone** is the one named-place concept: a taught pose in the map frame that
 the robot can navigate to. `fetch` uses zones as its `pickup`/`dropoff`
 waypoints, and `goto <zone>` drives to any of them — `goto kitchen`,
 `goto home`, whatever is in the table. A zone can *optionally* carry an **area
-footprint** (a `radius`), which turns it from a bare waypoint into something
-that also answers "am I inside it?". That footprint is just optional metadata
-on the single zone concept — not a second kind of thing — so there's one YAML
+footprint**, which turns it from a bare waypoint into something that also
+answers "am I inside it?". That footprint is just optional metadata on the
+single zone concept — not a second kind of thing — so there's one YAML
 section, one loader, one teach command:
 
 ```yaml
@@ -66,21 +66,44 @@ frame_id: map
 zones:
   pickup:  {x: 1.8, y: -1.5, yaw: 0.0}      # bare waypoint
   kitchen: {x: 2.0, y: 2.0, radius: 1.5}    # room: pose + circular footprint
+  ward:    {x: 6.0, y: 1.0,                 # room: pose + outline
+            polygon: [[4, 0], [9, 0], [9, 3], [4, 3]]}
 ```
 
 `goto kitchen` navigates to the pose; success is exactly Nav2 reaching it —
 the footprint isn't needed for `goto`. `zones.load_zones(path)` returns
 `{name: Zone(name, pose, footprint)}`, and `zones.containing(zones, x, y)`
-answers "which zone am I in?" (nearest-pose first) using the footprints. Teach
-a zone by driving there: `pixi run save-zone <name>` for a waypoint, or
-`pixi run save-zone <name> --radius R` to give it a footprint; it writes into
-the active site's floor (`site info` shows the zone count and how many have a
-footprint), or the legacy `~/.mote/zones.yaml` when no site is active.
+answers "which zone am I in?" (nearest-pose first) using the footprints.
 
-The footprint is deliberately extensible: today it's a circle (`radius`); a
-`polygon:` (explicit vertices, e.g. from map room-detection) slots into the
-same `Zone.footprint` seam, and auto-segmenting a saved map into room zones are
-the tracked follow-ups.
+### Circles and polygons
+
+A `radius` is the simple default — one number, and `pixi run save-zone <name>
+--radius R` teaches it along with the pose. It only describes a roughly round
+room, though. A real ward is a rectangle, a ward with an ensuite is an L, and a
+corridor stretch is a long thin box; sizing a circle to fit inside one of those
+leaves most of the room outside the zone, and sizing it to cover the room
+spills into the neighbours. Concretely, the hospital world's wards are 4.7 x
+5.6 m — the `radius: 1.5` circle they used to carry claimed 7.1 m² of a 26.5 m²
+room, so standing 2 m inside the kitchen answered "you are in no zone".
+
+A `polygon` is a list of `[x, y]` vertices in the file's `frame_id`, closed
+implicitly, in either winding order, and may be concave — membership is a ray
+cast, not a convex-hull test. A zone carrying both keys uses the polygon.
+
+Polygons are not taught by driving; the intended source is post-processing a
+saved map into room outlines (the tracked follow-up), which is also why a
+polygon zone may omit `x`/`y` — the loader then derives a pose guaranteed to
+lie inside the outline (the centroid, or, when the shape is concave enough that
+its centroid falls outside, the middle of the widest span through it). Where a
+pose *is* given it always wins, which matters: in the hospital wards the room
+centre is occupied by a bed, so the taught pose is the doorway approach.
+
+Because polygons arrive from a different direction than poses do, re-teaching a
+room's pose with `pixi run save-zone <name>` keeps whatever footprint the zone
+already had; passing `--radius R` is the deliberate way to replace it. Zones
+are written into the active site's floor (`site info` shows the zone count and
+how many have a footprint), or the legacy `~/.mote/zones.yaml` when no site is
+active.
 
 ## Interface
 

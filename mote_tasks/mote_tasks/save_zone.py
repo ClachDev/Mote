@@ -6,7 +6,8 @@ into the active site's zones.yaml (legacy ~/.mote/zones.yaml if no site).
 Poses taught this way are reachable by construction. ``--radius`` (metres)
 gives the zone a circular area footprint, so it answers "am I in it" and reads
 as a room rather than a bare waypoint; omit it for a plain navigation target.
-Re-teaching an existing name replaces it.
+Re-teaching an existing name replaces its pose but keeps its footprint, which
+may be a polygon outline this command cannot capture (see mote_tasks.zones).
 """
 
 import sys
