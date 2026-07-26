@@ -18,6 +18,10 @@ changing the file's shape.
 | `pixi run provision` | render cloud-init user-data for a clean Pi |
 | `pixi run dds-check` | DDS participant-slot headroom on this host |
 
+**First time through**, in order: §1a (create the tailnet — browser, once, for
+the whole fleet) → §2 (give this robot an id) → §1b (join it and your
+workstation) → §5 (every robot after this one, unattended from a card).
+
 ---
 
 ## 1. The overlay: one tailnet, no port forwarding
@@ -27,6 +31,70 @@ single [Tailscale](https://tailscale.com/) tailnet. WireGuard gives each of them
 an encrypted, NAT-traversing link and a stable MagicDNS name, so "same LAN, same
 `ROS_DOMAIN_ID`" becomes "same tailnet" and nothing is ever exposed to the public
 internet.
+
+### 1a. Creating the tailnet — the one-time account setup
+
+Four things, all in the browser at
+[login.tailscale.com](https://login.tailscale.com/admin), before any machine runs
+`pixi run tailnet`. Ten minutes, once, for the whole fleet.
+
+**1. Make the tailnet.** Sign up with whichever identity provider you already
+use (Google / GitHub / Microsoft / Apple / email). Signing in *creates* the
+tailnet — there is nothing to name or configure — and you get a tailnet domain
+like `tail1a2b3.ts.net`. Everything below lives under that one account. The free
+Personal plan covers a homelab fleet comfortably; check the current device and
+user limits on the [pricing page](https://tailscale.com/pricing) at signup rather
+than trusting a number written here, and note that the plan's *tagged*-device
+allowance is the one that matters as robots multiply (see Cost & tradeoffs in
+[`fleet.md`](../design/fleet.md)).
+
+**2. Confirm MagicDNS is on.** Admin console → **DNS**. It is enabled by default
+on new tailnets, and it is the thing that makes `ssh michael@mote-01` work — the
+device's tailnet hostname becomes its name. Without it you are typing
+`100.x.y.z` addresses everywhere.
+
+**3. Declare the tags.** Admin console → **Access controls**, in the policy file.
+Tags do not exist until an owner is declared for them, and `--advertise-tags` on
+a machine fails with "requested tags are invalid or not permitted" if you skip
+this:
+
+```jsonc
+{
+  "tagOwners": {
+    "tag:robot":     ["autogroup:admin"],
+    "tag:fleet":     ["autogroup:admin"],
+    "tag:inference": ["autogroup:admin"],
+  },
+  // The default policy already allows every device to reach every other, which
+  // is what M0 wants. M7 replaces this with per-tag rules (operators reach
+  // robots; robots reach the broker and their own inference box; robots cannot
+  // reach each other).
+}
+```
+
+**4. Mint an auth key per robot.** Admin console → **Settings → Keys → Generate
+auth key**. For a robot:
+
+| Option | Set it to | Why |
+|---|---|---|
+| Reusable | **off** | one key, one robot — a leaked key can enrol exactly nothing twice |
+| Ephemeral | **off** | ephemeral nodes vanish when they go offline; a robot must persist |
+| Expiration | **short** (a day is plenty) | it only has to survive from rendering the card to first boot |
+| Tags | **`tag:robot`** | this is what makes the key mint a *tagged* device |
+
+The key looks like `tskey-auth-…`; it goes into `pixi run provision --ts-authkey`
+(or `pixi run tailnet --auth-key` on a machine you are sitting at). Keep the key's
+tags and the `--role` you pass in agreement — a mismatch is rejected rather than
+merged. The workstation needs no key at all: `pixi run tailnet --role workstation`
+opens a browser to authenticate you.
+
+**Why bother tagging the robots**, beyond ACLs: a *user* device's key expires
+(180 days by default) and needs a human to re-authenticate it, which for a robot
+means it silently drops off the tailnet one day months from now. Tagged devices
+do not expire. That failure mode is the practical argument for `tag:robot`,
+ahead of anything M7 does with it.
+
+### 1b. Joining machines
 
 ```bash
 # on the robot (identity must exist first — its id becomes the MagicDNS name)
@@ -64,15 +132,6 @@ name). What you defer is M7's ACLs — a rule keyed on your user's device rather
 than `tag:fleet`/`tag:inference`. Tag it when a second person or a second machine
 appears and the roles want to outlive your account.
 
-**Roles are tags.** Robots and servers join as *tagged* devices
-(`tag:robot`, `tag:fleet`, `tag:inference`): a tagged device is owned by the
-tailnet rather than by a person, so it outlives the operator's account and can be
-ACL'd as a class. That is what M7's ACLs (operators reach robots; robots reach the
-broker and their local inference box; robots cannot reach each other) will be
-written against. The workstation stays a user device. Tags must exist in the
-tailnet policy and the auth key that mints a robot must be
-[pre-authorised and tagged](https://tailscale.com/kb/1085/auth-keys).
-
 **Verify off-LAN** (the M0 acceptance test) — from a device on a *different*
 network, e.g. a laptop tethered to a phone:
 
@@ -86,8 +145,8 @@ does — including `pixi run sync`, whose target is still the legacy hardcoded
 `michael@auldbot` (`pixi.toml`). Retargeting it at the robot id is a
 one-line change to make when the current Pi is re-provisioned.
 
-Cost shape and the escape hatch (Headscale) are in the design doc; at homelab
-scale the free tier covers this.
+The per-device cost curve at fleet scale, and the self-hosted escape hatch
+(Headscale), are in the design doc.
 
 ---
 
