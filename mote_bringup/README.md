@@ -92,10 +92,30 @@ and publishes, every second:
   pixi run -- ros2 topic echo /health
   ```
 
-**Criticality → roll-up**: a stale *critical* subsystem (scan, filtered scan,
-joint states, odom TF) is a **FAULT**; a stale non-critical one (camera,
-localisation TF) or a fresh-but-slow one is **DEGRADED**. Expectations live in
-`config/health.yaml`, overridable per-robot at `~/.mote/health.yaml`.
+**Severity → roll-up**, set per subsystem in `config/health.yaml`
+(overridable per-robot at `~/.mote/health.yaml`):
+
+| `severity` | Missing/stale means | Used for |
+|-----------|---------------------|----------|
+| `critical` | **FAULT** | scan, filtered scan, joint states, odom TF — cannot drive without them |
+| `degraded` | **DEGRADED** | camera — capability lost, driving still safe |
+| `info` | reported, never degrades | `map→odom`, which exists only once a mission localises |
+
+A fresh-but-slow subsystem degrades one step at most (never above its own
+severity). `info` exists because the hardware base alone legitimately has no map
+frame: scoring that as DEGRADED made a healthy idle robot report DEGRADED
+forever. Mission localisation health belongs to the nav2 lifecycle, not here.
+
+Two things learned measuring this on the robot:
+
+- The `joint_states` 5 Hz floor is a *control-loop-overrun* check, not a rate
+  spec (`controller_manager` runs at 50 Hz). When the servo bus stopped
+  answering, each `read()` blocked ~200 ms per servo and the loop collapsed to
+  ~1.6 Hz — the floor caught a real fault the driver only logged as warnings.
+- `/diagnostics` is a **shared** topic: `controller_manager` publishes its own
+  loop-jitter status there. The host status is therefore matched by exact name
+  (`system`), or a third party's ERROR gets misattributed to the host and drives
+  a spurious robot-level FAULT.
 
 The monitor is also the systemd watchdog feeder: it sends `READY=1` once up and
 pets the watchdog on every publish (`sd_notify.py`, a dependency-free
