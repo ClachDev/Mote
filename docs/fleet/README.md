@@ -630,9 +630,7 @@ sudo systemctl enable --now mote-foxglove  # to have it always there
 
 Then, in Foxglove: **Open connection → Foxglove WebSocket →
 `ws://<robot-id>:8765`** — the robot's MagicDNS name, so this works from
-anywhere on the tailnet with nothing exposed to the internet. (That is exactly
-the URL the dashboard's button opens, via a `foxglove://` link that hands off to
-the desktop app.) Import
+anywhere on the tailnet with nothing exposed to the internet. Import
 [`mote_bringup/foxglove/mote.json`](../../mote_bringup/foxglove/mote.json) once
 — **Layouts → Import from file…** — for the map/camera/teleop/diagnostics
 layout; what is in it and why is in
@@ -642,6 +640,40 @@ The bridge is **included in the base bringup by default**, so any way of startin
 the robot gives you something to connect to. Under systemd it is a separate unit
 instead — `mote-bringup.service` passes `foxglove:=false` — so the view survives
 a bringup restart, which is exactly when you want to look at a robot.
+
+### Arriving from the dashboard's button
+
+§9's roster has an **open in Foxglove** button per robot. The fleet server holds
+the template and the browser only substitutes the id, so the two halves meet at
+one string (`--foxglove-url`, `fleet_server.py`):
+
+```
+foxglove://open?ds=foxglove-websocket&ds.url=ws://<robot_id>:8765
+```
+
+That is the same connection as typing it by hand — `robot_id` is the MagicDNS
+name (§2) and 8765 is this bridge's default port — so the button needs no
+agreement beyond those two facts. Three consequences worth knowing:
+
+- **It opens the desktop app, not a browser tab.** `foxglove://` is a scheme the
+  installed Foxglove application registers with the OS; a machine without it does
+  nothing visible when the button is clicked. The hosted web app takes the same
+  parameters at `https://app.foxglove.dev/~/view?ds=…` instead, but a page served
+  over HTTPS will not open a plain `ws://` socket — browsers block that as mixed
+  content — so reaching this bridge from the web app means giving it TLS
+  (`tls`/`certfile`/`keyfile`, which `foxglove_launch.py` leaves at the node's
+  defaults). Desktop is the path that works without a certificate. *(Reasoned
+  from the mixed-content rule, not measured — see
+  [`m2-verification.md` §5](m2-verification.md).)*
+- **The link carries the data source, not the layout.** Foxglove's deep links can
+  name a layout, but only by an id from the operator's own layout store, so there
+  is no value this repo could ship. Import `mote.json` once per Foxglove install
+  and the button lands on it thereafter; skip that and it opens whatever layout
+  was last active.
+- **Change the port and you must change the template.** Running the bridge on
+  another port (`pixi run foxglove port:=9000`) leaves the dashboard pointing at
+  8765; `fleet-server --foxglove-url` is the one place to fix it, and
+  `--foxglove-url ""` hides the button entirely.
 
 ### Driving it
 

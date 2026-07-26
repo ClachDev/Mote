@@ -153,6 +153,16 @@ Publisher count: 1
 - **`mote-foxglove.service` under systemd.** The unit is installed by
   `pixi run setup` and modelled on `mote-health.service`, but has only been run
   via `pixi run foxglove`.
+- **The dashboard's deep link, clicked.** M3 ships an *open in Foxglove* button
+  per robot and its own ledger records the far end as unobserved, because
+  "neither exists until M2"
+  ([`m3-verification.md`](m3-verification.md)). The two agree on paper — the
+  server's template is `ws://<robot_id>:8765`, which is this bridge's default
+  port on the MagicDNS name M0 assigns — but nobody has clicked it and watched
+  Foxglove connect. **M3's open item and this milestone's are the same test**:
+  one session with the desktop app, a Pi, and the layout closes both. The
+  mixed-content reasoning about the hosted web app (§10 of the runbook) is part
+  of what that session should confirm rather than trust.
 - **Bandwidth over a real link.** The camera is streamed compressed and only
   while a panel is subscribed, but nothing here measured what a DERP-relayed
   connection does to it.
