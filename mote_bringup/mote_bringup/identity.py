@@ -2,9 +2,9 @@
 
     $MOTE_HOME/robot.yaml
         schema: 1
-        id: mote-01          # the fleet's primary key
-        name: Front desk     # human label, free text
-        site: home           # which site's bundles this robot is entitled to
+        id: mote-01     # the fleet's primary key
+        name: Scout     # human label, free text
+        site: home      # which site's bundles this robot is entitled to
 
 The ``id`` is the fleet's primary key: it keys the MQTT topic tree
 (``mote/<robot_id>/...``), the registry row, and the robot's MagicDNS name on
@@ -25,7 +25,7 @@ id and the agent rewrites this file as a cache; the shape does not change.
 Console script ``identity`` (pixi task: identity):
     identity show                 the full record (and where it came from)
     identity id                   just the id, for scripts
-    identity set --id mote-01 [--name "Front desk"] [--site home]
+    identity set --id mote-01 [--name "Scout"] [--site home]
 """
 
 import argparse
@@ -82,7 +82,7 @@ def require_id() -> str:
     if not rid:
         sys.exit(
             f"no robot identity at {identity_path()} — set one with:\n"
-            "    pixi run identity set --id mote-01 --name 'Front desk'"
+            "    pixi run identity set --id mote-01 --name 'Scout'"
         )
     return rid
 
@@ -118,7 +118,7 @@ def main():
     sub.add_parser("id", help="print just the robot id")
     p_set = sub.add_parser("set", help="create or update the identity record")
     p_set.add_argument("--id", help="fleet primary key, e.g. mote-01")
-    p_set.add_argument("--name", help="human label, e.g. 'Front desk'")
+    p_set.add_argument("--name", help="human label, e.g. 'Scout'")
     p_set.add_argument("--site", help="site whose bundles this robot uses")
     args = parser.parse_args()
 
@@ -138,7 +138,7 @@ def main():
     data = load()
     if not data:
         print(f"no identity set (expected {identity_path()})")
-        print("    pixi run identity set --id mote-01 --name 'Front desk'")
+        print("    pixi run identity set --id mote-01 --name 'Scout'")
         return
     print(f"{identity_path()}:")
     print(yaml.safe_dump(data, sort_keys=False).rstrip())

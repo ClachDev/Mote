@@ -32,13 +32,13 @@ def test_unset_identity_reads_as_none():
 
 
 def test_set_then_read_back(home):
-    identity.set_identity(id="mote-01", name="Front desk", site="hq")
+    identity.set_identity(id="mote-01", name="Scout", site="hq")
     assert identity.robot_id() == "mote-01"
     record = yaml.safe_load((home / "robot.yaml").read_text())
     assert record == {
         "schema": 1,
         "id": "mote-01",
-        "name": "Front desk",
+        "name": "Scout",
         "site": "hq",
     }
 
@@ -46,18 +46,18 @@ def test_set_then_read_back(home):
 def test_identity_survives_a_reboot(home):
     """The record is a plain file under MOTE_HOME, so a fresh process — a
     reboot, or the stack restarting — reads back the same id."""
-    identity.set_identity(id="mote-01", name="Front desk")
+    identity.set_identity(id="mote-01", name="Scout")
     assert identity.load() == identity.load()
     assert identity.robot_id() == "mote-01"
 
 
 def test_partial_update_keeps_other_fields():
-    identity.set_identity(id="mote-01", name="Front desk", site="hq")
-    identity.set_identity(name="Back office")
+    identity.set_identity(id="mote-01", name="Scout", site="hq")
+    identity.set_identity(name="Rover")
     assert identity.load() == {
         "schema": 1,
         "id": "mote-01",
-        "name": "Back office",
+        "name": "Rover",
         "site": "hq",
     }
 

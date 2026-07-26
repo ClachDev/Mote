@@ -67,7 +67,9 @@ runcmd:
   - [bash, -c, "set -x; exec >> /var/log/mote-provision.log 2>&1; echo provisioning @ROBOT_ID@"]
 
 # >>> wifi
-  - [bash, -c, "rfkill unblock wifi || true; nmcli connection reload || true; nmcli connection up mote-wifi || true"]
+  # The WLAN radio stays rfkill-blocked until the regulatory domain is set, so
+  # the country code comes before anything tries to bring the connection up.
+  - [bash, -c, "raspi-config nonint do_wifi_country @WIFI_COUNTRY@ || true; rfkill unblock wifi || true; nmcli connection reload || true; nmcli connection up mote-wifi || true"]
 # <<< wifi
 
   # 1. Identity first: everything downstream is keyed by robot_id.

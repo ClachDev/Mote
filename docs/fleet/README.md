@@ -43,6 +43,27 @@ pixi run tailnet --role inference
 `tailscale up` is declarative, so re-running is a no-op — the script is safe to
 run from provisioning and by hand.
 
+**One machine, several roles.** A machine is one tailnet node, and `tailscale up`
+replaces the whole tag set — so roles are passed *together*, never in two runs
+(the second would silently drop the first's tag). A home box that is both the
+fleet server and the GPU inference node is one call:
+
+```bash
+pixi run tailnet --role fleet,inference
+pixi run tailnet --role fleet,inference --dry-run   # resolve roles/tags/hostname only
+```
+
+**Should your dev machine take those roles?** Only if you want it to stop being
+*yours*. Advertising a tag transfers the node from your user account to the
+tailnet, which needs a re-auth and drops key expiry — so `--role workstation` and
+any tagged role are mutually exclusive and the script refuses the combination.
+For one operator at one site, leave the dev machine an untagged workstation that
+happens to run Mosquitto and the inference servers: nothing functional depends on
+the tag (robots reach it by MagicDNS either way, and `inference_host` is just a
+name). What you defer is M7's ACLs — a rule keyed on your user's device rather
+than `tag:fleet`/`tag:inference`. Tag it when a second person or a second machine
+appears and the roles want to outlive your account.
+
 **Roles are tags.** Robots and servers join as *tagged* devices
 (`tag:robot`, `tag:fleet`, `tag:inference`): a tagged device is owned by the
 tailnet rather than by a person, so it outlives the operator's account and can be
@@ -73,7 +94,7 @@ scale the free tier covers this.
 ## 2. Identity: `robot_id` is the fleet's primary key
 
 ```bash
-pixi run identity set --id mote-01 --name "Front desk" --site home
+pixi run identity set --id mote-01 --name "Scout" --site home
 pixi run identity show
 pixi run identity id            # just the id, for scripts
 ```
@@ -83,7 +104,7 @@ writes `$MOTE_HOME/robot.yaml` (`~/.mote/robot.yaml` by default):
 ```yaml
 schema: 1
 id: mote-01
-name: Front desk
+name: Scout
 site: home
 ```
 
@@ -97,7 +118,10 @@ site: home
   id for convenience, but nothing depends on that.
 - It is **stable across reboots and across updates**: the file lives in
   `MOTE_HOME`, outside the package, so an update physically cannot touch it.
-- `name` is a free-text label, `site` says which site's map bundles this robot is
+- `name` is a free-text label for the *robot*, so name it like an individual
+  ("Scout") rather than a place ("Front desk") — places are already a concept
+  here, and a robot label that reads like a zone name is a trap when both appear
+  in the same dispatch UI. `site` says which site's map bundles this robot is
   entitled to. Both are optional to the software.
 
 ---
@@ -185,41 +209,83 @@ The image is stock Raspberry Pi OS plus **one file**: `user-data` on the boot
 partition. Raspberry Pi Imager 2.0+ writes cloud-init user-data for its own
 OS-customisation, so this replaces that dialog rather than sitting beside it.
 
+**Everything up to "boot the Pi" happens on the workstation, against the SD card
+mounted there.** The Pi runs nothing until it boots; it has no pixi, no network
+config and no repo. `pixi run provision` is a workstation command that writes a
+file onto the card — it never runs on the robot. The wifi *is* configured, by the
+template, which is precisely why the Imager dialog is skipped: Imager would write
+its own `user-data` to the same path and one would clobber the other.
+
 The ordering trap — "the robot needs the tailnet to reach the server, but the key
 comes from the server" — is resolved by making the Tailscale key a
 **provisioning-time secret baked into the image**, minted out-of-band by the
 operator. Nothing is fetched over a network the robot cannot yet use.
 
-1. **Mint a single-use, pre-authorised, tagged key** in the Tailscale admin
-   console (tag `tag:robot`, short expiry, ephemeral off).
-2. **Image the card** with Raspberry Pi Imager — *skip* the OS-customisation
-   dialog.
-3. **Render and install `user-data`:**
+**Prerequisite:** the image must be one whose first boot runs cloud-init.
+Raspberry Pi OS gained that with the Imager 2.0-era images; if `user-data` is
+ignored on first boot, that is the thing to check first — none of this has been
+run on real hardware yet (see [m0-verification.md §5](m0-verification.md)).
+
+1. **[workstation] Mint a single-use, pre-authorised, tagged key** in the
+   Tailscale admin console (tag `tag:robot`, short expiry, ephemeral off). The
+   tag must already exist in the tailnet policy with an owner, or redeeming the
+   key fails.
+2. **[workstation] Image the card** with Raspberry Pi Imager — choose the OS and
+   the card, and *skip* the OS-customisation dialog entirely (answer "no" when it
+   offers to apply settings).
+3. **[workstation] Re-insert the card.** Imager ejects it when it finishes, so
+   the boot partition is not mounted any more. Pull it out, put it back, and
+   check where it landed — usually `/media/$USER/bootfs`:
 
    ```bash
-   pixi run provision --id mote-02 --name "Back office" \
+   lsblk -o NAME,LABEL,MOUNTPOINT | grep -i boot
+   ```
+
+4. **[workstation] Render `user-data` onto the card:**
+
+   ```bash
+   pixi run provision --id mote-02 --name "Rover" \
        --ssh-key ~/.ssh/id_ed25519.pub \
        --ts-authkey tskey-auth-... \
-       --wifi-ssid HomeNet --wifi-psk '…' \
+       --wifi-ssid HomeNet --wifi-psk '…' --wifi-country GB \
        --boot /media/$USER/bootfs
    ```
 
+   `--wifi-country` is required with wifi and is not guessed: the Pi's WLAN stays
+   rfkill-blocked until the regulatory domain is set. Omit the three wifi flags
+   entirely if the robot is on ethernet.
+
    The output carries a live auth key and a wifi passphrase: it is written `0600`
-   and must never be committed.
-4. **Boot the Pi.** With no interactive steps it: writes
+   and must never be committed. Print it to stdout first (drop `--boot`) if you
+   want to read it before it goes near a card.
+
+5. **[workstation] Eject the card**, so the write is actually on it:
+
+   ```bash
+   sync && udisksctl unmount -b /dev/sdX1     # or just: umount /media/$USER/bootfs
+   ```
+
+6. **[Pi] Boot it.** With no interactive steps it: brings up wifi; writes
    `~/.mote/robot.yaml`; joins the tailnet as `mote-02` and shreds the key;
    installs pixi, clones the workspace and builds it; runs `pixi run setup` (udev,
    wifi power save, systemd units).
-5. **Verify** from any tailnet device, off-LAN:
-   `tailscale ping mote-02 && ssh <user>@mote-02 'cd ~/Mote && pixi run identity id'`.
-   First boot takes a while — the build is the long pole. Progress lands in
+7. **[anywhere on the tailnet] Verify**, ideally off-LAN:
+
+   ```bash
+   tailscale ping mote-02
+   ssh <user>@mote-02 'cd ~/Mote && pixi run identity id'
+   ```
+
+   First boot takes a while — the build is the long pole, tens of minutes on a Pi.
+   The robot appears on the tailnet long before it finishes, so `tailscale ping`
+   succeeding while ssh has no repo yet is expected. Progress lands in
    `/var/log/mote-provision.log` and `/var/log/cloud-init-output.log`.
 
 **Raspberry Pi Connect stays as the break-glass path**, independent of our
 tailnet and fleet server, so a Pi with a botched key or a broken agent is still
 recoverable without a keyboard.
 
-Note that step 4 builds from source because the prefix.dev `mote` channel does
+Note that step 6 builds from source because the prefix.dev `mote` channel does
 not ship a robot package yet; when it does (M5), that step becomes a pinned
 `pixi install` and first boot gets much shorter. The template is the only thing
 that changes.

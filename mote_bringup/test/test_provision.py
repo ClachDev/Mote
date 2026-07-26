@@ -22,13 +22,14 @@ def args(tmp_path):
     key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI+fake operator@workstation\n")
     return argparse.Namespace(
         id="mote-02",
-        name="Front desk",
+        name="Scout",
         site="hq",
         ssh_key=str(key),
         ts_authkey=SECRETS["authkey"],
         ts_authkey_file=None,
         wifi_ssid="Home Net",
         wifi_psk=SECRETS["psk"],
+        wifi_country="GB",
         user="michael",
         repo="https://github.com/ClachDev/Mote.git",
         timezone="Europe/London",
@@ -52,7 +53,7 @@ def test_identity_is_written_before_anything_uses_it(args):
     assert yaml.safe_load(staged["content"]) == {
         "schema": 1,
         "id": "mote-02",
-        "name": "Front desk",
+        "name": "Scout",
         "site": "hq",
     }
     commands = [c[-1] for c in data["runcmd"]]
@@ -116,6 +117,28 @@ def test_wifi_ssid_without_passphrase_is_refused(args):
     args.wifi_psk = None
     with pytest.raises(ValueError):
         provision.build(args)
+
+
+@pytest.mark.parametrize("country", [None, "", "gb", "GBR", "1B"])
+def test_wifi_without_a_valid_country_is_refused(args, country):
+    """The WLAN radio stays rfkill-blocked until the regulatory domain is set, so
+    a card rendered without one boots to a robot with no network."""
+    args.wifi_country = country
+    with pytest.raises(ValueError, match="wifi-country"):
+        provision.build(args)
+
+
+def test_the_country_is_set_before_the_connection_comes_up(args):
+    commands = [c[-1] for c in yaml.safe_load(provision.build(args))["runcmd"]]
+    wifi = next(c for c in commands if "nmcli connection up" in c)
+    assert wifi.index("do_wifi_country GB") < wifi.index("nmcli connection up")
+
+
+def test_no_wifi_needs_no_country(args):
+    args.wifi_ssid = None
+    args.wifi_psk = None
+    args.wifi_country = None
+    assert "do_wifi_country" not in provision.build(args)
 
 
 def test_quoted_placeholders_really_sit_inside_quoted_scalars():

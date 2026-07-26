@@ -172,7 +172,7 @@ A robot works standalone with nothing above, but it can also join a fleet
 overlay so it is reachable and identifiable from anywhere:
 
 ```bash
-pixi run identity set --id mote-01 --name "Front desk"   # this robot's fleet id
+pixi run identity set --id mote-01 --name "Scout"   # this robot's fleet id
 pixi run tailnet --role robot --auth-key tskey-auth-...  # join the Tailscale mesh
 ```
 

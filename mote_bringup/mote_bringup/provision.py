@@ -25,7 +25,7 @@ and must never be committed. Mint the key short-lived and single-use
 Console script ``provision`` (pixi task: provision)::
 
     pixi run provision --id mote-02 --ssh-key ~/.ssh/id_ed25519.pub \\
-        --ts-authkey tskey-auth-... --name "Front desk" \\
+        --ts-authkey tskey-auth-... --name "Scout" \\
         --wifi-ssid HomeNet --wifi-psk secret --boot /media/$USER/bootfs
 """
 
@@ -46,6 +46,7 @@ WIFI_CLOSE = "# <<< wifi"
 PLACEHOLDER_RE = re.compile(r"@[A-Z_]+@")
 USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 
 # Placeholders that sit inside a double-quoted YAML scalar in the template. An
 # auth key or a passphrase is arbitrary bytes, and a stray " or \ in one would
@@ -139,6 +140,14 @@ def build(args) -> str:
         raise ValueError(f"no such ssh public key: {key_file}")
     if args.wifi_ssid and not args.wifi_psk:
         raise ValueError("--wifi-ssid given without --wifi-psk")
+    if args.wifi_ssid and not COUNTRY_RE.match(args.wifi_country or ""):
+        # Not defaulted: the Pi's WLAN stays rfkill-blocked until the regulatory
+        # domain is set, and guessing the wrong country is a radio-law problem,
+        # not a config preference.
+        raise ValueError(
+            "--wifi-country is required with --wifi-ssid: a two-letter ISO 3166 "
+            "code (GB, US, DE, ...) — the Pi's wifi will not come up without it"
+        )
 
     authkey = args.ts_authkey
     if args.ts_authkey_file:
@@ -155,6 +164,7 @@ def build(args) -> str:
         "TS_AUTHKEY": authkey,
         "WIFI_SSID": args.wifi_ssid or "",
         "WIFI_PSK": args.wifi_psk or "",
+        "WIFI_COUNTRY": args.wifi_country or "",
         "REPO": args.repo,
         "TIMEZONE": args.timezone,
     }
@@ -184,6 +194,9 @@ def main():
     parser.add_argument("--ts-authkey-file", help="read the auth key from a file")
     parser.add_argument("--wifi-ssid")
     parser.add_argument("--wifi-psk")
+    parser.add_argument(
+        "--wifi-country", help="ISO 3166 code for the WLAN regulatory domain, e.g. GB"
+    )
     parser.add_argument(
         "--user", default=os.environ.get("USER", "mote"), help="login to create"
     )
