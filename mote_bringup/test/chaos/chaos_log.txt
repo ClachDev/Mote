@@ -1,5 +1,94 @@
+=== mote reliability: recovery evidence ===
+
+Curated results from three runs: the systemd restart policy on a workstation,
+and the startup gate plus per-node respawn on the real robot (auldbot,
+Raspberry Pi 5, aarch64, 2026-07-26). See README.md in this directory.
+
+
+--- 1. systemd restart policy (workstation, chaos_policy_demo.sh) -------------
+
 [11:42:29] === systemd restart-policy demo (mirrors mote-*.service) ===
 [11:42:31] started mote-chaos-demo, MainPID=3254018
 [11:42:31] killing MainPID 3254018 (SIGKILL)
 [11:42:33] PASS: mote-chaos-demo restarted in ~2.0s, new MainPID=3254059
 [11:42:33] === done ===
+
+
+--- 2. startup self-check gate (auldbot) -------------------------------------
+
+Servos unpowered — the gate must block bringup:
+  [PASS] servo_bus: /dev/mote_servos present and openable
+  [FAIL] servo_ping: id=7 MISSING; id=9 MISSING; FAIL: 2/2 servos did not respond
+  [PASS] lidar, camera, disk_space, clock, robot_yaml, active_site
+  self-check: NOT READY — mission blocked                       exit=1
+
+  Cross-checked against the pre-existing servo_debug `ping 1 9`, which also
+  found zero responders: a true negative, not a tool bug.
+
+  Side effect worth recording: with the bus unresponsive each read() blocks
+  ~200 ms per servo, so controller_manager overran its 50 Hz loop ("the loop
+  took 601 ms") and /joint_states fell to ~1.6 Hz. The health monitor reported
+  FAULT while the driver itself only logged warnings.
+
+Servos powered — the gate must allow bringup:
+  [PASS] servo_ping: id=7 OK (pos=3928); id=9 OK (pos=3767); all 2 responded
+  [PASS] servo_bus, lidar, camera, disk_space, clock, robot_yaml, active_site
+  self-check: READY                                             exit=0
+
+Full bus sweep (the SO-101 arm shares /dev/mote_servos with the wheels):
+  id=1..6 OK (arm), id=7 OK, id=8 MISSING (unused), id=9 OK
+
+
+--- 3. per-node respawn + /health transitions (auldbot) ----------------------
+
+Measured rates, healthy stack, servos powered:
+  /scan 10.024 Hz    /scan_filtered 10.024 Hz    /joint_states 50.000 Hz
+  (/joint_states == controller_manager update_rate exactly)
+
+Baseline /health: OK
+
+Scenario A — kill sllidar_node (severity: critical)
+  11:32:57  killed (pid 9834)
+  11:32:58  DEGRADED: scan slow (3.0 < 5.0 Hz), scan_filtered slow (3.0 < 5.0 Hz)
+  11:33:00  FAULT: scan stale (2.8s > 2.0s), scan_filtered stale, odometry stale
+  11:33:08  OK              <- respawned as pid 13064; recovered ~11s
+  RESPAWN: PASS
+
+Scenario B — kill v4l2_camera_node (severity: degraded)
+  11:33:24  killed (pid 9838)
+  11:33:25  DEGRADED: camera slow (0.0 < 5.0 Hz)     <- DEGRADED, never FAULT
+  11:33:27  OK              <- respawned as pid 14333; recovered ~3s
+  RESPAWN: PASS
+
+Scenario C — kill ros2_control_node: FIRST RUN FAILED and found a real defect.
+  respawn fired, but re-running the OnProcessStart spawner actions raised
+  "ExecuteLocal action 'spawner-11': executed more than once". That exception
+  aborted the launch and SIGINT'd every other node — the lidar and camera died
+  too and nothing recovered. A launch action may only ever be executed once.
+  Fixed by building fresh spawner actions per start (mote_bringup/launch_utils.py).
+
+Scenario C — re-run after the fix
+  11:40:10  killed ros2_control_node (pid 19469)
+  11:40:12  DEGRADED: joint_states slow (0.0 < 5.0 Hz)
+  11:40:13  FAULT: joint_states stale (2.4s > 2.0s)
+  11:40:13  OK              <- recovered ~3s; ~6s total from the kill
+
+  ros2_control_node: 19469 -> 22224     RESPAWN:  PASS
+  sllidar_node:      19471 -> 19471     SURVIVAL: PASS (same pid, untouched)
+  v4l2_camera_node:  19475 -> 19475     SURVIVAL: PASS (same pid, untouched)
+  robot_state_pub:   19467 -> 19467     SURVIVAL: PASS (same pid, untouched)
+
+  controllers after the respawn:
+    joint_state_broadcaster  active
+    diff_drive_controller    active     <- re-spawned, the point of the fix
+  "executed more than once" occurrences: 0
+  launch SIGINT-storm lines:             0
+
+
+--- Not yet verified on the robot -------------------------------------------
+
+* Service-level restart of the installed units, and the journald drop-in:
+  needs `pixi run install-systemd` (root). The units pass
+  `systemd-analyze verify`, and their restart policy is proven in run 1 above.
+* A true USB unplug rather than a node kill, which also needs root.
+* chaos_restart.sh against the full nav stack including controller_server.

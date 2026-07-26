@@ -12,7 +12,7 @@ set -uo pipefail
 
 UNIT="mote-chaos-demo"
 BOUND_S=15
-LOG="$(cd "$(dirname "$0")" && pwd)/chaos_log.txt"
+LOG="${CHAOS_LOG:-/tmp/mote_chaos_policy_log.txt}"
 
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
 

@@ -14,7 +14,9 @@ time. Runs on any workstation with a user systemd manager — no ROS, no robot.
 bash mote_bringup/test/chaos/chaos_policy_demo.sh
 ```
 
-The committed `chaos_log.txt` is the output of this run.
+Logs go to `/tmp/mote_chaos_policy_log.txt` (override with `CHAOS_LOG`). The
+committed `chaos_log.txt` is curated evidence, not scratch output — writing into
+a tracked file on every run dirties the worktree and breaks git operations.
 
 ## `chaos_restart.sh` — on the robot
 
@@ -27,6 +29,8 @@ within 30 s. Recovery comes from `respawn=True` on those nodes in
 ```bash
 pixi run chaos          # on the robot
 ```
+
+Logs go to `/tmp/mote_chaos_log.txt` (override with `CHAOS_LOG`).
 
 It aborts safely (exit 2, nothing killed) if the stack is not running, so it is
 harmless to invoke on a workstation. Nodes are matched by executable name and

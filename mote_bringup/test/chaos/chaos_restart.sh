@@ -16,7 +16,11 @@ set -uo pipefail
 BOUND_S=30          # max seconds allowed for a node to reappear
 POLL_MS=500         # integer arithmetic only: `bc` is not installed on the Pi
 SELF=$$
-LOG="$(cd "$(dirname "$0")" && pwd)/chaos_log.txt"
+# Log outside the repo by default: writing into the tracked chaos_log.txt on
+# every run dirties the worktree and blocks later git operations (it silently
+# aborted a --ff-only merge mid-test). Set CHAOS_LOG to redirect; the committed
+# chaos_log.txt is curated evidence, not this script's scratch output.
+LOG="${CHAOS_LOG:-/tmp/mote_chaos_log.txt}"
 
 # Executable names to knock over. These are the process names, not the launch
 # nodes' remapped names, so they are stable to match on.
