@@ -30,6 +30,7 @@ talking to?" over the existing link (see WireClient.health).
 """
 
 import json
+import os
 import socket
 import struct
 import subprocess
@@ -89,14 +90,21 @@ def send_health(conn, info):
 
 
 def repo_revision():
-    """The server's checkout revision, for the health blob, or None if unknown.
+    """The revision this side is running, for the health blob, or None.
 
     Robot and server share this protocol module, so they must be updated
-    together; reporting the revision each side is running makes a stale
-    inference machine visible from the robot (`pixi run inference-health`)
-    instead of surfacing later as a confusing protocol error. Best-effort: git
-    may be absent on the inference machine, so failure is not an error.
+    together; reporting each side's revision makes a stale inference server
+    visible from the robot (`pixi run inference-health`) instead of surfacing
+    later as a confusing protocol error.
+
+    MOTE_VERSION wins when set: the inference server ships as a container with no
+    git and no checkout, so its version is baked in at image build time. Falling
+    back to `git describe` covers the robot and dev machines, which do run from a
+    checkout. Best-effort — neither being available is not an error.
     """
+    baked = os.environ.get("MOTE_VERSION")
+    if baked:
+        return baked
     try:
         out = subprocess.run(
             [

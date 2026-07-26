@@ -98,7 +98,7 @@ def main():
                 f"\nWARNING: version skew — this machine is at {local}, but "
                 + ", ".join(f"{n} is at {v}" for n, v in stale.items())
                 + ".\n         Update the inference machine "
-                "(deploy/windows/update.ps1) so both ends match."
+                "(docker pull) so both ends match."
             )
 
     return 0 if all(v is not None for v in results.values()) else 1

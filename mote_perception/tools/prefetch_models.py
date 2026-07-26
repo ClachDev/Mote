@@ -7,7 +7,10 @@ guide) makes the servers start serving immediately and confirms the machine can
 reach the HF hub before you rely on it.
 
     pixi run inference-prefetch          # CPU/dev env
-    pixi run inference-prefetch-cuda     # the gaming-PC CUDA env
+    pixi run inference-prefetch-rocm     # AMD ROCm dev env
+
+The container image runs this at build time, so a deployed server ships with its
+weights already cached and never downloads at runtime.
 
 Weights land in the standard HF cache (~/.cache/huggingface, or %USERPROFILE%\
 .cache\huggingface on Windows); set HF_HOME to relocate it. Safe to re-run —

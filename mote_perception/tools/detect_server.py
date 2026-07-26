@@ -14,6 +14,7 @@ package is imported straight from the source tree.
 import argparse
 import io
 import os
+import select
 import socket
 import struct
 import sys
@@ -25,6 +26,7 @@ from PIL import Image
 from transformers import Owlv2ForObjectDetection, Owlv2Processor
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from model_host import ModelHost  # noqa: E402
 from mote_perception.detect_wire import (  # noqa: E402
     DEFAULT_PORT,
     HEALTH_MAGIC,
@@ -36,6 +38,9 @@ from mote_perception.detect_wire import (  # noqa: E402
 )
 
 MODEL = "google/owlv2-base-patch16-ensemble"
+
+# How often the accept/recv wait wakes to check whether the model has gone idle.
+IDLE_CHECK_S = 5.0
 
 
 def detect(proc, model, img, labels, threshold, device):
@@ -84,6 +89,10 @@ def main():
     # this only trims the wire traffic of clear noise.
     ap.add_argument("--threshold", type=float, default=0.1)
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    # Release the model (and its VRAM) after this long with no traffic. Detection
+    # is bursty by nature (one task command, then nothing), so this matters more
+    # here than for depth. 0 = never.
+    ap.add_argument("--idle-timeout", type=float, default=300.0)
     args = ap.parse_args()
 
     if args.device == "auto":
@@ -91,9 +100,6 @@ def main():
     else:
         device = args.device
 
-    print("loading", args.model)
-    proc = Owlv2Processor.from_pretrained(args.model)
-    model = Owlv2ForObjectDetection.from_pretrained(args.model).eval().to(device)
     if device == "cpu":
         # OWLv2 is CPU-bound here; use all cores. On GPU, leave torch's threading
         # alone — the heavy work runs on the device.
@@ -102,16 +108,27 @@ def main():
     else:
         print("using GPU:", torch.cuda.get_device_name(0))
 
-    health_info = {
-        "service": "detect",
-        "model": args.model,
-        "device": device,
-        "gpu": torch.cuda.get_device_name(0) if device != "cpu" else None,
-        "threshold": args.threshold,
-        "torch": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "version": repo_revision(),
-    }
+    def load():
+        print("loading", args.model)
+        proc = Owlv2Processor.from_pretrained(args.model)
+        model = Owlv2ForObjectDetection.from_pretrained(args.model).eval().to(device)
+        return proc, model
+
+    host = ModelHost(load, args.idle_timeout)
+
+    def health_info():
+        return {
+            "service": "detect",
+            "model": args.model,
+            "device": device,
+            "gpu": torch.cuda.get_device_name(0) if device != "cpu" else None,
+            "threshold": args.threshold,
+            "torch": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "version": repo_revision(),
+            "loaded": host.loaded,
+            "idle_timeout": args.idle_timeout,
+        }
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -120,16 +137,23 @@ def main():
     print(f"detect server listening on {args.host}:{args.port}")
 
     while True:
+        # See depth_server: idleness is measured from the last request, because
+        # the robot node keeps its connection open between missions.
+        while not select.select([srv], [], [], IDLE_CHECK_S)[0]:
+            host.release_if_idle()
         conn, addr = srv.accept()
         print("client", addr)
         try:
             while True:
+                if not select.select([conn], [], [], IDLE_CHECK_S)[0]:
+                    host.release_if_idle()
+                    continue
                 hdr = recvall(conn, 4)
                 if hdr is None:
                     break
                 (n,) = struct.unpack(">I", hdr)
                 if n == HEALTH_MAGIC:
-                    send_health(conn, health_info)
+                    send_health(conn, health_info())
                     print("health check")
                     continue
                 blob = recvall(conn, n)
@@ -145,6 +169,7 @@ def main():
                 dets = None
                 try:
                     img = Image.open(io.BytesIO(blob)).convert("RGB")
+                    proc, model = host.get()
                     t0 = time.perf_counter()
                     dets = detect(proc, model, img, labels, args.threshold, device)
                     dt = (time.perf_counter() - t0) * 1000

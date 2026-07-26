@@ -18,6 +18,7 @@ imported straight from the source tree.
 
 import argparse
 import io
+import select
 import socket
 import struct
 import sys
@@ -31,6 +32,7 @@ from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from model_host import ModelHost  # noqa: E402
 from mote_perception.depth_wire import (  # noqa: E402
     DEFAULT_PORT,
     HEALTH_MAGIC,
@@ -40,6 +42,9 @@ from mote_perception.depth_wire import (  # noqa: E402
     send_health,
     send_rejection,
 )
+
+# How often the accept/recv wait wakes to check whether the model has gone idle.
+IDLE_CHECK_S = 5.0
 
 MODEL = (
     "depth-anything/Depth-Anything-V2-Small-hf"  # relative (SSI); see module docstring
@@ -57,6 +62,9 @@ def main():
     ap.add_argument("--metric", action="store_true")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     ap.add_argument("--fp16", action="store_true")
+    # Release the model (and its VRAM) after this long with no traffic, so the
+    # inference machine is usable as a normal PC between missions. 0 = never.
+    ap.add_argument("--idle-timeout", type=float, default=300.0)
     args = ap.parse_args()
 
     if args.device == "auto":
@@ -71,26 +79,37 @@ def main():
     else:
         print("using CPU")
 
-    print("loading", args.model, "(metric)" if args.metric else "(relative)")
-    proc = AutoImageProcessor.from_pretrained(args.model)
-    model = AutoModelForDepthEstimation.from_pretrained(args.model).eval().to(device)
-    if use_fp16:
-        model = model.half()
-    # Leave torch's default thread count (physical cores). Setting it to
-    # os.cpu_count() counts SMT siblings, and oversubscribing them thrashes the
-    # CPU (~460 ms vs ~330 ms per frame here — measured with depth_bag_eval.py).
+    def load():
+        print("loading", args.model, "(metric)" if args.metric else "(relative)")
+        proc = AutoImageProcessor.from_pretrained(args.model)
+        model = (
+            AutoModelForDepthEstimation.from_pretrained(args.model).eval().to(device)
+        )
+        if use_fp16:
+            model = model.half()
+        # Leave torch's default thread count (physical cores). Setting it to
+        # os.cpu_count() counts SMT siblings, and oversubscribing them thrashes the
+        # CPU (~460 ms vs ~330 ms per frame here — measured with depth_bag_eval.py).
+        return proc, model
 
-    health_info = {
-        "service": "depth",
-        "model": args.model,
-        "device": device,
-        "gpu": torch.cuda.get_device_name(0) if device != "cpu" else None,
-        "fp16": use_fp16,
-        "metric": args.metric,
-        "torch": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "version": repo_revision(),
-    }
+    host = ModelHost(load, args.idle_timeout)
+
+    def health_info():
+        return {
+            "service": "depth",
+            "model": args.model,
+            "device": device,
+            "gpu": torch.cuda.get_device_name(0) if device != "cpu" else None,
+            "fp16": use_fp16,
+            "metric": args.metric,
+            "torch": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "version": repo_revision(),
+            # Reported so a health probe doesn't itself look like a hung server
+            # while the model is cold: "up but not resident" is a normal state.
+            "loaded": host.loaded,
+            "idle_timeout": args.idle_timeout,
+        }
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -99,16 +118,25 @@ def main():
     print(f"depth server listening on {args.host}:{args.port}")
 
     while True:
+        # Wait for a client, waking periodically to release an idle model. The
+        # robot node holds its connection open across missions, so idleness is
+        # measured from the last request, not from the last disconnect — hence
+        # the same select() wait inside the per-connection loop below.
+        while not select.select([srv], [], [], IDLE_CHECK_S)[0]:
+            host.release_if_idle()
         conn, addr = srv.accept()
         print("client", addr)
         try:
             while True:
+                if not select.select([conn], [], [], IDLE_CHECK_S)[0]:
+                    host.release_if_idle()
+                    continue
                 hdr = recvall(conn, 4)
                 if hdr is None:
                     break
                 (n,) = struct.unpack(">I", hdr)
                 if n == HEALTH_MAGIC:
-                    send_health(conn, health_info)
+                    send_health(conn, health_info())
                     print("health check")
                     continue
                 blob = recvall(conn, n)
@@ -118,6 +146,7 @@ def main():
                 try:
                     img = Image.open(io.BytesIO(blob)).convert("RGB")
                     W, H = img.size
+                    proc, model = host.get()
                     t0 = time.perf_counter()
                     inputs = proc(images=img, return_tensors="pt").to(device)
                     if use_fp16:

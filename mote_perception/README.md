@@ -38,11 +38,11 @@ concern, not by machine — which machine each half lands on is a deployment cho
   starts both (depth + detect) in the torch-only `inference` pixi env. That's a
   GPU box, or the robot/dev machine itself. `pixi run inference-rocm` runs the
   same pair on an AMD ROCm GPU (the Linux-dev fallback tier; see the L1 section
-  for the iGPU caveats), and **`pixi run inference-cuda`** runs them on a
-  dedicated NVIDIA Windows box — the productionized "inference server" role, with
-  boot auto-start, a health probe, and the multi-service pattern documented in
-  **[`docs/inference-server.md`](../../docs/inference-server.md)**. All three run
-  the same servers via one cross-platform supervisor (`tools/inference_server.py`).
+  for the iGPU caveats). As a *deployed role* on a dedicated NVIDIA machine — a
+  gaming PC or a cloud GPU — the same servers ship as a **container image**
+  (`ghcr.io/clachdev/mote-inference`), so that host installs no repo, pixi, or
+  scripts: see **[`docs/inference-server.md`](../../docs/inference-server.md)**.
+  Every variant runs the same supervisor (`tools/inference_server.py`).
 
 The only knob is **`inference_host`** in `config/perception.yaml` (with the same
 `~/.mote/perception.yaml` override as the camera calibration): leave it
@@ -281,7 +281,7 @@ role and [`benchmarks/`](benchmarks/README.md) for numbers.
 
 - `tools/inference_server.py` — cross-platform supervisor that runs every service
   (the `SERVICES` list) bound to `0.0.0.0` and tears the rest down if one dies; the
-  `inference` / `inference-rocm` / `inference-cuda` tasks all run it. Add a tenant
+  `inference` / `inference-rocm` tasks and the container entrypoint all run it. Add a tenant
   by adding a row.
 - `tools/inference_health.py` (`pixi run inference-health`) — torch-free probe of
   each service's health/version over the wire; `DOWN` if unreachable, non-zero exit
@@ -290,9 +290,11 @@ role and [`benchmarks/`](benchmarks/README.md) for numbers.
   latency/fps benchmark against a server; writes JSON for the benchmarks dir.
 - `tools/prefetch_models.py` (`pixi run inference-prefetch[-cuda|-rocm]`) — warm the
   HuggingFace cache so the first request doesn't block on a download.
-- `deploy/windows/` — PowerShell setup, boot auto-start, and update for the NVIDIA
-  Windows inference PC (`setup.ps1`, `install_service.ps1`, `run_inference.ps1`,
-  `update.ps1`). That machine is a git clone and updates by pulling
-  (`update.ps1`), unlike the Pi which is pushed to by `pixi run sync`; the servers
-  report their checkout revision in the health blob so `inference-health` warns on
-  version skew.
+- `tools/model_host.py` — on-demand model loading: the servers load on the first
+  request and release the model (and its VRAM) after `--idle-timeout` seconds
+  idle, so the inference machine stays usable as a normal PC between missions.
+- `deploy/Dockerfile` — the inference-server image (depth + detect, CUDA torch,
+  model weights baked in), built and pushed to GHCR by
+  `.github/workflows/inference-image.yml`. The host runs one `docker run`; it
+  never needs the repo. Servers report the image's baked `MOTE_VERSION` in the
+  health blob, so `inference-health` warns on robot/server version skew.

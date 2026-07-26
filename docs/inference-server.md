@@ -4,232 +4,184 @@ Mote keeps torch off the robot. The heavy vision models (monocular depth today,
 open-vocabulary detection now, SfM/policy inference later) run in a separate
 process reached over a plain TCP socket, so the robot's ROS environment stays
 light and the compute can live wherever the GPU is. This document is about
-running that process as a **first-class role on a dedicated machine** — a Windows
-gaming PC with an NVIDIA GPU — that the whole robot talks to, and that the robot
-degrades gracefully without.
+running that process as a **first-class role on a dedicated machine** that the
+whole robot talks to, and that the robot degrades gracefully without.
 
 The mechanism (the two-process split, the `depth_wire`/`detect_wire` protocol,
 the on-robot nodes) is described in [`mote_perception/README.md`](../mote_perception/README.md).
-This document adds the *deployment*: host choice, the CUDA env, auto-start,
+This document adds the *deployment*: how it ships, how it starts, how it updates,
 health, the multi-service pattern, the fallback matrix, and how to measure it.
 
 ---
 
-## Host decision: native Windows
+## It ships as a container
 
-The target is a Windows gaming PC with an NVIDIA GPU that also stays a gaming PC.
-Three ways to host a torch stack there — native Windows, WSL2, and Docker — were
-weighed against the things that actually matter for this role:
+The inference machine is **not a development environment**. It is a Windows
+gaming PC, or a Linux box, or a rented cloud GPU — a machine whose owner should
+not have to install a toolchain, clone a repo, or run a setup script to lend the
+robot its GPU. So the server ships as a container image and the host needs
+exactly two things: an NVIDIA driver and a container runtime.
 
-| Criterion | Native Windows (chosen) | WSL2 | Docker Desktop |
+That also makes the role portable in a way the alternatives were not. The same
+image is the answer for a contributor with no Windows PC who wants to rent a
+cloud GPU for an afternoon, and for a permanently-installed box on the LAN.
+
+**Host options considered:**
+
+| | Container (chosen) | Native Windows + pixi | WSL2 + pixi |
 |---|---|---|---|
-| **CUDA torch in a pixi env** | ✅ `win-64` feature, torch `cu128` wheel from pytorch.org solves cleanly (verified: `torch-2.11.0+cu128-cp312-cp312-win_amd64.whl`) | ✅ `linux-64`, torch `cu128` linux wheel | ✅ but in an image, not a pixi env |
-| **GPU access** | ✅ direct | ✅ via WSL2 CUDA driver | ⚠️ **requires the WSL2 backend anyway** — CUDA in a Linux container on Windows goes through WSL2, so Docker is WSL2 *plus* a container layer |
-| **LAN reachability from the robot** | ✅ binds `0.0.0.0` straight onto the PC's LAN IP | ⚠️ NAT'd behind the host — needs `netsh interface portproxy` or mirrored networking | ✅ `-p 5601:5601` publishes on the host interface (Docker's port proxy solves what raw WSL2 doesn't) |
-| **Auto-start on boot** | ✅ Task Scheduler "at startup", session 0, no desktop needed | ⚠️ WSL auto-launch + systemd-in-WSL + waking the distro | ✅ `--restart unless-stopped`, but Docker Desktop itself must auto-start (and it starts on *login*, not boot, unless run as a service) |
-| **Toolchain count** | ✅ pixi only — the same tool the whole project already uses | ✅ pixi only | ❌ pixi **and** Docker: a second dependency system, plus a ~6 GB CUDA image, a registry to host it, and a build pipeline to produce it |
-| **Reproducibility** | ⚠️ `pixi.lock` pins deps exactly, but the OS/driver layer is the machine's own | ⚠️ same | ✅ frozen image is the strongest answer |
-| **Update story** | ✅ `git pull` + `pixi install` (see below) | ✅ same | ✅ pull a new tag — but only after CI builds and pushes it |
-| **Stays a gaming PC** | ✅ a background scheduled task | ✅ a running VM | ⚠️ Docker Desktop resident; licensing terms apply to commercial use |
+| **What the host installs** | ✅ a container runtime | ❌ pixi, a git checkout, PowerShell scripts | ❌ pixi, a checkout, plus a WSL distro |
+| **GPU access** | ✅ `--gpus all` (Docker Desktop bundles the NVIDIA toolkit; on Windows this runs over WSL2, but as an installer detail you never touch) | ✅ direct | ✅ via the WSL2 CUDA driver |
+| **Reaching it from the robot** | ✅ `-p 5601:5601` publishes on the host interface | ✅ binds the LAN directly | ⚠️ NAT'd — needs `portproxy` or mirrored networking |
+| **Works on a cloud GPU** | ✅ same artifact, no changes | ❌ Windows-only | ❌ awkward |
+| **Update** | ✅ `docker pull` | ❌ `git pull` + re-solve on the host | ❌ same |
+| **Reproducibility** | ✅ a frozen, versioned image | ⚠️ `pixi.lock` pins deps, but the host supplies the rest | ⚠️ same |
+| **Cost** | ⚠️ a multi-GB image to build in CI and pull once | ✅ none beyond pixi | ✅ none beyond pixi |
 
-**Docker was ruled out for this deployment, not on capability but on cost/benefit
-at this scale.** Its real advantage is reproducibility — a frozen image makes "a
-rebuild of the PC could follow it" trivially true. But buying that means adding a
-second dependency-management system to a project whose stated rule is *everything
-runs through pixi*, standing up a registry for a ~6 GB CUDA image, and building
-that image in CI — all for **one machine**, and on Windows the container still
-sits on WSL2 underneath, so it doesn't even remove the layer WSL2 was penalised
-for. The `pixi.lock` already pins every dependency exactly; what an image would
-add on top is the OS/driver layer, which is the part that changes least.
+The native-pixi paths were implemented first and then removed: they required the
+inference machine to become a small dev environment, which is exactly what the
+owner of a gaming PC does not want. The container's one real cost — a few GB of
+image, built in CI and pulled once — buys a host that stays a gaming PC.
 
-**Revisit Docker when there is more than one inference box.** At fleet scale
-(task 166) the image-plus-registry cost amortises across machines and the
-reproducibility argument flips — that is the trigger, and this section is the
-record of the trade so the decision can be re-made on evidence rather than
-re-litigated from scratch.
-
-So native Windows wins: it takes the two criteria that bite in practice — the
-robot reaching the socket and the servers returning after a reboot — without
-adding tooling. WSL2's only real edge (matching Linux tooling) is outweighed by
-its NAT layer; Docker's (reproducibility) doesn't yet pay for its overhead.
-Dual-boot Linux was out of scope and unnecessary since the other options solved.
-
-**So: the inference PC runs native Windows, pixi's `inference-cuda` env, torch
-from the CUDA wheel index.** The pixi feature declares `platforms = ["win-64"]`
-in its own environment, so this never perturbs the robot/dev/sim solves (the
-aarch64 robot env is byte-for-byte unchanged — verified in `pixi.lock`).
-
-If the win-64 torch solve ever breaks (a torch release skips Windows wheels, say),
-the fallback is WSL2 with the `inference-rocm`-style pattern retargeted to a linux
-`cu128` index, plus a `portproxy` rule — but that is the contingency, not the plan.
+pixi is still how inference runs **for development** on Linux (`pixi run
+inference`, `pixi run inference-rocm`). The container is how it runs as a
+*deployed role*. Those are different jobs and it is fine that they use different
+tools; nothing on the robot changes either way.
 
 ---
 
-## Setup guide (run once at the PC)
+## Setup: one command
 
-Everything below runs in PowerShell on the gaming PC. The scripts live in
-[`mote_perception/deploy/windows/`](../mote_perception/deploy/windows) and are
-parameterised, so a PC rebuild is: clone the repo, run these, done.
+On the inference machine, install a container runtime with GPU support — on
+Windows that is [Docker Desktop](https://docs.docker.com/desktop/) (free for
+personal use; tick *Start Docker Desktop when you log in*), on Linux Docker plus
+the NVIDIA Container Toolkit. Then, once:
 
-1. **Get the repo.** Install git if needed, then clone Mote somewhere stable,
-   e.g. `C:\mote`. (Only the repo is needed; no ROS on this machine.)
-
-2. **Set up the env + models** — a normal (non-admin) PowerShell:
-
-   ```powershell
-   cd C:\mote
-   .\mote_perception\deploy\windows\setup.ps1
-   ```
-
-   This installs pixi if missing, solves and installs the `inference-cuda` env
-   (first run downloads the ~2–3 GB torch CUDA wheel — be patient), prints a GPU
-   check (`cuda_available True`, the device name), and pre-fetches the depth +
-   detect model weights into the HuggingFace cache so the first request doesn't
-   block on a download.
-
-3. **Smoke-test by hand** (optional but recommended):
-
-   ```powershell
-   pixi run inference-cuda
-   ```
-
-   You should see `using GPU: <your card>` for depth and detect, and both
-   "listening on 0.0.0.0:5601 / :5602". Leave it running and, from the robot:
-
-   ```bash
-   pixi run inference-health --host <gaming-pc-hostname-or-ip>
-   ```
-
-   Expect `depth  UP ... on cuda (<card>)` and `detect UP ... on cuda (<card>)`.
-   Ctrl+C the server when satisfied.
-
-4. **Install boot auto-start** — an **elevated** (Administrator) PowerShell:
-
-   ```powershell
-   .\mote_perception\deploy\windows\install_service.ps1
-   ```
-
-   It registers a `MoteInference` scheduled task that runs the servers at every
-   boot (whether or not anyone logs in) and prompts for the account password so
-   Task Scheduler can run it unattended. Remove it later with
-   `uninstall_service.ps1`.
-
-5. **Point the robot at the PC** — see the next section.
-
-That's it. Reboot the PC and confirm `pixi run inference-health --host <pc>` from
-the robot answers with no manual step on the PC.
-
----
-
-## Pointing the robot at the server
-
-The single deployment knob is **`inference_host`** in
-[`mote_perception/config/perception.yaml`](../mote_perception/config/perception.yaml).
-Set it to the gaming PC's stable hostname (or LAN IP):
-
-```yaml
-inference_host: mote-gpu   # the gaming PC on the LAN
-depth:  { enabled: true, server_port: 5601 }
-detect: { enabled: true, server_port: 5602 }
+```
+docker run -d --gpus all --restart unless-stopped \
+  -p 5601:5601 -p 5602:5602 \
+  --name mote-inference \
+  ghcr.io/clachdev/mote-inference:latest
 ```
 
-Override per-robot without editing the committed file by dropping the same keys in
-`~/.mote/perception.yaml` (same precedence as the camera calibration). This config
-lives here, **not** in `robot.yaml`: `robot.yaml` is hardware/description (wheels,
-servos, sensor device paths) and `perception.yaml` is perception *runtime* — the
-two are deliberately separate config surfaces. No discovery protocol is invented;
-a stable hostname is the contract. Give the PC a DHCP reservation or a hosts entry
-so its name is stable.
+That is the entire deployment. No repo, no scripts, no files on the host.
+`--restart unless-stopped` means it comes back whenever the Docker daemon starts,
+so it survives reboots and crashes on its own.
 
-Ports are per-service and fixed (depth 5601, detect 5602); the robot node for each
-service carries its own port, so services are independent.
+Confirm from the robot:
+
+```bash
+pixi run inference-health --host <inference-machine>
+```
+
+Expect `depth UP` and `detect UP` with the GPU name and the image's version.
+
+> **Windows: boot vs login.** Docker Desktop is a desktop application — it starts
+> when you *sign in*, not at boot. After a reboot the container comes back once
+> someone logs into the PC. For a personal machine that is normally fine; if you
+> ever need it up before login, that needs Docker Engine inside WSL2 started by a
+> scheduled task, which puts a setup script back on the host.
 
 ---
 
-## Deploy and update
+## On-demand GPU: the model is not resident when idle
 
-The robot is *pushed* to (`pixi run sync` rsyncs the tree to the Pi). The
-inference PC is **pulled**: it is a plain git clone with no ROS, needing only the
-repo plus the `inference-cuda` env, and it is a machine you occasionally sit at
-anyway. Pulling also keeps the reported revision honest — the servers report
-`git describe` in their health blob, which a push-based deploy of a tree without
-`.git` could not do.
+A gaming PC should not have ~1 GB of VRAM pinned by a robot that is parked, so the
+servers load their model on the **first request** and release it after
+`--idle-timeout` seconds (default 300) with no traffic. Serving continuously
+never unloads; serving after an idle period pays a few seconds for the reload.
 
-To update the PC:
+This lives in the server ([`tools/model_host.py`](../mote_perception/tools/model_host.py)),
+not in the deployment, so it behaves identically on a gaming PC, a Linux box, and
+a cloud instance — no socket activation, wake proxy, or orchestration. The health
+blob reports `loaded`, so "up but cold" is a visible, normal state rather than
+something that looks like a hang.
 
-```powershell
-cd C:\mote
-.\mote_perception\deploy\windows\update.ps1
+To keep a truly dedicated box always-resident, pass `--idle-timeout 0`:
+
+```
+docker run ... ghcr.io/clachdev/mote-inference:latest --idle-timeout 0
 ```
 
-That stops the servers, `git pull --ff-only`s (add `-Branch <name>` to switch;
-by default it follows whatever branch the checkout is on, so it tracks a feature
-branch during bring-up and `main` afterwards), re-runs `pixi install -e
-inference-cuda` so a changed `pixi.lock` takes effect, pre-fetches any newly
-referenced models, and restarts the boot task. It prints the revision before and
-after.
+Arguments after the image name pass through to both servers.
+
+---
+
+## Updating
+
+```
+docker pull ghcr.io/clachdev/mote-inference:latest
+docker rm -f mote-inference
+docker run -d --gpus all --restart unless-stopped -p 5601:5601 -p 5602:5602 \
+  --name mote-inference ghcr.io/clachdev/mote-inference:latest
+```
+
+Two commands and a re-run, or the equivalent buttons in Docker Desktop's GUI. CI
+([`inference-image.yml`](../.github/workflows/inference-image.yml)) builds and
+pushes to GHCR when the server files change on `main`, on a tag, or on demand;
+`latest` tracks main and `sha-` / version tags let a host pin a known-good build
+and roll back.
 
 **Version skew is visible, not silent.** The robot and the server share the wire
-protocol modules, so they must move together. Each server reports its checkout
-revision in the health blob, and `pixi run inference-health` compares it against
-the robot's own and warns when they differ:
+protocol modules, so they must move together. CI bakes the build's revision into
+the image as `MOTE_VERSION`, each server reports it in its health blob, and
+`pixi run inference-health` compares it against the robot's own:
 
 ```
 inference host: mote-gpu   (this machine: a1b2c3d)
-  depth   UP   ...  @ 6aa919f
-  detect  UP   ...  @ 6aa919f
+  depth   UP   ...  @ v0.1.0-42-g6aa919f
+  detect  UP   ...  @ v0.1.0-42-g6aa919f
 
-WARNING: version skew — this machine is at a1b2c3d, but depth is at 6aa919f, ...
-         Update the inference machine (deploy/windows/update.ps1) so both ends match.
+WARNING: version skew — this machine is at a1b2c3d, but depth is at ...
 ```
 
-In practice the protocol changes rarely and additively (the health request was
-added without breaking existing clients — an unknown leading `uint32` was already
-impossible to confuse with an image length). But when it does change, this turns
-a confusing protocol error into a one-line diagnosis.
+In practice the protocol changes rarely and additively — the health request was
+added without breaking existing clients, since an unknown leading `uint32` could
+never be confused with an image length — but when it does change, this turns a
+confusing protocol error into a one-line diagnosis.
 
-**Rebuilding the PC from scratch** is: install git, clone the repo, run
-`setup.ps1`, then `install_service.ps1`. No state lives on that machine other than
-the repo, the pixi env, and the HuggingFace model cache — all reproducible from
-the checkout, which is what makes the guide repeatable.
+---
 
-## Production behaviors
+## Scaling to a cloud GPU
 
-- **Auto-start on boot** — the `MoteInference` scheduled task (step 4) launches
-  [`run_inference.ps1`](../mote_perception/deploy/windows/run_inference.ps1),
-  which runs `pixi run inference-cuda` in a supervise loop and restarts it a few
-  seconds after any exit. So a server crash *or* a reboot both recover with no
-  human at the PC.
+The image runs unchanged on a cloud GPU instance, which is the practical option
+for anyone without an NVIDIA machine. Two things change, and both matter:
 
-- **Reconnect across restarts, both ends** — the robot nodes use a persistent
-  socket that reconnects lazily: any failure (server down, connection dropped,
-  server restarted) tears the socket down and the next frame reconnects, warning
-  once (throttled) meanwhile. Nothing on the robot needs restarting when the
-  server bounces. This is `WireClient` in `depth_wire.py` and is covered by
-  `test_depth_wire.py::test_depth_client_reconnects_after_server_drop` and the
-  health round-trip tests. On the server side, each connection is independent and
-  a bad frame never kills the server.
+**1. The wire protocol is unauthenticated and unencrypted.** That was a
+deliberate choice for one hop on a trusted LAN, and it is documented as such in
+`depth_wire.py`. On a public cloud instance, publishing 5601/5602 to the internet
+means anyone who finds the port can use your GPU and read the images your robot
+sends. **Do not publish these ports publicly.** Put the robot and the instance on
+the same private network — Tailscale, WireGuard, or an SSH tunnel — and bind the
+published ports to that interface only:
 
-- **Health / version check from the robot** — `pixi run inference-health [--host H]`
-  probes each service over the same socket (the `HEALTH_MAGIC` request in the wire
-  protocol) and prints the model, device, GPU, and torch version the server is
-  actually running, or `DOWN` if it can't be reached. Exit status is non-zero if
-  any service is down, so it doubles as a scriptable gate. `--json` for machine
-  output.
+```
+# only reachable over the VPN interface, not the public one
+docker run -d --gpus all -p 100.x.y.z:5601:5601 -p 100.x.y.z:5602:5602 ...
+```
 
-- **Logs somewhere findable** — the runner tees everything (its own lifecycle
-  plus both servers' per-frame lines) to `%LOCALAPPDATA%\mote\logs\inference-<date>.log`
-  on the PC. Each server also prints `health check` when probed, so you can see
-  the robot reaching it.
+Adding a shared-secret token to the handshake would be the next step if the
+socket ever needs to face a hostile network; it is deliberately not built yet,
+because a private network solves the problem without complicating a protocol
+whose value is that you can debug it with a hexdump.
+
+**2. Bandwidth, not latency, is the limit.** Each frame sends ~50 KB up but the
+depth reply is `640×480×4` = **1.2 MB down**. On a LAN that is nothing; over
+broadband it dominates the round trip. Note that the pipeline stamps clouds at
+*image-capture* time and Nav2 places them via tf, so added latency costs
+**rate**, not correctness — obstacles land in the right place, just less often.
+If cloud use becomes routine, sending float16 depth would halve the payload for
+no meaningful precision loss at these ranges; `pixi run inference-bench` measures
+exactly this, so the decision can be made on numbers.
 
 ---
 
 ## Multi-service pattern (adding the next tenant)
 
-Depth and detect are already two tenants of this role, and a third (SfM, a policy
-server, …) is a config exercise, not a redesign. The seam is
+Depth and detect are already two tenants, and a third (SfM, a policy server, …)
+is a config exercise, not a redesign. The seam is
 [`inference_server.py`](../mote_perception/tools/inference_server.py), the
-cross-platform supervisor the `inference*` tasks run:
+supervisor the container runs:
 
 ```python
 SERVICES = [
@@ -241,78 +193,93 @@ SERVICES = [
 To add a tenant:
 
 1. **Write the server** in `mote_perception/tools/`, following `depth_server.py`:
-   load the model, `listen(1)`, and in the per-connection loop read the leading
-   `uint32` — if it equals `HEALTH_MAGIC`, `send_health(conn, info)` and continue;
-   otherwise read your request and reply. Reuse the framing helpers in a
-   `*_wire.py` module.
+   load the model through a `ModelHost` (so it inherits on-demand loading),
+   `listen(1)`, and in the per-connection loop read the leading `uint32` — if it
+   equals `HEALTH_MAGIC`, `send_health(conn, info)` and continue; otherwise read
+   your request and reply.
 2. **Give it a wire module** (`mycompute_wire.py`) with a `DEFAULT_PORT` (next
    free port, e.g. 5603), the request/reply framing, and a `Client(WireClient)`
    subclass — it inherits `connect`/`close`/**`health`**/reconnect for free.
-3. **Add one row to `SERVICES`** above. It now inherits `0.0.0.0` binding,
-   supervision (if it dies, the others are torn down so the failure is visible),
-   teardown, boot auto-start, and the health probe automatically.
+3. **Add one row to `SERVICES`**, plus its port to the `EXPOSE` line and the
+   documented `docker run`. It now inherits binding, supervision, restart,
+   on-demand loading, and the health probe.
 4. **On the robot**, add its node to `perception_launch.py` and a
    `mycompute: { enabled, server_port }` block to `perception.yaml`, exactly like
    `depth`/`detect`.
 
-Port allocation is manual and documented here (5601 depth, 5602 detect, 5603+ for
-new services) — a fixed small map beats a discovery protocol for a handful of
-services on one box. Health and reconnect are free because they live in the shared
-`WireClient`/`send_health`, not per-service.
+Port allocation is manual and documented here (5601 depth, 5602 detect, 5603+
+next) — a fixed small map beats a discovery protocol for a handful of services.
+
+---
+
+## Pointing the robot at the server
+
+The single deployment knob is **`inference_host`** in
+[`mote_perception/config/perception.yaml`](../mote_perception/config/perception.yaml):
+
+```yaml
+inference_host: mote-gpu   # the inference machine
+depth:  { enabled: true, server_port: 5601 }
+detect: { enabled: true, server_port: 5602 }
+```
+
+Override per-robot in `~/.mote/perception.yaml` (same precedence as the camera
+calibration). This lives here, not in `robot.yaml`: `robot.yaml` is
+hardware/description, `perception.yaml` is perception runtime. No discovery
+protocol is invented — a stable hostname is the contract, so give the machine a
+DHCP reservation or a hosts entry.
 
 ---
 
 ## Fallback matrix (server present / absent)
 
-The robot must keep working when the inference PC is off, asleep, or unreachable.
-It does, because the depth/detect nodes are torch-free and treat "no server" as
-"skip this frame", never as a fatal error. Navigation runs on lidar; the camera
-obstacle layer is an *additive* near-band voxel layer, so losing it degrades
-obstacle coverage but never stops nav.
+The robot must keep working when the inference machine is off, asleep, or
+unreachable. It does: the depth/detect nodes are torch-free and treat "no server"
+as "skip this frame", never as a fatal error. Navigation runs on lidar; the
+camera obstacle layer is an *additive* near-band voxel layer, so losing it
+degrades obstacle coverage but never stops nav.
 
-| Situation | What runs the depth model | `/camera_obstacles` | Navigation |
+| Situation | What runs the model | `/camera_obstacles` | Navigation |
 |---|---|---|---|
-| **Gaming PC up** (`inference_host: mote-gpu`) | NVIDIA CUDA — the fast path | published normally | full: lidar + camera near-band |
-| **Gaming PC down / unreachable** | nothing — node warns (throttled 2 s) and skips each frame; publisher stays alive, publishes nothing | silent (no points) | **unaffected** — runs on lidar alone |
-| **No GPU box, fall back to the dev machine** (`inference_host: <dev>`, `pixi run inference-rocm` or `pixi run inference`) | AMD ROCm iGPU, or CPU | published (slower) | full, at reduced depth rate |
+| **Inference machine up** | NVIDIA CUDA in the container — the fast path | published normally | full: lidar + camera near-band |
+| **Machine down / unreachable / not logged in** | nothing — node warns (throttled 2 s) and skips each frame; publisher stays alive | silent (no points) | **unaffected** — runs on lidar alone |
+| **Model idle-released** | reloads on the next frame (a few seconds) | brief gap, then normal | unaffected |
+| **No GPU box at all** | dev fallback: `pixi run inference-rocm` (AMD iGPU) or `pixi run inference` (CPU) on a Linux machine | published (slower) | full, at reduced depth rate |
 
-The current code's behavior in the "down" case is **warn-and-skip, not disable**:
-`DepthClient.infer` / `DetectClient.infer` return `None` on any socket failure and
-the node returns early (`depth_obstacle_node._on_image`), so the topic simply goes
-quiet and resumes automatically when the server returns — no relaunch. Verified by
-`test_depth_client_unreachable_returns_none_and_warns` and the reconnect test.
+The "down" case is **warn-and-skip, not disable**: `DepthClient.infer` /
+`DetectClient.infer` return `None` on any socket failure and the node returns
+early, so the topic goes quiet and resumes automatically when the server returns
+— no relaunch. Verified by `test_depth_client_unreachable_returns_none_and_warns`
+and the reconnect test.
 
-To *intentionally* disable a service (e.g. the PC is gone for a while and you want
-the logs quiet), set `depth.enabled: false` / `detect.enabled: false` in
-`perception.yaml` and relaunch `pixi run perception` — the node isn't created at
-all. Leaving it enabled with no server is harmless (it idles, only working when a
-subscriber is present).
+To *intentionally* disable a service, set `depth.enabled: false` /
+`detect.enabled: false` in `perception.yaml` and relaunch `pixi run perception`.
+Leaving one enabled with no server is harmless.
 
 ---
 
 ## Measuring it
 
 Two committed harnesses; results live under
-[`mote_perception/benchmarks/`](../mote_perception/benchmarks) so they can be
-compared across machines and over time.
+[`mote_perception/benchmarks/`](../mote_perception/benchmarks).
 
-- **`pixi run inference-bench`** — client-side, torch-free, run from the robot (or
-  any LAN machine). Times the full round trip the node pays — compress → send →
-  server infer → receive — so the number includes GPU time *and* the network hop,
-  comparable to the on-robot pipeline. Example:
+- **`pixi run inference-bench`** — client-side, torch-free, run from the robot or
+  any machine that can reach the server. Times the full round trip the node pays
+  — compress → send → infer → receive — so the number includes GPU time *and*
+  the network hop:
 
   ```bash
   pixi run inference-bench --host mote-gpu --image sample.jpg --frames 200 \
       --out mote_perception/benchmarks/depth_cuda_lan.json
   ```
 
-  It prints a percentile table (min/p50/mean/p90/p99/max ms + fps) and writes the
-  raw samples as JSON. Use `--service detect --labels "red box"` for the detector.
+  Prints a percentile table (min/p50/mean/p90/p99/max ms + fps) and writes the raw
+  samples as JSON. `--service detect --labels "red box"` for the detector. Note
+  the first timed frame after an idle release includes the model load — use
+  `--warmup` (default 5) to exclude it, or `--idle-timeout 0` on the server.
 
-- **The server's own per-frame log** (`served WxH in N ms`) isolates pure model
-  time on the GPU, so `inference-bench`'s round-trip minus the server's reported
-  time is the LAN + transport overhead.
+- **The server's per-frame log** (`served WxH in N ms`) isolates model time, so
+  the bench round trip minus that is transport overhead.
 
 See [`benchmarks/README.md`](../mote_perception/benchmarks/README.md) for the
-baseline numbers (#152 CPU / ROCm iGPU) and how to fill in the gaming-PC CUDA
-results.
+baselines and how to fill in results.

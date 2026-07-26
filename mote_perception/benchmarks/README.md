@@ -26,8 +26,12 @@ Commit the resulting `*.json` alongside this file and fill the tables below.
 | CPU (oversubscribed) | Linux dev | CPU (SMT threads) | ~460 | ~2 | #152, same |
 | CPU (under load) | Linux dev / Pi-class | CPU while RViz+ROS+node run | ~1000–2000 | ~0.5–1 | #152 prose baseline |
 | ROCm iGPU | Linux dev | Radeon 780M (gfx1103, fp32) | ~330, **flat under load** | ~3 | #152 — ties idle CPU, stays flat where CPU degrades |
-| **CUDA (LAN)** | **gaming PC** | **NVIDIA (fp32)** | _measure_ | _measure_ | **`inference-bench` → `depth_cuda_lan.json`** |
-| CUDA (fp16) | gaming PC | NVIDIA (`--fp16`) | _optional_ | _optional_ | optional, if fp16 is stable on the card |
+| **CUDA (LAN)** | **container on the inference machine** | **NVIDIA (fp32)** | _measure_ | _measure_ | **`inference-bench` → `depth_cuda_lan.json`** |
+| CUDA (fp16) | container | NVIDIA (`--fp16`) | _optional_ | _optional_ | optional, if fp16 is stable on the card |
+
+Measure with the server warm: the first frame after an idle release includes the
+model load (see `--idle-timeout` in `docs/inference-server.md`), which `--warmup`
+already excludes by default.
 
 The CUDA tier is expected to land well under the ROCm/CPU ~330 ms — a discrete
 NVIDIA card runs this small ViT in tens of ms — so the depth rate is bounded by
@@ -38,13 +42,13 @@ that and to quantify the LAN overhead (round trip minus the server's reported
 ## Detect (OWLv2-base, 640×480)
 
 OWLv2 is much heavier than depth and was CPU-only before this task; the
-`inference-cuda` env plus the new `--device` support in `detect_server.py` let it
-run on the GPU too. Measure once the gaming PC is up:
+container's CUDA torch plus the `--device` support in `detect_server.py` let it
+run on the GPU too. Measure once the inference machine is up:
 
 | Tier | Machine | Device | ~ms/frame | ~fps | Source |
 |---|---|---|---:|---:|---|
 | CPU | Linux dev | CPU (all cores) | _prior_ | _prior_ | pre-CUDA baseline, if recorded |
-| **CUDA (LAN)** | **gaming PC** | **NVIDIA** | _measure_ | _measure_ | **`inference-bench --service detect` → `detect_cuda_lan.json`** |
+| **CUDA (LAN)** | **container** | **NVIDIA** | _measure_ | _measure_ | **`inference-bench --service detect` → `detect_cuda_lan.json`** |
 
 Detection is a per-command burst (the task layer asks for a label, not a stream),
 so its latency matters for fetch responsiveness, not sustained fps.

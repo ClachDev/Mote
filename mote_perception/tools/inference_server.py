@@ -14,11 +14,11 @@ in SERVICES — it inherits binding, supervision, teardown, and (via the shared
 wire) health and reconnect for free. Per-service flags go in the row's args; the
 robot-side node already carries its own port. See docs/inference-server.md.
 
-    pixi run inference        # CPU env
-    pixi run inference-rocm   # AMD ROCm env
-    pixi run inference-cuda   # Windows/NVIDIA env
-    # extra args pass through to every server, e.g. a shared device override:
-    pixi run inference-cuda -- --device cuda
+    pixi run inference        # CPU env (dev)
+    pixi run inference-rocm   # AMD ROCm env (dev)
+    # Deployed, it is the container's entrypoint (deploy/Dockerfile); extra args
+    # pass through to every server:
+    docker run ... ghcr.io/clachdev/mote-inference --idle-timeout 0
 """
 
 import signal
