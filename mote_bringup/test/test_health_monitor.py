@@ -2,34 +2,38 @@
 
 import time
 
+import pytest
 from diagnostic_msgs.msg import DiagnosticStatus
 
-from mote_bringup.health_monitor import _TopicWatch
+from mote_bringup.health_monitor import (
+    _one_line,
+    _severity_level,
+    _TfWatch,
+    _TopicWatch,
+)
 from mote_bringup.sd_notify import SdNotifier
 
 
-def _watch(critical=True, min_rate=5.0, timeout=2.0):
+def _watch(severity="critical", min_rate=5.0, timeout=2.0):
     return _TopicWatch(
         {
             "name": "scan",
             "topic": "/scan",
             "min_rate": min_rate,
             "timeout": timeout,
-            "critical": critical,
+            "severity": severity,
         }
     )
 
 
 def test_never_received_critical_is_fault():
-    w = _watch(critical=True)
-    level, msg, _ = w.evaluate(window=1.0)
+    level, msg, _ = _watch("critical").evaluate(window=1.0)
     assert level == DiagnosticStatus.ERROR
     assert "no messages" in msg
 
 
-def test_never_received_noncritical_is_degraded():
-    w = _watch(critical=False)
-    level, _, _ = w.evaluate(window=1.0)
+def test_never_received_degraded_is_warn():
+    level, _, _ = _watch("degraded").evaluate(window=1.0)
     assert level == DiagnosticStatus.WARN
 
 
@@ -52,7 +56,7 @@ def test_fresh_but_slow_is_degraded():
 
 
 def test_stale_critical_is_fault():
-    w = _watch(critical=True, timeout=2.0)
+    w = _watch("critical", timeout=2.0)
     w.on_msg(None)
     w.last_stamp = time.monotonic() - 10.0  # last seen 10s ago
     level, msg, _ = w.evaluate(window=1.0)
@@ -60,12 +64,11 @@ def test_stale_critical_is_fault():
     assert "stale" in msg
 
 
-def test_stale_noncritical_is_degraded():
-    w = _watch(critical=False, timeout=2.0)
+def test_stale_degraded_is_warn():
+    w = _watch("degraded", timeout=2.0)
     w.on_msg(None)
     w.last_stamp = time.monotonic() - 10.0
-    level, _, _ = w.evaluate(window=1.0)
-    assert level == DiagnosticStatus.WARN
+    assert w.evaluate(window=1.0)[0] == DiagnosticStatus.WARN
 
 
 def test_recovery_back_to_ok():
@@ -75,6 +78,51 @@ def test_recovery_back_to_ok():
     for _ in range(10):
         w.on_msg(None)
     assert w.evaluate(window=1.0)[0] == DiagnosticStatus.OK
+
+
+def test_info_severity_never_degrades():
+    """An `info` subsystem is reported but must not degrade the robot summary.
+
+    map->odom is legitimately absent when only the hardware base runs; before
+    this, bringup-only reported a permanent DEGRADED on the robot.
+    """
+    w = _watch("info", min_rate=5.0, timeout=2.0)
+    level, msg, _ = w.evaluate(window=1.0)  # never received
+    assert level == DiagnosticStatus.OK
+    assert "no messages" in msg
+    w.on_msg(None)  # fresh but slow
+    assert w.evaluate(window=1.0)[0] == DiagnosticStatus.OK
+
+
+def test_tf_info_severity_unavailable_is_ok():
+    tf = _TfWatch(
+        {"name": "localization", "parent": "map", "child": "odom", "severity": "info"}
+    )
+    assert tf.fault_level == DiagnosticStatus.OK
+
+
+def test_boolean_critical_still_supported():
+    assert _severity_level({"critical": True}) == DiagnosticStatus.ERROR
+    assert _severity_level({"critical": False}) == DiagnosticStatus.WARN
+
+
+def test_unknown_severity_rejected():
+    with pytest.raises(ValueError):
+        _severity_level({"name": "x", "severity": "catastrophic"})
+
+
+def test_one_line_collapses_embedded_newlines():
+    """A third-party diagnostic message must not shatter the /health summary.
+
+    controller_manager publishes a multi-line "High execution jitter" status on
+    the shared /diagnostics topic; embedding it verbatim split the single-line
+    summary across several messages on the real robot.
+    """
+    messy = "High execution jitter or mean error :\n[ mote_hardware  mote_hardware ]\n"
+    assert _one_line(messy) == (
+        "High execution jitter or mean error : [ mote_hardware mote_hardware ]"
+    )
+    assert "\n" not in _one_line(messy)
 
 
 def test_sd_notify_noop_without_socket(monkeypatch):

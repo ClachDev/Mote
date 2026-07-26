@@ -44,6 +44,38 @@ LEVEL_NAME = {
     DiagnosticStatus.STALE: "STALE",
 }
 
+# system_monitor's host status, matched by exact name on the shared /diagnostics.
+HOST_STATUS_NAME = "system"
+
+# How much a missing/stale subsystem degrades the robot summary. "info" reports
+# the subsystem without degrading — for edges that are legitimately absent in a
+# healthy state (map->odom exists only once a mission localises).
+SEVERITY_LEVEL = {
+    "critical": DiagnosticStatus.ERROR,
+    "degraded": DiagnosticStatus.WARN,
+    "info": DiagnosticStatus.OK,
+}
+
+
+def _severity_level(spec):
+    """Level a missing/stale subsystem reports, from its config severity."""
+    severity = spec.get("severity")
+    if severity is None:
+        # Back-compat with the boolean form.
+        severity = "critical" if spec.get("critical") else "degraded"
+    if severity not in SEVERITY_LEVEL:
+        raise ValueError(f"unknown severity {severity!r} for {spec.get('name')}")
+    return SEVERITY_LEVEL[severity]
+
+
+def _one_line(text):
+    """Collapse whitespace so a summary stays a single line.
+
+    Third-party diagnostic messages can carry embedded newlines, which would
+    otherwise shatter the one-line /health summary into several messages.
+    """
+    return " ".join(text.split())
+
 
 def _load_config():
     default = os.path.join(
@@ -63,7 +95,7 @@ class _TopicWatch:
         self.topic = spec["topic"]
         self.min_rate = spec.get("min_rate")
         self.timeout = spec.get("timeout", 2.0)
-        self.critical = spec.get("critical", False)
+        self.fault_level = _severity_level(spec)
         self.last_stamp = None
         self.count = 0
 
@@ -78,18 +110,14 @@ class _TopicWatch:
 
         values = {"topic": self.topic, "rate_hz": f"{rate:.1f}"}
         if age is None:
-            level = DiagnosticStatus.ERROR if self.critical else DiagnosticStatus.WARN
-            return level, "no messages received", values
+            return self.fault_level, "no messages received", values
         values["age_s"] = f"{age:.1f}"
         if age > self.timeout:
-            level = DiagnosticStatus.ERROR if self.critical else DiagnosticStatus.WARN
-            return level, f"stale ({age:.1f}s > {self.timeout:.1f}s)", values
+            return self.fault_level, f"stale ({age:.1f}s > {self.timeout:.1f}s)", values
         if self.min_rate is not None and rate < self.min_rate:
-            return (
-                DiagnosticStatus.WARN,
-                f"slow ({rate:.1f} < {self.min_rate:.1f} Hz)",
-                values,
-            )
+            # A degraded rate never exceeds the subsystem's own fault level.
+            level = min(DiagnosticStatus.WARN, self.fault_level)
+            return level, f"slow ({rate:.1f} < {self.min_rate:.1f} Hz)", values
         return DiagnosticStatus.OK, "ok", values
 
 
@@ -101,21 +129,19 @@ class _TfWatch:
         self.parent = spec["parent"]
         self.child = spec["child"]
         self.timeout = spec.get("timeout", 2.0)
-        self.critical = spec.get("critical", False)
+        self.fault_level = _severity_level(spec)
 
     def evaluate(self, buffer, now):
         values = {"transform": f"{self.parent}->{self.child}"}
         try:
             tf = buffer.lookup_transform(self.parent, self.child, rclpy.time.Time())
         except tf2_ros.TransformException as exc:
-            level = DiagnosticStatus.ERROR if self.critical else DiagnosticStatus.WARN
-            values["error"] = str(exc)[:80]
-            return level, "unavailable", values
+            values["error"] = _one_line(str(exc))[:80]
+            return self.fault_level, "unavailable", values
         age = (now - rclpy.time.Time.from_msg(tf.header.stamp)).nanoseconds / 1e9
         values["age_s"] = f"{age:.1f}"
         if age > self.timeout:
-            level = DiagnosticStatus.ERROR if self.critical else DiagnosticStatus.WARN
-            return level, f"stale ({age:.1f}s > {self.timeout:.1f}s)", values
+            return self.fault_level, f"stale ({age:.1f}s > {self.timeout:.1f}s)", values
         return DiagnosticStatus.OK, "ok", values
 
 
@@ -160,14 +186,15 @@ class HealthMonitor(Node):
         self._sd.ready(status="health monitor up")
 
     def _on_diagnostics(self, msg):
-        # Keep the worst host-level status from system_monitor for the roll-up.
-        worst = None
+        # Only system_monitor's host status feeds the roll-up, matched by exact
+        # name. /diagnostics is a shared topic — controller_manager publishes its
+        # own loop-jitter status there — and folding a third party's level into
+        # the robot summary misattributes it as "host". Other publishers stay
+        # visible on /diagnostics itself.
         for status in msg.status:
-            if status.name.startswith("system") or status.hardware_id:
-                if worst is None or status.level > worst.level:
-                    worst = status
-        if worst is not None:
-            self.host_status = worst
+            if status.name == HOST_STATUS_NAME:
+                self.host_status = status
+                break
 
     def _tick(self):
         now_wall = time.monotonic()
@@ -198,7 +225,7 @@ class HealthMonitor(Node):
             statuses.append(self.host_status)
             overall = max(overall, self.host_status.level)
             if self.host_status.level >= DiagnosticStatus.WARN:
-                faults.append(f"host {self.host_status.message}")
+                faults.append(f"host {_one_line(self.host_status.message)}")
 
         selfcheck = self._read_selfcheck()
         if selfcheck is not None:
@@ -213,6 +240,8 @@ class HealthMonitor(Node):
         summary_text = summary_word
         if faults:
             summary_text = f"{summary_word}: " + ", ".join(faults)
+        # One line, always: /health is meant for `ros2 topic echo` and log greps.
+        summary_text = _one_line(summary_text)
 
         mote_status = self._status(
             "mote", overall, summary_text, {"subsystems": str(len(statuses))}
