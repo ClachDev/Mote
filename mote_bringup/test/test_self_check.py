@@ -83,9 +83,8 @@ def test_write_status_roundtrip(tmp_path, monkeypatch):
 def test_held_servo_bus_blocks_bringup_and_names_the_holder(monkeypatch):
     """A bus held by the arm must fail the gate with an actionable reason.
 
-    Before this, the ping went ahead into the other process's traffic and the
-    gate reported "2/2 servos did not respond" — true, but it points at the
-    wrong problem and hides the fix (stop the arm driver).
+    Pinging a contended bus reports "servos did not respond", which is true but
+    points at the wrong problem and hides the fix (stop the arm driver).
     """
     monkeypatch.setattr(
         self_check.serial_bus,

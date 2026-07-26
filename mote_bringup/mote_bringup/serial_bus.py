@@ -6,12 +6,7 @@ The drive wheels and the SO-101 arm sit on the *same* Feetech bus
 need to ask. It lives here, in the base package, rather than in whichever
 component asked first.
 
-``mote_arm.bus.port_holders`` implements the same scan for the arm's side; the
-two should collapse into this one. See the Feetech-layer consolidation
-follow-up — it is deliberately not done here, because unifying the bus layer
-also has to decide what to do about the two different SDKs in play (C++
-``SMS_STS`` in ``mote_hardware``'s realtime ``ros2_control`` loop, Python
-``scservo_sdk`` in ``mote_arm``).
+``mote_arm.bus.port_holders`` implements the same scan for the arm's side.
 """
 
 import os
@@ -50,10 +45,9 @@ def port_holders(path):
             try:
                 with open(f"/proc/{entry}/cmdline", "rb") as f:
                     raw = f.read().replace(b"\0", b" ").decode(errors="replace")
-                # Collapse all whitespace: a cmdline can contain newlines (any
-                # `python3 -c` with a multi-line script does), and callers put
-                # this straight into single-line diagnostics, where an embedded
-                # newline truncates the message and loses the command name.
+                # A cmdline can contain newlines (any `python3 -c` with a
+                # multi-line script does); callers put this straight into
+                # single-line diagnostics, so collapse all whitespace.
                 cmd = " ".join(raw.split())
             except OSError:
                 cmd = "?"

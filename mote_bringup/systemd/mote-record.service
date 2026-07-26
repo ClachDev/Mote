@@ -6,8 +6,8 @@ After=mote-bringup.service
 #
 # Deliberately NOT Wants=: that would make this unit pull bringup, and a restart
 # loop here then fires a start request for bringup every cycle, which bypasses
-# bringup's own RestartSec backoff (measured on the robot — see
-# mote-health.service for the detail). Boot start comes from WantedBy below.
+# bringup's own RestartSec backoff (see mote-health.service). Boot start comes
+# from WantedBy below.
 PartOf=mote-bringup.service
 StartLimitIntervalSec=0
 

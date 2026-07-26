@@ -102,10 +102,9 @@ def _check_servos(result, cfg, do_ping):
         return
 
     # The arm shares this bus with the wheels, and serial ports have no
-    # kernel-level exclusion — pinging into someone else's traffic interleaves
-    # packets on a half-duplex bus, so both sides see corrupt replies and the
-    # ping reports a misleading "servos did not respond". Refuse instead, naming
-    # the holder: the base cannot run while another process owns the bus anyway.
+    # kernel-level exclusion: pinging into another process's traffic interleaves
+    # packets on a half-duplex bus and both sides see corrupt replies. The base
+    # cannot run while another process owns the bus, so refuse and name it.
     holders = serial_bus.port_holders(port)
     if holders:
         who = "; ".join(f"pid {pid} ({cmd[:60]})" for pid, cmd in holders)

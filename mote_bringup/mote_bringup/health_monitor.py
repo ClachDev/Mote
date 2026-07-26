@@ -185,10 +185,10 @@ class HealthMonitor(Node):
 
     def _on_diagnostics(self, msg):
         # Only system_monitor's host status feeds the roll-up, matched by exact
-        # name. /diagnostics is a shared topic — controller_manager publishes its
-        # own loop-jitter status there — and folding a third party's level into
-        # the robot summary misattributes it as "host". Other publishers stay
-        # visible on /diagnostics itself.
+        # name: /diagnostics is a shared topic — controller_manager publishes its
+        # own loop-jitter status there — and folding a third party's level in
+        # would attribute it to the host. Other publishers stay visible on
+        # /diagnostics itself.
         for status in msg.status:
             if status.name == HOST_STATUS_NAME:
                 self.host_status = status

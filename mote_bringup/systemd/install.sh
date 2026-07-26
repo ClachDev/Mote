@@ -8,11 +8,11 @@ set -euo pipefail
 MOTE_USER="${SUDO_USER:-$USER}"
 MOTE_HOME="$(getent passwd "$MOTE_USER" | cut -d: -f6)"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-# The checkout the units should run from: this script's own repo root, NOT a
+# The checkout the units should run from: this script's own repo root, not a
 # hardcoded ~/Mote. Installing from a second checkout (a git worktree, a staging
-# clone) otherwise produces units pointing at a tree that may not even contain
-# the tasks they invoke — on the robot that gave a self-check ExecStartPre
-# failing with status=127 ("task not found") and a permanent restart loop.
+# clone) otherwise produces units pointing at a tree that need not contain the
+# tasks they invoke, which fails ExecStartPre with status=127 and leaves the
+# service restarting forever.
 MOTE_REPO="$(cd "$SRC_DIR/../.." && pwd)"
 echo "Repo: $MOTE_REPO"
 

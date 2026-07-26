@@ -17,8 +17,8 @@ BOUND_S=30          # max seconds allowed for a node to reappear
 POLL_MS=500         # integer arithmetic only: `bc` is not installed on the Pi
 SELF=$$
 # Log outside the repo: run output is not a repo artifact, and writing into a
-# tracked file dirties the worktree and blocks later git operations (it silently
-# aborted a --ff-only merge mid-test). Set CHAOS_LOG to redirect.
+# tracked file dirties the worktree, which blocks git operations such as a
+# --ff-only merge. Set CHAOS_LOG to redirect.
 LOG="${CHAOS_LOG:-/tmp/mote_chaos_log.txt}"
 
 # Executable names to knock over. These are the process names, not the launch

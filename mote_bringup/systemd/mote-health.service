@@ -2,10 +2,10 @@
 Description=Mote Health Monitor
 # Ordering only — deliberately no Wants= and no PartOf=:
 #   * Wants= would make this unit *pull* bringup. A restart loop here then fires
-#     a start request for bringup on every cycle, and such a request bypasses
+#     a start request for bringup on every cycle, and a requested start bypasses
 #     bringup's own RestartSec backoff ("Scheduled restart job immediately on
-#     client request"). Measured on the robot: bringup hammered every ~3.5 s
-#     while systemd's own RestartUSecNext already said 30 s.
+#     client request"), so bringup restarts at this unit's rate rather than its
+#     own backoff.
 #   * PartOf= would restart the monitor whenever bringup restarts, losing
 #     observation exactly when something is going wrong.
 # The monitor's whole job is to keep watching and report a broken robot, so it

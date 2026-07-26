@@ -28,7 +28,7 @@ robot when the recovery paths change.
   binaries. If you add a Python target, match on the cmdline instead. A target
   that is never found aborts the run rather than reporting a false failure.
 - `bc` is not installed on the Pi, so all timing here is integer milliseconds in
-  pure bash. Keep it that way.
+  pure bash.
 - **Tearing down afterwards**: `pixi run robot` also starts the rosbag
   recorders, and killing a launch's nodes does not stop them. Sweep for leftover
   `ros2 bag record` processes (and the `~/.mote/bags/<stream>/<timestamp>`
@@ -43,6 +43,6 @@ robot when the recovery paths change.
    `WatchdogSec=15`) is killed and restarted when it stops petting the watchdog.
 
 Layers 2 and 3 are systemd's; `mote_bringup/README.md` documents the unit
-configuration that makes them work, including the two traps found on the robot
-(a `Wants=` dependent defeating the restart backoff, and hardcoding a checkout
-path in a unit template).
+configuration that makes them work, including two traps worth knowing about: a
+`Wants=` dependent defeats the parent's restart backoff, and hardcoding a
+checkout path in a unit template breaks installs from a second checkout.

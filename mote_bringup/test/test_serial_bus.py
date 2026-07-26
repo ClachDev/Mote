@@ -70,9 +70,8 @@ def test_holder_cmdline_is_single_line():
     """A holder's cmdline must be one line.
 
     Callers put it straight into single-line diagnostics, and a cmdline can
-    legitimately contain newlines — any `python3 -c` with a multi-line script.
-    Observed on the robot: the gate's FAIL message truncated at "python3 -c "
-    and lost the command name that made it actionable.
+    legitimately contain newlines — any `python3 -c` with a multi-line script —
+    which would truncate the message and lose the command name.
     """
     import subprocess
     import time

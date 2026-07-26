@@ -4,8 +4,7 @@ A launch action may only ever be executed once. `respawn=True` on
 controller_manager makes its OnProcessStart handler fire again on every restart,
 so the handler must produce *fresh* spawner actions each time. Registering fixed
 Node actions raises "executed more than once", and that exception aborts the
-entire launch, taking every other node down with it — observed on the robot,
-where killing ros2_control_node also killed the lidar and camera.
+entire launch, taking every other node down with it.
 """
 
 from launch.actions import OpaqueFunction, RegisterEventHandler
@@ -51,8 +50,7 @@ def test_handler_registers_an_opaque_function_not_bare_nodes():
 
     registered = _registered_actions(handler)
     assert len(registered) == 1
-    # An OpaqueFunction can be executed repeatedly; a Node cannot, and a Node
-    # registered here is precisely the bug this guards against.
+    # An OpaqueFunction can be executed repeatedly; a Node cannot.
     assert isinstance(registered[0], OpaqueFunction)
     assert not any(isinstance(e, Node) for e in registered)
 

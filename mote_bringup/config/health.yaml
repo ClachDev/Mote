@@ -28,10 +28,10 @@ topics:
     timeout: 2.0
     severity: critical
   # controller_manager runs at 50 Hz (controllers.yaml), so the broadcaster
-  # publishes far above this floor. 5 Hz is deliberately loose: it is a "the
-  # control loop is not overrunning" check, not a rate spec. Measured on the
-  # robot, an unresponsive servo bus blocks each read() ~200 ms per servo and
-  # collapses the loop to ~1.6 Hz, which this catches.
+  # publishes far above this floor. 5 Hz is deliberately loose: it detects a
+  # control loop that is overrunning, not an off-spec rate. An unresponsive
+  # servo bus blocks each read() ~200 ms per servo, collapsing the loop to
+  # ~1.6 Hz.
   - name: joint_states
     topic: /joint_states
     type: sensor_msgs/msg/JointState

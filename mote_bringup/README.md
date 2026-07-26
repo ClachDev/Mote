@@ -64,8 +64,8 @@ separate self-check service; gating bringup gates everything downstream.
   restart-looping fires a start request for bringup every cycle, and such a
   request **bypasses bringup's own `RestartSec` backoff** — systemd logs
   "Scheduled restart job immediately on client request". Measured on the robot:
-  bringup hammered every ~3.5 s while systemd's `RestartUSecNext` already said
-  30 s. Each unit is started at boot by its own `WantedBy=multi-user.target`.
+  bringup then restarts at the dependent's rate rather than its own backoff.
+  Each unit is started at boot by its own `WantedBy=multi-user.target`.
   `mote-slam`/`mote-nav` keep `Requires=`/`BindsTo=` because they are genuinely
   meaningless without bringup, and `BindsTo` holds them stopped (rather than
   looping) while it is down.
@@ -136,12 +136,12 @@ severity). `info` exists because the hardware base alone legitimately has no map
 frame: scoring that as DEGRADED made a healthy idle robot report DEGRADED
 forever. Mission localisation health belongs to the nav2 lifecycle, not here.
 
-Two things learned measuring this on the robot:
+Two things worth knowing about these thresholds:
 
-- The `joint_states` 5 Hz floor is a *control-loop-overrun* check, not a rate
-  spec (`controller_manager` runs at 50 Hz). When the servo bus stopped
-  answering, each `read()` blocked ~200 ms per servo and the loop collapsed to
-  ~1.6 Hz — the floor caught a real fault the driver only logged as warnings.
+- The `joint_states` 5 Hz floor detects a control loop that is overrunning; it
+  is not a rate spec (`controller_manager` runs at 50 Hz). An unresponsive servo
+  bus blocks each `read()` ~200 ms per servo and collapses the loop to ~1.6 Hz,
+  which the driver itself reports only as warnings.
 - `/diagnostics` is a **shared** topic: `controller_manager` publishes its own
   loop-jitter status there. The host status is therefore matched by exact name
   (`system`), or a third party's ERROR gets misattributed to the host and drives

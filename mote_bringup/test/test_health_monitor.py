@@ -83,8 +83,8 @@ def test_recovery_back_to_ok():
 def test_info_severity_never_degrades():
     """An `info` subsystem is reported but must not degrade the robot summary.
 
-    map->odom is legitimately absent when only the hardware base runs; before
-    this, bringup-only reported a permanent DEGRADED on the robot.
+    map->odom is legitimately absent when only the hardware base runs, so
+    scoring it would leave a healthy idle robot permanently DEGRADED.
     """
     w = _watch("info", min_rate=5.0, timeout=2.0)
     level, msg, _ = w.evaluate(window=1.0)  # never received
@@ -112,11 +112,11 @@ def test_unknown_severity_rejected():
 
 
 def test_one_line_collapses_embedded_newlines():
-    """A third-party diagnostic message must not shatter the /health summary.
+    """A third-party diagnostic message must not break the /health summary.
 
     controller_manager publishes a multi-line "High execution jitter" status on
-    the shared /diagnostics topic; embedding it verbatim split the single-line
-    summary across several messages on the real robot.
+    the shared /diagnostics topic, and embedding such a message verbatim would
+    split the single-line summary across several messages.
     """
     messy = "High execution jitter or mean error :\n[ mote_hardware  mote_hardware ]\n"
     assert _one_line(messy) == (
@@ -144,10 +144,9 @@ def test_sd_notify_watchdog_period(monkeypatch):
 def test_health_config_override_honours_mote_home(tmp_path, monkeypatch):
     """The per-robot override must resolve through MOTE_HOME, not a literal ~/.mote.
 
-    CLAUDE.md makes mote_home the one place that rule lives, so MOTE_HOME is
-    honoured everywhere. This module originally hardcoded ~/.mote/health.yaml,
-    which silently ignored MOTE_HOME — invisible on a robot (where they are the
-    same path) but wrong for the sim and for tests.
+    mote_home is the one place that rule lives, so MOTE_HOME is honoured
+    everywhere. A hardcoded ~/.mote looks identical on a robot, where the two are
+    the same path, and is wrong for the sim and for tests.
     """
     monkeypatch.setenv("MOTE_HOME", str(tmp_path))
     override = tmp_path / "health.yaml"

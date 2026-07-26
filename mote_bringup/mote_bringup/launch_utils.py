@@ -27,12 +27,11 @@ def controller_spawn_handler(controller_manager):
     """Spawn the controllers whenever ``controller_manager`` starts.
 
     Wrapping the spawners in an OpaqueFunction is what makes a
-    ``respawn=True`` controller_manager survivable. Registering pre-built Node
+    ``respawn=True`` controller_manager survivable: registering pre-built Node
     actions instead raises "executed more than once" on the second start, and
-    that exception aborts the *entire* launch — on the robot, killing
-    ros2_control_node took the lidar and camera down with it. Re-spawning is
-    also required for real recovery: a restarted controller_manager comes back
-    with no controllers loaded.
+    that exception aborts the entire launch, taking every other node with it.
+    Re-spawning is also required for recovery to mean anything — a restarted
+    controller_manager comes back with no controllers loaded.
     """
     return RegisterEventHandler(
         event_handler=OnProcessStart(
