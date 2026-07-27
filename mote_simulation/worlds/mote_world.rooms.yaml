@@ -1,0 +1,7 @@
+# Every enclosed room of mote_world.sdf as its walkable rectangle
+# (x0, y0, x1, y1, metres, wall faces not centrelines) -- ground truth for
+# scoring map room segmentation, see mote_simulation/test/room_segmentation_eval.py.
+# Read off the SDF by hand (the world is hand-written, unlike hospital_world,
+# whose generator emits its own rooms file). Corridors are not rooms.
+rooms:
+  - [-2.9, -2.9, 2.9, 2.9]

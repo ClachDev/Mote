@@ -1,0 +1,18 @@
+# Every enclosed room of office_world.sdf as its walkable rectangle
+# (x0, y0, x1, y1, metres, wall faces not centrelines) -- ground truth for
+# scoring map room segmentation, see mote_simulation/test/room_segmentation_eval.py.
+# Read off the SDF by hand (the world is hand-written, unlike hospital_world,
+# whose generator emits its own rooms file): a 22 x 12 m shell with a corridor
+# between y = -1 and y = 1, and five wards each side split at x = -6.6, -2.2,
+# 2.2, 6.6. The corridor itself is not a room and is not listed.
+rooms:
+  - [-10.925, 1.075, -6.675, 5.925]
+  - [-6.525, 1.075, -2.275, 5.925]
+  - [-2.125, 1.075, 2.125, 5.925]
+  - [2.275, 1.075, 6.525, 5.925]
+  - [6.675, 1.075, 10.925, 5.925]
+  - [-10.925, -5.925, -6.675, -1.075]
+  - [-6.525, -5.925, -2.275, -1.075]
+  - [-2.125, -5.925, 2.125, -1.075]
+  - [2.275, -5.925, 6.525, -1.075]
+  - [6.675, -5.925, 10.925, -1.075]
