@@ -1,5 +1,4 @@
 import os
-import tempfile
 
 import yaml
 from ament_index_python.packages import get_package_share_directory
@@ -12,7 +11,12 @@ from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
 from mote_bringup import mote_home, param_overrides
-from mote_bringup.launch_utils import controller_spawn_handler
+from mote_bringup.launch_utils import (
+    INACTIVE_CONTROLLERS,
+    arm_on_wheel_bus,
+    controller_spawn_handler,
+    joint_params_file,
+)
 
 
 def generate_launch_description():
@@ -33,24 +37,8 @@ def generate_launch_description():
     controller_config = param_overrides.override_path(
         "controllers", os.path.join(bringup_share, "config", "controllers.yaml")
     )
-    # Must be a params *file* keyed by node name: a plain dict gets flattened to
-    # "diff_drive_controller.ros__parameters.wheel_separation" on the
-    # controller_manager node and never reaches the diff_drive_controller node.
-    wheel_params_file = tempfile.NamedTemporaryFile(
-        mode="w", prefix="mote_wheel_params_", suffix=".yaml", delete=False
-    )
-    yaml.safe_dump(
-        {
-            "diff_drive_controller": {
-                "ros__parameters": {
-                    "wheel_separation": cfg["wheel_separation"],
-                    "wheel_radius": cfg["wheel_radius"],
-                }
-            }
-        },
-        wheel_params_file,
-    )
-    wheel_params_file.close()
+    has_arm = arm_on_wheel_bus(cfg)
+    controller_joint_params = joint_params_file(cfg)
 
     # respawn=True gives per-node recovery: if a driver process crashes, the
     # launch system relaunches it within respawn_delay. This is the inner layer;
@@ -69,7 +57,7 @@ def generate_launch_description():
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, controller_config, wheel_params_file.name],
+        parameters=[robot_description, controller_config, controller_joint_params],
         **respawn,
     )
 
@@ -184,7 +172,10 @@ def generate_launch_description():
             SetParameter(name="use_sim_time", value=use_sim_time),
             robot_state_publisher,
             controller_manager,
-            controller_spawn_handler(controller_manager),
+            controller_spawn_handler(
+                controller_manager,
+                inactive=INACTIVE_CONTROLLERS if has_arm else (),
+            ),
             rplidar,
             laser_filter,
             camera,

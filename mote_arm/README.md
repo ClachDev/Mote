@@ -63,33 +63,73 @@ exists rather than a dependency.
 We are not outside this ecosystem either: `mote_hardware` builds on our fork of
 [`adityakamath/SCServo_Linux`](https://github.com/adityakamath/SCServo_Linux)
 (packaging fixes upstreamed, v1.0 packaged on the mote prefix.dev channel) —
-the same SDK LeRobot and the stacks above sit on. When arm control folds into
-`mote_hardware`'s ros2_control interface (task 231), evaluate
+the same SDK LeRobot and the stacks above sit on. Arm control has since folded
+into `mote_hardware`'s ros2_control interface (below);
 [`adityakamath/sts_hardware_interface`](https://github.com/adityakamath/sts_hardware_interface)
-first: same SDK underneath, and it already supports mixed position/velocity
-modes on one bus — though it targets Kilted (we run Jazzy), is not on
-rosdistro, and is a fast-moving single-maintainer WIP, so the honest case for
-it is upstream convergence, not saved effort.
+does the same job on the same SDK, with mixed position/velocity modes on one
+bus, and remains the upstream to converge on — but it targets Kilted (we run
+Jazzy), is not on rosdistro, and is a fast-moving single-maintainer WIP, so
+adopting it now would trade a working stack for a moving one.
 
 ## Wiring: the arm shares the drive-wheel bus
 
 Verified on the robot: arm servos are IDs **1–6**, the drive wheels are **7**
 and **9**, and all eight are on the one `/dev/mote_servos` (CH343) bus. The arm
-needs no udev rule of its own. Two consequences are enforced in code, not just
+needs no udev rule of its own.
+
+A serial port has no kernel-level exclusion, so a second opener is not refused —
+it interleaves packets on the bus that *moves the robot*, and both openers see
+corrupt replies. There is therefore exactly one process allowed to hold that
+port, and **it is the controller_manager**: `mote_hardware`'s `MoteHardware`
+exports velocity command interfaces for the wheels and position command
+interfaces for the six arm joints, from one `open()`.
+
+That is what lets the arm move *during* a mission, with Nav2 driving the wheels
+at the same time — the point of the arm, and impossible while it lived in its
+own process. Two guards keep the arrangement honest rather than merely
 documented:
 
 - **ID collision** — an arm ID equal to a wheel ID would send arm commands to a
-  wheel. `mote_arm.config` rejects that at load time when both share a port.
-- **One opener only** — a serial port has no kernel-level exclusion, so a second
-  process would interleave packets on the bus that *moves the robot*.
-  `mote_arm.bus.FeetechBus.open()` scans `/proc` and refuses to open a port
-  another process already holds, naming the offending PID. In practice: the arm
-  driver cannot run at the same time as the robot base (`pixi run launch`,
-  `mapping`, `robot`) — stop the base first (`pixi run kill`).
+  wheel. Rejected at load time in `mote_arm.config` *and* in `MoteHardware`, on
+  both sides of the language boundary.
+- **One opener only** — `MoteHardware::on_activate` scans `/proc` for another
+  holder of the port and refuses to start, naming the PID; the read-only bench
+  tools (`arm-check`, `arm-gains`) do the same through `mote_arm.bus`. So
+  whichever starts first wins and the loser says why, instead of two processes
+  quietly corrupting each other's traffic.
 
-Lifting that restriction means moving arm control into the `mote_hardware`
-ros2_control `SystemInterface`, so one process owns the bus. That is the natural
-next step once the arm needs to move *during* a mission.
+The bench tools still open the bus directly, so they still need the control
+stack stopped (`pixi run kill`). `jog` and `arm-pose` do not — they command the
+controller.
+
+## Where the arm lives in the control stack
+
+```
+robot.yaml (arm:)
+   |
+   +-- mote.urdf.xacro  -> <ros2_control> joints, one per arm servo, carrying
+   |                       its id / soft limits / home / invert as <param>s
+   |
+   +-- mote_launch.py   -> arm_controller's joint list (never duplicated in
+                           controllers.yaml)
+
+controller_manager
+   |-- diff_drive_controller   (active)    velocity -> wheels
+   |-- joint_state_broadcaster (active)    /joint_states, wheels *and* arm
+   \-- arm_controller          (INACTIVE)  position -> arm, on demand
+```
+
+`arm_controller` is a `JointTrajectoryController`, spawned **inactive**.
+Activating it is what claims the arm's position command interfaces, which is
+what makes the hardware enable torque — so "the arm is limp until something
+asks it to move" is now a property of the control stack rather than a rule the
+driver had to remember.
+
+The hardware also spends the shared bus carefully, because the wheels are on
+it: arm states are read one joint per control cycle (~8 Hz per joint at the
+50 Hz update rate) rather than six reads every cycle, and arm goals go out as a
+single sync-write packet, only when a goal actually changed. An idle arm costs
+no bus traffic at all.
 
 ## Components
 
@@ -101,10 +141,11 @@ conversions are verified without hardware.
 |-------|------------|
 | `config.py` | Parses the `arm:` section; encoder<->radian conversion + soft-limit clamping. |
 | `bus.py` | `FeetechBus` — thin `scservo_sdk` wrapper (ping, read position/health, torque, position goal, homing offset). Lazy SDK import. |
-| `arm_driver` (node) | **Single bus owner.** Publishes `/joint_states` for the arm, accepts absolute goals on `arm/goal`, exposes `arm/set_torque`. `pixi run arm`. |
-| `jog` (CLI) | Interactive per-joint jog. A *client* of the driver — publishes clamped `arm/goal`, calls `arm/set_torque`. `pixi run arm-jog`. |
-| `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only; run with the driver stopped. `pixi run arm-check`. |
-| `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. `pixi run arm-calibrate`. |
+| `control.py` | The one place that knows how to talk to `arm_controller`: single-point trajectories, and activation as the torque switch. |
+| `arm_launch.py` | Bench bring-up — the same controller_manager, URDF and `controllers.yaml` as a mission, without the lidar/camera/Nav2. `pixi run arm`. |
+| `jog` (CLI) | Interactive per-joint jog. A *client of the controller* — publishes clamped trajectories, never opens the bus. `pixi run arm-jog`. |
+| `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only, but opens the bus: run with the control stack stopped. `pixi run arm-check`. |
+| `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. Owns the bus: control stack stopped. `pixi run arm-calibrate`. |
 | `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
 
@@ -299,44 +340,61 @@ setpoint it was given: sustained lag beyond `--max-lag` (0.15 rad) for
 `--stall-time` means it is no longer keeping up, and the move stops where it is.
 Measured lag on the full swing is a steady 0.07-0.10 rad.
 
-Because `arm_driver` and `arm_check` both open the serial port, run **one at a
-time**, never both.
+`arm-pose go` and `jog` command `arm_controller`, so they run happily alongside
+a mission. `arm-check` and `arm-gains` open the bus directly and so still need
+the control stack stopped.
+
+Lag is measured against `/joint_states`, which the hardware refreshes one arm
+joint per control cycle to stay inside the bus budget it shares with the wheels,
+so a stall is caught within a few setpoints rather than instantly.
 
 ## Torque policy
 
-Nothing moves without an explicit command.
+Nothing moves without an explicit command. The policy did not change when the
+arm moved into ros2_control — it stopped being a rule the driver enforced and
+became a consequence of who holds the command interfaces.
 
-- **Startup (`arm_driver`):** torque **OFF** — the arm is limp/back-drivable.
-  Have the arm physically supported or resting in a stable pose before power.
-  A servo that fails enumeration, or cannot be *confirmed* in position mode
-  (mode changes are verified by read-back, never blind-written to EEPROM), is
-  excluded from control entirely: its state is still published, but it accepts
-  no goals — in wheel mode a position goal is obeyed as a speed.
-- **First goal:** a goal on `arm/goal` (or `jog`'s `+`/`-`/`home`) enables
-  torque (holding the current pose) and then moves. Torque is engaged
-  per-joint: a joint whose position cannot be read at that instant stays limp,
-  receives no goals, and is retried on the next command rather than silently
-  abandoned. Goals are soft-clamped to the per-joint limits from `robot.yaml`
-  in the driver — the authoritative clamp — and again client-side in `jog` for
-  immediate feedback.
-- **`arm/set_torque false`** (or quitting `jog`): torque OFF — limp. The
-  enable direction reports `success: false` and names any joints left limp.
-- **Shutdown (`arm_driver`):** torque OFF — the arm is left safely limp.
+- **Bringup:** torque **OFF** — the arm is limp/back-drivable, and
+  `arm_controller` is spawned inactive so nothing holds its interfaces. Have the
+  arm physically supported or resting in a stable pose before power. A servo
+  that fails enumeration, or cannot be *confirmed* in position mode (mode
+  changes are verified by read-back, never blind-written to EEPROM), is excluded
+  from control entirely: its state is still published, but it accepts no goals —
+  in wheel mode a position goal is obeyed as a speed.
+- **Taking hold:** activating `arm_controller` makes the hardware seed each
+  joint's goal register with its *present* position and only then enable torque
+  — the order that stops an arm snapping to a stale goal. It engages one joint
+  per control cycle (~120 ms for all six) so no single realtime cycle pays for
+  six read-plus-write pairs, and a joint whose position cannot be read stays
+  limp rather than being driven against an unknown goal.
+- **Letting go:** deactivating `arm_controller` (`jog`'s `torque off`, or
+  quitting `jog`) drops torque immediately, inside the switch itself rather than
+  on the next write — a component being torn down may never write again.
+- **Shutdown:** deactivating the hardware stops the wheels and limps the arm.
+
+Goals are soft-clamped to the per-joint limits from `robot.yaml` **in the
+hardware**, on the far side of every client, so a trajectory controller, the jog
+CLI and the task layer are all held to the same envelope. `jog` clamps again
+client-side purely for immediate feedback.
 
 ## Control interfaces
 
-- `/joint_states` (`sensor_msgs/JointState`) — arm joint positions in rad.
-  robot_state_publisher animates the arm in TF from these (the joints are in the
-  URDF; see `mote_description/urdf/mote.urdf.xacro`, `arm:=true`).
-- `arm/goal` (`sensor_msgs/JointState`) — absolute per-joint goal positions
-  (rad); only the `name`/`position` fields are read.
-- `arm/set_torque` (`std_srvs/SetBool`) — `true` = hold, `false` = limp.
+- `/joint_states` (`sensor_msgs/JointState`) — published by
+  `joint_state_broadcaster` for the wheels *and* the arm. robot_state_publisher
+  animates the arm in TF from these (the joints are in the URDF; see
+  `mote_description/urdf/mote.urdf.xacro`, `arm:=true`).
+- `arm_controller/joint_trajectory` (`trajectory_msgs/JointTrajectory`) — a
+  goal. `allow_partial_joints_goal` is on, so a single-joint trajectory is
+  valid and the rest hold where they are.
+- `arm_controller/follow_joint_trajectory` (action) — the same thing with
+  feedback and cancellation; this is the seam the task layer's pick/place will
+  use in place of its stubs.
+- `controller_manager/switch_controller` — activate to hold, deactivate to limp.
 
 ## Physical note (GitHub #2)
 
 The camera does not fit when the SO-101 arm is attached. That is an unresolved
-mechanical clash, tracked separately — not addressed here. `arm_driver` is not
-part of the mission bringup; run it explicitly with `pixi run arm`.
+mechanical clash, tracked separately — not addressed here.
 
 ## Calibration
 
@@ -366,14 +424,30 @@ offset, so the limits stay whatever they were.
 
 ## Verified on hardware
 
+> **The ros2_control fold is not in this table.** Everything below was measured
+> against the real arm on 2026-07-25, when it ran as a standalone driver. The
+> move into `mote_hardware` is verified against a *simulated* STS bus —
+> `mote_hardware/test/test_arm_bus.cpp` drives the real plugin through the real
+> SCServo SDK over a pty and asserts on the actual packets (comes up limp, seeds
+> the goal before enabling torque, clamps to the soft limits, sends nothing when
+> a goal has not changed, drops torque on release) — plus a green `pixi run
+> sim-test`. The hardware runs in `BENCH.md`'s "still open" list are the real
+> gate, in particular jogging the arm *while the wheels are driving*, which is
+> the thing this whole change exists to make possible.
+>
+> The soft limits did not change, and they are still the authoritative gate on
+> motion — but they are still the conservative envelope of two taught poses,
+> and `home:` is still the arm's as-found resting counts rather than a taught
+> mechanical zero (see Calibration). Nothing here widens what the arm may do.
+
 Run against the real arm on 2026-07-25:
 
 | Check | Result |
 |-------|--------|
 | Bus enumeration | all 6 joints respond; 5.1–5.2 V, 26–29 °C, load 0 |
 | `/joint_states` | 6 arm joints at a steady 20.0 Hz, no jitter while limp |
-| Startup torque | driver comes up limp; `TORQUE_ENABLE` reads 0 on every joint |
-| Port guard | `arm_check` refused the bus while the driver held it, naming its PID |
+| Startup torque | bringup comes up limp; `TORQUE_ENABLE` reads 0 on every joint |
+| Port guard | `arm_check` refused the bus while another process held it, naming its PID |
 | Torque engage | seeding goals before enabling moved the arm **0.00000 rad** |
 | Jog motion | `elbow_flex` jogged −0.05 rad per step and returned; `/joint_states` tracked |
 | Soft-limit clamp | repeated `+` past the limit held at `+0.103` — no further motion |

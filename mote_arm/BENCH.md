@@ -41,9 +41,13 @@ recalibration. What is still open:
 
 The arm **shares the drive-wheel bus**: arm IDs 1–6, wheels 7 and 9, all on
 `/dev/mote_servos`. `robot.yaml` already reflects this and no udev rule is
-needed. Because the bus is shared, **stop the robot base before running the
-arm** (`pixi run kill`) — the driver refuses to start otherwise, naming the
-process that holds the port.
+needed. One process owns that port and it is the controller_manager, so the arm
+now comes up with the base rather than instead of it.
+
+Only one thing on this bench still needs the base stopped: the tools that open
+the bus directly — `arm-check` and `arm-gains`. Run `pixi run kill` before
+those; they refuse to start otherwise, naming the process that holds the port.
+`arm-jog` and `arm-pose` command the controller and need no such care.
 
 ## Step 2 — enumerate + health check
 
@@ -206,7 +210,15 @@ Terminal A:
 pixi run arm
 ```
 
-**Expected:** `arm_driver up ... (torque OFF — limp until commanded)`.
+**Expected:** `MoteHardware ... Activated on /dev/mote_servos ... arm: 6/6
+joints controllable (torque OFF — limp until a controller claims them)`, then
+`joint_state_broadcaster` and an **inactive** `arm_controller`. Confirm with:
+
+```
+pixi run -- ros2 control list_controllers
+```
+
+`arm_controller` must read `inactive` — that is what keeps the arm limp.
 
 Terminal B:
 
@@ -220,7 +232,9 @@ criterion 1.**
 
 ## Step 5 — jog each joint through a small range (done for `elbow_flex`)
 
-Leave `pixi run arm` running in Terminal A. Terminal C:
+Leave `pixi run arm` running in Terminal A (or a full `pixi run robot` — the
+arm is part of the mission stack now, and this step works during a mission).
+Terminal C:
 
 ```
 pixi run arm-jog
@@ -324,7 +338,7 @@ Already verified on the robot (2026-07-25):
 
 - [x] `arm.port` points at the shared wheel bus; all six joints respond
 - [x] `/joint_states` shows live arm joints (20 Hz)
-- [x] driver starts limp and leaves the arm limp on shutdown
+- [x] bringup starts limp and leaves the arm limp on shutdown
 - [x] the soft-limit clamp rejects an out-of-range goal (proven zero-motion)
 
 - [x] `elbow_flex` jogs in the commanded direction; `/joint_states` tracks it
@@ -351,6 +365,15 @@ Still open:
       its own zero; the calibrated band on the arm does not)
 - [ ] the offset applies to commanded goals, not only to feedback — the first
       `arm-jog` move settles it
+- [ ] **the arm moving under ros2_control on the real robot** — everything
+      about the fold is verified against a simulated bus
+      (`mote_hardware/test/test_arm_bus.cpp`), not against servos: confirm
+      `arm-jog` still moves `elbow_flex` in the commanded direction, that the
+      soft limits still hold, and that activating `arm_controller` takes hold
+      without a snap
+- [ ] **the arm moving while the wheels are driving** — the point of the fold.
+      `pixi run robot`, drive a short goal, and jog the arm at the same time;
+      watch for wheel-odometry glitches that would mean the bus is oversubscribed
 - [ ] the other five joints jogged and direction-checked (`invert`)
 - [ ] re-check the gain with a payload on the gripper — the sweep only measures
       an unloaded static hold, which is why Kp=64 was taken over a better-scoring

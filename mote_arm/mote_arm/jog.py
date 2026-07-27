@@ -1,13 +1,19 @@
 """Interactive per-joint jog CLI for the SO-101 follower arm.
 
-A thin client of ``arm_driver`` (it publishes ``arm/goal`` and calls
-``arm/set_torque``), so it never touches the serial bus itself and there is no
-contention with the driver. Increments are clamped to the per-joint soft limits
-from robot.yaml both here (for immediate feedback) and again in the driver
-(authoritative). On exit it commands the arm limp — torque off.
+A client of the ros2_control stack, not of the bus: it publishes single-point
+trajectories to ``arm_controller/joint_trajectory`` and reads ``/joint_states``
+from the joint_state_broadcaster, so it never opens the serial port and cannot
+contend with the wheels. Increments are clamped to the per-joint soft limits
+from robot.yaml both here (for immediate feedback) and again in the hardware
+(authoritative).
 
-Run the driver first (``pixi run arm``), then ``pixi run arm-jog`` in another
-terminal.
+"Torque" is controller activation. ``arm_controller`` is spawned *inactive*, so
+the arm starts limp; activating it makes MoteHardware take hold of the arm's
+current pose, and deactivating it drops torque. Jogging therefore activates on
+demand, and exiting leaves the arm limp again.
+
+Start a stack that owns the bus first — ``pixi run arm`` on the bench, or
+``pixi run robot`` / ``mapping`` during a mission — then ``pixi run arm-jog``.
 """
 
 from __future__ import annotations
@@ -19,15 +25,26 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_srvs.srv import SetBool
 
 from mote_arm import config
 from mote_arm.config import JointSpec
+from mote_arm.control import ArmControl
+
+# Trajectory speed for a jog move. Deliberately under the servos' own
+# `moving_speed` cap (robot.yaml: 500 steps/s is ~0.77 rad/s) — a trajectory
+# asking for more than the servo delivers just runs ahead of the hardware.
+JOG_SPEED_RAD_S = 0.5
+MIN_MOVE_TIME_S = 0.5
 
 
 def next_target(current: float, step: float, joint: JointSpec) -> float:
     """Advance ``current`` by ``step`` and clamp to the joint's soft limits."""
     return joint.clamp_rad(current + step)
+
+
+def move_time(delta: float) -> float:
+    """Seconds to allow for a jog of ``delta`` radians."""
+    return max(MIN_MOVE_TIME_S, abs(delta) / JOG_SPEED_RAD_S)
 
 
 class JogClient(Node):
@@ -41,9 +58,8 @@ class JogClient(Node):
         self._target: dict[str, float] = {}
         self._lock = threading.Lock()
 
-        self._pub = self.create_publisher(JointState, "arm/goal", 10)
+        self.arm = ArmControl(self)
         self.create_subscription(JointState, "joint_states", self._on_states, 10)
-        self._torque_cli = self.create_client(SetBool, "arm/set_torque")
 
     def _on_states(self, msg: JointState) -> None:
         with self._lock:
@@ -63,33 +79,27 @@ class JogClient(Node):
         meas = self.measured(joint.name)
         return meas if meas is not None else 0.0
 
-    def wait_for_states(self, timeout: float = 2.0) -> bool:
-        """Block briefly until the first /joint_states arrives."""
+    def wait_for_states(self, timeout: float = 5.0) -> bool:
+        """Block briefly until /joint_states carries an arm joint.
+
+        The joint_state_broadcaster publishes the wheels too, so waiting for any
+        message at all would succeed even with the arm absent from the stack.
+        """
+        wanted = set(self.cfg.names)
         deadline = time.time() + timeout
         while time.time() < deadline:
             with self._lock:
-                if self._measured:
+                if wanted & self._measured.keys():
                     return True
             time.sleep(0.05)
         return False
 
     def send(self, joint: JointSpec, rad: float) -> None:
-        self._target[joint.name] = rad
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = [joint.name]
-        msg.position = [rad]
-        self._pub.publish(msg)
-
-    def set_torque(self, enable: bool) -> None:
-        if not self._torque_cli.wait_for_service(timeout_sec=2.0):
-            self.get_logger().warn(
-                "arm/set_torque unavailable — is arm_driver running?"
-            )
-            return
-        req = SetBool.Request()
-        req.data = enable
-        self._torque_cli.call_async(req)
+        """Command one joint, taking hold of the arm first if it is still limp."""
+        measured = self.measured(joint.name)
+        delta = rad - measured if measured is not None else rad
+        if self.arm.send({joint.name: rad}, move_time(delta)):
+            self._target[joint.name] = rad
 
 
 HELP = """
@@ -98,7 +108,7 @@ Commands:
   + / -          jog selected joint by +step / -step
   step <rad>     set jog step (default 0.05 rad)
   zero           move selected joint to 0 rad (mid-travel, NOT the rest pose)
-  torque on|off  enable (hold) / disable (limp) torque
+  torque on|off  hold (activate arm_controller) / limp (deactivate it)
   status         print all joints
   help           show this help
   quit           limp the arm and exit
@@ -106,7 +116,9 @@ Commands:
 
 
 def _print_status(node: JogClient, selected: int, step: float) -> None:
-    print(f"\nstep = {step:.3f} rad")
+    print(
+        f"\nstep = {step:.3f} rad   arm is {'HOLDING' if node.arm.holding else 'LIMP'}"
+    )
     for i, joint in enumerate(node.cfg.joints):
         meas = node.measured(joint.name)
         meas_s = f"{meas:+.3f}" if meas is not None else "  ?  "
@@ -123,7 +135,10 @@ def _repl(node: JogClient) -> None:
     step = 0.05
     print("SO-101 arm jog. Type 'help' for commands. Arm starts LIMP.")
     if not node.wait_for_states():
-        print("warning: no /joint_states yet — is 'pixi run arm' running?")
+        print(
+            "warning: no arm joints on /joint_states — is a stack that owns the "
+            "bus running (`pixi run arm`, or `pixi run robot`)?"
+        )
     _print_status(node, selected, step)
     while True:
         try:
@@ -167,7 +182,7 @@ def _repl(node: JogClient) -> None:
             node.send(joint, tgt)
             print(f"{joint.name} -> {tgt:+.3f} rad (zero)")
         elif cmd == "torque" and len(parts) == 2:
-            node.set_torque(parts[1].lower() in ("on", "true", "1", "hold"))
+            node.arm.set_holding(parts[1].lower() in ("on", "true", "1", "hold"))
         elif cmd == "status":
             _print_status(node, selected, step)
         else:
@@ -186,8 +201,8 @@ def main() -> None:
         except (KeyboardInterrupt, ExternalShutdownException):
             pass
         except Exception:  # noqa: BLE001
-            # Context torn down by SIGINT (see arm_driver.main); a real error
-            # is one that happened while the context was still valid.
+            # Context torn down by SIGINT; a real error is one that happened
+            # while the context was still valid.
             if rclpy.ok():
                 raise
 
@@ -198,10 +213,8 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        print("\nlimping arm (torque off) and exiting...")
-        node.set_torque(False)
-        # Give the async torque-off a moment to reach the driver.
-        time.sleep(0.2)
+        print("\nlimping arm (deactivating arm_controller) and exiting...")
+        node.arm.set_holding(False)
         rclpy.shutdown()
         node.destroy_node()
 

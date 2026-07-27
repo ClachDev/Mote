@@ -3,14 +3,21 @@
 <package format="3">
   <name>mote_arm</name>
   <version>0.0.0</version>
-  <description>SO-101 follower arm bring-up: joint states, safe jog control, and bench tools</description>
+  <description>SO-101 follower arm: bench tools, pose teaching, and jog control on top of ros2_control</description>
   <maintainer email="michael@clach.dev">Michael Johnson</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>mote_description</exec_depend>
+  <!-- arm_launch.py brings up the same controller_manager a mission does,
+       reusing mote_bringup's launch helpers and controllers.yaml. -->
+  <exec_depend>mote_bringup</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>std_srvs</exec_depend>
+  <!-- The jog CLI drives the arm through ros2_control: single-point
+       trajectories to arm_controller, and switch_controller as the torque
+       switch. It never opens the servo bus. -->
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <!-- feetech-servo-sdk (imports as scservo_sdk) is a PyPI dep declared in
        pixi.toml; pyserial is its transport. -->

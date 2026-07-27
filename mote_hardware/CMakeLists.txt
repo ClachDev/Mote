@@ -17,6 +17,7 @@ find_package(SCServo CONFIG REQUIRED)
 
 add_library(mote_hardware SHARED
   src/mote_hardware.cpp
+  src/port_guard.cpp
 )
 
 target_compile_features(mote_hardware PUBLIC cxx_std_17)
@@ -88,6 +89,20 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_encoder test/test_encoder.cpp)
   target_include_directories(test_encoder PRIVATE include)
+
+  ament_add_gtest(test_arm_joint test/test_arm_joint.cpp)
+  target_include_directories(test_arm_joint PRIVATE include)
+
+  ament_add_gtest(test_port_guard test/test_port_guard.cpp src/port_guard.cpp)
+  target_include_directories(test_port_guard PRIVATE include)
+
+  # Drives the real plugin through the real SCServo SDK against a simulated
+  # servo bus on a pty (test/sts_bus_sim.hpp), so the bus-facing behaviour is
+  # covered without a robot.
+  ament_add_gtest(test_arm_bus test/test_arm_bus.cpp)
+  target_include_directories(test_arm_bus PRIVATE include test)
+  target_link_libraries(test_arm_bus mote_hardware SCServo::SCServo)
+  ament_target_dependencies(test_arm_bus hardware_interface rclcpp rclcpp_lifecycle)
 endif()
 
 ament_package()
