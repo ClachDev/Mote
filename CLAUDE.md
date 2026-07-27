@@ -224,7 +224,7 @@ section. Contains:
   `SystemInterface` so one process owns the bus.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
-- `arm_gains` (`pixi run arm-gains show|apply`) — the servos' position-loop
+- `arm_gains` (`pixi run arm-gains show|apply|sweep`) — the servos' position-loop
   gains live in EEPROM, i.e. invisible config a servo swap would silently
   revert, so `robot.yaml`'s `arm.gains` is the source of truth and this tool
   reconciles hardware with it. The arm shipped `Kp=16`, which left permanent
@@ -236,7 +236,13 @@ section. Contains:
   (wheel/STS3215 default) is applied**; the arm now completes the full 3.19 rad
   home<->reachy move both ways with 0.02-0.06 rad residual. Gotcha: an EEPROM
   read-back races the relock — wait ~150 ms and read twice, or a single read can
-  return a garbled 250 and make a successful write look failed.
+  return a garbled 250 and make a successful write look failed. `sweep` is how a
+  gain is chosen rather than guessed: it steps one joint (`elbow_flex` — the only
+  one with room in its soft limits) under each candidate gain, scores the
+  response (`step_response.py`: error, kp*error, load, settling, ripple and
+  reversals — the last two are the buzz check that bounds how high Kp may go),
+  writes the trace to `~/.mote/arm_gain_sweeps/`, and restores the gains and
+  limpness it started with, so a sweep on its own changes nothing.
 - **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
   an unresolved mechanical clash, tracked separately, not addressed here.
   `mote_arm` is not part of the mission bringup; run it explicitly.

@@ -254,7 +254,43 @@ EEPROM read-back races the relock: a single read taken too soon returns a
 garbled value (observed: 250) and makes a successful write look failed. The bus
 layer reads twice and trusts the value only when both agree.
 
+### Measuring a gain instead of guessing it: `arm-gains sweep`
+
+A gain is only defensible against a measurement, so the third subcommand takes
+one and produces the evidence:
+
+```
+pixi run arm-gains sweep --joint elbow_flex --kp 16,32,64,128
+pixi run arm-gains sweep --joint elbow_flex --kp 32 --ki 0,1,2   # the Ki question
+```
+
+It drives that one joint through the **same** step (`--step`, default -0.2 rad
+from wherever the joint is resting) under each candidate gain set, sampling
+position and load at 50 Hz, and scores each trial (`step_response.py`):
+
+| Column | What it decides |
+|--------|-----------------|
+| `error` | how far short the joint settles — the droop itself |
+| `kp*err` | constant across gains = proportional droop; not constant = something else |
+| `load` | effort while holding, of 1000; near 1000 means torque saturation, not droop |
+| `settle` | time to enter and stay in the settle band (2% of travel, min 2 counts) |
+| `ripple`/`rev` | peak-to-peak motion and direction changes *while holding* — the counter-check on raising gain, since a hunting servo buzzes rather than holds |
+
+It closes with a one-line verdict reading the sweep as droop or as saturation,
+and writes every sample to `~/.mote/arm_gain_sweeps/<stamp>.json` so a run can be
+re-read or plotted later rather than believed from a terminal.
+
+The sweep moves the arm and writes EEPROM, so it is a bench tool with the
+guards to match: it torques **only** the swept joint and leaves the rest limp,
+refuses a step that would clamp against the soft limits (trials that command
+different travel are not comparable), stops if the servo reaches `--max-temp`
+(55 C default), and — via a `finally`, so a crash or Ctrl-C counts too — returns
+the joint to where it started, writes the original gains back, and drops torque.
+`test_gain_sweep.py` pins those properties against a simulated droopy servo, so
+they are checked without hardware.
+
 Closing the residual 1-3.5 deg would mean a small `Ki`, which is left alone for
 now: integral windup on an arm risks a lunge when a load is removed, so it wants
-a deliberate test on an unloaded joint first. Supply voltage is worth revisiting
-only after that, since the arm still has not demanded full torque.
+a deliberate test on an unloaded joint first — that is what the `--ki` sweep
+above is for. Supply voltage is worth revisiting only after that, since the arm
+still has not demanded full torque.
