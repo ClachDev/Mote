@@ -6,10 +6,17 @@ this stays because a CLI composes, exits with a status, and needs no display.
 
     fleetctl token new                        mint an enrollment token
     fleetctl operator new --name michael      mint an operator token
+    fleetctl broker sync                      push credentials to the broker
     fleetctl robots                           the registry roster
     fleetctl dispatch mote-01 "goto kitchen"  send a task, follow it to terminal
     fleetctl audit                            who dispatched what
     fleetctl watch                            tail the whole fleet's topics
+
+**Everything except `token`/`operator`/`broker` needs an operator token** since
+M7 — the API's read routes are authorized too, not just dispatch — and the
+broker is no longer anonymous, so `watch` and `dispatch` fetch the operator's
+own subscribe-only broker login from `/v1/config` rather than connecting
+unauthenticated. One credential in your environment, both paths.
 
 **Dispatch goes through the fleet API, not to the broker.** M1's version
 published straight to `task/command`, which is right when there is one operator
@@ -39,8 +46,9 @@ import json  # noqa: E402
 import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
 
+import credentials  # noqa: E402
 from mote_fleet import protocol  # noqa: E402
-from registry import Registry, RegistryError, default_db  # noqa: E402
+from registry import Registry, RegistryError, default_db, fleet_home  # noqa: E402
 
 DEFAULT_SERVER = "http://localhost:8080"
 DEFAULT_BROKER = "localhost"
@@ -88,7 +96,23 @@ def subscriber(subscriptions):
     return on_connect
 
 
-def _client(broker: str, port: int, client_id: str, subscriptions=()):
+def _broker_credential(args) -> tuple[str, str] | None:
+    """This operator's subscribe-only broker login, from ``/v1/config``.
+
+    Since M7 the broker is not anonymous, so ``watch`` and the status half of
+    ``dispatch`` need a credential — and the right one to use is the operator's
+    own, fetched with the operator token they already hold. The alternative,
+    reading the registry file, would only work while sitting on the fleet box,
+    which is exactly the constraint ``fleetctl`` exists to avoid.
+    """
+    config = _get(args.server, "/v1/config", token=_token(args))
+    broker = config.get("broker") or {}
+    if not broker.get("username"):
+        return None
+    return broker["username"], broker.get("password") or ""
+
+
+def _client(broker: str, port: int, client_id: str, subscriptions=(), credential=None):
     """A connected client that **re-subscribes every time it connects**.
 
     Subscriptions belong to an MQTT session, and paho's default session is a
@@ -105,6 +129,8 @@ def _client(broker: str, port: int, client_id: str, subscriptions=()):
     except AttributeError:  # paho 1.x
         client = mqtt.Client(client_id=client_id)
 
+    if credential:
+        client.username_pw_set(*credential)
     client.on_connect = subscriber(subscriptions)
     # Reconnect forever with backoff: an operator's terminal should outlive a
     # fleet-server redeploy without them noticing.
@@ -134,7 +160,7 @@ def cmd_token(args):
 
 
 def cmd_robots(args):
-    robots = _get(args.server, "/v1/robots").get("robots", [])
+    robots = _get(args.server, "/v1/robots", token=_token(args)).get("robots", [])
     if not robots:
         print("no robots enrolled")
         return
@@ -144,6 +170,28 @@ def cmd_robots(args):
             f"{robot['robot_id']:12} {robot['name'][:16]:16} "
             f"{(robot['site'] or '-')[:10]:10} {robot['enrolled_at']:21} "
             f"{robot['fingerprint']}"
+        )
+
+
+def _sync_broker(registry, args, why: str):
+    """Push the registry's credentials to the broker, and say what happened.
+
+    Minting or revoking an operator changes who may connect, and a change the
+    broker has not read is not in force yet — a revoked operator would keep
+    receiving the fleet's telemetry until something reloaded it. Reported rather
+    than silent, because the files are right on disk either way and the operator
+    needs to know which half succeeded.
+    """
+    ok, detail = credentials.sync(
+        registry, args.broker_auth_dir, reload_cmd=args.broker_reload_cmd or None
+    )
+    if ok:
+        print(f"  (broker credentials {why} and reloaded)", file=sys.stderr)
+    else:
+        print(
+            f"  (broker credentials {why}, but the broker did not reload: "
+            f"{detail or 'no running broker'} — it will read them on next start)",
+            file=sys.stderr,
         )
 
 
@@ -160,15 +208,46 @@ def cmd_operator(args):
             "into the dashboard)",
             file=sys.stderr,
         )
+        _sync_broker(registry, args, "written")
         return
     if args.action == "revoke":
         if not args.token:
             sys.exit("which token? fleetctl operator revoke --token <token>")
-        sys.exit(0 if registry.revoke_operator(args.token) else "no such live token")
+        if not registry.revoke_operator(args.token):
+            sys.exit("no such live token")
+        # Revocation is only real once the broker has forgotten the credential.
+        _sync_broker(registry, args, "rewritten")
+        return
     for row in registry.operators():
         state = f"revoked {row['revoked_at']}" if row["revoked_at"] else "live"
         used = row["last_used_at"] or "never used"
-        print(f"{row['name']:16} {state:24} {used:22} {row['note']}")
+        print(
+            f"{row['name']:16} {state:24} {used:22} "
+            f"{row['broker_user'] or '-':24} {row['note']}"
+        )
+
+
+def cmd_broker(args):
+    """Regenerate the broker's credential files from the registry, and reload.
+
+    The fleet server does this by itself on every enrollment. This verb is for
+    the two cases where nothing else would: a broker restarted with an empty
+    file, and a registry restored from a backup.
+    """
+    registry = Registry(args.db)
+    auth = credentials.BrokerAuth(args.broker_auth_dir)
+    principals = registry.broker_principals()
+    if args.action == "show":
+        print(f"password_file {auth.passwd_path}")
+        print(f"acl_file      {auth.acl_path}")
+        print(
+            f"principals    {len(principals['robots'])} robots, "
+            f"{len(principals['operators'])} operators, 1 server"
+        )
+        for user in sorted(principals["users"]):
+            print(f"  {user}")
+        return
+    _sync_broker(registry, args, "regenerated")
 
 
 def cmd_audit(args):
@@ -240,6 +319,7 @@ def cmd_dispatch(args):
         args.port,
         f"fleetctl-{os.getpid()}",
         subscriptions=[protocol.topic(args.robot_id, protocol.STATUS)],
+        credential=_broker_credential(args),
     )
     client.on_message = on_message
     client.loop_start()
@@ -297,6 +377,7 @@ def cmd_watch(args):
                 protocol.STATUS,
             )
         ],
+        credential=_broker_credential(args),
     )
     client.on_message = on_message
     print(f"watching {robot} on {args.broker}:{args.port} (ctrl-c to stop)")
@@ -341,7 +422,20 @@ def main(argv=None):
     parser.add_argument(
         "--token",
         default="",
-        help=f"operator token for the write routes (default: ${TOKEN_ENV})",
+        help=f"operator token for the API (default: ${TOKEN_ENV})",
+    )
+    parser.add_argument(
+        "--broker-auth-dir",
+        default=str(fleet_home() / "broker"),
+        help="the broker's generated password_file/acl_file directory "
+        "(default: $MOTE_FLEET_HOME/broker)",
+    )
+    parser.add_argument(
+        "--broker-reload-cmd",
+        default=" ".join(credentials.DEFAULT_RELOAD_CMD),
+        help="how to make a running broker re-read those files (default: "
+        "broker.sh reload). Needed when the broker was not started by "
+        "broker.sh — e.g. a container someone else runs.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -362,6 +456,12 @@ def main(argv=None):
     p_operator.add_argument("--name", default="", help="who this token is for")
     p_operator.add_argument("--note", default="", help="what it is for")
     p_operator.set_defaults(func=cmd_operator)
+
+    p_broker = sub.add_parser(
+        "broker", help="regenerate the broker's credential files from the registry"
+    )
+    p_broker.add_argument("action", choices=["sync", "show"], nargs="?", default="sync")
+    p_broker.set_defaults(func=cmd_broker)
 
     p_robots = sub.add_parser("robots", help="list enrolled robots")
     p_robots.set_defaults(func=cmd_robots)

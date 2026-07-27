@@ -34,11 +34,15 @@ class FakeMqtt:
         self.target = None
         self.loop_running = False
         self.disconnected = False
+        self.credential = None
         self.on_connect = self.on_disconnect = self.on_message = None
 
     # -- the paho surface the agent uses --
     def reconnect_delay_set(self, **_kwargs):
         pass
+
+    def username_pw_set(self, username, password=None):
+        self.credential = (username, password)
 
     def will_set(self, topic, payload, qos=0, retain=False):
         self.will = SimpleNamespace(topic=topic, payload=payload, retain=retain)
@@ -122,7 +126,13 @@ def home(tmp_path, monkeypatch):
     from mote_fleet import fleet_config
 
     identity.set_identity(id="mote-01", name="Scout", site="home")
-    fleet_config.save(server="http://fleet:8080", broker_host="fleet", broker_port=1883)
+    fleet_config.save(
+        server="http://fleet:8080",
+        broker_host="fleet",
+        broker_port=1883,
+        broker_username="mote-01",
+        broker_password="issued-at-enrollment",
+    )
     # The site/floor on the wire is the *active map bundle*, not identity's
     # entitlement field: a coordinate is only meaningful against the floor it
     # was measured in.
@@ -397,3 +407,44 @@ def test_pose_follows_the_map_frame_transform(fleet):
     assert pose["yaw"] == pytest.approx(math.pi / 2, abs=1e-3)
     # The coordinate travels with the floor whose map frame it is measured in.
     assert (pose["site"], pose["floor"]) == ("home", "ground")
+
+
+# ---- M7: the agent authenticates -------------------------------------------
+
+
+def test_the_agent_presents_the_credential_from_fleet_yaml(fleet):
+    """Which is what confines it, at the broker, to its own branch of the tree:
+    the ACL is keyed on this username."""
+    assert fleet.mqtt.credential == ("mote-01", "issued-at-enrollment")
+
+
+def test_a_robot_with_no_credential_still_tries(home, monkeypatch):
+    """An M0/M1 robot that has not re-enrolled. It will be refused by an M7
+    broker — and the log says to enrol — but the agent must not refuse to start,
+    because a robot whose fleet link is broken still has to boot and navigate.
+    """
+    from mote_fleet import fleet_config
+
+    fleet_config.save(server="http://fleet:8080", broker_host="fleet", broker_port=1883)
+    assert fleet_config.broker_credentials() is None
+
+
+def test_the_credential_file_is_not_world_readable(home):
+    import stat
+
+    from mote_fleet import fleet_config
+
+    mode = stat.S_IMODE(fleet_config.config_path().stat().st_mode)
+    assert mode == 0o600
+
+
+def test_a_refused_connack_is_not_reported_as_connected(fleet):
+    """paho calls on_connect for a refusal too. Treating that as connected would
+    leave the agent publishing into a socket the broker is about to close."""
+    fleet.mqtt.on_connect(fleet.mqtt, None, {}, 5, None)  # 5 = not authorized
+    assert fleet.agent.connected is False
+
+
+def test_a_successful_connack_is_reported_as_connected(fleet):
+    fleet.mqtt.on_connect(fleet.mqtt, None, {}, 0, None)
+    assert fleet.agent.connected is True

@@ -1,16 +1,17 @@
 # Fleet API — interface contract v1
 
 The HTTP wire: enrollment, the registry, **mediated dispatch**, the audit log,
-and what the dashboard needs to bootstrap. This is the second of the fleet's two
-contracts — [`control-plane.md`](control-plane.md) specifies the MQTT one — and
-the versioned spec [`fleet.md`](../design/fleet.md) requires M3 to publish.
+and what the dashboard needs to bootstrap. One of the fleet's three contracts —
+[`control-plane.md`](control-plane.md) specifies the MQTT wire and
+[`security.md`](security.md) the authorization rules applied to both — and the
+versioned spec [`fleet.md`](../design/fleet.md) requires M3 to publish.
 
 | | |
 |---|---|
 | **Contract version** | `v1` (routes under `/v1/…`, payload `schema: 1`) |
 | **Authority** | [`mote_fleet/server/fleet_server.py`](../../mote_fleet/server/fleet_server.py) |
 | **Kept honest by** | `mote_fleet/test/test_fleet_server.py`, and `test_e2e_fleet.py` for the dispatch path end to end |
-| **Milestone** | M3. Operator runbook: [`README.md`](README.md) §6–9. Measurements: [`m3-verification.md`](m3-verification.md) |
+| **Milestone** | M3, with authorization from M7. Operator runbook: [`README.md`](README.md) §6–9. Measurements: [`m3-verification.md`](m3-verification.md), [`m7-verification.md`](m7-verification.md) |
 
 ## Why there are two contracts
 
@@ -46,9 +47,17 @@ Status codes are part of the contract: a client may switch on them.
 
 | Route | Credential |
 |---|---|
+| `GET /healthz` | none — a liveness probe that needs a secret is one nobody wires up |
+| `GET /` and the static UI | none — the page must load before it can ask for a token |
 | `POST /v1/enroll` | an **enrollment token** in the body (single-use by default) |
-| `POST /v1/robots/<id>/dispatch`, `GET /v1/audit` | an **operator token** as `Authorization: Bearer <token>` |
-| everything else | none — see the security note below |
+| **everything else under `/v1`** | an **operator token** as `Authorization: Bearer <token>` |
+
+**Since M7 the read routes are authorized too**, not just dispatch — M3 left the
+roster, the basemaps and the broker's address readable by anything that could
+reach the port. The check sits in one gate in front of every `/v1` path rather
+than in each handler, so a route added later is authenticated by default; a
+`404` is never returned to an unauthenticated caller, because that would
+disclose which routes are real.
 
 Operator tokens are minted on the fleet box, against the registry file, never
 over the network:
@@ -60,25 +69,27 @@ pixi run -e fleet fleetctl -- operator revoke --token <token>
 ```
 
 The token's **name is what the audit log records**, which is why an unnamed one
-is refused. Revocation keeps the row: who *had* access is part of the record.
+is refused. Revocation keeps the row: who *had* access is part of the record —
+and it also withdraws that operator's **broker** credential, because the two are
+minted together and the broker's password file is regenerated from these rows
+([`security.md`](security.md)).
 
 Bearer header only — never a query parameter, which would put the credential in
 every access log between here and the browser.
 
-**Security posture, plainly.** The read routes are unauthenticated and the
-broker is anonymous, exactly as M1 left them. M3 adds a credential on the
-*write* path and a record of who used it, which is the milestone's brief; it is
-proportionate only while the tailnet is the boundary. M7 adds operator auth on
-the read routes, per-robot broker credentials, and the Tailscale ACLs. Until
-then, do not expose this port to a network the robots are not already trusted
-on.
+**Security posture, plainly.** Every route that discloses anything about the
+fleet requires an operator; the broker requires a per-principal credential; and
+the tailnet policy denies robot-to-robot traffic. What is still absent — token
+expiry, mTLS, package signing — is listed with reasons in
+[`security.md`](security.md#what-m7-does-not-do). The tailnet remains the outer
+boundary: this port should still not be published to the internet.
 
 ---
 
 ## Routes
 
 ```
-GET  /healthz                            liveness, contract, robot count
+GET  /healthz                            liveness, contract, robot count  [open]
 GET  /v1/config                          what the browser needs to bootstrap
 GET  /v1/robots                          the roster
 GET  /v1/robots/<robot_id>               one row
@@ -176,6 +187,20 @@ Everything the dashboard cannot work out from its own URL.
 falls back to the host it was loaded from — so reaching the fleet box by MagicDNS,
 by tailnet address or over localhost all work with no per-deployment build.
 
+Since M7 the `broker` object also carries **the calling operator's own**
+subscribe-only MQTT credential:
+
+```json
+"broker": {"ws_host": null, "ws_port": 9001, "host": "fleet-box", "port": 1883,
+           "username": "op_michael_3f9a", "password": "…"}
+```
+
+That is the reason this route needs a token: it hands out a credential, and the
+one it hands out is the caller's. Two operators get two different logins, and a
+revoked operator's next page load has nothing to connect with. The credential
+grants `mote/v1/+/{presence,health,pose,task/status}` and **no write rule at
+all** ([`security.md`](security.md)).
+
 ### `GET /v1/maps`, `/v1/maps/<site>/<floor>/map.json|map.png`
 
 The basemap a pose is meaningful on.
@@ -212,9 +237,15 @@ than a bespoke map format.
 
 ## What the browser is allowed to do
 
-The dashboard holds an operator token for this API and **no broker credential at
-all that can publish**. The read path connects to the broker's WebSocket
-listener with a client that implements no PUBLISH packet
-([`ui/mqtt.mjs`](../../mote_fleet/server/ui/mqtt.mjs)) — the split is enforced by
-omission, not by intention. M7 makes that structural on the broker side too,
-with a subscribe-only credential.
+The dashboard holds an operator token for this API and **no broker credential
+that can publish**. That is now true twice over:
+
+- its MQTT client implements no PUBLISH packet at all
+  ([`ui/mqtt.mjs`](../../mote_fleet/server/ui/mqtt.mjs)) — enforced by omission;
+- and since M7 the broker credential it is given has no write rule in the
+  broker's ACL — enforced by the broker, so it holds for `curl`, a hand-rolled
+  client, or anywhere else that credential is pasted.
+
+The second is what makes the split structural rather than a property of our own
+code, which is what M3 said it owed. Both credentials arrive together, from this
+route and its token, and die together when the operator is revoked.

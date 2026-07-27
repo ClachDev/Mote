@@ -5,6 +5,8 @@
     broker:
       host: fleet-box                 # MQTT control plane
       port: 1883
+      username: mote-01               # M7: this robot's broker credential
+      password: "…"
 
 Written by ``enroll`` from the server's own answer, so a robot learns its
 broker from the same exchange that gave it its id — there is no second thing to
@@ -15,6 +17,12 @@ does: it is per-robot state, so an update replaces the package around it and
 cannot take the robot off the fleet. The host names are normally MagicDNS names
 on the tailnet (``fleet-box``, not an IP), which is what keeps the file valid
 when the fleet server changes networks.
+
+**Since M7 this file holds a secret**, so it is written ``0600``. The broker
+password is issued at enrollment and exists nowhere else in plaintext — the
+registry keeps only its hash — which means the way to replace a lost or leaked
+one is to enrol again. That is deliberate: rotation is an idempotent command the
+robot already runs, not a separate mechanism to build and remember.
 """
 
 import os
@@ -52,15 +60,42 @@ def broker(config: dict | None = None) -> tuple[str, int] | None:
     return host, int(entry.get("port", DEFAULT_BROKER_PORT))
 
 
-def save(*, server: str, broker_host: str, broker_port: int = DEFAULT_BROKER_PORT):
-    record = {
-        "schema": SCHEMA,
-        "server": server,
-        "broker": {"host": broker_host, "port": int(broker_port)},
-    }
+def broker_credentials(config: dict | None = None) -> tuple[str, str] | None:
+    """``(username, password)`` for the broker, or None if this robot has none.
+
+    None is the honest answer for a robot enrolled before M7: it means "connect
+    anonymously and find out", and against an M7 broker it will be refused with
+    a message that says to enrol again.
+    """
+    config = load() if config is None else config
+    if not config:
+        return None
+    entry = config.get("broker") or {}
+    username = entry.get("username")
+    if not username:
+        return None
+    return username, entry.get("password") or ""
+
+
+def save(
+    *,
+    server: str,
+    broker_host: str,
+    broker_port: int = DEFAULT_BROKER_PORT,
+    broker_username: str = "",
+    broker_password: str = "",
+):
+    broker_entry = {"host": broker_host, "port": int(broker_port)}
+    if broker_username:
+        broker_entry["username"] = broker_username
+        broker_entry["password"] = broker_password
+    record = {"schema": SCHEMA, "server": server, "broker": broker_entry}
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".fleet.yaml.{os.getpid()}")
     tmp.write_text(yaml.safe_dump(record, sort_keys=False))
+    # 0600 on the temporary file, before the rename: the broker password must
+    # never exist at the final path in a world-readable state, not even briefly.
+    os.chmod(tmp, 0o600)
     os.replace(tmp, path)
     return record

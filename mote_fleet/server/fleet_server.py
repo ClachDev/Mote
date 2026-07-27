@@ -38,13 +38,24 @@ change — only who may publish to it. The browser therefore never holds a broke
 credential that can publish, and the UI's MQTT client cannot publish at all
 (``ui/mqtt.mjs`` implements no PUBLISH packet).
 
-**Security posture for M3:** the read routes are still unauthenticated, exactly
-as M1 left them, and the broker is still anonymous. What M3 adds is a credential
-on the *write* path and a record of who used it. That stays proportionate only
-while the tailnet is the boundary; M7 is where operator auth reaches the read
-routes, per-robot broker credentials land, and Tailscale ACLs stop robots
-reaching each other. Until then, do not expose this port to a network the robots
-are not already trusted on.
+**Security posture (M7).** Every ``/v1`` route now needs a credential:
+``POST /v1/enroll`` an enrollment token, everything else an operator token as a
+bearer header. Two things stay deliberately open — ``/healthz``, because a
+liveness probe that needs a secret is a liveness probe nobody wires up, and the
+static UI, because the page has to load in order to ask for a token, and it
+contains no fleet data until it has one.
+
+This process is also the **issuer** of broker credentials. It generates the
+``password_file`` and ``acl_file`` mosquitto reads, from the registry, whenever
+a credential changes — a robot enrols, an operator is minted or revoked — and
+asks the broker to re-read them (``--broker-reload-cmd``). So the answer to "who
+may connect to the control plane, and say what" lives in one place and is
+derived, never hand-maintained. :mod:`credentials` holds the format and the
+policy; ``docs/fleet/security.md`` is the contract.
+
+The tailnet is still the outer boundary and still the thing that keeps this port
+off the public internet. What changed is that it is no longer the *only*
+boundary.
 """
 
 import argparse
@@ -59,6 +70,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import credentials  # noqa: E402
 from mote_fleet import protocol  # noqa: E402
 from registry import (  # noqa: E402
     ID_PREFIX,
@@ -67,6 +79,8 @@ from registry import (  # noqa: E402
     default_db,
     fleet_home,
 )
+
+DEFAULT_RELOAD_CMD = credentials.DEFAULT_RELOAD_CMD
 
 MAX_BODY = 64 * 1024
 
@@ -110,10 +124,21 @@ class BrokerLink:
     the tests inject a fake in its place.
     """
 
-    def __init__(self, host: str, port: int = 1883, keepalive: int = 30):
+    def __init__(
+        self,
+        host: str,
+        port: int = 1883,
+        keepalive: int = 30,
+        *,
+        credential=None,
+    ):
         self.host = host
         self.port = int(port)
         self.keepalive = keepalive
+        # ``(username, password)``. Since M7 the broker's ACL grants exactly one
+        # principal the right to publish task/command, and it is this one — so
+        # dispatch cannot be bypassed by talking to the broker directly.
+        self.credential = credential
         self._client = None
         self._lock = threading.Lock()
 
@@ -126,6 +151,8 @@ class BrokerLink:
             )
         except AttributeError:  # paho 1.x
             client = mqtt.Client(client_id="mote-fleet-api")
+        if self.credential:
+            client.username_pw_set(*self.credential)
         client.reconnect_delay_set(min_delay=1, max_delay=30)
         client.connect(self.host, self.port, keepalive=self.keepalive)
         client.loop_start()
@@ -224,6 +251,26 @@ class FleetHandler(BaseHTTPRequestHandler):
         path = path.rstrip("/") or "/"
         params = urllib.parse.parse_qs(query)
 
+        # One gate, in front of everything under /v1 (M7). Before this, only
+        # /v1/audit checked — which meant the roster, the basemaps and the
+        # broker's address were readable by anything that could reach the port.
+        # Putting it here rather than in each handler is deliberate: a route
+        # added later is authenticated by default, and has to opt out in a place
+        # a reviewer looks at.
+        #
+        # The two things outside /v1 are open for reasons, not by omission:
+        # /healthz, because a liveness probe that needs a secret is one nobody
+        # wires up, and the static UI, because the page has to load before it
+        # can ask for a token. (`POST /v1/enroll` is open too, in do_POST — it
+        # carries its own credential in the body.)
+        operator = None
+        if path.startswith("/v1/"):
+            try:
+                operator = self._operator()
+            except Unauthorized as exc:
+                self._error(401, str(exc))
+                return
+
         if path == "/healthz":
             self._send(
                 200,
@@ -236,7 +283,7 @@ class FleetHandler(BaseHTTPRequestHandler):
                 },
             )
         elif path == "/v1/config":
-            self._send(200, self.server.ui_config())
+            self._send(200, self.server.ui_config(operator))
         elif path == "/v1/robots":
             self._send(
                 200,
@@ -308,9 +355,15 @@ class FleetHandler(BaseHTTPRequestHandler):
             self._error(code, str(exc))
             return
 
+        # The robot now has a broker credential the broker has never heard of.
+        # Publishing the generated files and reloading is what closes that gap,
+        # and it happens before the answer goes out so a robot that connects the
+        # instant it is enrolled is not refused.
+        reloaded, detail = self.server.publish_credentials()
         print(
             f"enrolled {robot['robot_id']} "
-            f"({'new' if created else 'existing'}, {robot['fingerprint']})",
+            f"({'new' if created else 'existing'}, {robot['fingerprint']})"
+            f"{'' if reloaded else f'; BROKER NOT RELOADED: {detail}'}",
             file=sys.stderr,
         )
         self._send(
@@ -325,6 +378,10 @@ class FleetHandler(BaseHTTPRequestHandler):
                 "broker": {
                     "host": self.server.broker_host,
                     "port": self.server.broker_port,
+                    # The one time this password is ever sent. The registry keeps
+                    # only its hash, so a robot that loses it enrols again.
+                    "username": robot["robot_id"],
+                    "password": robot["broker_password"],
                 },
                 "contract": f"{protocol.ROOT}/{protocol.VERSION}",
             },
@@ -425,11 +482,8 @@ class FleetHandler(BaseHTTPRequestHandler):
         )
 
     def _audit(self, params: dict):
-        try:
-            self._operator()
-        except Unauthorized as exc:
-            self._error(401, str(exc))
-            return
+        # Authorization happens in do_GET's gate, which covers every /v1 route
+        # rather than only this one.
         try:
             limit = int((params.get("limit") or ["100"])[0])
         except ValueError:
@@ -516,6 +570,7 @@ class FleetServer(ThreadingHTTPServer):
         broker_ws_host,
         broker_ws_port,
         foxglove_url,
+        broker_auth=None,
     ):
         super().__init__(address, FleetHandler)
         self.registry = registry
@@ -528,16 +583,50 @@ class FleetServer(ThreadingHTTPServer):
         self.broker_ws_host = broker_ws_host
         self.broker_ws_port = broker_ws_port
         self.foxglove_url = foxglove_url
+        self.broker_auth = broker_auth
+
+    # -- broker credentials -----------------------------------------------
+
+    def publish_credentials(self) -> tuple[bool, str]:
+        """Regenerate the broker's ``password_file`` + ``acl_file``, and reload.
+
+        Called after anything that changes who may connect. Regenerating the
+        whole pair from the registry rather than appending is what keeps the
+        files a *projection* of the registry: a revoked operator disappears
+        because the query no longer returns them, not because something
+        remembered to delete a line.
+        """
+        if self.broker_auth is None:
+            return True, "no broker credential directory configured"
+        try:
+            self.broker_auth.write(**self.registry.broker_principals())
+        except OSError as exc:
+            return False, f"could not write broker credentials: {exc}"
+        return self.broker_auth.reload()
 
     # -- what the browser needs to bootstrap ------------------------------
 
-    def ui_config(self) -> dict:
+    def ui_config(self, operator: dict | None = None) -> dict:
         """Everything the UI cannot work out from its own URL.
 
         ``ws_host`` is null by default and the page falls back to the host it
         was loaded from, so reaching the fleet box by MagicDNS, by tailnet
         address or over localhost all work with no per-deployment build step.
+
+        Since M7 it also carries **this operator's** subscribe-only broker
+        credential. That is why the route needs a token: it hands out a
+        credential, and the one it hands out is the caller's own — revoke the
+        operator and the next page load has nothing to connect with.
         """
+        broker = {
+            "ws_host": self.broker_ws_host,
+            "ws_port": self.broker_ws_port,
+            "host": self.broker_host,
+            "port": self.broker_port,
+        }
+        if operator and operator.get("broker_user"):
+            broker["username"] = operator["broker_user"]
+            broker["password"] = operator["broker_password"]
         return {
             "schema": protocol.SCHEMA,
             "contract": f"{protocol.ROOT}/{protocol.VERSION}",
@@ -548,12 +637,7 @@ class FleetServer(ThreadingHTTPServer):
                 "pose": protocol.POSE,
                 "status": protocol.STATUS,
             },
-            "broker": {
-                "ws_host": self.broker_ws_host,
-                "ws_port": self.broker_ws_port,
-                "host": self.broker_host,
-                "port": self.broker_port,
-            },
+            "broker": broker,
             "foxglove_url": self.foxglove_url,
             "maps": bool(self.maps_dir and self.maps_dir.is_dir()),
         }
@@ -663,22 +747,44 @@ def serve(
     broker_ws_host=None,
     broker_ws_port=9001,
     foxglove_url=FOXGLOVE_URL,
+    broker_auth_dir=None,
+    broker_reload_cmd=None,
 ) -> FleetServer:
     """Build a listening server. The caller runs it (or its ``serve_forever``)."""
     broker_host = broker_host or socket.gethostname()
-    return FleetServer(
+    registry = Registry(db)
+    auth = (
+        credentials.BrokerAuth(broker_auth_dir, reload_cmd=broker_reload_cmd)
+        if broker_auth_dir
+        else None
+    )
+    server = FleetServer(
         (host, port),
-        Registry(db),
+        registry,
         broker_host=broker_host,
         broker_port=broker_port,
         id_prefix=id_prefix,
-        publisher=publisher or BrokerLink(broker_host, broker_port),
+        publisher=publisher
+        or BrokerLink(
+            broker_host,
+            broker_port,
+            credential=(
+                credentials.SERVER_USER,
+                registry.server_broker_password(),
+            ),
+        ),
         maps_dir=maps_dir,
         ui_dir=ui_dir,
         broker_ws_host=broker_ws_host,
         broker_ws_port=broker_ws_port,
         foxglove_url=foxglove_url,
+        broker_auth=auth,
     )
+    # Write the credential files at startup, before serving. A fleet box that
+    # was restored from a registry backup, or upgraded from M3, has rows but no
+    # generated files; this is what makes "start the server" enough.
+    server.publish_credentials()
+    return server
 
 
 def main(argv=None):
@@ -727,6 +833,20 @@ def main(argv=None):
     parser.add_argument(
         "--id-prefix", default=ID_PREFIX, help="allocated ids look like <prefix>-01"
     )
+    parser.add_argument(
+        "--broker-auth-dir",
+        default=str(fleet_home() / "broker"),
+        help="where to generate the broker's password_file and acl_file "
+        "(default: $MOTE_FLEET_HOME/broker). Empty disables generation, which "
+        "leaves whatever credentials are already there untouched.",
+    )
+    parser.add_argument(
+        "--broker-reload-cmd",
+        default=" ".join(DEFAULT_RELOAD_CMD),
+        help="how to make a running broker re-read those files "
+        "(default: broker.sh reload). Empty means never reload, for a broker "
+        "somebody else restarts.",
+    )
     args = parser.parse_args(argv)
 
     server = serve(
@@ -741,18 +861,30 @@ def main(argv=None):
         ui_dir=None if args.no_ui else UI_DIR,
         foxglove_url=args.foxglove_url,
         id_prefix=args.id_prefix,
+        broker_auth_dir=args.broker_auth_dir or None,
+        broker_reload_cmd=args.broker_reload_cmd or None,
     )
     print(
         f"mote-fleet on http://{args.host}:{args.port}  db={args.db}  "
         f"broker={server.broker_host}:{server.broker_port}  "
         f"ws={server.broker_ws_host or '<page host>'}:{server.broker_ws_port}  "
-        f"maps={len(server.list_maps())}",
+        f"maps={len(server.list_maps())}  "
+        f"credentials={args.broker_auth_dir or '<not managed>'}",
         file=sys.stderr,
     )
+    if server.broker_auth and server.broker_auth.last_reload_error:
+        print(
+            "the broker did not reload the credential files "
+            f"({server.broker_auth.last_reload_error}). They are correct on "
+            "disk; a broker started later will read them, and a running one "
+            "needs a SIGHUP.",
+            file=sys.stderr,
+        )
     if not server.registry.operators():
         print(
-            "no operator tokens exist yet — dispatch will refuse every request. "
-            "Mint one with: fleetctl operator new --name <you>",
+            "no operator tokens exist yet — every route except /healthz and "
+            "enrollment will refuse. Mint one with: "
+            "fleetctl operator new --name <you>",
             file=sys.stderr,
         )
     thread = threading.Thread(target=server.serve_forever, daemon=True)

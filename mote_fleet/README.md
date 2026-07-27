@@ -56,10 +56,11 @@ pixi run -e fleet fleetctl -- dispatch mote-01 goto kitchen
 | Script | |
 |---|---|
 | [`server/fleet_server.py`](server/fleet_server.py) | the fleet API: enrollment, roster, dispatch, audit, basemaps, and the UI — stdlib `http.server` |
-| [`server/registry.py`](server/registry.py) | the SQLite row store: robots, enrollment tokens, operators, the audit log, transactional id allocation |
-| [`server/fleetctl.py`](server/fleetctl.py) | operator CLI: tokens, roster, dispatch, audit, watch |
+| [`server/registry.py`](server/registry.py) | the SQLite row store: robots, enrollment tokens, operators, broker credentials, the audit log, transactional id allocation |
+| [`server/credentials.py`](server/credentials.py) | who may connect to the broker and say what — mosquitto's `$7$` hash, and the `password_file`/`acl_file` generated from the registry (M7) |
+| [`server/fleetctl.py`](server/fleetctl.py) | operator CLI: tokens, operators, broker sync, roster, dispatch, audit, watch |
 | [`server/ui/`](server/ui/) | the dashboard: `index.html`, `app.mjs`, `map.mjs` (basemap + the Q5 transform), `mqtt.mjs` (a subscribe-only MQTT client) |
-| [`server/mosquitto.conf`](server/mosquitto.conf), [`broker.sh`](server/broker.sh) | the broker, its WebSocket listener, and where its state goes |
+| [`server/mosquitto.conf`](server/mosquitto.conf), [`broker.sh`](server/broker.sh) | the broker, its WebSocket listener, its generated credentials, and where its state goes |
 
 The server imports `mote_fleet.protocol` from the source tree by path (the
 `depth_server.py` pattern) and nothing else — no ROS, no framework, no ament.
@@ -86,9 +87,10 @@ pixi run test                 # colcon: everything except the broker tests
 pixi run -e dev test-fleet    # + the real-broker end-to-end run
 ```
 
-Four tiers, so the same files give full coverage wherever they run:
+Five tiers, so the same files give full coverage wherever they run:
 
-- **contract** (`test_protocol.py`, `test_fleet_server.py`, `test_registry.py`)
+- **contract** (`test_protocol.py`, `test_fleet_server.py`, `test_registry.py`,
+  `test_credentials.py`)
   — the code, the JSON Schema files and the doc's field tables checked against
   each other, and every HTTP route over a real socket with an injected
   publisher, so a payload or status-code change that nobody described fails here
@@ -101,7 +103,16 @@ Four tiers, so the same files give full coverage wherever they run:
   loads. Skips where there is no node. `browser_check.mjs` is the other half —
   a real headless browser against a running stack, which needs more than CI has,
   so it is an operator's tool rather than a test.
+- **authorization** (`test_broker_acl.py`) — a real mosquitto reading the real
+  generated `password_file` and `acl_file`, asked to do the things M7 says it
+  must refuse. Asserts on *delivery*, never on a return code: mosquitto denies
+  silently, granting a forbidden subscription at SUBACK and simply never
+  delivering, so a suite checking return codes would pass with no ACL at all.
+  Skips where there is no broker.
 - **end to end** (`test_e2e_fleet.py`) — a real mosquitto, the real fleet
   server, the `enroll` CLI, a real paho client, and the actual `mote_tasks`
   behaviour tree driving a mock Nav2; including a dispatch that goes out through
-  the API. Skips where there is no broker.
+  the API. Since M7 the broker it runs against is **authenticated and ACL'd,
+  starting from empty credential files**, so the chain only completes if
+  enrollment issues a credential and the reload puts it in force. Skips where
+  there is no broker.

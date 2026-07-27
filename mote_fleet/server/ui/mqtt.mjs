@@ -51,15 +51,33 @@ function packet(type, flags, body) {
   return new Uint8Array([(type << 4) | flags, ...encodeLength(body.length), ...body]);
 }
 
-export function encodeConnect(clientId, keepalive = 30) {
+// Connect flags (MQTT 3.1.1 §3.1.2.3). Only these three are ever set: there is
+// no will to register, and this client has nothing to publish.
+const CLEAN_SESSION = 0x02;
+const HAS_PASSWORD = 0x40;
+const HAS_USERNAME = 0x80;
+
+export function encodeConnect(clientId, keepalive = 30, credential = null) {
+  // Since M7 the broker is not anonymous, and what this carries is the
+  // operator's own subscribe-only login, fetched from /v1/config with their
+  // token. It grants the four read topics and no write anywhere — so "the
+  // browser cannot publish" is now the broker's rule, not only this file's
+  // omission of a PUBLISH encoder.
+  let flags = CLEAN_SESSION;
+  if (credential && credential.username) {
+    flags |= HAS_USERNAME;
+    if (credential.password) flags |= HAS_PASSWORD;
+  }
   const body = [
     ...encodeString('MQTT'),
     4, // protocol level 3.1.1
-    0x02, // clean session; no will, no credentials (the broker is anonymous)
+    flags,
     keepalive >> 8,
     keepalive & 0xff,
     ...encodeString(clientId),
   ];
+  if (flags & HAS_USERNAME) body.push(...encodeString(credential.username));
+  if (flags & HAS_PASSWORD) body.push(...encodeString(credential.password));
   return packet(CONNECT, 0, body);
 }
 
@@ -150,9 +168,10 @@ const CONNACK_REASONS = {
 // reconnecting. A fleet UI left open on a wall display has to survive the fleet
 // box restarting without somebody pressing reload.
 export class BrokerReader {
-  constructor({ url, topics, onMessage, onState, clientId, keepalive = 30 }) {
+  constructor({ url, topics, onMessage, onState, clientId, keepalive = 30, credential = null }) {
     this.url = url;
     this.topics = topics;
+    this.credential = credential;
     this.onMessage = onMessage || (() => {});
     this.onState = onState || (() => {});
     this.clientId = clientId || `mote-ui-${Math.random().toString(16).slice(2, 10)}`;
@@ -178,7 +197,8 @@ export class BrokerReader {
     }
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
-    socket.onopen = () => socket.send(encodeConnect(this.clientId, this.keepalive));
+    socket.onopen = () =>
+      socket.send(encodeConnect(this.clientId, this.keepalive, this.credential));
     socket.onmessage = (event) => this._onBytes(new Uint8Array(event.data));
     socket.onerror = () => {};
     socket.onclose = () => {

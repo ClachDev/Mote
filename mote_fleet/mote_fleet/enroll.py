@@ -98,6 +98,10 @@ def persist(server: str, answer: dict) -> dict:
         server=server,
         broker_host=broker.get("host") or "",
         broker_port=broker.get("port") or fleet_config.DEFAULT_BROKER_PORT,
+        # M7: the answer also carries this robot's broker credential, and this
+        # is the only time it is ever sent. Enrolling again issues a new one.
+        broker_username=broker.get("username") or "",
+        broker_password=broker.get("password") or "",
     )
 
 
@@ -164,6 +168,13 @@ def main(argv=None):
     print(f"  identity: {identity.identity_path()}")
     print(f"  fleet:    {fleet_config.config_path()}")
     print(f"  broker:   {broker.get('host')}:{broker.get('port')}")
+    if broker.get("username"):
+        print(f"  login:    {broker['username']} (password written, not shown)")
+    else:
+        print(
+            "  login:    none — this server issued no broker credential, so the "
+            "agent will connect anonymously"
+        )
     print("next: start the agent with 'pixi run agent'")
 
 

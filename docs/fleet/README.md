@@ -7,10 +7,12 @@ every robot (**M1**), and a browser you watch and drive the fleet from
 (**M3**). The architecture and the milestones after these are in
 [`docs/design/fleet.md`](../design/fleet.md); the measurements are in
 [`m0-verification.md`](m0-verification.md),
-[`m1-verification.md`](m1-verification.md) and
-[`m3-verification.md`](m3-verification.md); the two wires are specified in
-[`control-plane.md`](control-plane.md) (MQTT) and [`fleet-api.md`](fleet-api.md)
-(HTTP).
+[`m1-verification.md`](m1-verification.md),
+[`m3-verification.md`](m3-verification.md) and
+[`m7-verification.md`](m7-verification.md); the three contracts are
+[`control-plane.md`](control-plane.md) (the MQTT wire),
+[`fleet-api.md`](fleet-api.md) (the HTTP wire) and
+[`security.md`](security.md) (who may say what on either).
 
 | | |
 |---|---|
@@ -65,24 +67,22 @@ on new tailnets, and it is the thing that makes `ssh michael@mote-01` work — t
 device's tailnet hostname becomes its name. Without it you are typing
 `100.x.y.z` addresses everywhere.
 
-**3. Declare the tags.** Admin console → **Access controls**, in the policy file.
-Tags do not exist until an owner is declared for them, and `--advertise-tags` on
-a machine fails with "requested tags are invalid or not permitted" if you skip
-this:
+**3. Apply the access policy.** Admin console → **Access controls** → *Edit
+file*, then paste
+[`mote_bringup/tailscale/policy.hujson`](../../mote_bringup/tailscale/policy.hujson)
+and Save. That file is the source of truth; the console holds a copy of it, so
+edit the repo first.
 
-```jsonc
-{
-  "tagOwners": {
-    "tag:robot":     ["autogroup:admin"],
-    "tag:fleet":     ["autogroup:admin"],
-    "tag:inference": ["autogroup:admin"],
-  },
-  // The default policy already allows every device to reach every other, which
-  // is what M0 wants. M7 replaces this with per-tag rules (operators reach
-  // robots; robots reach the broker and their own inference box; robots cannot
-  // reach each other).
-}
-```
+It does two things. It **declares the tags** — they do not exist until an owner
+is declared, and `--advertise-tags` fails with "requested tags are invalid or not
+permitted" if you skip this, which is the first thing to check when joining a
+robot fails. And it **replaces the default allow-everything policy** with rules
+that grant only what something in this repo actually dials: operators reach the
+fleet server, the robots' Foxglove/SSH ports and the GPU box; robots reach the
+broker, the registry API and their inference server; and **robots cannot reach
+each other on any port**, which is one half of M7's acceptance criterion. The
+policy's own `tests` block asserts that, and Tailscale refuses to save a policy
+that fails it.
 
 **4. Mint an auth key per robot.** Admin console → **Settings → Keys → Generate
 auth key**. For a robot:
@@ -407,14 +407,24 @@ memory of who is in it.
 fleet box's MagicDNS name (`fleet-box`), not `localhost` — it is handed out
 verbatim in every enrollment answer. It defaults to the box's hostname.
 
-**Security, plainly:** the broker is anonymous and the API's *read* routes are
-unauthenticated. Dispatch is not — it needs an operator token (§8) — but that is
-one credential on one path, not an auth story. It is proportionate only because
-the tailnet is the boundary: WireGuard authenticates, and nothing here is
-exposed to the internet. Do not put either on a network the robots are not
-already trusted on. Per-robot broker credentials and operator auth everywhere
-are M7; the shape of what changes is in
-[`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
+**Security, plainly (M7):** the broker authenticates every client and confines
+each to its own part of the topic tree, and every API route that discloses
+anything about the fleet needs an operator token. A robot gets its broker
+credential from enrollment (§7); an operator gets theirs with their token (§8).
+The two generated files the broker reads — `$MOTE_FLEET_HOME/broker/{passwd,acl}`
+— are written by this server from the registry and reloaded automatically, so
+there is nothing to hand-maintain. The full contract is
+[`security.md`](security.md).
+
+Start the broker **before** the server the first time. It comes up with empty
+credential files, refusing everybody, and the server fills them in and reloads
+it. If you ever restart the broker against a stale or empty directory, `pixi run
+-e fleet fleetctl -- broker sync` regenerates and reloads without touching the
+server.
+
+The tailnet is still the outer boundary and this port should still not be
+published to the internet — but it is no longer the *only* boundary, which is
+the difference M7 makes.
 
 To run it unattended, wrap the two commands in systemd units on that box. They
 are deliberately *not* part of `pixi run setup`, which provisions robots.
@@ -437,13 +447,22 @@ pixi run enroll -- --server http://fleet-box:8080 --token tskey… --name Scout 
 That writes both files the agent needs, and nothing else:
 
 ```yaml
-# $MOTE_HOME/robot.yaml                # $MOTE_HOME/fleet.yaml
+# $MOTE_HOME/robot.yaml                # $MOTE_HOME/fleet.yaml   (0600)
 schema: 1                              schema: 1
 id: mote-01                            server: http://fleet-box:8080
 name: Scout                            broker:
 site: home                               host: fleet-box
                                          port: 1883
+                                         username: mote-01
+                                         password: "…"
 ```
+
+**The same exchange issues the robot's broker credential** (M7), and this is the
+only time that password is sent — the registry keeps a hash. So **rotation is
+just re-running `enroll`**: idempotent on the hardware fingerprint, same
+identity, new password. A robot enrolled before M7 has no credential and the
+broker will refuse it; the agent's log says exactly that, and the fix is one
+`pixi run enroll`.
 
 Three properties make this safe to run unattended, or twice, or after a mistake:
 
@@ -478,7 +497,7 @@ it logs and retries — enrolling later brings it up without a restart.
 ```bash
 # [fleet box] mint yourself an operator credential, once
 pixi run -e fleet fleetctl -- operator new --name michael
-export MOTE_FLEET_TOKEN=<that token>
+export MOTE_FLEET_TOKEN=<that token>          # every verb below needs it now
 
 pixi run fleetctl -- robots                             # the registry roster
 pixi run fleetctl -- watch                              # live: presence, health, pose, status
@@ -496,6 +515,13 @@ against the registry file while you are sitting on the fleet box, never over the
 network; the **name on it is what the audit log records**, which is why an
 unnamed one is refused. `fleetctl operator list|revoke` are the other two verbs,
 and the route contract is [`fleet-api.md`](fleet-api.md).
+
+**One credential, both paths.** Since M7 the read routes need the token too, and
+so does the broker — `watch` and the status half of `dispatch` fetch the
+operator's own *subscribe-only* broker login from `/v1/config` using that same
+token, so there is still only one secret to hold. `fleetctl operator revoke`
+closes both at once, because they are minted together and the broker's password
+file is regenerated from the registry rows.
 
 `dispatch` exits 0 only if the task **succeeded**, so it composes into scripts.
 The command grammar is the task layer's own, unchanged (`fetch <target>
@@ -563,11 +589,16 @@ no request/response loop, and no service between the broker and the browser.
 That is the read path in [`fleet.md`](../design/fleet.md) Q5, and it is why the
 broker needs the WebSocket listener from §6.
 
-**Paste an operator token to dispatch.** Without one the page is read-only,
-which is a perfectly good wall display. The token is kept in the browser's local
-storage and sent to the fleet API as a bearer credential; the page holds **no
-broker credential that can publish**, and its MQTT client implements no PUBLISH
-packet at all.
+**Paste an operator token to sign in.** Since M7 there is no anonymous
+read-only mode: `/v1/config` is itself operator-only, because it is what hands
+the page its broker credential. So the page has two states — signed in, or
+asking to be — and pasting a token needs no reload. The token is kept in the
+browser's local storage and sent to the fleet API as a bearer credential.
+
+The page holds **no broker credential that can publish**, and that is now true
+twice over: its MQTT client implements no PUBLISH packet at all, *and* the
+credential it is given has no write rule in the broker's ACL. The second is what
+makes the split a property of the broker rather than of our own code.
 
 **The map.** A floor's PNG basemap with live robot markers on it: pan by
 dragging, zoom with the wheel, click a robot to select it, `follow` to keep the

@@ -41,6 +41,38 @@ test('CONNECT names protocol 3.1.1 and a clean session', () => {
   assert.equal(packet[9], 0x02); // clean session, no will, no credentials
 });
 
+// -- M7: the page authenticates to the broker ---------------------------
+
+test('CONNECT carries the operator credential when there is one', () => {
+  const packet = encodeConnect('mote-ui-test', 30, {
+    username: 'op_michael_1a2b',
+    password: 's3cret',
+  });
+  assert.equal(packet[9], 0x02 | 0x80 | 0x40, 'clean session + username + password');
+  const text = new TextDecoder().decode(packet);
+  assert.ok(text.includes('op_michael_1a2b'));
+  assert.ok(text.includes('s3cret'));
+  // Order matters: client id, then username, then password (MQTT 3.1.1 3.1.3).
+  assert.ok(text.indexOf('mote-ui-test') < text.indexOf('op_michael_1a2b'));
+  assert.ok(text.indexOf('op_michael_1a2b') < text.indexOf('s3cret'));
+});
+
+test('CONNECT sets no credential flags when there is no credential', () => {
+  for (const credential of [null, undefined, {}, { username: '' }]) {
+    assert.equal(encodeConnect('mote-ui-test', 30, credential)[9], 0x02);
+  }
+});
+
+test('the client still has no way to publish', async () => {
+  // The subscribe-only split is enforced twice over since M7 — by the broker's
+  // ACL, and by this file simply not being able to build the packet. If an
+  // `encodePublish` ever appears here, that second half is gone and this test
+  // is the thing that should stop it.
+  const module = await import('../server/ui/mqtt.mjs');
+  const exported = Object.keys(module);
+  assert.ok(!exported.some((name) => /^encodePublish/i.test(name)), exported.join());
+});
+
 test('SUBSCRIBE carries the mandatory 0x02 flags', () => {
   const packet = encodeSubscribe(1, ['mote/v1/+/health']);
   assert.equal(packet[0], (8 << 4) | 0x02);

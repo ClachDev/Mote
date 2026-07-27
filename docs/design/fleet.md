@@ -732,7 +732,11 @@ per-channel auth on top; do **not** build a PKI or a custom auth server for v1.
   tailnets or broker vhosts + topic-prefix ACLs per customer — so one customer's
   operator can never see another's robots. Designed-for, not built in v1.
 - **Proportionality.** Small trusted fleet, not a public product: mTLS-everywhere
-  and a custom PKI wait until the fleet runs *outside* the trusted overlay. Note
+  and a custom PKI wait until the fleet runs *outside* the trusted overlay. The
+  argument that made M7 worth building anyway is that a single boundary makes
+  **every robot as trusted as the fleet server** — a robot is physically
+  reachable and runs the largest dependency tree in the system, so one boundary
+  means one compromised robot owns the fleet. Note
   Zenoh's TLS is *hop-by-hop, not end-to-end*
   ([Zenoh security analysis](https://census-labs.com/news/2025/03/17/zenoh-protocol-security-analysis/))
   — a reason the encryption baseline lives at the WireGuard layer (end-to-end
@@ -973,6 +977,24 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   signed if available) packages. *Accept:* a device off the tailnet reaches nothing;
   a robot can't read another robot's command topic. *Depends on:* M0; folds into
   each milestone as it lands.
+  **Built** as [`docs/fleet/security.md`](../fleet/security.md) — the fleet's
+  third contract, alongside M1's MQTT one and M3's HTTP one — with the policy in
+  `mote_fleet/server/credentials.py` and
+  [`mote_bringup/tailscale/policy.hujson`](../../mote_bringup/tailscale/policy.hujson),
+  and the measurements in [`m7-verification.md`](../fleet/m7-verification.md).
+  The broker is no longer anonymous: credentials are **generated from the
+  registry** and the broker reloads them on SIGHUP, so a robot may publish only
+  under its own `robot_id`, an operator may only subscribe, and only the fleet
+  API may write `task/command`. Every `/v1` route now needs an operator token,
+  behind one gate rather than per-handler. Three things the milestone did *not*
+  do, each for a stated reason: **mTLS** (username/password inside WireGuard is
+  proportionate, and the seam is unchanged), **expiring operator sessions**
+  (Q7's OIDC/GitHub answer replaces the minting, not the checking), and
+  **package signing** — there is nothing to sign until the channel ships a robot
+  package, so that stays M5's, and pinning is what M7 could actually deliver
+  (`pixi install --locked` at provisioning, every dependency sha256-pinned).
+  **Foxglove tokens wait for M2**, which does not exist yet; what M7 contributes
+  is the tailnet rule already scoping port 8765 to operators.
 
 ---
 

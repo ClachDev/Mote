@@ -1,0 +1,153 @@
+// The Mote tailnet access policy (fleet.md Q7, milestone M7).
+//
+// This is the *outer* boundary. Inside it, the broker has per-robot credentials
+// and an ACL (docs/fleet/security.md) and the fleet API has operator tokens;
+// this file decides which machines may open a socket to which port at all, and
+// it is what answers the milestone's first acceptance criterion — a device that
+// is not on the tailnet reaches nothing, because nothing here is published to
+// the internet and Tailscale denies by default.
+//
+// The second criterion it contributes to: **robots cannot reach each other.**
+// There is deliberately no rule granting tag:robot any access to tag:robot. In
+// v1 there is no robot-to-robot anything — no coordination, no shared map
+// service, no peer discovery (fleet.md "Non-goals") — so the absence of a rule
+// here is the design, not an omission.
+//
+// APPLYING IT. Tailscale keeps the policy in its admin console, not in a repo,
+// so this file is the source of truth and the console is a copy:
+//
+//     1. https://login.tailscale.com/admin/acls/file
+//     2. paste this file, "Preview" to see what changes, then Save.
+//
+// Keep the two in step by editing here first. `tailscale-policy` in a CI job or
+// the `gitops-pusher` tool can automate the push; at one-operator scale, don't.
+// The tags must exist (below) before any machine runs `pixi run tailnet` with
+// them — `--advertise-tags` on an undeclared tag fails with "requested tags are
+// invalid or not permitted", which is the first thing to check if joining a
+// robot fails.
+{
+  // ---- who owns the tags ------------------------------------------------
+  //
+  // A tagged device belongs to the tailnet rather than to a person, which is
+  // what lets it outlive the operator's account and — the practical reason —
+  // stops its key expiring after 180 days and silently dropping a robot off the
+  // network months later.
+  "tagOwners": {
+    "tag:robot":     ["autogroup:admin"],
+    "tag:fleet":     ["autogroup:admin"],
+    "tag:inference": ["autogroup:admin"],
+  },
+
+  // ---- the ports, named once -------------------------------------------
+  "hosts": {},
+
+  // ---- who may reach what ----------------------------------------------
+  //
+  // Tailscale denies anything not listed. Every rule below exists because
+  // something in this repo dials that port; if a rule looks unused, the thing
+  // that used it has gone, and the rule should go too.
+  "acls": [
+    // Operators (you, on a laptop or a phone) reach the fleet server's API and
+    // dashboard, and the broker's WebSocket listener the dashboard subscribes
+    // through. 1883 as well, so `fleetctl watch` works from a workstation.
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["tag:fleet:8080", "tag:fleet:1883", "tag:fleet:9001"],
+    },
+
+    // Operators reach a robot for the single-robot deep view (foxglove_bridge,
+    // M2) and for hands-on work. Note this is the *only* rule that opens a
+    // robot's ports to anything.
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["tag:robot:22", "tag:robot:8765"],
+    },
+
+    // Operators reach the GPU box directly, for `pixi run inference-health` and
+    // the bench tools.
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["tag:inference:5601", "tag:inference:5602", "tag:inference:22"],
+    },
+
+    // A robot reaches the fleet server: enrollment + the registry API on 8080,
+    // the control-plane broker on 1883. Nothing else, and in particular not the
+    // dashboard's WebSocket listener — a robot has no browser.
+    {
+      "action": "accept",
+      "src":    ["tag:robot"],
+      "dst":    ["tag:fleet:8080", "tag:fleet:1883"],
+    },
+
+    // A robot reaches the inference server's depth and detect wires. This is
+    // the rule that makes "run it on a trusted network" true for a protocol
+    // that is unauthenticated by design (depth_wire.py): the wire has no
+    // credentials, so the network is what decides who may speak it.
+    {
+      "action": "accept",
+      "src":    ["tag:robot"],
+      "dst":    ["tag:inference:5601", "tag:inference:5602"],
+    },
+
+    // Deliberately absent, and each absence is load-bearing:
+    //
+    //   tag:robot -> tag:robot        no robot-to-robot anything in v1, and
+    //                                 this is the acceptance criterion
+    //   tag:fleet -> tag:robot        the fleet server never dials a robot; the
+    //                                 agent is the sole egress and it dials out
+    //   tag:inference -> anything     the GPU box answers, it never initiates
+    //   * -> autogroup:internet       no exit nodes; robots use their own link
+  ],
+
+  // ---- SSH --------------------------------------------------------------
+  //
+  // Tailscale SSH, so getting onto a robot needs a tailnet identity rather than
+  // a key that has been copied around. "check" re-authenticates the operator in
+  // a browser periodically; robots are not reachable by each other here either.
+  "ssh": [
+    {
+      "action": "check",
+      "src":    ["autogroup:member"],
+      "dst":    ["tag:robot", "tag:fleet", "tag:inference"],
+      "users":  ["autogroup:nonroot", "root"],
+    },
+  ],
+
+  // ---- tests ------------------------------------------------------------
+  //
+  // Tailscale evaluates these on every save and refuses a policy that breaks
+  // one, so the acceptance criteria are checked by the thing enforcing them
+  // rather than by a person reading the rules above.
+  "tests": [
+    {
+      "src": "tag:robot",
+      "accept": [
+        "tag:fleet:1883",
+        "tag:fleet:8080",
+        "tag:inference:5601",
+      ],
+      "deny": [
+        // The M7 criterion: one robot cannot reach another, on any port.
+        "tag:robot:22",
+        "tag:robot:8765",
+        "tag:robot:1883",
+        // A robot has no business in the dashboard's listener or on the GPU
+        // box's shell.
+        "tag:fleet:9001",
+        "tag:inference:22",
+      ],
+    },
+    {
+      "src": "tag:inference",
+      "deny": ["tag:robot:8765", "tag:fleet:8080", "tag:fleet:1883"],
+    },
+    {
+      "src": "tag:fleet",
+      // The agent dials the server, never the other way round.
+      "deny": ["tag:robot:8765", "tag:robot:22"],
+    },
+  ],
+}

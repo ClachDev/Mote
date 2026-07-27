@@ -350,6 +350,15 @@ main {
   flex: none;
 }
 
+/* `hidden` is an attribute, and the UA rule that honours it is `display: none`
+   at the lowest specificity — so any `display` a class sets silently wins, and
+   the element stays on screen with `.hidden === true`. Both the dispatch form
+   and the Foxglove link are toggled that way, and both looked hidden in the
+   code and were not. Restated here so the attribute means what it says. */
+[hidden] {
+  display: none !important;
+}
+
 .dispatch {
   display: flex;
   gap: 6px;

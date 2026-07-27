@@ -28,6 +28,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -94,15 +95,23 @@ class MockNav(Node):
 
 
 class Operator:
-    """The off-robot side: publishes commands, collects everything retained."""
+    """The off-robot side: publishes commands, collects everything retained.
 
-    def __init__(self, port):
+    It connects with the **fleet server's** broker credential, because that is
+    whose role it is playing — the ACL grants `task/command` to exactly one
+    principal (M7), and publishing a command is the thing this class exists to
+    do. A human operator's credential cannot do it, which is the point, and is
+    asserted in ``test_broker_acl.py`` rather than here.
+    """
+
+    def __init__(self, broker, credential):
         self.messages = []
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2, client_id="operator"
         )
+        self.client.username_pw_set(*credential)
         self.client.on_message = self._on_message
-        self.client.connect("127.0.0.1", port, keepalive=30)
+        self.client.connect("127.0.0.1", broker.port, keepalive=30)
         self.client.subscribe("mote/v1/#", qos=1)
         self.client.loop_start()
 
@@ -138,10 +147,25 @@ class Operator:
 
 @pytest.fixture
 def broker(tmp_path):
+    """A broker with M7's posture: authenticated, ACL'd, nothing anonymous.
+
+    It starts with the credential files *empty*, exactly as a fleet box does
+    before its server has ever run — so what this fixture sets up is the real
+    bootstrap, and the robot below can only connect because enrolling wrote a
+    credential and the reload made the broker read it.
+    """
     port = free_port()
+    auth_dir = tmp_path / "broker"
+    auth_dir.mkdir()
+    (auth_dir / "passwd").write_text("")
+    (auth_dir / "acl").write_text("")
     conf = tmp_path / "mosquitto.conf"
     conf.write_text(
-        f"listener {port} 127.0.0.1\nallow_anonymous true\npersistence false\n"
+        f"listener {port} 127.0.0.1\n"
+        "allow_anonymous false\n"
+        f"password_file {auth_dir / 'passwd'}\n"
+        f"acl_file {auth_dir / 'acl'}\n"
+        "persistence false\n"
     )
     process = subprocess.Popen(
         [BROKER_BIN, "-c", str(conf)],
@@ -158,7 +182,13 @@ def broker(tmp_path):
     else:
         process.kill()
         pytest.fail("mosquitto did not start")
-    yield port
+    yield SimpleNamespace(
+        port=port,
+        auth_dir=auth_dir,
+        # The real reload path: the fleet server runs this, mosquitto re-reads
+        # both files, and a robot enrolled a moment ago can connect.
+        reload_cmd=["kill", "-HUP", str(process.pid)],
+    )
     process.terminate()
     process.wait(timeout=10)
 
@@ -172,14 +202,29 @@ def fleet_api(tmp_path, broker):
         host="127.0.0.1",
         port=0,
         broker_host="127.0.0.1",
-        broker_port=broker,
+        broker_port=broker.port,
+        # M7: the server is the issuer. It writes the broker's credential files
+        # and SIGHUPs it, so this exercises the real path rather than a fixture
+        # that pre-loads credentials the code never generated.
+        broker_auth_dir=broker.auth_dir,
+        broker_reload_cmd=broker.reload_cmd,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     server.url = f"http://127.0.0.1:{server.server_address[1]}"
+    # Every /v1 read route needs an operator now, and so does the broker.
+    server.operator_token = server.registry.new_operator(name="e2e")
+    server.publish_credentials()
     yield server
     server.shutdown()
     server.server_close()
+
+
+def server_credential(fleet_api):
+    """The fleet server's own broker login, from its registry."""
+    import credentials
+
+    return (credentials.SERVER_USER, fleet_api.registry.server_broker_password())
 
 
 def spin_until(executor, condition, timeout=30.0):
@@ -208,7 +253,7 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
 
     robot_id = identity.robot_id()
     assert robot_id == "mote-01"
-    assert fleet_config.broker() == ("127.0.0.1", broker)
+    assert fleet_config.broker() == ("127.0.0.1", broker.port)
     # Idempotent: the same machine enrolling again is the same robot.
     enroll.main(["--token", token])
     assert identity.robot_id() == "mote-01"
@@ -244,7 +289,7 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
     for node in (agent, tasks, nav):
         executor.add_node(node)
 
-    operator = Operator(broker)
+    operator = Operator(broker, server_credential(fleet_api))
     try:
         assert spin_until(executor, lambda: agent.connected), "agent never connected"
 
@@ -358,7 +403,7 @@ def test_a_dead_agent_is_reported_offline_by_the_broker(
     agent = MoteAgent(parameter_overrides=[Parameter("keepalive", value=2)])
     executor = SingleThreadedExecutor()
     executor.add_node(agent)
-    operator = Operator(broker)
+    operator = Operator(broker, server_credential(fleet_api))
     try:
         assert spin_until(executor, lambda: agent.connected)
         assert spin_until(executor, lambda: operator.of("presence"))
@@ -378,7 +423,7 @@ def test_a_dead_agent_is_reported_offline_by_the_broker(
 
         # And a subscriber arriving afterwards is told immediately, because the
         # will was retained.
-        latecomer = Operator(broker)
+        latecomer = Operator(broker, server_credential(fleet_api))
         try:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline and not latecomer.of("presence"):
@@ -472,7 +517,7 @@ def test_dispatch_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api
     for node in (agent, tasks, nav):
         executor.add_node(node)
 
-    operator = Operator(broker)
+    operator = Operator(broker, server_credential(fleet_api))
     try:
         assert spin_until(executor, lambda: agent.connected), "agent never connected"
 

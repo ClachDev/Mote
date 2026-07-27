@@ -12,6 +12,20 @@ the credential the API authorizes a dispatch against, and **audit**, the record
 it writes before publishing. Every table is created ``IF NOT EXISTS`` on open,
 so an M1 registry file gains them by being opened by an M3 server.
 
+M7 makes this file the source of truth for **broker credentials** as well
+(:mod:`credentials`): a robot's is issued at enrollment, an operator's is minted
+with their token, and the server's own lives in ``settings``. Nothing else knows
+who may connect to the broker — the ``password_file`` and ``acl_file`` mosquitto
+reads are *generated* from these rows, which is what makes revoking an operator
+close their HTTP and their MQTT access in the same step. Columns added after the
+table already exists are applied by :func:`_migrate`, since ``CREATE TABLE IF
+NOT EXISTS`` cannot alter one.
+
+**This file is a secret store**, and since M7 it is created ``0600``. Enrollment
+tokens, operator tokens and the operators' broker passwords are all recoverable
+from it. Robot broker passwords are not: only their hash is kept, so a lost one
+is re-issued by re-enrolling rather than looked up.
+
 Two invariants are worth naming because everything else leans on them:
 
 **Allocation is transactional.** ``mote-03`` is derived from the ids already in
@@ -35,8 +49,12 @@ import json
 import os
 import secrets
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import credentials  # noqa: E402
 
 #: The fleet box's state root — the server-side analogue of the robot's
 #: ``MOTE_HOME``. The registry and the broker's persistence both live here, so a
@@ -84,7 +102,26 @@ CREATE TABLE IF NOT EXISTS audit (
     remote     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_stamp ON audit (stamp DESC);
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+#: Columns added to already-existing tables after M1. ``CREATE TABLE IF NOT
+#: EXISTS`` is a no-op on a table that is already there, so an M1/M3 registry
+#: file would silently keep its old shape without these.
+MIGRATIONS = (
+    ("robots", "broker_hash", "TEXT NOT NULL DEFAULT ''"),
+    ("robots", "credential_issued_at", "TEXT"),
+    ("operators", "broker_user", "TEXT NOT NULL DEFAULT ''"),
+    ("operators", "broker_password", "TEXT NOT NULL DEFAULT ''"),
+)
+
+#: The server's own broker password, in ``settings``. Generated on first use and
+#: kept, because regenerating it on every restart would lock the server out of
+#: its own broker until the next reload.
+SERVER_PASSWORD_KEY = "broker_server_password"
 
 ID_PREFIX = "mote"
 
@@ -113,6 +150,11 @@ class Registry:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            _migrate(conn)
+        # Tokens and operator broker passwords live in here in the clear, so the
+        # file is the operator's to read and nobody else's. Applied on every
+        # open rather than only at creation, so an M1 file tightens on upgrade.
+        os.chmod(self.path, 0o600)
 
     def _connect(self):
         # isolation_level=None: transactions are opened explicitly with
@@ -152,11 +194,84 @@ class Registry:
             (now(), robot_id, token),
         )
 
+    # ---- broker credentials ---------------------------------------------
+
+    def server_broker_password(self) -> str:
+        """The fleet API's own broker password, generated once and kept.
+
+        Kept rather than regenerated per start because the broker only learns a
+        new password when the generated files are reloaded — a server that
+        re-minted its own on every restart would spend the window between
+        starting and reloading unable to publish a dispatch.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (SERVER_PASSWORD_KEY,)
+            ).fetchone()
+            if row is not None:
+                return row["value"]
+            password = credentials.new_password()
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (SERVER_PASSWORD_KEY, password),
+            )
+        return password
+
+    def issue_robot_credential(self, robot_id: str) -> str:
+        """Mint this robot's broker password, returning the *only* plaintext
+        copy there will ever be. Re-enrolling rotates it, which is the fleet's
+        whole robot-credential-rotation story: one command, on the robot."""
+        password = credentials.new_password()
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE robots SET broker_hash = ?, credential_issued_at = ? "
+                "WHERE robot_id = ?",
+                (credentials.hash_password(password), now(), robot_id),
+            ).rowcount
+        if not changed:
+            raise RegistryError(f"no such robot {robot_id}")
+        return password
+
+    def broker_principals(self) -> dict:
+        """Everything the generated broker files are built from.
+
+        ``{"users": {username: hash}, "robots": [...], "operators": [...]}`` —
+        one query so the password file and the ACL can never describe different
+        fleets.
+        """
+        server_user = credentials.SERVER_USER
+        users = {
+            server_user: credentials.hash_password(self.server_broker_password()),
+        }
+        robots, operators = [], []
+        with self._connect() as conn:
+            for row in conn.execute(
+                "SELECT robot_id, broker_hash FROM robots WHERE broker_hash != ''"
+            ):
+                users[row["robot_id"]] = row["broker_hash"]
+                robots.append(row["robot_id"])
+            for row in conn.execute(
+                "SELECT broker_user, broker_password FROM operators "
+                "WHERE revoked_at IS NULL AND broker_user != ''"
+            ):
+                users[row["broker_user"]] = credentials.hash_password(
+                    row["broker_password"]
+                )
+                operators.append(row["broker_user"])
+        return {"users": users, "robots": robots, "operators": operators}
+
     # ---- operators ------------------------------------------------------
 
     def new_operator(self, *, name: str, note: str = "") -> str:
-        """Mint an operator token. This is the credential the dispatch API
-        authorizes against, and the name it writes into the audit line."""
+        """Mint an operator token, and the subscribe-only broker credential that
+        goes with it.
+
+        One act, two credentials, deliberately: an operator needs the HTTP
+        bearer token to dispatch *and* a broker login to see the fleet, and
+        minting them together is what lets ``revoke`` close both at once. The
+        broker password is stored in the clear because the dashboard fetches it
+        on every load; the registry file is ``0600`` and that is the boundary.
+        """
         if not name.strip():
             raise RegistryError(
                 "an operator needs a name — it is what the audit log records"
@@ -164,9 +279,16 @@ class Registry:
         token = secrets.token_urlsafe(24)
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO operators (token, name, note, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (token, name.strip(), note, now()),
+                "INSERT INTO operators (token, name, note, created_at, "
+                "broker_user, broker_password) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    token,
+                    name.strip(),
+                    note,
+                    now(),
+                    credentials.operator_username(name),
+                    credentials.new_password(),
+                ),
             )
         return token
 
@@ -344,6 +466,16 @@ class Registry:
                         ),
                     )
                     created = True
+                # The broker credential is issued *inside* the enrollment
+                # transaction, so a robot is never a registry row without one —
+                # and re-enrolling rotates it, which is the whole rotation
+                # story: one idempotent command, run on the robot.
+                password = credentials.new_password()
+                conn.execute(
+                    "UPDATE robots SET broker_hash = ?, credential_issued_at = ? "
+                    "WHERE robot_id = ?",
+                    (credentials.hash_password(password), now(), robot_id),
+                )
                 row = conn.execute(
                     "SELECT * FROM robots WHERE robot_id = ?", (robot_id,)
                 ).fetchone()
@@ -351,7 +483,12 @@ class Registry:
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
-        return _row_to_robot(row), created
+        robot = _row_to_robot(row)
+        # The only moment this plaintext exists. It is not a column and never
+        # appears on `robots()` or `/v1/robots`; the caller hands it to the
+        # robot that just enrolled, and after that only its hash is anywhere.
+        robot["broker_password"] = password
+        return robot, created
 
 
 def _next_id(conn, prefix: str) -> str:
@@ -367,7 +504,26 @@ def _next_id(conn, prefix: str) -> str:
     raise RegistryError(f"no free id left under the prefix {prefix!r}")
 
 
+def _migrate(conn) -> None:
+    """Add any column MIGRATIONS names that this file does not have yet.
+
+    SQLite has no ``ADD COLUMN IF NOT EXISTS``, so the existing columns are read
+    back and compared. Every migration is a nullable/defaulted add, which is the
+    only shape that can be applied to a live registry without a rewrite.
+    """
+    for table, column, decl in MIGRATIONS:
+        present = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in present:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def _row_to_robot(row) -> dict:
     robot = dict(row)
     robot["facts"] = json.loads(robot.get("facts") or "{}")
+    # A password hash is not roster data. Dropped here rather than in the API so
+    # that no future route can serve it by forgetting to.
+    robot.pop("broker_hash", None)
     return robot

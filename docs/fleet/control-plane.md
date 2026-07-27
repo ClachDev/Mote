@@ -236,8 +236,8 @@ supersedes M0's operator-set id: the server owns the id space.
 | Route | Purpose |
 |---|---|
 | `GET /healthz` | liveness, contract version, robot count |
-| `GET /v1/robots` | the roster |
-| `GET /v1/robots/<robot_id>` | one row |
+| `GET /v1/robots` | the roster (operator token, since M7) |
+| `GET /v1/robots/<robot_id>` | one row (operator token, since M7) |
 | `POST /v1/enroll` | allocate (or return) a robot id |
 
 ### `POST /v1/enroll`
@@ -254,9 +254,15 @@ the server records it rather than renumbering the fleet.
 
 ```json
 {"schema":1,"robot_id":"mote-01","name":"Scout","site":"home","created":true,
- "enrolled_at":"2026-07-26T16:12:46Z","broker":{"host":"fleet-box","port":1883},
+ "enrolled_at":"2026-07-26T16:12:46Z",
+ "broker":{"host":"fleet-box","port":1883,"username":"mote-01","password":"…"},
  "contract":"mote/v1"}
 ```
+
+`broker.username`/`broker.password` are M7's, and additive — a field a consumer
+did not know about does not bump `schema`. **This is the only time the password
+is sent**; the registry keeps a hash, so re-enrolling rotates it rather than
+recovering it.
 
 `201` for a new robot, `200` for one that was already enrolled. The robot writes
 `$MOTE_HOME/robot.yaml` (identity) and `$MOTE_HOME/fleet.yaml` (server +
@@ -280,25 +286,32 @@ robots enrolling at once get eight distinct ids.
 
 ---
 
-## Security posture (and what M7 changes)
+## Security posture
 
-M1 is proportionate to the M0 substrate and no further. Stated plainly so it is
-not mistaken for a finished story:
+**The topic tree above is enforced, not merely agreed.** Since M7 the broker
+authenticates every client and confines each to its own part of the tree; the
+full contract — the principals, the rules, and how a credential is issued,
+rotated and revoked — is [`security.md`](security.md). In one table:
 
-- **The broker is anonymous.** Any client that can reach it may publish or
-  subscribe anywhere in the tree. WireGuard is the authentication boundary;
-  nothing here is reachable from the public internet.
-- **The fleet API has no auth** on its read routes. Enrollment tokens and, since
-  M3, operator tokens are the only credentials in the system.
-- **Dispatch is mediated, as of M3.** M1's `fleetctl` published straight to the
-  broker; now it and the dashboard both POST to `/v1/robots/<id>/dispatch`,
-  which authorizes an operator token and writes an audit row before publishing
-  ([`fleet-api.md`](fleet-api.md)). As this section promised, **the topic tree
-  did not change** — only who publishes to it. The browser holds no broker
-  credential that can publish; making that structural on the broker side, with a
-  subscribe-only credential, is still M7's.
+| | publish | subscribe |
+|---|---|---|
+| robot `mote-01` | `mote/v1/mote-01/{presence,health,pose,task/status}` | `mote/v1/mote-01/task/command` |
+| operator | *nothing* | `mote/v1/+/{presence,health,pose,task/status}` |
+| fleet server | `mote/v1/+/task/command` | `mote/v1/#` |
 
-M7 adds per-robot broker credentials (username = `robot_id`, publish confined to
-its own prefix), operator auth on the API, and the Tailscale ACLs that stop
-robots reaching each other. Until then: do not put the broker or the API on a
-network the robots are not already trusted on.
+So a robot cannot read another robot's commands or forge another robot's health,
+and an operator cannot publish a command at all — dispatch stays the fleet API's,
+because that is the only place it can be *attributed*
+([`fleet-api.md`](fleet-api.md)). **The topic tree itself did not change** across
+any of this; only who may speak on which part of it.
+
+A robot receives its broker credential from the same `POST /v1/enroll` exchange
+that gives it its id — `broker.username` and `broker.password` in the answer —
+and re-enrolling rotates it. A robot enrolled before M7 has none and will be
+refused; `pixi run enroll` is the fix, and the agent's log says so.
+
+The boundary outside all of this is still the tailnet, now with a policy that
+denies robot-to-robot traffic on every port
+([`policy.hujson`](../../mote_bringup/tailscale/policy.hujson)). What is *not*
+in place: mTLS, expiring operator sessions, and package signing —
+[`security.md`](security.md#what-m7-does-not-do) says why for each.

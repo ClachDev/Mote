@@ -95,25 +95,43 @@ def server(tmp_path):
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    # Since M7 every /v1 route needs an operator, so one comes with the fixture
+    # and `get`/`post` send it unless a test says otherwise. The tests that care
+    # about *absence* pass token="" and assert the 401.
+    httpd.token = httpd.registry.new_operator(name="fixture")
     yield httpd
     httpd.shutdown()
     httpd.server_close()
 
 
-def get(server, path, token=None):
-    request = urllib.request.Request(server.url + path)
+#: Sent when a call does not name a token. ``token=""`` means "send none".
+DEFAULT = object()
+
+
+def _authorize(request, server, token):
+    token = server.token if token is DEFAULT else token
     if token:
         request.add_header("Authorization", f"Bearer {token}")
+
+
+def get(server, path, token=DEFAULT):
+    request = urllib.request.Request(server.url + path)
+    _authorize(request, server, token)
     with urllib.request.urlopen(request, timeout=10) as response:
         return response.status, json.loads(response.read())
 
 
-def get_bytes(server, path):
-    with urllib.request.urlopen(server.url + path, timeout=10) as response:
+def get_bytes(server, path, token=DEFAULT):
+    request = urllib.request.Request(server.url + path)
+    _authorize(request, server, token)
+    with urllib.request.urlopen(request, timeout=10) as response:
         return response.status, response.headers["Content-Type"], response.read()
 
 
 def post(server, path, payload, token=None):
+    # Unlike `get`, this defaults to *no* token: /v1/enroll carries its own
+    # credential in the body, and every dispatch test is explicit about which
+    # operator it is acting as.
     request = urllib.request.Request(
         server.url + path,
         data=json.dumps(payload).encode(),
@@ -155,7 +173,12 @@ def test_enrollment_returns_an_id_and_the_broker(server):
     assert body["name"] == "Scout"
     assert body["site"] == "home"
     assert body["created"] is True
-    assert body["broker"] == {"host": "fleet-box", "port": 1883}
+    assert body["broker"]["host"] == "fleet-box"
+    assert body["broker"]["port"] == 1883
+    # M7: the same exchange issues this robot's broker credential. The username
+    # is the robot id because that is what the broker's ACL is keyed on.
+    assert body["broker"]["username"] == "mote-01"
+    assert body["broker"]["password"]
 
 
 def test_re_enrolling_answers_200_and_the_same_id(server):
@@ -373,7 +396,7 @@ def test_a_broker_that_is_down_is_reported_not_swallowed(server, operator, robot
 
 
 def test_the_audit_route_needs_an_operator_token(server, operator, robot):
-    expect_error(lambda: get(server, "/v1/audit"), 401)
+    expect_error(lambda: get(server, "/v1/audit", token=""), 401)
     dispatch(server, robot, "goto kitchen", token=operator)
     status, body = get(server, "/v1/audit", token=operator)
     assert status == 200
@@ -452,3 +475,137 @@ def test_a_reconnecting_client_resubscribes_every_time():
     on_connect(client, None, {}, 0)
     assert [t for t, _ in client.subscribed] == topics + topics
     assert {qos for _, qos in client.subscribed} == {protocol.QOS}
+
+
+# ---- M7: every read route is authorized -------------------------------------
+
+
+READ_ROUTES = [
+    "/v1/config",
+    "/v1/robots",
+    "/v1/robots/mote-01",
+    "/v1/audit",
+    "/v1/maps",
+    "/v1/maps/home/ground/map.json",
+    "/v1/maps/home/ground/map.png",
+]
+
+
+@pytest.mark.parametrize("route", READ_ROUTES)
+def test_every_read_route_refuses_an_anonymous_request(server, route):
+    """M3 put a token on dispatch only, so the roster, the basemaps and the
+    broker's address were readable by anything that could reach the port. This
+    is the parametrised statement that they are not."""
+    enroll(server, "serial:aaa")
+    body = expect_error(lambda: get(server, route, token=""), 401)
+    assert "operator token" in body["error"]
+
+
+@pytest.mark.parametrize("route", READ_ROUTES)
+def test_every_read_route_refuses_an_unknown_token(server, route):
+    enroll(server, "serial:aaa")
+    expect_error(lambda: get(server, route, token="not-a-real-token"), 401)
+
+
+@pytest.mark.parametrize("route", READ_ROUTES)
+def test_every_read_route_refuses_a_revoked_token(server, route):
+    enroll(server, "serial:aaa")
+    token = server.registry.new_operator(name="leaver")
+    server.registry.revoke_operator(token)
+    expect_error(lambda: get(server, route, token=token), 401)
+
+
+def test_authorization_is_checked_before_the_route_exists(server):
+    """A 404 for an unauthenticated caller would leak which routes are real."""
+    expect_error(lambda: get(server, "/v1/nothing", token=""), 401)
+
+
+def test_healthz_stays_open(server):
+    """Deliberately: a liveness probe that needs a secret is a liveness probe
+    nobody wires up."""
+    status, body = get(server, "/healthz", token="")
+    assert (status, body["ok"]) == (200, True)
+
+
+def test_the_ui_stays_open(server):
+    """The page has to load before it can ask for a token, and it carries no
+    fleet data until it has one."""
+    status, content_type, body = get_bytes(server, "/index.html", token="")
+    assert status == 200
+    assert content_type.startswith("text/html")
+    assert b"operator token" in body
+
+
+def test_enrollment_needs_no_operator_token(server):
+    """It carries its own credential. A robot enrolling has no operator behind
+    it — that is the whole point of an unattended first boot."""
+    status, _ = enroll(server, "serial:aaa")
+    assert status == 201
+
+
+# ---- M7: what an authorized caller is given ---------------------------------
+
+
+def test_config_carries_this_operators_broker_credential(server):
+    """The reason /v1/config needs a token: it hands out a credential, and the
+    one it hands out is the caller's own."""
+    _, body = get(server, "/v1/config")
+    operator = server.registry.operator(server.token)
+    assert body["broker"]["username"] == operator["broker_user"]
+    assert body["broker"]["password"] == operator["broker_password"]
+
+
+def test_two_operators_get_different_broker_credentials(server):
+    other = server.registry.new_operator(name="someone else")
+    _, mine = get(server, "/v1/config")
+    _, theirs = get(server, "/v1/config", token=other)
+    assert mine["broker"]["username"] != theirs["broker"]["username"]
+    assert mine["broker"]["password"] != theirs["broker"]["password"]
+
+
+def test_the_roster_never_serves_a_password_hash(server):
+    """Dropped in `_row_to_robot`, so a route added later cannot serve it by
+    forgetting to."""
+    enroll(server, "serial:aaa")
+    _, roster = get(server, "/v1/robots")
+    _, one = get(server, "/v1/robots/mote-01")
+    assert "broker_hash" not in one
+    assert all("broker_hash" not in robot for robot in roster["robots"])
+    assert "broker_hash" not in json.dumps(roster)
+
+
+def test_enrolling_writes_the_broker_credential_files(tmp_path):
+    """The server is the issuer: a robot is never given a credential the broker
+    has not been told about."""
+    import credentials
+
+    broker_dir = tmp_path / "broker"
+    httpd = serve(
+        db=tmp_path / "registry.db",
+        host="127.0.0.1",
+        port=0,
+        broker_host="fleet-box",
+        publisher=FakeBroker(),
+        broker_auth_dir=broker_dir,
+        broker_reload_cmd=None,
+    )
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.token = ""
+    try:
+        _, body = enroll(httpd, "serial:aaa")
+        passwd = (broker_dir / "passwd").read_text()
+        acl = (broker_dir / "acl").read_text()
+        assert "mote-01:$7$" in passwd
+        assert credentials.SERVER_USER in passwd
+        assert "user mote-01" in acl
+        assert "topic read mote/v1/mote-01/task/command" in acl
+        # ...and the plaintext it just handed out verifies against the file.
+        line = next(row for row in passwd.splitlines() if row.startswith("mote-01:"))
+        assert credentials.verify_password(
+            body["broker"]["password"], line.split(":", 1)[1]
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

@@ -104,6 +104,20 @@ def yaw_from_quaternion(q) -> float:
     )
 
 
+def _connack_ok(args) -> bool:
+    """Did this ``on_connect`` describe a *successful* CONNACK?
+
+    paho hands the code as the second positional argument under both callback
+    APIs — an int in 1.x, a ``ReasonCode`` in 2.x — and both compare equal to 0
+    on success. A callback with no code at all (the test fake, older shims) is
+    taken as success, because refusal is the thing that has to be explicit.
+    """
+    if len(args) < 2:
+        return True
+    code = args[1]
+    return getattr(code, "value", code) == 0
+
+
 def paho_client(client_id: str):
     """A paho client, imported here so the module stays importable without it."""
     import paho.mqtt.client as mqtt
@@ -125,6 +139,11 @@ class MoteAgent(Node):
 
         self.broker_host = self.declare_parameter("broker_host", "").value
         self.broker_port = self.declare_parameter("broker_port", 0).value
+        # Normally the credential comes from fleet.yaml, written by `enroll`.
+        # These exist for the same reason broker_host does: a bench robot
+        # pointed at a throwaway broker, without an enrollment behind it.
+        self.broker_username = self.declare_parameter("broker_username", "").value
+        self.broker_password = self.declare_parameter("broker_password", "").value
         health_period = self.declare_parameter("health_period", 5.0).value
         pose_period = self.declare_parameter("pose_period", 1.0).value
         self.map_frame = self.declare_parameter("map_frame", "map").value
@@ -168,8 +187,8 @@ class MoteAgent(Node):
 
     # ---- connection -----------------------------------------------------
 
-    def _resolve(self) -> tuple[str, str, int] | None:
-        """``(robot_id, broker_host, broker_port)`` once this robot can join."""
+    def _resolve(self) -> tuple[str, str, int, tuple[str, str] | None] | None:
+        """``(robot_id, host, port, credential)`` once this robot can join."""
         robot_id = identity.robot_id()
         if not robot_id:
             self.get_logger().warning(
@@ -180,8 +199,12 @@ class MoteAgent(Node):
             return None
         host = self.broker_host
         port = self.broker_port
+        credential = None
+        if self.broker_username:
+            credential = (self.broker_username, self.broker_password)
         if not host:
-            configured = fleet_config.broker()
+            config = fleet_config.load()
+            configured = fleet_config.broker(config)
             if not configured:
                 self.get_logger().warning(
                     f"no broker configured at {fleet_config.config_path()} — "
@@ -190,7 +213,18 @@ class MoteAgent(Node):
                 )
                 return None
             host, port = configured
-        return robot_id, host, int(port or fleet_config.DEFAULT_BROKER_PORT)
+            if credential is None:
+                credential = fleet_config.broker_credentials(config)
+        if credential is None:
+            # An M7 broker refuses this outright; an older one does not. Say
+            # what to do rather than leaving "not authorised" to be decoded.
+            self.get_logger().warning(
+                f"no broker credential in {fleet_config.config_path()} — this "
+                "robot enrolled before credentials existed. Re-run "
+                "'pixi run enroll' to be issued one; connecting anonymously",
+                throttle_duration_sec=300.0,
+            )
+        return robot_id, host, int(port or fleet_config.DEFAULT_BROKER_PORT), credential
 
     def _try_connect(self):
         if self.client is not None:
@@ -198,9 +232,14 @@ class MoteAgent(Node):
         resolved = self._resolve()
         if resolved is None:
             return
-        self.robot_id, host, port = resolved
+        self.robot_id, host, port, credential = resolved
 
         client = self._client_factory(f"mote-agent-{self.robot_id}")
+        if credential is not None:
+            # The broker's ACL is keyed on this username, so it is what confines
+            # the agent to its own branch of the topic tree (M7). Set before the
+            # connect, because it travels in the CONNECT packet.
+            client.username_pw_set(*credential)
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_mqtt_message
@@ -231,6 +270,20 @@ class MoteAgent(Node):
     def _on_connect(self, client, _userdata, *args):
         """paho's thread. Subscribe here; leave anything ROS-shaped to the
         executor by asking _drain_inbound for a snapshot."""
+        # paho calls this for a *refused* CONNACK too, and since M7 that is a
+        # thing that happens — a robot whose credential the broker has not
+        # reloaded yet. Reporting it as connected would leave the agent
+        # publishing into a socket the broker is about to close, silently.
+        if not _connack_ok(args):
+            self.connected = False
+            self.get_logger().error(
+                f"broker refused this agent ({args[1] if len(args) > 1 else '?'}). "
+                "If this says 'not authorised', the broker has no credential for "
+                f"{self.robot_id} — re-run 'pixi run enroll' on this robot, and "
+                "make sure the fleet server reloaded the broker.",
+                throttle_duration_sec=60.0,
+            )
+            return
         self.connected = True
         self.get_logger().info(f"connected to broker as {self.robot_id}")
         client.subscribe(

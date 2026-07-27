@@ -5,8 +5,13 @@
 // state of the fleet the instant it loads and never polls (fleet.md Q5). The
 // write path is the fleet API: `POST /v1/robots/<id>/dispatch` authorizes the
 // operator and writes an audit line before anything reaches `task/command`.
+//
 // The two paths are deliberately different, and the browser holds no credential
-// that can publish to the broker.
+// that can publish to the broker. Since M7 that is enforced twice over: this
+// page's MQTT client has no PUBLISH encoder, *and* the broker credential it is
+// given — the operator's own, from /v1/config — has no write rule in the
+// broker's ACL. Both credentials arrive together and die together, because
+// revoking the operator removes the row both are read from.
 //
 // What this view is *not* is a Foxglove replacement. It answers "where is every
 // robot, what is each doing, send one somewhere" and hands the single-robot
@@ -38,6 +43,7 @@ const state = {
 const dom = {};
 let mapView = null;
 let pending = false;
+let reader = null;
 
 // -- small helpers -------------------------------------------------------
 
@@ -203,6 +209,9 @@ function scheduleRender() {
 }
 
 function render() {
+  // At the gate there is nothing to render, and the periodic re-render must not
+  // replace "paste a token" with "no robots" — which is a different claim.
+  if (!state.config) return;
   const records = [...state.robots.values()].sort((a, b) => a.id.localeCompare(b.id));
   if (!state.selected && records.length) state.selected = records[0].id;
   renderRoster(records);
@@ -392,30 +401,31 @@ async function onToken(event) {
   event.preventDefault();
   const token = dom.token.value.trim();
   localStorage.setItem(TOKEN_KEY, token);
-  await checkOperator();
   dom.token.value = '';
+  await start();
 }
 
-// The one call that tells us whether this token is any good — the audit route
-// is operator-only, so a 200 is proof and a 401 is the reason to say so.
-async function checkOperator() {
-  const token = localStorage.getItem(TOKEN_KEY);
-  if (!token) {
-    state.operator = null;
-    dom.operator.textContent = 'read-only — paste an operator token to dispatch';
-    dom.operator.className = 'operator anonymous';
-    return;
-  }
-  try {
-    await api('/v1/audit?limit=1');
-    state.operator = token;
-    dom.operator.textContent = 'operator token accepted';
-    dom.operator.className = 'operator ok';
-  } catch (error) {
-    state.operator = null;
-    dom.operator.textContent = `token refused: ${error.message}`;
-    dom.operator.className = 'operator error';
-  }
+// Since M7 there is no read-only mode to fall back to: /v1/config is itself
+// operator-only, because it hands out this operator's broker credential. So the
+// page has exactly two states — signed in, or asking to be — and this is the
+// asking one. It is not an error; a wall display that has been logged out looks
+// like this until somebody pastes a token back in.
+function showGate(reason) {
+  state.operator = null;
+  state.config = null;
+  dom.operator.textContent = reason;
+  dom.operator.className = 'operator anonymous';
+  dom.brokerState.textContent = 'not connected — no operator token';
+  dom.brokerState.className = 'broker offline';
+  dom.roster.replaceChildren(
+    el('p', {
+      class: 'empty',
+      text:
+        'Paste an operator token to see the fleet. Mint one on the fleet box: ' +
+        'fleetctl operator new --name <you>',
+    }),
+  );
+  renderDetail(null);
 }
 
 // -- boot ----------------------------------------------------------------
@@ -450,6 +460,48 @@ function brokerUrl(config) {
   return `${scheme}://${host}:${config.broker.ws_port}/`;
 }
 
+// Everything that needs a credential. Called at load, and again whenever a
+// token is pasted — so signing in never needs a page reload, and a token that
+// stops working puts the page back at the gate rather than into a silent
+// half-state.
+async function start() {
+  if (!localStorage.getItem(TOKEN_KEY)) {
+    showGate('read-only — paste an operator token');
+    return;
+  }
+  try {
+    state.config = await api('/v1/config');
+  } catch (error) {
+    showGate(`token refused: ${error.message}`);
+    return;
+  }
+  state.operator = localStorage.getItem(TOKEN_KEY);
+  dom.operator.textContent = 'operator token accepted';
+  dom.operator.className = 'operator ok';
+  document.getElementById('contract').textContent = state.config.contract;
+  await loadRoster().catch((error) => console.warn('roster unavailable', error));
+
+  if (reader) reader.close();
+  const { root, presence, health, pose, status } = state.config.topics;
+  reader = new BrokerReader({
+    url: brokerUrl(state.config),
+    topics: [presence, health, pose, status].map((leaf) => `${root}/+/${leaf}`),
+    // The broker is authenticated since M7, and this credential is
+    // subscribe-only by the broker's own ACL — see docs/fleet/security.md.
+    credential: state.config.broker.username
+      ? { username: state.config.broker.username, password: state.config.broker.password }
+      : null,
+    onMessage: onBrokerMessage,
+    onState: (status_, detail) => {
+      dom.brokerState.textContent =
+        status_ === 'connected' ? `broker connected` : `broker ${status_}: ${detail}`;
+      dom.brokerState.className = `broker ${status_}`;
+    },
+  });
+  reader.connect();
+  scheduleRender();
+}
+
 export async function boot() {
   bind();
   mapView = new MapView(dom.canvas, {
@@ -471,23 +523,7 @@ export async function boot() {
   dom.dispatch.addEventListener('submit', onDispatch);
   document.getElementById('token-form').addEventListener('submit', onToken);
 
-  state.config = await api('/v1/config');
-  document.getElementById('contract').textContent = state.config.contract;
-  await checkOperator();
-  await loadRoster().catch((error) => console.warn('roster unavailable', error));
-
-  const { root, presence, health, pose, status } = state.config.topics;
-  const reader = new BrokerReader({
-    url: brokerUrl(state.config),
-    topics: [presence, health, pose, status].map((leaf) => `${root}/+/${leaf}`),
-    onMessage: onBrokerMessage,
-    onState: (status_, detail) => {
-      dom.brokerState.textContent =
-        status_ === 'connected' ? `broker connected` : `broker ${status_}: ${detail}`;
-      dom.brokerState.className = `broker ${status_}`;
-    },
-  });
-  reader.connect();
+  await start();
 
   // Ages are the only thing on the page that changes without a message.
   setInterval(scheduleRender, 5000);
