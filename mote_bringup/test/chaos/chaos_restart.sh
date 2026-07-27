@@ -5,8 +5,11 @@
 #
 #   pixi run chaos            # kills nodes, logs recovery to $CHAOS_LOG
 #
-# Recovery is expected because the launch files mark the driver / nav2 nodes
-# respawn=True (see mote_launch.py / nav2_launch.py); this proves it end to end.
+# Recovery is expected because the launch files mark the drivers and the nav2
+# container respawn=True (see mote_launch.py / nav2_launch.py); this proves it
+# end to end. Nav2 is composed, so the unit of recovery there is the container:
+# killing it takes every Nav2 server down together, and the launch file both
+# respawns the process and reloads the components into it.
 #
 # Safety: nodes are matched by their executable name (e.g. ros2_control_node),
 # which never matches this bash script, and this script's own PID is excluded —
@@ -24,9 +27,9 @@ LOG="${CHAOS_LOG:-/tmp/mote_chaos_log.txt}"
 # Executable names to knock over. These are the process names, not the launch
 # nodes' remapped names, so they are stable to match on.
 TARGETS=(
-    "ros2_control_node"    # controller_manager — drive control
-    "sllidar_node"         # lidar driver — /scan
-    "controller_server"    # nav2 local controller
+    "ros2_control_node"              # controller_manager — drive control
+    "sllidar_node"                   # lidar driver — /scan
+    "component_container_isolated"   # the whole composed nav2 stack
 )
 
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
