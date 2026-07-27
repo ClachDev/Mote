@@ -22,7 +22,8 @@ pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks
 pixi run arm            # SO-101 arm driver: joint states + safe jog control
 pixi run arm-jog        # Interactive per-joint jog CLI (needs `pixi run arm`)
 pixi run arm-check      # Standalone arm bus enumeration + health (read-only)
-pixi run arm-pose       # Teach/replay named arm poses; derive soft limits
+pixi run arm-calibrate  # Guided range calibration: sweep to the stops -> limits
+pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi-powersave + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -206,11 +207,33 @@ section. Contains:
   driver (publishes clamped `arm/goal`, torque-off on exit). No bus contention.
 - `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
   + `--save-home` calibration snapshot. Run with the driver stopped (same port).
+- `calibrate.py` + `arm_calibrate` (`pixi run arm-calibrate`) — **where the soft
+  limits come from.** Guided LeRobot-style range calibration: a bus owner (not a
+  driver client — the driver reports radians about the very `home` under
+  replacement, and the arm must stay limp), it walks the joints, the operator
+  sweeps each limp joint to both mechanical stops by hand, and it emits a
+  ready-to-paste `arm.joints` block whose band is the swept range pulled
+  *inward* by `--margin` (0.05 rad) — the opposite direction to `arm-pose
+  limits`. `home` is the sweep mid-point, or `--home capture` per joint. Refuses
+  rather than guesses on three cases, each keeping the joint's old values with
+  the reason above its line: a sweep crossing the 12-bit **encoder wrap** (no
+  `home`/limit pair can describe it — re-home that servo away from 0/4095), a
+  `home` so near a stop that the band would exclude 0 rad (**the defect in the
+  committed `shoulder_pan` limits: [0.010, 0.229] excludes its own zero**), and
+  a range too short to survive the margin. Warns which taught poses a changed
+  `home` invalidates, naming them and the per-joint radian shift, before
+  emitting. Measurements recorded to `~/.mote/arm_calibration.yaml`. The maths
+  is ROS-free and unit-tested (`test_calibrate.py`).
 - `poses.py` + `arm_pose` (`pixi run arm-pose`) — teach/replay named poses
   (`~/.mote/arm_poses.yaml`, `MOTE_HOME`-overridable), the arm's analogue of
-  `save-zone`. **The committed soft limits are the envelope of physically vetted
-  poses** (`arm-pose limits`), not guesses; `go` refuses moves over
-  `--max-travel`. Changing `home` invalidates stored poses.
+  `save-zone`. `go` refuses moves over `--max-travel`. Changing `home`
+  invalidates stored poses. `arm-pose limits` is **not** the calibration path:
+  it widens outward from taught poses, so it only describes where the arm has
+  been and never finds the stops (which is why the committed limits give barely
+  moved joints a near-zero band) — its remaining use is *narrowing* to a working
+  envelope inside calibrated hard stops. The committed values are still that old
+  envelope output, flagged as provisional in `robot.yaml` pending a real
+  calibration pass (`mote_arm/BENCH.md` step 3).
 - The arm links/joints are added to `mote.urdf.xacro` behind an `arm:=true`
   default (the sim passes `arm:=false`); joint names match `robot.yaml` and
   `/joint_states` so robot_state_publisher animates the arm in TF.

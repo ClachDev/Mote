@@ -95,6 +95,10 @@ arm = "ros2 launch mote_arm arm_launch.py"
 arm-jog = "ros2 run mote_arm jog"
 # Teach/replay named arm poses (save is read-only; go asks before moving).
 arm-pose = "ros2 run mote_arm arm_pose"
+# Guided range calibration: sweep each joint to its mechanical stops by hand and
+# emit robot.yaml limits from what was measured. Opens the bus directly, so run
+# it with the arm driver stopped. This is where soft limits come from.
+arm-calibrate = "ros2 run mote_arm arm_calibrate"
 # Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
 arm-gains = "ros2 run mote_arm arm_gains"
 # Robot-side inference diagnostics (torch-free — run in the default/robot env):

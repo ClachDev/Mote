@@ -13,13 +13,14 @@ Prerequisites: servos wired and enumerated, robot powered, repo built
 are in `README.md`. They are kept here because they are the right checks after
 any rewiring or recalibration. What is still open:
 
-- **Step 3** — the taught poses ("home", "reachy") define the working envelope,
-  but `home:` in robot.yaml is still the as-found parked count rather than a
-  deliberately taught mechanical zero. Optional; do it if you want "0 rad" to
-  mean something specific.
+- **Step 3 — one full calibration pass.** This is the important one. The
+  committed limits are still the old pose-envelope output: they describe where
+  the arm has been, not where it can go, and `shoulder_pan`'s band excludes its
+  own zero so that joint can never be commanded home. `pixi run arm-calibrate`
+  measures the stops directly; until it has been run on the real arm, every
+  limit below is provisional.
 - **Steps 5–6 for the other five joints** — only `elbow_flex` was jogged and
-  clamp-tested. The rest have a deliberately tight envelope until you pose the
-  arm somewhere that widens it.
+  clamp-tested. The rest stay on a tight provisional envelope until Step 3 runs.
 - Nothing power-related: the earlier "5 V torque limit" was a misdiagnosis. It
   was proportional droop from `Kp=16`; `Kp=32` is now applied (see README) and
   the arm completes the full home<->reachy move. A small `Ki` would close the
@@ -46,19 +47,61 @@ position (0–4095), the supply voltage (measures 5.1–5.2 V today), a temperat
 a wiring/ID problem — fix IDs with `pixi run setup-ids` / `ros2 run
 mote_hardware servo_debug` before continuing.
 
-## Step 3 — teach home offsets (calibration) — optional, needs a human
+## Step 3 — full-range calibration — needs a human, ~10 minutes
 
-The committed `home:` values are the arm's as-found resting counts, so "0 rad"
-currently means "the pose it was parked in". Replace them with true mechanical
-zeros: move each joint by hand (it's limp) to its zero / neutral pose, then:
+**This is where the soft limits come from.** The committed values are still the
+old pose-envelope output, which never learned where the mechanical stops are.
+Run one full pass and replace them.
+
+Support the arm — it goes limp at the start of this step, and an unsupported arm
+falls. Stop the driver and the robot base first (`pixi run kill`): this tool
+opens the serial bus directly.
 
 ```
-pixi run arm-check -- --save-home
+pixi run arm-calibrate
 ```
 
-Paste the printed per-joint `home:` counts into the `arm.joints` entries in
-`robot.yaml`. Re-run Step 2 and confirm each joint's `rad` column now reads
-~0.000 at the neutral pose. `pixi run build` to reinstall the config.
+For each of the six joints in turn it prints a live readout and waits:
+
+1. Move the joint **gently** to one mechanical stop. The stop is where it
+   resists — do not force it, and do not use it to "find" extra range.
+2. Move it to the other stop, watching `min`/`max`/`span` grow on the readout.
+3. Move it back to a safe resting position and press **Enter**.
+
+**Expected per joint:** a swept span matching what you felt (a full-travel joint
+is ~2–4 rad; the gripper much less), then a printed band a little inside it.
+Anything that does not calibrate says why and keeps its existing values — see
+the failure table below.
+
+Use `--home capture` instead if you want a deliberate zero: after each sweep it
+asks you to park that joint at the pose which should read 0 rad. Park it well
+away from the stops, or the band would exclude its own zero and it is rejected.
+
+Before emitting anything it lists every taught pose that a changed `home`
+invalidates. **Those poses must be re-taught** (`pixi run arm-pose save <name>`)
+— they are stored in radians about home, so afterwards they name different
+physical positions.
+
+Finally, paste the printed `arm.joints` block over the one in
+`mote_description/config/robot.yaml`, then:
+
+```
+pixi run build
+pixi run arm-check     # the rad column should read ~0.000 at each new home
+```
+
+What was measured is kept in `~/.mote/arm_calibration.yaml`.
+
+### When a joint does not calibrate
+
+| Reported | What to do |
+|----------|------------|
+| `sweep crossed the encoder 0/4095 boundary` | That joint's travel straddles the encoder wrap, so no `home`/limit pair can describe it. Re-home the servo (re-seat the horn, or re-zero it) so its mid-range sits away from the boundary, then `pixi run arm-calibrate -- --joints <name>`. |
+| `home too close to a stop; zero would be unreachable` | Only with `--home capture`. Re-run that joint and park it further from the stops. |
+| `swept only X rad, too short for the margin` | The sweep did not reach both stops — redo it. If the joint really is that short, lower `--margin`. |
+
+A joint that fails keeps its previous values, with the reason as a comment above
+its line, so pasting the block never silently reverts a joint to a guess.
 
 ## Step 4 — joint states live in ROS
 
@@ -110,24 +153,25 @@ README's "Verified on hardware" for what the elbow run showed.
 | `/joint_states` value follows the jog | feedback + conversion OK |
 | Direction matches the `+` sign | `invert` correct |
 
-## Step 5b — teach the working envelope
+## Step 5b — teach poses, and optionally narrow the envelope
 
-Soft limits come from poses you vet physically, not from guesses:
+Poses are how you return the arm to somewhere useful; the hard limits already
+came from Step 3.
 
 1. `pixi run arm` in one terminal.
 2. Pose the limp arm by hand somewhere useful, then
    `pixi run arm-pose save <name>` (read-only capture).
 3. Repeat for each pose worth reaching.
-4. `pixi run arm-pose limits` prints a `robot.yaml` `joints:` block spanning
-   every taught pose plus a 0.10 rad margin, and sanity-checks that each taught
-   pose falls inside it. Paste it into `robot.yaml` and rebuild.
-5. `pixi run arm-pose go <name>` moves between taught poses. It prints per-joint
+4. `pixi run arm-pose go <name>` moves between taught poses. It prints per-joint
    travel and asks before moving; it refuses any move over `--max-travel`
    (0.35 rad default).
 
-The committed limits came from two poses, `home` and `reachy`. Joints that
-barely differ between them have a tight band by construction — teach a pose that
-exercises them to widen it.
+`pixi run arm-pose limits` prints a `joints:` block spanning every taught pose
+plus a margin. It is **not** the calibration path — it widens outward from poses
+already reached and never learns where the stops are, which is why joints that
+barely differ between two poses come out with a near-zero band. Use it only to
+deliberately **narrow** a joint inside its calibrated stops, and never paste it
+over calibrated limits expecting to widen them: re-run Step 3 for that.
 
 ## Step 6 — demonstrate the soft-limit clamp (done for `elbow_flex`)
 
@@ -159,12 +203,18 @@ Already verified on the robot (2026-07-25):
 - [x] soft limits clamp during a real jog (repeated `+` held at the limit)
 - [x] enabling torque holds the current pose instead of snapping
 - [x] `min`/`max` in `robot.yaml` derived from taught poses, not guessed
+      (superseded by the calibration pass below — provisional until it runs)
 - [x] servo gains applied and verified (`pixi run arm-gains`), full
       home<->reachy move completed both ways
 
 Still open:
 
+- [ ] **Step 3: one full `pixi run arm-calibrate` pass on the real arm**, its
+      block pasted into `robot.yaml`, and any taught poses it named re-taught
+- [ ] no joint reports an encoder wrap during that pass (if one does, re-home
+      that servo away from the 0/4095 boundary and sweep it again)
+- [ ] `shoulder_pan` can be commanded to 0 rad afterwards (today its band
+      excludes its own zero)
 - [ ] the other five joints jogged and direction-checked (`invert`)
-- [ ] `home:` taught at a true mechanical zero (optional — re-teach poses after)
 - [ ] optional: small `Ki` to remove the residual 1-3.5 deg droop (test windup
       on an unloaded joint first)

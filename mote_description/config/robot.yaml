@@ -57,21 +57,25 @@ arm:
     kd: 32
     ki: 0
   # min/max are soft limits in radians about each joint's zero; home is the raw
-  # encoder count (0-4095) at that zero (the arm's as-found parked pose, which
-  # measured within 0.003 rad of the taught "home" pose on every joint but pan).
+  # encoder count (0-4095) at that zero.
   #
-  # These limits are NOT guesses — they are the envelope of poses a human
-  # physically posed the arm into and vetted ("home" and "reachy", taught
-  # 2026-07-25), widened by a 0.10 rad margin, as emitted by
-  # `pixi run arm-pose limits`. Every position inside the band therefore lies
-  # between two vetted poses. Joints that barely moved between the two poses get
-  # a correspondingly tight band — that is the point, not a bug: nothing may
-  # travel further than a human has demonstrated is safe.
+  # These come from `pixi run arm-calibrate`: the operator sweeps each limp joint
+  # to both mechanical stops by hand and the tool emits this block, the band
+  # being the measured travel pulled INWARD by a margin. It is the only method
+  # that learns where the stops actually are.
   #
-  # To widen the envelope, pose the arm somewhere new, `arm-pose save <name>`,
-  # then re-run `arm-pose limits` and paste the result here. Changing `home`
-  # invalidates stored poses (they are recorded in radians about it), so re-teach
-  # poses after any re-home.
+  # THE VALUES BELOW PREDATE THAT TOOL. They are the older pose-envelope output
+  # (`arm-pose limits`): the extremes of two vetted poses ("home" and "reachy",
+  # taught 2026-07-25) widened by 0.10 rad, plus the arm's as-found parked counts
+  # as home. Safe, but they describe where the arm has *been* rather than where
+  # it can go, so joints that barely moved between those two poses carry a
+  # near-zero band — and shoulder_pan's [0.010, 0.229] excludes its own zero, so
+  # that joint can never be commanded home. Run a calibration pass
+  # (mote_arm/BENCH.md step 3) and paste the result over this block.
+  #
+  # Changing `home` invalidates stored poses (they are recorded in radians about
+  # it), so re-teach poses after any re-home — `arm-calibrate` names the ones
+  # affected before it emits anything.
   joints:
     - {name: shoulder_pan,  id: 1, min:  0.010, max: 0.229, home: 3013, invert: false}
     - {name: shoulder_lift, id: 2, min: -0.102, max: 0.100, home: 1483, invert: false}

@@ -102,9 +102,47 @@ conversions are verified without hardware.
 | `arm_driver` (node) | **Single bus owner.** Publishes `/joint_states` for the arm, accepts absolute goals on `arm/goal`, exposes `arm/set_torque`. `pixi run arm`. |
 | `jog` (CLI) | Interactive per-joint jog. A *client* of the driver — publishes clamped `arm/goal`, calls `arm/set_torque`. `pixi run arm-jog`. |
 | `arm_check` (tool) | Standalone enumeration + health + home snapshot. Read-only; run with the driver stopped. `pixi run arm-check`. |
-| `poses.py` / `arm_pose` | Teach and replay named poses, and derive soft limits from them. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
+| `calibrate.py` / `arm_calibrate` | Guided range calibration: sweep each joint to its stops, emit `robot.yaml` limits. `pixi run arm-calibrate`. |
+| `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
 
-## Named poses, and where the soft limits come from
+## Where the soft limits come from
+
+**`pixi run arm-calibrate`.** It walks the six joints in servo-command order;
+for each, you move the limp joint gently to both mechanical stops by hand while
+it watches the encoder live, and it emits a ready-to-paste `arm.joints` block:
+
+```
+pixi run arm-calibrate                        # home = the mid-point of each sweep
+pixi run arm-calibrate -- --home capture      # pose a zero per joint instead
+pixi run arm-calibrate -- --joints wrist_roll # redo one joint
+```
+
+The band it emits is the swept range pulled **inward** by `--margin` (0.05 rad),
+because a hard stop is where the operator stopped pushing — a soft limit has to
+sit short of it. It opens the serial bus directly, like `arm-check`, so run it
+with the driver stopped: the driver reports radians about the very `home` being
+replaced, and the arm has to stay limp throughout. The one write it makes is
+torque *off*, and it asks first, because an unsupported arm falls when it goes
+limp.
+
+Three things it refuses to guess at, rather than emit plausible-looking numbers:
+
+- **An encoder wrap.** A joint whose travel crosses the 12-bit 0/4095 boundary
+  has a raw min/max that says nothing about its span, and no `home`/limit pair
+  in that scheme can describe it (`rad_to_counts` clamps at the encoder edge).
+  The wrap is detected, reported, and the joint keeps its existing values with
+  the reason on the line above it. Fix it by re-homing that servo so its
+  mid-range sits away from the boundary, then sweep it again.
+- **A zero it could never reach.** If `home` lands within a margin of a stop,
+  the band would exclude 0 rad and the joint could not be commanded home — which
+  is exactly the defect in the pre-calibration `shoulder_pan` limits.
+- **A range too short to survive the margin at both ends.**
+
+It also warns, *before* emitting anything, which taught poses a changed `home`
+invalidates and by how many radians each has shifted. What was measured is
+recorded in `~/.mote/arm_calibration.yaml` for provenance.
+
+### Named poses, and narrowing the envelope
 
 The base layer teaches map positions by driving there and running
 `pixi run save-zone`; the arm's analogue is `pixi run arm-pose`. Pose the limp
@@ -114,7 +152,7 @@ arm by hand, capture it, and later command it back:
 pixi run arm-pose save reachy     # read-only capture of the current pose
 pixi run arm-pose list            # taught poses, and how far the arm is from each
 pixi run arm-pose go reachy       # the only command that moves; asks first
-pixi run arm-pose limits          # emit robot.yaml limits spanning the taught poses
+pixi run arm-pose limits          # emit limits spanning the taught poses
 ```
 
 Poses live in `~/.mote/arm_poses.yaml` (`MOTE_HOME` overrides `~/.mote`) —
@@ -122,12 +160,17 @@ per-robot data, since a pose only means anything for one physical arm and its
 calibration. **Changing `home` invalidates stored poses** (they are recorded in
 radians about it), so re-teach after any re-home.
 
-The committed soft limits are **not guesses**: they are the envelope of poses a
-human physically posed the arm into and vetted, widened by a 0.10 rad margin
-(`arm-pose limits`). Every position inside the band lies between two vetted
-poses. Joints that barely moved between poses get a correspondingly tight band —
-that is the design, not a defect: nothing may travel further than a human has
-demonstrated is safe. Widen it by teaching another pose and re-running `limits`.
+`arm-pose limits` is **not** the calibration path. It widens *outward* from the
+extremes of the taught poses, so it can only describe where the arm has already
+been, and it never learns where the stops are: a joint that barely moved between
+two poses gets a near-zero band. Its remaining use is the opposite direction —
+**narrowing** to a working envelope on top of calibrated hard-stop limits, when
+a task wants a joint held tighter than the mechanism allows. Take the hard stops
+from `arm-calibrate` first; reach for `limits` only to pull them in.
+
+The values committed in `robot.yaml` today still come from the old envelope
+method, and are flagged as such in that file, pending a calibration pass on the
+real arm (`BENCH.md` step 3).
 
 `arm-pose go` refuses any move whose largest single-joint travel exceeds
 `--max-travel` (0.35 rad by default), so a stale pose or a bad limit change
@@ -190,10 +233,17 @@ because they start from the measured position — but it is not yet a real zero.
 See `BENCH.md` for the full runbook. In short:
 
 1. `pixi run arm-check` — confirm every joint responds; note IDs.
-2. Pose each joint at its mechanical zero, run `pixi run arm-check -- --save-home`,
-   paste the printed `home:` counts into `robot.yaml`.
-3. Jog each joint to its safe extremes and set `min`/`max` (rad) in `robot.yaml`;
-   flip `invert` if a joint moves opposite the expected sign.
+2. `pixi run arm-calibrate` — sweep every joint to its stops; paste the emitted
+   `arm.joints` block into `robot.yaml` and `pixi run build`. This sets `home`
+   *and* `min`/`max` together, which is the point: limits only mean something
+   relative to the zero they were measured about.
+3. Jog each joint (`pixi run arm-jog`) and flip `invert` for any that moves
+   opposite the expected sign. `invert` changes what the limits mean, so
+   re-calibrate after changing it.
+
+`arm-check -- --save-home` still prints a bare `home:` snapshot of the current
+pose. It is a one-joint-at-a-time convenience, not calibration: it measures no
+range, so the limits stay whatever they were.
 
 ## Verified on hardware
 
