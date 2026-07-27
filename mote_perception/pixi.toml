@@ -1,0 +1,8 @@
+# Release build definition (docs/releasing.md). Deliberately carries no
+# `version`: the backend reads it from package.xml, which stays the single
+# source of truth that `pixi run release-version` bumps.
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.5.0.*" }
+
+[package.build.config]
+distro = "jazzy"

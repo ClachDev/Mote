@@ -1,0 +1,12 @@
+# Out-of-tree build definition for the `sllidar_ros2` submodule.
+#
+# The manifest lives here rather than in third_party/sllidar_ros2/ because that
+# tree is a git submodule: a pixi.toml added inside it would be an untracked
+# file in someone else's repo, lost on the next clone. `source.path` points the
+# backend at the submodule instead. The version comes from its package.xml.
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.5.0.*" }
+source = { path = "../../../third_party/sllidar_ros2" }
+
+[package.build.config]
+distro = "jazzy"

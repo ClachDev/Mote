@@ -7,13 +7,19 @@ package_name = "mote_perception"
 
 setup(
     name=package_name,
-    version="0.0.0",
+    version="0.1.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
         (os.path.join("share", package_name, "config"), glob("config/*")),
+        # The robot-side inference diagnostics (inference_health, inference_bench)
+        # are run against the inference machine from the robot, which under a
+        # released deploy has no checkout to run them from. The whole tools/ dir
+        # ships because it is ~128 KB of Python and splitting it would mean
+        # maintaining a list of which harness is robot-side.
+        (os.path.join("share", package_name, "tools"), glob("tools/*.py")),
     ],
     install_requires=["setuptools"],
     # the 'test' extra tells colcon to run these tests with pytest

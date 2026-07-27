@@ -1,0 +1,60 @@
+{
+  "version": "0.1.0",
+  "platform": "linux-64",
+  "manifest": "release/deploy/pixi.toml (channel overridden to dist/channel)",
+  "channel": "dist/channel (local, indexed)",
+  "packages_built": [
+    "ros-jazzy-mote-description",
+    "ros-jazzy-mote-hardware",
+    "ros-jazzy-mote-nav",
+    "ros-jazzy-mote-bringup",
+    "ros-jazzy-mote-perception",
+    "ros-jazzy-mote-tasks",
+    "ros-jazzy-mote-arm",
+    "ros-jazzy-mote-fleet",
+    "ros-jazzy-sllidar-ros2",
+    "ros-jazzy-kinematic-icp"
+  ],
+  "resolved": {
+    "ros-jazzy-kinematic-icp": {
+      "version": "0.1.1",
+      "url": "dist/channel/linux-64/ros-jazzy-kinematic-icp-0.1.1-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-arm": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-arm-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-bringup": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-bringup-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-description": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-description-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-fleet": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-fleet-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-hardware": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-hardware-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-nav": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-nav-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-perception": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-perception-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-mote-tasks": {
+      "version": "0.1.0",
+      "url": "dist/channel/linux-64/ros-jazzy-mote-tasks-0.1.0-hb0f4dca_0.conda"
+    },
+    "ros-jazzy-sllidar-ros2": {
+      "version": "1.0.1",
+      "url": "dist/channel/linux-64/ros-jazzy-sllidar-ros2-1.0.1-hb0f4dca_0.conda"
+    }
+  }
+}

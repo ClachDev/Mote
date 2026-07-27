@@ -1,0 +1,16 @@
+# Release build definition (docs/releasing.md). Deliberately carries no
+# `version`: the backend reads it from package.xml, which stays the single
+# source of truth that `pixi run release-version` bumps.
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.5.0.*" }
+
+[package.build.config]
+distro = "jazzy"
+# paho-mqtt is a plain conda-forge package, not a ROS one, and RoboStack has no
+# entry for the rosdep key -- so the backend's `ros-jazzy-` fallback would make
+# the built package depend on something that does not exist. Caught by
+# `pixi run release-verify`, which is the reason that step resolves a whole
+# robot environment rather than trusting a successful build.
+extra-package-mappings = [
+    { "python3-paho-mqtt" = { robostack = ["paho-mqtt"] } },
+]

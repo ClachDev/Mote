@@ -1,0 +1,21 @@
+# Out-of-tree build definition for the `kinematic_icp` submodule.
+#
+# The manifest lives here rather than in third_party/kinematic_icp/ros/ because
+# that tree is a git submodule: a pixi.toml added inside it would be an
+# untracked file in someone else's repo, lost on the next clone. `source.path`
+# points the backend at the submodule instead. The version comes from its
+# package.xml.
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.5.0.*" }
+source = { path = "../../../third_party/kinematic_icp/ros" }
+
+[package.build.config]
+distro = "jazzy"
+# kinematic_icp's core pulls kiss-icp/tessil through CMake FetchContent, and
+# tessil still declares a pre-3.5 cmake_minimum_required. Same workaround the
+# colcon build uses (`pixi run build`), passed through the generated script's
+# $EXTRA_CMAKE_ARGS hook.
+env = { EXTRA_CMAKE_ARGS = "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" }
+# Sophus is a conda-forge C++ header library, not a ROS package, so the
+# backend's `ros-jazzy-` fallback would look for a package that does not exist.
+extra-package-mappings = [{ sophus = { robostack = ["sophus"] } }]

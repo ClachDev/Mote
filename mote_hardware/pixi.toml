@@ -1,0 +1,11 @@
+[package.build]
+backend = { name = "pixi-build-ros", version = "0.5.0.*" }
+
+[package.build.config]
+distro = "jazzy"
+# The Feetech SCServo C++ SDK is a plain conda package on the mote channel, not
+# a ROS one, so the backend's `ros-jazzy-` fallback would name a package that
+# does not exist.
+extra-package-mappings = [
+    { scservo_linux = { robostack = ["scservo-linux"] } },
+]

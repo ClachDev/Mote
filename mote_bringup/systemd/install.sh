@@ -1,20 +1,48 @@
 #!/usr/bin/env bash
 # Install the mote systemd services for the invoking user.
-# Run via: pixi run install-systemd (uses sudo; @USER@/@HOME@/@REPO@/@DDS_IFACE@
-# are filled in here). Override the DDS interface with:
+# Run via: pixi run install-systemd (uses sudo; @USER@/@HOME@/@REPO@/@DDS_CONFIG@
+# /@DDS_IFACE@ are filled in here). Override the DDS interface with:
 #   MOTE_DDS_INTERFACE=eth0 pixi run install-systemd
+# Set MOTE_REPO to install units for a released deploy slot rather than for the
+# checkout this script lives in (see below, and docs/releasing.md).
 set -euo pipefail
 
 MOTE_USER="${SUDO_USER:-$USER}"
 MOTE_HOME="$(getent passwd "$MOTE_USER" | cut -d: -f6)"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-# The checkout the units should run from: this script's own repo root, not a
-# hardcoded ~/Mote. Installing from a second checkout (a git worktree, a staging
-# clone) otherwise produces units pointing at a tree that need not contain the
-# tasks they invoke, which fails ExecStartPre with status=127 and leaves the
-# service restarting forever.
-MOTE_REPO="$(cd "$SRC_DIR/../.." && pwd)"
+# The directory the units run from: the one holding the pixi manifest whose
+# tasks they invoke. Two layouts:
+#
+#   source checkout -- this script's own repo root, not a hardcoded ~/Mote.
+#     Installing from a second checkout (a git worktree, a staging clone)
+#     otherwise produces units pointing at a tree that need not contain the
+#     tasks they invoke, which fails ExecStartPre with status=127 and leaves
+#     the service restarting forever.
+#
+#   released deploy -- the slot directory, which cannot be derived from SRC_DIR
+#     because this script then lives inside the *environment*, under
+#     share/mote_bringup. mote-update passes it in as MOTE_REPO, pointing at
+#     the stable `current` symlink.
+if [ -n "${MOTE_REPO:-}" ]; then
+    MOTE_DEPLOYED=1
+    MOTE_REPO="$(cd "$MOTE_REPO" && pwd)"
+else
+    MOTE_DEPLOYED=0
+    MOTE_REPO="$(cd "$SRC_DIR/../.." && pwd)"
+fi
 echo "Repo: $MOTE_REPO"
+
+# Where the units read cyclonedds.xml from. Deliberately expressed through
+# $MOTE_REPO rather than as "$SRC_DIR/../config": in a deploy that keeps the
+# path routed through the `current` symlink, so a cutover redirects every unit
+# to the new slot's config instead of pinning them to the slot that happened to
+# install them.
+if [ "$MOTE_DEPLOYED" = "1" ]; then
+    DDS_CONFIG="$MOTE_REPO/.pixi/envs/default/share/mote_bringup/config/cyclonedds.xml"
+else
+    DDS_CONFIG="$MOTE_REPO/mote_bringup/config/cyclonedds.xml"
+fi
+echo "DDS config: $DDS_CONFIG"
 
 # The interface the ROS graph should live on: the one carrying the default
 # route. cyclonedds.xml treats it as optional, so a wrong guess degrades to a
@@ -25,7 +53,7 @@ echo "DDS interface: $DDS_IFACE"
 
 for unit in "$SRC_DIR"/*.service; do
     sed "s|@USER@|$MOTE_USER|g; s|@HOME@|$MOTE_HOME|g; s|@REPO@|$MOTE_REPO|g; \
-         s|@DDS_IFACE@|$DDS_IFACE|g" "$unit" \
+         s|@DDS_CONFIG@|$DDS_CONFIG|g; s|@DDS_IFACE@|$DDS_IFACE|g" "$unit" \
         | sudo tee "/etc/systemd/system/$(basename "$unit")" > /dev/null
 done
 

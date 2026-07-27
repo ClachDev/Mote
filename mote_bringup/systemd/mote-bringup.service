@@ -35,8 +35,10 @@ RestartMaxDelaySec=30
 TimeoutStartSec=120
 
 # Pin DDS to the robot's one real interface and drop non-discovery multicast
-# (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
-Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
+# (mote_bringup/config/cyclonedds.xml); @DDS_CONFIG@ and @DDS_IFACE@ are filled
+# in by install.sh, which resolves the config path for a source checkout or a
+# released deploy slot.
+Environment=CYCLONEDDS_URI=file://@DDS_CONFIG@
 Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
 
 [Install]

@@ -4,6 +4,10 @@ channels = ["https://prefix.dev/mote", "robostack-jazzy", "conda-forge"]
 name = "mote"
 platforms = ["linux-64", "linux-aarch64"]
 version = "0.1.0"
+# `pixi publish` builds the first-party packages as conda packages for the
+# `mote` channel (docs/releasing.md). Still a pixi preview feature, so the
+# backend version is pinned in each package's build manifest.
+preview = ["pixi-build"]
 
 [tasks]
 submodules = "git submodule update --init"
@@ -13,6 +17,25 @@ build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_PO
 test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_nav mote_perception mote_tasks mote_arm mote_fleet --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
     "build",
 ] }
+
+# Releases: versioned conda packages on the prefix.dev `mote` channel, which is
+# how software reaches a robot (docs/releasing.md). `pixi run sync` below stays
+# the *development* loop; this is the deployment one.
+release-version = "python release/version.py"          # show | check | set X.Y.Z
+release-build = "python release/build.py"              # -> dist/channel (local)
+release-verify = "python release/verify.py"            # resolve a robot env against it
+release-manifest = "python release/deploy_manifest.py" # regenerate release/deploy/pixi.toml
+# The whole dry run: versions agree, tests pass, every package builds, and a
+# robot environment resolves against the result. Publishes nothing.
+release = { depends-on = [
+    "test",
+    "release-manifest",
+    "release-build",
+    "release-verify",
+] }
+# The one outward-facing step, kept separate and never part of `release`: it
+# uploads to a public channel and asks for typed confirmation first.
+release-publish = "python release/build.py --to https://prefix.dev/mote"
 
 # Pi Setup tasks
 setup-ids = "ros2 run mote_hardware setup_ids"
@@ -308,6 +331,19 @@ fleetctl = "python -u mote_fleet/server/fleetctl.py"
 # end-to-end run (see mote_fleet/test/test_e2e_fleet.py).
 test-fleet = "pytest mote_fleet/test -q"
 
+# The release tooling's own tests. Its own minimal env (no ROS) for the same
+# reason `lint` has one: these tests read manifests and scripts, so making them
+# wait on the robot stack to solve would be pure cost. Auto-selected, because
+# the task is defined only here.
+[feature.release.dependencies]
+pytest = ">=8,<9"
+
+[feature.release.tasks]
+# Guards the release tooling: that no package is missing from the release set,
+# that build backends stay pinned, that the committed deploy manifest is
+# current, and that an update cannot touch ~/.mote.
+test-release = "pytest release/test -q"
+
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
 
@@ -333,3 +369,5 @@ inference-rocm = { features = ["inference-rocm"], no-default-feature = true }
 # can never perturb any other env.
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
 lint = { features = ["lint"], no-default-feature = true }
+# Likewise for the release tooling's tests -- they read manifests, not ROS.
+release = { features = ["release"], no-default-feature = true }

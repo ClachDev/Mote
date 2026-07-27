@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+# Install, cut over to, and roll back released Mote versions on a robot.
+#
+#   mote-update status
+#   mote-update stage    <version>     # install a slot; the running robot is untouched
+#   mote-update cutover  <version>     # stop services, flip `current`, start, health-gate
+#   mote-update update   <version>     # stage + cutover
+#   mote-update rollback               # flip back to the previous slot
+#   mote-update prune                  # delete all but current + previous
+#
+# Deliberately plain bash with no dependency on a Mote environment: it has to
+# run before the first slot exists, and it has to keep working when the slot it
+# is cutting over to is broken.
+#
+# Layout under $MOTE_DEPLOY_ROOT (default ~/mote-deploy):
+#
+#   versions/<version>/     a slot: its own pixi.toml + pixi.lock + .pixi env
+#   current -> versions/X   what systemd runs; flipped atomically
+#   previous                a file naming the version to roll back to
+#
+# Two slots on disk, not N: conda hard-links identical packages between
+# environments, so a point release costs disk only for what actually changed.
+#
+# $MOTE_HOME (default ~/.mote) -- identity, sites/maps, calibration, bags -- is
+# outside the deploy root entirely and is never read or written here. That is
+# what makes an update safe to repeat and a rollback safe to take.
+set -euo pipefail
+
+DEPLOY_ROOT="${MOTE_DEPLOY_ROOT:-$HOME/mote-deploy}"
+VERSIONS_DIR="$DEPLOY_ROOT/versions"
+CURRENT_LINK="$DEPLOY_ROOT/current"
+PREVIOUS_FILE="$DEPLOY_ROOT/previous"
+PIXI="${PIXI:-$HOME/.pixi/bin/pixi}"
+MANIFEST_REPO="${MOTE_MANIFEST_REPO:-https://raw.githubusercontent.com/ClachDev/Mote}"
+HEALTH_TIMEOUT="${MOTE_HEALTH_TIMEOUT:-90}"
+
+# The units a cutover has to take down and bring back. mote-slam/nav/record are
+# absent on purpose: they are BindsTo/PartOf mote-bringup, so systemd stops and
+# starts them with it.
+UNITS=(mote-bringup mote-health mote-agent)
+
+die() { echo "mote-update: $*" >&2; exit 1; }
+log() { echo "==> $*"; }
+
+slot_dir() { echo "$VERSIONS_DIR/$1"; }
+
+current_version() {
+    [ -L "$CURRENT_LINK" ] || return 0
+    basename "$(readlink -f "$CURRENT_LINK")"
+}
+
+previous_version() {
+    [ -f "$PREVIOUS_FILE" ] && cat "$PREVIOUS_FILE" || true
+}
+
+# Which of our units systemd is currently running. Only these are restarted, so
+# a robot whose units are installed-but-not-enabled (the default -- see
+# mote_bringup/systemd/install.sh) is not silently switched to autostart.
+active_units() {
+    local unit
+    for unit in "${UNITS[@]}"; do
+        if systemctl is-active --quiet "$unit" 2>/dev/null; then echo "$unit"; fi
+    done
+}
+
+fetch_manifest() {
+    # Resolution order: an explicit path, the environment, then the tag on
+    # GitHub. The last is what makes this headless and checkout-free -- the
+    # fleet orchestrator needs no more than a version string.
+    local version="$1" dest="$2"
+    if [ -n "${MANIFEST_PATH:-}" ]; then
+        log "manifest: $MANIFEST_PATH"
+        cp "$MANIFEST_PATH" "$dest"
+    elif [ -n "${MOTE_DEPLOY_MANIFEST:-}" ]; then
+        log "manifest: $MOTE_DEPLOY_MANIFEST"
+        cp "$MOTE_DEPLOY_MANIFEST" "$dest"
+    else
+        local url="$MANIFEST_REPO/v$version/release/deploy/pixi.toml"
+        log "manifest: $url"
+        curl -fsSL "$url" -o "$dest" \
+            || die "could not fetch the deploy manifest for v$version"
+    fi
+    # The manifest ships with $HOME-relative placeholders so it stays
+    # machine-independent in the repo; pin them to this robot's real paths
+    # rather than relying on when (or whether) pixi expands them.
+    sed -i "s|\$HOME/mote-deploy/current|$CURRENT_LINK|g" "$dest"
+}
+
+cmd_status() {
+    local current previous slot found unit
+    current="$(current_version)"
+    previous="$(previous_version)"
+    echo "deploy root: $DEPLOY_ROOT"
+    echo "current:     ${current:-<none>}"
+    echo "previous:    ${previous:-<none>}"
+
+    echo "installed:"
+    found=0
+    for slot in "$VERSIONS_DIR"/*; do
+        [ -d "$slot" ] || continue
+        echo "  $(basename "$slot")"
+        found=1
+    done
+    [ "$found" = "1" ] || echo "  <none>"
+
+    echo "active units:"
+    found=0
+    for unit in $(active_units); do
+        echo "  $unit"
+        found=1
+    done
+    [ "$found" = "1" ] || echo "  <none>"
+}
+
+cmd_stage() {
+    local version="$1"
+    [ -n "$version" ] || die "usage: mote-update stage <version>"
+    local slot
+    slot="$(slot_dir "$version")"
+
+    if [ -d "$slot/.pixi" ]; then
+        log "$version already staged at $slot"
+        return 0
+    fi
+
+    # Stage into a scratch directory and move it into place only once the
+    # install has succeeded, so an interrupted or failed download never leaves a
+    # half-built slot that a later cutover would treat as ready. Same
+    # complete-then-flip rule the map registry uses for map revisions.
+    local staging="$VERSIONS_DIR/.staging-$version.$$"
+    rm -rf "$staging"
+    mkdir -p "$staging"
+    trap 'rm -rf "$staging"' EXIT
+
+    fetch_manifest "$version" "$staging/pixi.toml"
+
+    log "installing $version (the running robot is untouched)"
+    "$PIXI" install --manifest-path "$staging/pixi.toml" \
+        || die "pixi install failed -- $version is NOT staged"
+
+    mkdir -p "$VERSIONS_DIR"
+    rm -rf "$slot"
+    mv "$staging" "$slot"
+    trap - EXIT
+    log "staged $version at $slot"
+}
+
+# Flip the `current` symlink in one rename, so there is no instant at which it
+# is missing or pointing at nothing.
+flip_to() {
+    local version="$1"
+    ln -sfn "$(slot_dir "$version")" "$CURRENT_LINK.tmp"
+    mv -T "$CURRENT_LINK.tmp" "$CURRENT_LINK"
+}
+
+start_and_gate() {
+    local units="$1" version="$2"
+    [ -n "$units" ] || { log "no units were running; nothing to start"; return 0; }
+
+    log "starting: $units"
+    # shellcheck disable=SC2086
+    sudo systemctl start $units || true
+
+    log "waiting up to ${HEALTH_TIMEOUT}s for units to settle"
+    local deadline=$((SECONDS + HEALTH_TIMEOUT)) unit failed
+    while [ $SECONDS -lt $deadline ]; do
+        failed=""
+        for unit in $units; do
+            systemctl is-active --quiet "$unit" || failed="$failed $unit"
+        done
+        [ -z "$failed" ] && { log "$version healthy: $units active"; return 0; }
+        sleep 3
+    done
+    echo "mote-update: NOT healthy after ${HEALTH_TIMEOUT}s:$failed" >&2
+    return 1
+}
+
+cmd_cutover() {
+    local version="$1"
+    [ -n "$version" ] || die "usage: mote-update cutover <version>"
+    [ -d "$(slot_dir "$version")/.pixi" ] || die "$version is not staged"
+
+    local from units
+    from="$(current_version)"
+    [ "$from" = "$version" ] && { log "already on $version"; return 0; }
+    units="$(active_units | tr '\n' ' ')"
+
+    # The Pi has neither the CPU for two ROS stacks nor a second set of serial
+    # ports, so this is stop-then-start, not a hot swap. Hence: cut over when
+    # the robot is idle, never mid-mission.
+    if [ -n "$units" ]; then
+        log "stopping: $units"
+        # shellcheck disable=SC2086
+        sudo systemctl stop $units
+    fi
+
+    log "flipping current -> $version"
+    [ -n "$from" ] && echo "$from" > "$PREVIOUS_FILE"
+    flip_to "$version"
+
+    # Reinstall the units from the new slot: their content can change between
+    # releases. MOTE_REPO points them at the `current` symlink, not at this
+    # slot, so a later cutover redirects them without reinstalling.
+    log "refreshing systemd units from $version"
+    MOTE_REPO="$CURRENT_LINK" "$PIXI" run --manifest-path "$CURRENT_LINK/pixi.toml" \
+        install-systemd || log "WARNING: unit refresh failed; units still point at $CURRENT_LINK"
+
+    if start_and_gate "$units" "$version"; then
+        log "cutover to $version complete"
+        return 0
+    fi
+
+    echo "mote-update: rolling back to ${from:-<none>}" >&2
+    [ -n "$from" ] || die "no previous version to roll back to -- robot is DOWN on $version"
+    cmd_rollback
+    die "cutover to $version failed; rolled back to $from"
+}
+
+cmd_rollback() {
+    local target current units
+    target="$(previous_version)"
+    [ -n "$target" ] || die "no previous version recorded"
+    [ -d "$(slot_dir "$target")/.pixi" ] || die "previous version $target is not installed"
+    current="$(current_version)"
+    units="$(active_units | tr '\n' ' ')"
+
+    if [ -n "$units" ]; then
+        log "stopping: $units"
+        # shellcheck disable=SC2086
+        sudo systemctl stop $units
+    fi
+
+    log "rolling back $current -> $target"
+    flip_to "$target"
+    [ -n "$current" ] && echo "$current" > "$PREVIOUS_FILE"
+    MOTE_REPO="$CURRENT_LINK" "$PIXI" run --manifest-path "$CURRENT_LINK/pixi.toml" \
+        install-systemd || log "WARNING: unit refresh failed"
+    # No health gate here: rollback is the recovery path, and failing it would
+    # leave nowhere to go. Report and let the operator look.
+    if [ -n "$units" ]; then
+        log "starting: $units"
+        # shellcheck disable=SC2086
+        sudo systemctl start $units || true
+    fi
+    log "rolled back to $target"
+}
+
+cmd_update() {
+    cmd_stage "$1"
+    cmd_cutover "$1"
+}
+
+cmd_prune() {
+    local keep_current keep_previous slot name
+    keep_current="$(current_version)"
+    keep_previous="$(previous_version)"
+    [ -d "$VERSIONS_DIR" ] || return 0
+    for slot in "$VERSIONS_DIR"/*; do
+        [ -d "$slot" ] || continue
+        name="$(basename "$slot")"
+        if [ "$name" != "$keep_current" ] && [ "$name" != "$keep_previous" ]; then
+            log "removing $name"
+            rm -rf "$slot"
+        fi
+    done
+}
+
+main() {
+    local command="${1:-status}"
+    shift || true
+    # --manifest is accepted before or after the version for convenience.
+    local args=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --manifest) MANIFEST_PATH="$2"; shift 2 ;;
+            --health-timeout) HEALTH_TIMEOUT="$2"; shift 2 ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+
+    case "$command" in
+        status)   cmd_status ;;
+        stage)    cmd_stage "${args[0]:-}" ;;
+        cutover)  cmd_cutover "${args[0]:-}" ;;
+        update)   cmd_update "${args[0]:-}" ;;
+        rollback) cmd_rollback ;;
+        prune)    cmd_prune ;;
+        *) die "unknown command '$command' (status|stage|cutover|update|rollback|prune)" ;;
+    esac
+}
+
+main "$@"

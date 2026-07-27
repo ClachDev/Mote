@@ -225,25 +225,37 @@ The simulated lidar uses RPLIDAR C1 datasheet values from
 
 ### Deploying to the Pi
 
-The above section assumes you are developing entirely on the Pi which is
-definitely feasible at this stage. I do however want to support a more
-"professional" workflow and so we need a way to develop on laptops and run on
-the Pi. The exact mechanism that we will use is TBD.
+The above section assumes you are developing entirely on the Pi, which is
+definitely feasible at this stage. Developing on a laptop and running on the Pi
+takes one of two paths, depending on whether you are iterating or shipping.
 
-For now, I currently develop on a workstation and push to the Pi with rsync. The
-`sync` task targets an SSH host named `mote` — change the host in the
-[`pixi.toml`](pixi.toml) `[tasks]` `sync` entry to match your Pi, then:
+**Iterating — rsync.** The `sync` task targets an SSH host named `mote` — change
+the host in the [`pixi.toml`](pixi.toml) `[tasks]` `sync` entry to match your
+Pi, then:
 
 ```bash
 pixi run sync             # one-shot push
 pixi run sync-watch       # keep pushing on every save (needs the dev env)
 ```
 
-For pushing a finished build to one or more robots, the direction is to publish
-the first-party packages to the `prefix.dev/mote` channel (built with
-[`pixi-build-ros`](https://pixi.prefix.dev/latest/build/ros/)) so a robot just
-needs `pixi install` — no source checkout or compile on the bot. That work is in
-progress.
+Because the build uses `colcon --symlink-install`, edits to launch files,
+`robot.yaml` and Python go live with no rebuild; only C++ needs `pixi run build`.
+
+**Shipping — versioned packages.** The first-party packages are published to the
+`prefix.dev/mote` channel (built with
+[`pixi-build-ros`](https://pixi.prefix.dev/latest/build/ros/)), so a robot runs
+an environment resolved from that channel — no source checkout and no compile on
+the bot. Updates are by version, and reversible:
+
+```bash
+mote-update stage 0.2.0     # download and install; the robot keeps running
+mote-update cutover 0.2.0   # stop, flip, restart, health-gate
+mote-update rollback        # back to the previous version
+```
+
+`~/.mote` — identity, maps, calibration — lives outside the deploy and survives
+every update. See [`docs/releasing.md`](docs/releasing.md) for the version
+scheme, how a release is cut, and the full robot update procedure.
 
 ## SO-101 Follower Arm
 

@@ -1,0 +1,91 @@
+# Mote robot deploy manifest -- GENERATED, do not edit by hand.
+#
+# Rendered by release/deploy_manifest.py from this template plus the workspace
+# pixi.toml, and installed into a deploy slot by mote-update. What a robot runs
+# is *this* environment: released conda packages from the `mote` channel, no
+# source checkout, no colcon. `pixi run sync` remains the development loop
+# (docs/releasing.md).
+#
+# The dependency lists below are copied from the workspace manifest at release
+# time rather than maintained here, because a robot that resolves a different
+# set of ROS packages than the one the release was tested against is not running
+# the release.
+[workspace]
+name = "mote-robot"
+channels = @CHANNELS@
+platforms = @PLATFORMS@
+version = "@VERSION@"
+
+# The released first-party packages, pinned to the exact release version. They
+# move as a set, so they pin as a set: a robot is running Mote @VERSION@, not a
+# combination of package versions.
+[dependencies]
+@MOTE_PACKAGES@
+# Everything below is the workspace's own [dependencies], carried across so the
+# deployed environment resolves what the release was built and tested against.
+@DEPENDENCIES@
+
+[pypi-dependencies]
+# Not packaged on robostack/conda-forge, so they cannot come from the channel
+# and are resolved from PyPI on the robot instead (docs/releasing.md).
+@PYPI_DEPENDENCIES@
+
+[activation]
+env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp", MOTE_REPO = "@DEPLOY_CURRENT@" }
+
+# The operator surface of a deployed robot. Deliberately curated rather than
+# copied from the workspace manifest: the build/test/sync tasks are meaningless
+# without a checkout, and the sim and fleet-server tasks belong to other roles.
+# Task *names* match the workspace's, so a runbook, a systemd unit or an
+# operator's muscle memory works the same on a checkout and on a deploy.
+[tasks]
+# Missions
+launch = "ros2 launch mote_bringup mote_launch.py"
+mapping = "ros2 launch mote_bringup mapping_launch.py"
+nav = "ros2 launch mote_bringup nav2_launch.py"
+robot = "ros2 launch mote_bringup robot_launch.py"
+slam = "ros2 launch mote_bringup slam_launch.py"
+perception = "ros2 launch mote_perception perception_launch.py"
+record = "ros2 launch mote_bringup record_launch.py"
+tasks = "ros2 launch mote_tasks tasks_launch.py"
+teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
+
+# Health and state. These read and write $MOTE_HOME (default ~/.mote), which is
+# outside the deploy slot and therefore survives every update and rollback.
+health = "ros2 run mote_bringup health_monitor"
+self-check = "ros2 run mote_bringup self_check"
+site = "ros2 run mote_bringup site"
+save-map = "ros2 run mote_bringup site save-map"
+save-zone = "ros2 run mote_tasks save_zone"
+clean-map = "python -m mote_bringup.map_cleanup.cli"
+dds-check = "ros2 run mote_bringup dds_participants"
+kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
+
+# Fleet
+identity = "ros2 run mote_bringup identity"
+enroll = "ros2 run mote_fleet enroll"
+agent = "ros2 launch mote_fleet agent_launch.py"
+
+# SO-101 arm
+arm = "ros2 launch mote_arm arm_launch.py"
+arm-jog = "ros2 run mote_arm jog"
+arm-check = "ros2 run mote_arm arm_check"
+arm-pose = "ros2 run mote_arm arm_pose"
+arm-gains = "ros2 run mote_arm arm_gains"
+setup-ids = "ros2 run mote_hardware setup_ids"
+
+# Robot-side inference diagnostics against the off-board GPU machine.
+inference-health = "python -u $CONDA_PREFIX/share/mote_perception/tools/inference_health.py"
+inference-bench = "python -u $CONDA_PREFIX/share/mote_perception/tools/inference_bench.py"
+
+# One-time host setup. The assets live in the installed package rather than a
+# checkout, which is why mote_bringup ships udev/, systemd/, networkmanager/ and
+# tailscale/ into share (see its setup.py).
+udev = "sudo cp $CONDA_PREFIX/share/mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
+wifi-powersave = "bash $CONDA_PREFIX/share/mote_bringup/networkmanager/install.sh"
+# MOTE_REPO comes from [activation] above and points at the `current` symlink,
+# so the units it writes follow a cutover instead of pinning to this slot.
+install-systemd = "bash $CONDA_PREFIX/share/mote_bringup/systemd/install.sh"
+setup = { depends-on = ["udev", "wifi-powersave", "install-systemd"] }
+tailnet = "bash $CONDA_PREFIX/share/mote_bringup/tailscale/install.sh"
+provision = "ros2 run mote_bringup provision"

@@ -1,0 +1,65 @@
+name: release
+
+# Builds the release for both architectures and proves a robot environment
+# resolves against it. Deliberately does NOT publish: the upload to
+# prefix.dev/mote is a human action (`pixi run release-publish`), because a
+# published version cannot be taken back out of someone's lockfile.
+#
+# See docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+  # Cutting a release should never be the first time the release builds, so it
+  # can also be run by hand against a branch.
+  workflow_dispatch:
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest # linux-64
+          - runner: ubuntu-24.04-arm # linux-aarch64, same arch as the Pi
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # kinematic_icp and sllidar_ros2 are released too -- a robot
+          # installing from the channel has no source tree to build them from.
+          submodules: recursive
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          cache: true
+
+      # Cheap and ROS-free, so it fails in seconds rather than after a build:
+      # catches a package missing from the release set, an unpinned backend, or
+      # a stale committed deploy manifest.
+      - name: Test the release tooling
+        run: pixi run test-release
+
+      - name: Check version consistency
+        run: pixi run release-version check
+
+      # The package build does not run tests (BUILD_TESTING=OFF), so they run
+      # here, before anything is built.
+      - name: Test
+        run: pixi run test
+
+      - name: Build the release
+        run: pixi run release-build
+
+      # The step with teeth: resolves the robot deploy manifest against the
+      # freshly built channel, proving the release installs as a set.
+      - name: Verify a robot environment resolves
+        run: pixi run release-verify
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mote-packages-${{ matrix.runner }}
+          path: |
+            dist/channel/**/*.conda
+            release/evidence/
+          if-no-files-found: error

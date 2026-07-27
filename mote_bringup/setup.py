@@ -7,7 +7,7 @@ package_name = "mote_bringup"
 
 setup(
     name=package_name,
-    version="0.0.0",
+    version="0.1.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -18,6 +18,23 @@ setup(
             os.path.join("share", package_name, "provisioning"),
             glob("provisioning/*"),
         ),
+        # One-time host-setup assets. A robot running a released version has no
+        # checkout to run these from, so they ship inside the package and the
+        # deploy manifest's `setup` tasks resolve them under $CONDA_PREFIX/share
+        # (docs/releasing.md). Without these, `pixi run setup` is a
+        # checkout-only command and a released robot could never install its
+        # udev rules or systemd units.
+        (
+            os.path.join("share", package_name, "systemd"),
+            glob("systemd/*.service")
+            + ["systemd/install.sh", "systemd/journald-mote.conf"],
+        ),
+        (os.path.join("share", package_name, "udev"), glob("udev/*.rules")),
+        (
+            os.path.join("share", package_name, "networkmanager"),
+            glob("networkmanager/*"),
+        ),
+        (os.path.join("share", package_name, "tailscale"), glob("tailscale/*.sh")),
     ],
     install_requires=["setuptools"],
     extras_require={"test": ["pytest"]},

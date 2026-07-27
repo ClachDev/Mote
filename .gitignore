@@ -13,6 +13,15 @@ __pycache__/
 
 scratchpad*
 
+# setuptools install-record dropped in each ament_python package by a package
+# build (`pixi run release-build`). Full of absolute build-prefix paths.
+files.txt
+
+# Built release artifacts and the local dry-run channel (`pixi run release`).
+# The packages are never committed; what a release *does* commit is
+# release/evidence/ and the regenerated release/deploy/pixi.toml.
+dist/
+
 # Sim benchmark outputs (timestamped metrics/reports)
 benchmark_results/
 # Bag-replay scoring outputs (timestamped metrics/reports/maps)

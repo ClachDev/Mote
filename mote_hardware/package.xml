@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>mote_hardware</name>
-  <version>0.0.0</version>
+  <version>0.1.0</version>
   <description>ROS2 hardware interface for Mote differential-drive robot (motors and servo control)</description>
   <maintainer email="michael@clach.dev">Michael Johnson</maintainer>
   <license>Apache-2.0</license>
@@ -13,6 +13,10 @@
   <depend>rclcpp_lifecycle</depend>
   <depend>hardware_interface</depend>
   <depend>pluginlib</depend>
+  <!-- The Feetech SCServo C++ SDK. Not a ROS package, so it has no RoboStack
+       mapping: pixi.toml's extra-package-mappings points it at the
+       `scservo-linux` conda package on the mote channel. -->
+  <depend>scservo_linux</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
