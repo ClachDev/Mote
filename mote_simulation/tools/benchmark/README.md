@@ -3,9 +3,10 @@
 Runs scripted nav missions in the headless Gazebo sim and scores them against
 **Gazebo ground truth**, so Nav2 / SLAM / localization config changes can be
 *proven* with numbers instead of eyeballed in RViz. This is the runner the
-[parameter-sweep tool](sweep/README.md) (`pixi run bench-sweep`) and the future
-IMU-justification study build on; the metric maths lives in a ROS-free module
-(`metrics.py`) so an offline bag-replay scorer can reuse it unchanged.
+[parameter-sweep tool](sweep/README.md) (`pixi run bench-sweep`) and the IMU
+study (`design/research/imu_fusion_study.md`) build on; the metric maths lives
+in a ROS-free module (`metrics.py`) so an offline bag-replay scorer can reuse it
+unchanged.
 
 ## Usage
 
@@ -29,7 +30,17 @@ Useful flags (`pixi run bench -- --help`):
 | `--trials` | `2` | trials per world (repeat to measure variance) |
 | `--order` | `pickup,dropoff,home` | zone names cycled as NavigateToPose goals |
 | `--goal-timeout` | `120` | sim seconds allowed per goal |
+| `--wheel-mu` | `1.0` | drive-wheel friction; `<1` induces wheel slip |
+| `--slip` | off | shorthand for `--wheel-mu 0.4` (slip condition) |
 | `--out` | `benchmark_results/` | output root (git-ignored) |
+
+A caveat on `--slip`: lowering wheel friction does make the velocity-controlled
+wheels slip, but kinematic_icp re-registers against the scan every frame, so the
+slip is largely **absent from the resulting pose**. Do not expect it to degrade
+the localization or odometry ATE much — see
+`design/research/imu_fusion_study.md`. It is still useful for exercising code
+that reads the *disagreement* between wheel odom and the scan-matched pose,
+which slip does affect.
 
 ## What it measures
 
@@ -40,6 +51,11 @@ Per trial, gated on sim `/clock` (invariant to real-time factor):
   alignment (the SLAM `map` frame and the Gazebo world frame share no fixed
   transform, so alignment is required before differencing). Raw pre-alignment
   RMSE is also reported.
+- **odometry error** — a second ATE of the **`odom`→`base_footprint`
+  dead-reckoning** pose vs. truth, with no map correction (`odometry.*`). AMCL's
+  map correction can mask an odometry change in the localization ATE above; this
+  isolates odometry quality (kinematic_icp tuning, param sweeps) from the map
+  correction that would otherwise hide a change in it.
 - **goal success rate & time-to-goal** — over the scripted goal cycle.
 - **clearance** — nearest obstacle from `/scan_filtered`: min, 5th-percentile,
   mean, and the fraction of time spent inside 0.15/0.20/0.30 m bands.

@@ -341,6 +341,10 @@ def summarize(series: dict) -> dict:
     )
     return {
         "localization": ate(truth, est),
+        # Dead-reckoning ATE (odom->base vs truth), no map correction. An
+        # odometry change shows cleanly here, before AMCL masks it in the
+        # map->base estimate above.
+        "odometry": ate(truth, series.get("odom_est", [])),
         "goals": goal_stats(series.get("goals", [])),
         "clearance": clearance_stats(series.get("scan_min", [])),
         "smoothness": smoothness(series.get("cmd", [])),

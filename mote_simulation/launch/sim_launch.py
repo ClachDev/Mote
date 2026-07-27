@@ -66,9 +66,18 @@ def generate_launch_description():
     sim_controllers_file.close()
 
     urdf_file = os.path.join(description_share, "urdf", "mote.urdf.xacro")
+    # wheel_mu is passed through so the benchmark's slip mode can lower wheel
+    # friction (default 1.0 = gz default, no slip).
     robot_description_content = Command(
-        f"xacro {urdf_file} use_sim:=true arm:=false "
-        f"sim_controllers_file:={sim_controllers_file.name}"
+        [
+            "xacro ",
+            urdf_file,
+            " use_sim:=true arm:=false",
+            " sim_controllers_file:=",
+            sim_controllers_file.name,
+            " wheel_mu:=",
+            LaunchConfiguration("wheel_mu"),
+        ]
     )
     robot_description = {
         "robot_description": ParameterValue(robot_description_content, value_type=str),
@@ -242,6 +251,12 @@ def generate_launch_description():
                 "world",
                 default_value="mote_world.sdf",
                 description="World file in mote_simulation/worlds to load",
+            ),
+            DeclareLaunchArgument(
+                "wheel_mu",
+                default_value="1.0",
+                description="Drive-wheel friction coefficient. Lower values (e.g. "
+                "0.4) induce wheel slip; see the benchmark's --slip flag.",
             ),
             DeclareLaunchArgument(
                 "mode",

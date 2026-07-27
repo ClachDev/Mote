@@ -48,6 +48,8 @@ def build_markdown(run) -> str:
         f"- **git commit:** `{p['git_commit']}`",
         f"- **trials per world:** {p['trials']}",
         f"- **goal order:** {p['order']}",
+        f"- **wheel_mu:** {p.get('wheel_mu', 1.0)}"
+        f"{'  (slip condition)' if p.get('wheel_mu', 1.0) < 1.0 else ''}",
         f"- **nav2 params:** `{p['nav2_params']}`",
         f"- **ROS_DOMAIN_ID:** {p.get('ros_domain_id', 'unset')}",
         "",
@@ -90,6 +92,8 @@ def _world_section(world) -> list:
         _agg_row("time-to-goal mean (s)", agg, "goals.time_to_goal_s.mean", "", 1),
         _agg_row("ATE rmse (m)", agg, "localization.rmse_m", "", 3),
         _agg_row("ATE max (m)", agg, "localization.max_m", "", 3),
+        _agg_row("odom ATE rmse (m)", agg, "odometry.rmse_m", "", 3),
+        _agg_row("odom ATE max (m)", agg, "odometry.max_m", "", 3),
         _agg_row("min clearance (m)", agg, "clearance.min_m", "", 3),
         _agg_row("mean clearance (m)", agg, "clearance.mean_m", "", 3),
         _agg_row("linear jerk rms", agg, "smoothness.linear_jerk_rms", "", 2),
@@ -103,14 +107,15 @@ def _world_section(world) -> list:
 
     lines += ["<details><summary>per-trial</summary>", ""]
     lines += [
-        "| trial | goals ok | ATE rmse (m) | min clr (m) | recoveries | aborts |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| trial | goals ok | ATE rmse (m) | odom ATE (m) | min clr (m) | recoveries | aborts |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for i, t in enumerate(trials):
         g = t["goals"]
         lines.append(
             f"| {i} | {g['n_succeeded']}/{g['n_goals']} | "
             f"{_fmt(t['localization'].get('rmse_m'))} | "
+            f"{_fmt(t.get('odometry', {}).get('rmse_m'))} | "
             f"{_fmt(t['clearance'].get('min_m'))} | "
             f"{t['recoveries'].get('total', 0)} | {t['aborts']} |"
         )

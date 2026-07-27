@@ -205,7 +205,7 @@ def run_trial(world, trial_dir, args):
     time.sleep(1)
 
     try:
-        log(f"launching nav sim (world={world})")
+        log(f"launching nav sim (world={world}, wheel_mu={args.wheel_mu})")
         sim_p, sim_f = popen_group(
             [
                 "ros2",
@@ -214,6 +214,7 @@ def run_trial(world, trial_dir, args):
                 "sim_launch.py",
                 "mode:=nav",
                 f"world:={world}",
+                f"wheel_mu:={args.wheel_mu}",
             ],
             sim_log,
         )
@@ -282,6 +283,17 @@ def main():
     )
     ap.add_argument("--trials", type=int, default=2)
     ap.add_argument(
+        "--wheel-mu",
+        type=float,
+        default=1.0,
+        help="drive-wheel friction (sim_launch wheel_mu:=); <1 induces slip",
+    )
+    ap.add_argument(
+        "--slip",
+        action="store_true",
+        help="shorthand: set --wheel-mu 0.4 (slip condition) unless overridden",
+    )
+    ap.add_argument(
         "--order",
         default="pickup,dropoff,home",
         help="zone names to cycle as NavigateToPose goals",
@@ -324,6 +336,9 @@ def main():
         f"discovery range={os.environ.get('ROS_AUTOMATIC_DISCOVERY_RANGE', 'default')}"
     )
 
+    if args.slip and args.wheel_mu == 1.0:
+        args.wheel_mu = 0.4
+
     worlds = [w.strip() for w in args.worlds.split(",") if w.strip()]
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = Path(args.out) / ts
@@ -340,6 +355,7 @@ def main():
         "worlds": worlds,
         "ros_domain_id": domain,
         "gz_partition": os.environ["GZ_PARTITION"],
+        "wheel_mu": args.wheel_mu,
     }
 
     world_results = []
