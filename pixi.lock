@@ -229,7 +229,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/librbio-4.3.4-hf02c80a_7100101.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/librsvg-2.62.3-h4c96295_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libsanitizer-14.3.0-h8f1669f_19.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/libsdformat14-14.8.0-py312h1f51ce1_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libsdformat14-14.8.0-py312h1ac29df_4.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libsndfile-1.2.2-hc7d488a_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libsodium-1.0.22-h280c20c_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libspex-3.2.3-h9226d62_7100101.conda
@@ -314,8 +314,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/readline-8.3-h853b02a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/rhash-1.4.6-hb9d3cd8_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/ruby-4.0.5-h95e6935_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/sdformat14-14.8.0-h5bb51b8_2.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/sdformat14-python-14.8.0-py312h22a3d64_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/sdformat14-14.8.0-h593e687_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/sdformat14-python-14.8.0-py312h9b2b1e2_4.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/sdl2-2.32.56-h54a6638_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/sdl3-3.4.8-hdeec2a5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/shaderc-2026.2-h718be3e_0.conda
@@ -330,8 +330,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tinyxml2-11.0.0-h3f2d84a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tk-8.6.13-noxft_h366c992_103.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/uncrustify-0.83.0-h54a6638_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom-4.0.1-h8631160_4.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom_headers-1.1.2-h84d6215_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom-6.0.0-h8631160_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom_headers-3.0.0-hb700be7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/wayland-1.25.0-hd6090a7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/x264-1!164.3095-h166bdaf_2.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/x265-3.5-h924138e_3.tar.bz2
@@ -749,8 +749,8 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-unique-identifier-msgs-2.5.0-np2py312h2ed9cc7_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdf-2.10.0-np2py312h2ed9cc7_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdf-parser-plugin-2.10.0-np2py312h2ed9cc7_18.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-4.0.1-hb0f4dca_7.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-headers-1.1.2-hb0f4dca_7.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-6.0-py312h24bf083_18.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-headers-3.0-py312h24bf083_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-v4l2-camera-0.7.1-np2py312h2ed9cc7_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-velocity-controllers-4.40.0-np2py312h2ed9cc7_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-vision-msgs-4.1.1-np2py312h2ed9cc7_18.conda
@@ -976,7 +976,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/librbio-4.3.4-h6ed72c6_7100102.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/librsvg-2.62.3-hf685517_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libsanitizer-14.3.0-hedb4206_19.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libsdformat14-14.8.0-py312h39f64fe_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libsdformat14-14.8.0-py312h8b84bc1_4.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libsndfile-1.2.2-h30591a0_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libsodium-1.0.22-h80f16a2_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libspex-3.2.3-h7e0e133_7100102.conda
@@ -1057,8 +1057,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/readline-8.3-hb682ff5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/rhash-1.4.6-h86ecc28_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/ruby-4.0.5-h706e587_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdformat14-14.8.0-hb4dca6f_2.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdformat14-python-14.8.0-py312he22bb7a_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdformat14-14.8.0-h6df7c55_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdformat14-python-14.8.0-py312h6fb1926_4.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdl2-2.32.56-h7ac5ae9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdl3-3.4.8-had2c13b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/shaderc-2026.2-hfeb5c2c_0.conda
@@ -1073,8 +1073,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/tinyxml2-11.0.0-h5ad3122_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/tk-8.6.13-noxft_h0dc03b3_103.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/uncrustify-0.83.0-h7ac5ae9_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom-4.0.1-hcc88bc6_4.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom_headers-1.1.2-h17cf362_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom-6.0.0-hcc88bc6_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom_headers-3.0.0-hfefdfc9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/wayland-1.25.0-h4f8a99f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/x264-1!164.3095-h4e544f5_2.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/x265-3.5-hdd96247_3.tar.bz2
@@ -1494,8 +1494,8 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-unique-identifier-msgs-2.5.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdf-2.10.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdf-parser-plugin-2.10.0-np2py312h61f2ce4_18.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-4.0.1-he8cfe8b_7.conda
-      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-headers-1.1.2-he8cfe8b_7.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-6.0-py312h9804fc4_18.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-headers-3.0-py312h9804fc4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-v4l2-camera-0.7.1-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-velocity-controllers-4.40.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-vision-msgs-4.1.1-np2py312h61f2ce4_18.conda
@@ -12124,25 +12124,6 @@ packages:
     - libsdformat14 >=14.8.0,<15.0a0
   size: 1236486
   timestamp: 1780996376357
-- conda: https://conda.anaconda.org/conda-forge/linux-64/libsdformat14-14.8.0-py312h1f51ce1_2.conda
-  sha256: 41a56a57a0bb78429a5ad571226dbe4cffed586446d11ad30cc4173f89c1cee8
-  md5: 6dc0e6dc04a710e77bfe2865dad3f3b8
-  depends:
-  - libgcc >=14
-  - libstdcxx >=14
-  - libgcc >=14
-  - __glibc >=2.17,<3.0.a0
-  - urdfdom >=4.0.1,<4.1.0a0
-  - libgz-utils2 >=2.2.1,<3.0a0
-  - libgz-math7 >=7.5.2,<8.0a0
-  - tinyxml2 >=11.0.0,<11.1.0a0
-  - libgz-cmake3 >=3.5.5,<4.0a0
-  - libgz-tools >=2.0.3,<3.0a0
-  license: Apache-2.0
-  license_family: APACHE
-  purls: []
-  size: 1236819
-  timestamp: 1759339825312
 - conda: https://conda.anaconda.org/conda-forge/linux-64/libsndfile-1.2.2-hc7d488a_2.conda
   sha256: 57cb5f92110324c04498b96563211a1bca6a74b2918b1e8df578bfed03cc32e4
   md5: 067590f061c9f6ea7e61e3b2112ed6b3
@@ -14871,37 +14852,6 @@ packages:
     - libsdformat14 >=14.8.0,<15.0a0
   size: 14094
   timestamp: 1780996376357
-- conda: https://conda.anaconda.org/conda-forge/linux-64/sdformat14-14.8.0-h5bb51b8_2.conda
-  sha256: ee7c5db752b71cd03442eee21673f20748a30d57651db98fa2acbee1caa037ef
-  md5: 4559b2fc2081cddbc0a6b0764664e825
-  depends:
-  - libsdformat14 ==14.8.0 py312h1f51ce1_2
-  - sdformat14-python >=14.8.0,<14.8.1.0a0
-  license: Apache-2.0
-  license_family: APACHE
-  purls: []
-  size: 14078
-  timestamp: 1759339825312
-- conda: https://conda.anaconda.org/conda-forge/linux-64/sdformat14-python-14.8.0-py312h22a3d64_2.conda
-  sha256: 451f69e0b83e54e686b0dde799adaabccf7a73b5988771443f4cb39c1c2d0dc3
-  md5: 737b20358b5526be5da04407044520b8
-  depends:
-  - libsdformat14 ==14.8.0 py312h1f51ce1_2
-  - python
-  - gz-math7-python
-  - libstdcxx >=14
-  - libgcc >=14
-  - __glibc >=2.17,<3.0.a0
-  - libgcc >=14
-  - libgz-math7 >=7.5.2,<8.0a0
-  - pybind11-abi ==11
-  - python_abi 3.12.* *_cp312
-  - libsdformat14 >=14.8.0,<15.0a0
-  license: Apache-2.0
-  license_family: APACHE
-  purls: []
-  size: 680439
-  timestamp: 1759339825312
 - conda: https://conda.anaconda.org/conda-forge/linux-64/sdformat14-python-14.8.0-py312h9b2b1e2_4.conda
   sha256: 0dff399ecff29d8b3ea440540f1cc646f0427d3d188fe03d66fafb269f40b9df
   md5: e4f800f81f3ca9ca791a6f2dced4c4ca
@@ -15375,21 +15325,6 @@ packages:
   purls: []
   size: 307887
   timestamp: 1764772751439
-- conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom-4.0.1-h8631160_4.conda
-  sha256: 0bd2dddf5c9f68a75ccf8ce083b99b511b7f2acd12eafb2fbc50270157a1578d
-  md5: 50c945b918f7639e437727b87da16d77
-  depends:
-  - urdfdom_headers >=1.1.2,<2.0a0
-  - __glibc >=2.17,<3.0.a0
-  - libstdcxx >=14
-  - libgcc >=14
-  - console_bridge >=1.0.2,<1.1.0a0
-  - tinyxml2 >=11.0.0,<11.1.0a0
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  size: 119237
-  timestamp: 1771238079259
 - conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom-6.0.0-h8631160_0.conda
   sha256: 71980597735f2c426fdc862319a3ec870d6d1af0a42f71c4190aadcf95615df5
   md5: 831c6a69ab09da5c03a5d7cb5c174aa4
@@ -15409,18 +15344,6 @@ packages:
     - urdfdom >=6.0.0,<7.0a0
   size: 107311
   timestamp: 1780583079633
-- conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom_headers-1.1.2-h84d6215_0.conda
-  sha256: 9f4090616ed1cb509bb65f1edb11b23c86d929db0ea3af2bf84277caa4337c40
-  md5: 4872efb515124284f8cee0f957f3edce
-  depends:
-  - __glibc >=2.17,<3.0.a0
-  - libgcc >=13
-  - libstdcxx >=13
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  size: 19201
-  timestamp: 1726152409175
 - conda: https://conda.anaconda.org/conda-forge/linux-64/urdfdom_headers-3.0.0-hb700be7_0.conda
   sha256: 237cc2cab57c7857cf274b972b506e8b20e47ee3dee0e295b4dbac0d68dc9990
   md5: 2d5470c15bc0f4c553b280676701cdd2
@@ -22160,24 +22083,6 @@ packages:
   purls: []
   size: 378646
   timestamp: 1776441269980
-- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libsdformat14-14.8.0-py312h39f64fe_2.conda
-  sha256: 0ac75f115584bb5b7783c1c94b46966251095f03467c5687b38aaaf60d8db7dc
-  md5: b74a8a2efd31f3426aaff959759f6320
-  depends:
-  - libgcc >=14
-  - libstdcxx >=14
-  - libgcc >=14
-  - libgz-cmake3 >=3.5.5,<4.0a0
-  - libgz-tools >=2.0.3,<3.0a0
-  - tinyxml2 >=11.0.0,<11.1.0a0
-  - urdfdom >=4.0.1,<4.1.0a0
-  - libgz-utils2 >=2.2.1,<3.0a0
-  - libgz-math7 >=7.5.2,<8.0a0
-  license: Apache-2.0
-  license_family: APACHE
-  purls: []
-  size: 1173519
-  timestamp: 1759339827373
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libsdformat14-14.8.0-py312h8b84bc1_4.conda
   sha256: edd5848d60ec0fd5c543c616e70f78ac028d64525e4d6690c41a43d468c66f5d
   md5: 130f35336e435c92a82cb56439817031
@@ -24619,17 +24524,6 @@ packages:
     - libsdformat14 >=14.8.0,<15.0a0
   size: 14104
   timestamp: 1780996395208
-- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdformat14-14.8.0-hb4dca6f_2.conda
-  sha256: 4ebda896d769015de0374935e594700ffce1a7c0d04aa69c14ca91949385d116
-  md5: ae4d282bf81fe69ec7a19675ab1e5d05
-  depends:
-  - libsdformat14 ==14.8.0 py312h39f64fe_2
-  - sdformat14-python >=14.8.0,<14.8.1.0a0
-  license: Apache-2.0
-  license_family: APACHE
-  purls: []
-  size: 14075
-  timestamp: 1759339827373
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdformat14-python-14.8.0-py312h6fb1926_4.conda
   sha256: 0b9684f005e2a5a8909055459e5022fb409cceea9ebb35ace425196e79293550
   md5: 33f1c7ccc483cb3a25f64fba6cd5cfbd
@@ -24650,25 +24544,6 @@ packages:
   run_exports: {}
   size: 596600
   timestamp: 1780996395208
-- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdformat14-python-14.8.0-py312he22bb7a_2.conda
-  sha256: 1ba257aef3191051b20b2b133b7a905fed392091052444a66b8ae1588cdb7388
-  md5: eb21b46d63a7d034b48be42403042828
-  depends:
-  - libsdformat14 ==14.8.0 py312h39f64fe_2
-  - python
-  - gz-math7-python
-  - python 3.12.* *_cpython
-  - libstdcxx >=14
-  - libgcc >=14
-  - libgz-math7 >=7.5.2,<8.0a0
-  - pybind11-abi ==11
-  - python_abi 3.12.* *_cp312
-  - libsdformat14 >=14.8.0,<15.0a0
-  license: Apache-2.0
-  license_family: APACHE
-  purls: []
-  size: 591957
-  timestamp: 1759339827373
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/sdl2-2.32.56-h7ac5ae9_0.conda
   sha256: 47f4ef4cd2313906840f146b18fee95c2a3a4fa9bd0afdb2d519e6c0aa8ca2ed
   md5: 54747a3f3c468c5f446c78974c8c1234
@@ -25093,20 +24968,6 @@ packages:
   purls: []
   size: 359879
   timestamp: 1764772978657
-- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom-4.0.1-hcc88bc6_4.conda
-  sha256: a825aa0d61442664ce2b0fc1375cc3619dd31842f1be23e53c8df033da96558a
-  md5: 9ea965b9adf3b3828509083d88fea742
-  depends:
-  - urdfdom_headers >=1.1.2,<2.0a0
-  - libstdcxx >=14
-  - libgcc >=14
-  - tinyxml2 >=11.0.0,<11.1.0a0
-  - console_bridge >=1.0.2,<1.1.0a0
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  size: 127973
-  timestamp: 1771238089976
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom-6.0.0-hcc88bc6_0.conda
   sha256: e099d4349e7a323f2dff8ebc1f1fa77e497f79eb094efa76fa339b271c41ae6a
   md5: e65a00e7f9d9f48f16c58807356aaea0
@@ -25125,17 +24986,6 @@ packages:
     - urdfdom >=6.0.0,<7.0a0
   size: 120041
   timestamp: 1780583092353
-- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom_headers-1.1.2-h17cf362_0.conda
-  sha256: 8ee332fc383fb61652a3ccc7f0362553983e399f36b32abd6678842762e16c0d
-  md5: 6f24f2d3af565b2203a4479ad1b7f7e7
-  depends:
-  - libgcc >=13
-  - libstdcxx >=13
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  size: 19152
-  timestamp: 1726152459234
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/urdfdom_headers-3.0.0-hfefdfc9_0.conda
   sha256: 9efd5aa3e4d01ed8d16ec7d7f483751444dd9c8c0266ca4446ecad719008d064
   md5: ab8074f65a6d1727a3e89737852a5a70
@@ -37805,15 +37655,6 @@ packages:
   license: BSD-3-Clause
   size: 31995
   timestamp: 1782300576492
-- conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-4.0.1-hb0f4dca_7.conda
-  sha256: a77f04efe1402c59f72d2e034626091ba023f27a79ee5d7fb3055d52167efada
-  md5: a333bdd389d1db12d528812c53e65ea7
-  depends:
-  - urdfdom ==4.0.1
-  - python 3.12.* *_cpython
-  license: BSD-3-Clause
-  size: 1820
-  timestamp: 1749727287787
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-6.0-py312h24bf083_18.conda
   sha256: 655943d354f7a6247b46b1cd8fc19d1a71780d3e16af26d7200bfa1c58ab611a
   md5: 7ed43294e4e43716fd53b2b3220242b7
@@ -37834,15 +37675,6 @@ packages:
   license: BSD-3-Clause
   size: 8129
   timestamp: 1782300675701
-- conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-headers-1.1.2-hb0f4dca_7.conda
-  sha256: c6a3fbc8228f2174c25c2b723c22f19c5281bc7eeda8bc0d0696a09e9301f4f0
-  md5: 8a45fcfa0aeff32ac0f4b753373584c3
-  depends:
-  - urdfdom_headers ==1.1.2
-  - python 3.12.* *_cpython
-  license: BSD-3-Clause
-  size: 1876
-  timestamp: 1749727287698
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-urdfdom-headers-3.0-py312h24bf083_18.conda
   sha256: 3c5f07754d3ab4bf640d1d8d804515b083078fd57b94996c789d254ad1663bd4
   md5: 6ead5e4218084d969093178ae1bf4b39
@@ -47627,15 +47459,6 @@ packages:
   license: BSD-3-Clause
   size: 32086
   timestamp: 1782300667210
-- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-4.0.1-he8cfe8b_7.conda
-  sha256: c2fea711fc23ba1e19f3572102ee2360e69b1630cf866e8f0f6725035b2ea321
-  md5: 009590b4518c3afbd7a87458f620b7ac
-  depends:
-  - urdfdom ==4.0.1
-  - python 3.12.* *_cpython
-  license: BSD-3-Clause
-  size: 1825
-  timestamp: 1749727380100
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-6.0-py312h9804fc4_18.conda
   sha256: a35f34f070cff74addb75e530e3823e68f049154307ce41b53931f025dd04687
   md5: fcd9b83bacccfbdf8799cc1a44886739
@@ -47656,15 +47479,6 @@ packages:
   license: BSD-3-Clause
   size: 8236
   timestamp: 1782300793231
-- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-headers-1.1.2-he8cfe8b_7.conda
-  sha256: 586755f32d1d01b1ac7495216a7c58bd3b80c3264ad196756f0c33027d823f13
-  md5: a8c0c0595f5b6672c2b75a96b756e2e1
-  depends:
-  - urdfdom_headers ==1.1.2
-  - python 3.12.* *_cpython
-  license: BSD-3-Clause
-  size: 1885
-  timestamp: 1749727379995
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-urdfdom-headers-3.0-py312h9804fc4_18.conda
   sha256: 80c46c8e6d2c9b1abb471767128354f21b292c2a8693ed59a7087236e67cee92
   md5: 07110defc641fabd3b8a3fd8ef7fba0e

@@ -194,6 +194,12 @@ ros-jazzy-foxglove-bridge = ">=3.3.0,<4"
 ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
 ros-jazzy-vision-msgs = ">=4.1.0"
 ros-jazzy-xacro = ">=2.0.0"
+# ABI floor for the URDF stack. robostack's ros-jazzy-urdf depends on
+# ros-jazzy-urdfdom with no version bound, but its liburdf_xml_parser plugin
+# links liburdfdom_model.so.6; libsdformat14 — pulled in transitively via
+# ros2-control's hardware-interface -> sdformat-urdf — otherwise holds urdfdom
+# at 4.0.1, and robot_state_publisher then dies loading the parser plugin.
+urdfdom = ">=6"
 scservo-linux = "==1.0.0"
 ros-jazzy-ament-cmake-gtest = ">=2.5"
 # MQTT client for the fleet agent (mote_fleet). On the robot because the agent
