@@ -10,6 +10,8 @@ this stays because a CLI composes, exits with a status, and needs no display.
     fleetctl dispatch mote-01 "goto kitchen"  send a task, follow it to terminal
     fleetctl audit                            who dispatched what
     fleetctl watch                            tail the whole fleet's topics
+    fleetctl sites [site floor]               the map registry: floors, revisions
+    fleetctl promote home ground <rev>        make a candidate map canonical
 
 **Dispatch goes through the fleet API, not to the broker.** M1's version
 published straight to `task/command`, which is right when there is one operator
@@ -144,6 +146,65 @@ def cmd_robots(args):
             f"{robot['robot_id']:12} {robot['name'][:16]:16} "
             f"{(robot['site'] or '-')[:10]:10} {robot['enrolled_at']:21} "
             f"{robot['fingerprint']}"
+        )
+
+
+def cmd_sites(args):
+    """The map registry. Without a floor: what every floor is on. With one:
+    every candidate revision and whether it could be promoted."""
+    if not (args.site and args.floor):
+        floors = _get(args.server, "/v1/sites").get("sites", [])
+        if not floors:
+            print("no site bundles on the fleet server")
+            return
+        print(f"{'SITE':16} {'FLOOR':10} {'CANONICAL':18} CANDIDATES")
+        for floor in floors:
+            candidates = ", ".join(floor["candidates"]) or "-"
+            print(
+                f"{floor['site'][:16]:16} {floor['floor'][:10]:10} "
+                f"{(floor['canonical'] or '-'):18} {candidates}"
+            )
+        return
+    detail = _get(args.server, f"/v1/sites/{args.site}/floors/{args.floor}")
+    print(f"{args.site}/{args.floor}  canonical: {detail['canonical'] or 'none'}")
+    for revision in detail["revisions"]:
+        marker = "*" if revision["canonical"] else " "
+        who = revision.get("robot_id") or revision.get("uploaded_by") or "-"
+        when = revision.get("uploaded_at") or "-"
+        zones = len(revision.get("zones") or [])
+        state = "ok" if revision["ok"] else "UNUSABLE"
+        print(
+            f" {marker} {revision['revision']:20} {state:9} {who:10} {when:21} {zones} zones"
+        )
+        for problem in revision["errors"] + revision["warnings"]:
+            print(f"     - {problem}")
+
+
+def cmd_promote(args):
+    """Make one candidate revision the floor's canonical map.
+
+    This is the one write in the whole map path, which is why it is an
+    operator's: uploads are inert candidates, and nothing a robot does changes
+    which map a floor is on (fleet.md Q4).
+    """
+    answer = _request(
+        args.server,
+        f"/v1/sites/{args.site}/floors/{args.floor}/revisions/{args.revision}/promote",
+        payload={"schema": protocol.SCHEMA},
+        token=_token(args),
+    )
+    print(f"{args.site}/{args.floor} -> {answer['revision']}  ({answer['sha256']})")
+    for warning in answer.get("warnings") or []:
+        print(f"  note: {warning}")
+    if answer.get("announced"):
+        print(f"  announced on {answer['topic']} (retained); agents will pull it")
+    else:
+        # The flip already happened — the symlink is the fact. Say so plainly
+        # rather than implying the promotion failed.
+        print(
+            f"  PROMOTED BUT NOT ANNOUNCED: {answer.get('detail')}\n"
+            "  robots keep their current map until the broker is reachable; "
+            "the fleet server re-announces every floor at startup."
         )
 
 
@@ -379,6 +440,17 @@ def main(argv=None):
     )
     p_dispatch.add_argument("--issued-by", default="fleetctl")
     p_dispatch.set_defaults(func=cmd_dispatch)
+
+    p_sites = sub.add_parser("sites", help="the map registry")
+    p_sites.add_argument("site", nargs="?", default="")
+    p_sites.add_argument("floor", nargs="?", default="")
+    p_sites.set_defaults(func=cmd_sites)
+
+    p_promote = sub.add_parser("promote", help="make a map revision canonical")
+    p_promote.add_argument("site")
+    p_promote.add_argument("floor")
+    p_promote.add_argument("revision")
+    p_promote.set_defaults(func=cmd_promote)
 
     p_watch = sub.add_parser("watch", help="tail the fleet's topics")
     p_watch.add_argument("robot_id", nargs="?", help="one robot (default: all)")

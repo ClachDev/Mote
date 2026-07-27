@@ -973,6 +973,30 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   retained, not merged; the **bundle/registry API is documented as a versioned
   schema**. *Depends on:* M1. *Parallel with:* M2, M5, Ms.
   *Seams:* `sites.py:254-258`, `:348-410`, `:396-406`, `:432-441`.
+  **Built**; the registry routes are specified in
+  [`fleet-api.md`](../fleet/fleet-api.md) and the retained topic in
+  [`control-plane.md`](../fleet/control-plane.md), the operator flow is
+  [`README.md` §11](../fleet/README.md) and the measurements are
+  [`m4-verification.md`](../fleet/m4-verification.md). The shape it took is one
+  rule — **uploading is not publishing**: a revision a robot uploads is an inert
+  *candidate*, and only an operator's promote flips the floor's symlink and
+  announces it, which is what makes the two-mappers case a non-event rather than
+  a race. Five things landed differently from Q4, each recorded in the ledger's
+  §6: the topic is `mote/v1/registry/…` (the major version belongs in the root,
+  and `registry` is therefore a reserved robot id); the shared validator is
+  `mote_bringup/bundle.py` rather than a `mote_fleet` module, because the bundle
+  layout is `sites.py`'s and the other direction would be a package cycle — the
+  deploy image copies the two ROS-free files, so the fleet box still installs no
+  ROS; **uploads carry no operator credential** (they name an enrolled robot,
+  are bounded, audited, and change nothing) until M7 gives robots one; the flip
+  and the announcement are reported separately, because a broker that is down
+  must not leave a floor half-promoted — the server re-announces every floor at
+  startup, which repairs it; and zones travel *inside* the revision and replace
+  the floor's on install, because a different session's map makes previously
+  taught zones wrong. The one thing the milestone does not do is make a pulled
+  map take effect live: `map_server` reads its map at startup, so a flip lands
+  on the next bringup, and health now carries the revision each robot is
+  actually running so the gap is visible.
 
 - **M5 · OTA updates via prefix.dev.** Agent reports version; server drives ring
   rollout; install-alongside (two slots, hardlink-dedup) + health-check + rollback;

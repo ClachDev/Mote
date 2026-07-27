@@ -38,6 +38,15 @@ command would be re-delivered to the robot every time it reconnects, which
 turns a link flap into a re-dispatch. Everything else is retained, so an
 operator UI that connects at any moment sees the current state of the fleet
 without waiting for the next heartbeat.
+
+One subtree is about the fleet rather than about a robot (M4)::
+
+    registry/site/<site>/floor/<floor>/current   retained   canonical map revision
+
+Retained is the whole mechanism there: a robot that was switched off through a
+mapping session learns the floor's canonical revision the instant it
+reconnects, so map distribution needs no polling and has no missed-update case.
+``registry`` is therefore a reserved first level — no robot may be allocated it.
 """
 
 import json
@@ -57,6 +66,16 @@ HEALTH = "health"
 POSE = "pose"
 COMMAND = "task/command"
 STATUS = "task/status"
+
+# The map registry's subtree (M4). It sits at the same level as a robot id
+# because it is fleet-wide state rather than one robot's, and the name is
+# reserved so the two can never collide.
+REGISTRY = "registry"
+CURRENT = "current"
+
+#: First topic levels that are not robot ids. A robot called ``registry``
+#: would publish its health into the map registry's subtree.
+RESERVED_IDS = frozenset({REGISTRY})
 
 # QoS 1 (at-least-once) everywhere: the broker may redeliver, and every consumer
 # here is idempotent — status/health/pose are snapshots, and a command is keyed
@@ -100,9 +119,13 @@ REQUIRED = {
     POSE: ("schema", "robot_id", "stamp", "frame_id", "x", "y", "yaw"),
     COMMAND: ("schema", "id", "command", "issued_at"),
     STATUS: ("schema", "robot_id", "id", "command", "state", "stamp", "source"),
+    CURRENT: ("schema", "site", "floor", "revision", "url", "stamp"),
 }
 
 TOPIC_RE = re.compile(rf"^{ROOT}/{VERSION}/([^/+#]+)/(.+)$")
+REGISTRY_TOPIC_RE = re.compile(
+    rf"^{ROOT}/{VERSION}/{REGISTRY}/site/([^/+#]+)/floor/([^/+#]+)/{CURRENT}$"
+)
 
 # A robot id is a lowercase DNS label, because it is simultaneously a MagicDNS
 # hostname, a level of this topic tree, and a directory name. The definition
@@ -113,7 +136,8 @@ ID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$")
 
 
 def valid_id(robot_id: str) -> bool:
-    return bool(ID_RE.match(robot_id or ""))
+    """Is this a usable robot id? Shape *and* not a reserved topic level."""
+    return bool(ID_RE.match(robot_id or "")) and robot_id not in RESERVED_IDS
 
 
 class ProtocolError(ValueError):
@@ -136,8 +160,31 @@ def any_robot(leaf: str) -> str:
 
 
 def parse_topic(name: str) -> tuple[str, str] | None:
-    """``(robot_id, leaf)`` for a v1 topic, else None."""
+    """``(robot_id, leaf)`` for a v1 robot topic, else None.
+
+    A registry topic answers None: it is a v1 topic, but it is not *about* a
+    robot, and a consumer that took ``registry`` for a robot id would invent a
+    fleet member out of a map announcement.
+    """
     match = TOPIC_RE.match(name)
+    if not match or match.group(1) in RESERVED_IDS:
+        return None
+    return match.group(1), match.group(2)
+
+
+def registry_topic(site: str, floor: str) -> str:
+    """Where a floor's canonical map revision is announced, retained."""
+    return f"{ROOT}/{VERSION}/{REGISTRY}/site/{site}/floor/{floor}/{CURRENT}"
+
+
+def any_floor() -> str:
+    """The subscription that matches every floor's canonical revision."""
+    return f"{ROOT}/{VERSION}/{REGISTRY}/site/+/floor/+/{CURRENT}"
+
+
+def parse_registry_topic(name: str) -> tuple[str, str] | None:
+    """``(site, floor)`` for a registry ``current`` topic, else None."""
+    match = REGISTRY_TOPIC_RE.match(name)
     return (match.group(1), match.group(2)) if match else None
 
 
@@ -196,6 +243,7 @@ def health(
     version: str | None = None,
     uptime_s: float | None = None,
     battery: dict | None = None,
+    map: dict | None = None,
 ) -> dict:
     """The rolled-up robot health snapshot.
 
@@ -204,6 +252,11 @@ def health(
     ``battery`` is in the contract but always null today: nothing on the robot
     can measure it (the power bank exposes no telemetry — see fleet.md), and a
     field a dashboard can render as "unknown" is better than one added later.
+
+    ``map`` is which map revision this robot is actually running (M4). It is
+    reported rather than assumed because the registry's canonical revision is
+    what a floor *should* be on, and the difference between the two is the only
+    way to see a robot that has not picked up a new map.
     """
     if state not in HEALTH_STATES:
         raise ProtocolError(f"unknown health state {state!r}")
@@ -220,6 +273,7 @@ def health(
         "version": version,
         "uptime_s": None if uptime_s is None else round(uptime_s, 1),
         "battery": battery,
+        "map": map,
     }
 
 
@@ -267,6 +321,42 @@ def command(text: str, *, command_id: str | None = None, issued_by: str = "") ->
         "command": text,
         "issued_at": now(),
         "issued_by": issued_by,
+    }
+
+
+def current(
+    site: str,
+    floor: str,
+    revision: str,
+    *,
+    url: str,
+    sha256: str = "",
+    bytes_: int = 0,
+    promoted_by: str = "",
+) -> dict:
+    """A floor's canonical map revision, published retained by the registry.
+
+    This is the whole of map distribution's control channel: the revision id a
+    robot should be running, and where to fetch it. Retained, so a robot that
+    was off during the mapping session is told the moment it reconnects rather
+    than at the next poll — and because a revision directory is immutable and
+    published by an atomic symlink flip (``sites.py``), acting on it can never
+    leave a half-installed map visible.
+
+    ``sha256`` is what the puller checks the download against; ``url`` is
+    relative to the fleet server so the same retained message stays correct
+    when the box is reached by a different name.
+    """
+    return {
+        "schema": SCHEMA,
+        "site": site,
+        "floor": floor,
+        "revision": revision,
+        "url": url,
+        "sha256": sha256,
+        "bytes": int(bytes_),
+        "promoted_by": promoted_by,
+        "stamp": now(),
     }
 
 

@@ -26,9 +26,19 @@ id, so the agent enforces the single-in-flight rule that makes retries safe and
 keeps the correlation id upstream of the ROS seam
 (:mod:`mote_fleet.dispatch`).
 
+*Down* — the canonical map. The registry announces each floor's canonical map
+revision on a retained topic, so this agent learns about a new map the instant
+it connects rather than by polling, and installs it by staging the revision and
+flipping one symlink (:mod:`mote_fleet.mapsync`, fleet.md Q4). Nothing about
+that is in the control loop either: a map arrives, is staged, and is published
+locally — the running navigation stack keeps using the map it loaded until it
+is restarted.
+
 Threading: paho runs its own network loop, so its callbacks arrive off the ROS
 executor. Inbound commands are therefore pushed onto a queue and drained by a
 ROS timer — the ROS publisher is only ever touched from the executor thread.
+Map downloads get a worker thread of their own for the same reason in reverse:
+a multi-megabyte transfer must not sit inside a timer callback.
 
     pixi run agent            # or: mote-agent.service (installed, not enabled)
 """
@@ -37,6 +47,7 @@ import math
 import os
 import queue
 import subprocess
+import threading
 import time
 
 import rclpy
@@ -49,7 +60,7 @@ import tf2_ros
 
 from mote_bringup import identity, sites
 
-from mote_fleet import dispatch, fleet_config, protocol
+from mote_fleet import dispatch, fleet_config, mapsync, protocol
 
 # diagnostic_msgs levels -> the contract's health states.
 LEVEL_STATE = {
@@ -134,6 +145,9 @@ class MoteAgent(Node):
         ).value
         self.keepalive = self.declare_parameter("keepalive", 20).value
         command_timeout = self.declare_parameter("command_timeout", 20.0).value
+        # Map distribution is opt-out rather than opt-in: a robot that is on
+        # the fleet should be running the fleet's canonical map for its floor.
+        self.map_sync = self.declare_parameter("map_sync", True).value
 
         self.robot_id = None
         self.client = None
@@ -146,6 +160,9 @@ class MoteAgent(Node):
         self._diagnostics_at = None
         self._site = (None, None)
         self._site_at = 0.0
+        self._pulls = queue.Queue()
+        self._pull_results = queue.Queue()
+        self._pull_thread = None
 
         self.command_pub = self.create_publisher(String, "task/command", 1)
         self.create_subscription(String, "task/status", self._on_ros_status, 10)
@@ -162,6 +179,7 @@ class MoteAgent(Node):
         self._try_connect()
 
         self.create_timer(0.05, self._drain_inbound)
+        self.create_timer(1.0, self._drain_pulls)
         self.create_timer(health_period, self.publish_health)
         self.create_timer(pose_period, self.publish_pose)
         self.create_timer(1.0, self._tick_tracker)
@@ -236,6 +254,10 @@ class MoteAgent(Node):
         client.subscribe(
             protocol.topic(self.robot_id, protocol.COMMAND), qos=protocol.QOS
         )
+        if self.map_sync:
+            # Retained, so this arrives immediately for every floor — including
+            # the ones mapped while this robot was switched off.
+            client.subscribe(protocol.any_floor(), qos=protocol.QOS)
         client.publish(
             protocol.topic(self.robot_id, protocol.PRESENCE),
             protocol.encode(
@@ -278,7 +300,10 @@ class MoteAgent(Node):
                 topic, raw = self._inbound.get_nowait()
             except queue.Empty:
                 return
-            self._handle_command(topic, raw)
+            if protocol.parse_registry_topic(topic):
+                self._handle_announcement(topic, raw)
+            else:
+                self._handle_command(topic, raw)
 
     def _handle_command(self, topic: str, raw: bytes):
         try:
@@ -333,11 +358,112 @@ class MoteAgent(Node):
             ),
         )
 
+    # ---- the map registry -----------------------------------------------
+
+    def _handle_announcement(self, topic: str, raw: bytes):
+        """A floor's canonical revision changed (or we just connected)."""
+        try:
+            payload = protocol.decode(raw, protocol.CURRENT)
+        except protocol.ProtocolError as exc:
+            self.get_logger().warning(f"ignoring {topic}: {exc}")
+            return
+        if not mapsync.wants(payload, self._active_site_now()):
+            return
+        floor = f"{payload['site']}/{payload['floor']}"
+        if (
+            self._local_revision(payload["site"], payload["floor"])
+            == payload["revision"]
+        ):
+            return
+        self.get_logger().info(
+            f"{floor}: fleet canonical map is {payload['revision']}, pulling"
+        )
+        self._pulls.put(payload)
+        self._ensure_puller()
+
+    def _ensure_puller(self):
+        """One worker thread, started on the first pull and kept.
+
+        A thread rather than a timer because a revision is megabytes over a
+        link that may be a robot's wifi: doing it in the executor would stall
+        pose and health reporting for as long as the transfer takes.
+        """
+        if self._pull_thread is not None and self._pull_thread.is_alive():
+            return
+        self._pull_thread = threading.Thread(
+            target=self._pull_loop, name="mote-agent-mapsync", daemon=True
+        )
+        self._pull_thread.start()
+
+    def _pull_loop(self):
+        while True:
+            try:
+                announcement = self._pulls.get(timeout=30.0)
+            except queue.Empty:
+                return
+            server = (fleet_config.load() or {}).get("server") or ""
+            if not server:
+                self._pull_results.put(
+                    ("error", "no fleet server configured; cannot pull maps")
+                )
+                continue
+            try:
+                result = mapsync.pull(server, announcement)
+            except mapsync.SyncError as exc:
+                self._pull_results.put(("error", str(exc)))
+                continue
+            self._pull_results.put(("ok", result))
+
+    def _drain_pulls(self):
+        """Report what the worker did, from the executor thread."""
+        while True:
+            try:
+                kind, result = self._pull_results.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "error":
+                self.get_logger().warning(f"map sync: {result}")
+                continue
+            if result["action"] == "current":
+                continue
+            self.get_logger().info(
+                f"{result['site']}/{result['floor']}: {result['action']} map "
+                f"revision {result['revision']} (restart nav to load it)"
+            )
+            # Health carries the running revision, so the fleet can see the
+            # difference between a robot that has the canonical map and one
+            # that has not picked it up yet.
+            self.publish_health()
+
+    def _local_revision(self, site: str, floor: str) -> str | None:
+        try:
+            return sites.current_revision(sites.floor_dir(site, floor))
+        except OSError:
+            return None
+
+    def _map_summary(self) -> dict | None:
+        site, floor = self._active_site()
+        if not site or not floor:
+            return None
+        return {
+            "site": site,
+            "floor": floor,
+            "revision": self._local_revision(site, floor),
+        }
+
     # ---- outbound telemetry ---------------------------------------------
 
     def _on_diagnostics(self, msg: DiagnosticArray):
         self._diagnostics = msg
         self._diagnostics_at = time.monotonic()
+
+    def _active_site_now(self) -> tuple[str, str] | None:
+        """The active site/floor, uncached — read on the paho thread when an
+        announcement arrives, where a 30 s stale answer could skip a pull."""
+        try:
+            return sites.active()
+        except Exception:  # a malformed active.yaml must not stop reporting
+            return None
 
     def _active_site(self) -> tuple[str | None, str | None]:
         now = time.monotonic()
@@ -366,6 +492,7 @@ class MoteAgent(Node):
             floor=floor,
             version=self.version,
             uptime_s=host_uptime_s(),
+            map=self._map_summary(),
         )
         fresh = (
             self._diagnostics_at is not None

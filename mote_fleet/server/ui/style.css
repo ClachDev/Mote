@@ -193,6 +193,20 @@ main {
   padding: 0 14px 10px;
 }
 
+.revisions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.revisions select {
+  max-width: 220px;
+}
+
+#promote-note {
+  padding: 0 14px 8px;
+}
+
 #map-canvas {
   flex: 1;
   width: 100%;

@@ -34,10 +34,18 @@
         <div class="pane-head">
           <h2>map</h2>
           <span id="map-label" class="dim">—</span>
+          <span id="map-revision" class="pill"></span>
+          <!-- A candidate is a map a robot published; it changes nothing until
+               an operator promotes it here (or with fleetctl). -->
+          <form id="revisions" class="revisions" hidden>
+            <select id="revision" title="candidate map revisions for this floor"></select>
+            <button type="submit">promote</button>
+          </form>
           <label class="check"><input type="checkbox" id="follow" /> follow</label>
           <button id="fit" type="button">fit</button>
         </div>
         <canvas id="map-canvas"></canvas>
+        <p id="promote-note" class="note"></p>
       </section>
 
       <section class="pane detail-pane">

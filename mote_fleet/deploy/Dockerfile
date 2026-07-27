@@ -22,11 +22,12 @@ ARG MOTE_VERSION=unknown
 ENV MOTE_VERSION=${MOTE_VERSION} \
     PYTHONUNBUFFERED=1
 
-# The fleet's memory of who is in it — registry rows and tokens — and, until M4
-# moves map distribution to the registry, the site bundles the UI's basemaps are
-# served from ($MOTE_FLEET_HOME/sites). A named volume is mounted here by the
-# compose file, so redeploying the *code* replaces the container around this
-# directory and never the state inside it. Same split as the robot's MOTE_HOME.
+# The fleet's memory of who is in it — registry rows and tokens — and the map
+# registry's site bundles ($MOTE_FLEET_HOME/sites), which from M4 are the
+# canonical ones rather than a copy an operator rsynced. A named volume is
+# mounted here by the compose file, so redeploying the *code* replaces the
+# container around this directory and never the state inside it. Same split as
+# the robot's MOTE_HOME.
 ENV MOTE_FLEET_HOME=/var/lib/mote-fleet
 
 RUN pip install --no-cache-dir "paho-mqtt>=2,<3"
@@ -39,8 +40,16 @@ WORKDIR /app
 COPY mote_fleet/mote_fleet/__init__.py \
      mote_fleet/mote_fleet/protocol.py \
      /app/mote_fleet/
+# The map registry validates uploaded bundles with the *same* module the robot
+# writes them with (fleet.md Q4). It is stdlib-only and ROS-free for exactly
+# this reason, so the two files come across and nothing else from mote_bringup
+# does — no ROS, no PyYAML, no checkout.
+COPY mote_bringup/mote_bringup/__init__.py \
+     mote_bringup/mote_bringup/bundle.py \
+     /app/mote_bringup/
 COPY mote_fleet/server/fleet_server.py \
      mote_fleet/server/registry.py \
+     mote_fleet/server/bundle_store.py \
      mote_fleet/server/fleetctl.py \
      /app/server/
 # The dashboard is static files served by the API, so it ships in the same

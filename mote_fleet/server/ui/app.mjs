@@ -33,6 +33,7 @@ const state = {
   selected: null,
   operator: null,
   mapKey: null,
+  floor: null, // the registry's view of the floor on screen: revisions, candidates
 };
 
 const dom = {};
@@ -173,6 +174,8 @@ async function ensureMap(record) {
   const key = site && floor ? `${site}/${floor}` : null;
   if (key === state.mapKey) return;
   state.mapKey = key;
+  state.floor = null;
+  renderRevisions();
   if (!key) {
     mapView.clearMap();
     dom.mapLabel.textContent = 'no floor reported';
@@ -184,10 +187,81 @@ async function ensureMap(record) {
     const image = new Image();
     image.src = meta.image_url;
     await image.decode();
-    if (state.mapKey === key) mapView.setMap(meta, image);
+    if (state.mapKey !== key) return;
+    mapView.setMap(meta, image);
   } catch (error) {
     mapView.clearMap();
     dom.mapLabel.textContent = `${key} — no basemap on the fleet server (${error.message})`;
+    return;
+  }
+  // Taught places, in the same frame as the basemap. A floor may have none,
+  // which is a 404 and not an error worth showing.
+  api(`/v1/maps/${site}/${floor}/zones.json`)
+    .then((body) => state.mapKey === key && mapView.setZones(body.zones))
+    .catch(() => state.mapKey === key && mapView.setZones([]));
+  loadFloor(site, floor, key);
+}
+
+// -- the map registry ----------------------------------------------------
+
+async function loadFloor(site, floor, key) {
+  try {
+    const body = await api(`/v1/sites/${site}/floors/${floor}`);
+    if (state.mapKey !== key) return;
+    state.floor = body;
+  } catch (error) {
+    state.floor = null;
+  }
+  renderRevisions();
+}
+
+// Which revision the floor is on, and what else could be promoted onto it. A
+// candidate is a map some robot published that changes nothing until an
+// operator says so, so this is where that decision is made.
+function renderRevisions() {
+  const floor = state.floor;
+  if (!floor) {
+    dom.revisions.hidden = true;
+    dom.mapRevision.textContent = '';
+    return;
+  }
+  dom.mapRevision.textContent = floor.canonical || 'no published map';
+  const candidates = floor.revisions.filter(
+    (revision) => !revision.canonical && revision.ok,
+  );
+  dom.revisions.hidden = candidates.length === 0;
+  dom.revision.replaceChildren(
+    ...candidates.map((revision) =>
+      el('option', {
+        value: revision.revision,
+        text: `${revision.revision}${revision.robot_id ? ` · ${revision.robot_id}` : ''}`,
+      }),
+    ),
+  );
+}
+
+async function onPromote(event) {
+  event.preventDefault();
+  const revision = dom.revision.value;
+  if (!state.floor || !revision) return;
+  const { site, floor } = state.floor;
+  dom.promoteNote.textContent = `promoting ${revision}…`;
+  dom.promoteNote.className = 'note';
+  try {
+    const body = await api(
+      `/v1/sites/${site}/floors/${floor}/revisions/${revision}/promote`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"schema":1}' },
+    );
+    dom.promoteNote.textContent = body.announced
+      ? `${site}/${floor} is on ${body.revision}; robots will pull it`
+      : `promoted, but not announced: ${body.detail}`;
+    // Re-read the floor rather than assume: the basemap on screen is now a
+    // different map.
+    state.mapKey = null;
+    scheduleRender();
+  } catch (error) {
+    dom.promoteNote.textContent = error.message;
+    dom.promoteNote.className = 'note error';
   }
 }
 
@@ -316,6 +390,17 @@ function renderDetail(record) {
     ['task', health.task ? `${health.task.state}: ${health.task.command}` : 'idle'],
     ['site', health.site || (pose && pose.site) ? `${health.site || pose.site}/${health.floor || pose.floor}` : '—'],
     ['pose', pose ? `x ${pose.x.toFixed(2)}  y ${pose.y.toFixed(2)}  yaw ${pose.yaw.toFixed(2)}  (${ageText(pose.stamp)})` : 'not localised'],
+    [
+      'map',
+      health.map && health.map.revision
+        ? `${health.map.revision}${
+            state.floor && state.floor.canonical &&
+            state.floor.canonical !== health.map.revision
+              ? '  (fleet canonical: ' + state.floor.canonical + ')'
+              : ''
+          }`
+        : '—',
+    ],
     ['version', health.version || '—'],
     ['uptime', health.uptime_s ? `${Math.round(health.uptime_s / 3600)}h` : '—'],
     ['battery', 'unmeasurable on this hardware'],
@@ -436,6 +521,10 @@ function bind() {
     operator: 'operator',
     token: 'token',
     mapLabel: 'map-label',
+    mapRevision: 'map-revision',
+    revisions: 'revisions',
+    revision: 'revision',
+    promoteNote: 'promote-note',
     canvas: 'map-canvas',
     follow: 'follow',
     fit: 'fit',
@@ -469,6 +558,7 @@ export async function boot() {
     mapView.draw();
   });
   dom.dispatch.addEventListener('submit', onDispatch);
+  dom.revisions.addEventListener('submit', onPromote);
   document.getElementById('token-form').addEventListener('submit', onToken);
 
   state.config = await api('/v1/config');

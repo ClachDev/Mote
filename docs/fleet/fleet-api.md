@@ -8,9 +8,9 @@ the versioned spec [`fleet.md`](../design/fleet.md) requires M3 to publish.
 | | |
 |---|---|
 | **Contract version** | `v1` (routes under `/v1/…`, payload `schema: 1`) |
-| **Authority** | [`mote_fleet/server/fleet_server.py`](../../mote_fleet/server/fleet_server.py) |
-| **Kept honest by** | `mote_fleet/test/test_fleet_server.py`, and `test_e2e_fleet.py` for the dispatch path end to end |
-| **Milestone** | M3. Operator runbook: [`README.md`](README.md) §6–9. Measurements: [`m3-verification.md`](m3-verification.md) |
+| **Authority** | [`mote_fleet/server/fleet_server.py`](../../mote_fleet/server/fleet_server.py) + [`bundle_store.py`](../../mote_fleet/server/bundle_store.py) |
+| **Kept honest by** | `test_fleet_server.py`, `test_map_registry.py`, `test_mapsync.py`; `test_e2e_fleet.py` for dispatch end to end |
+| **Milestone** | M3, extended by M4 (the registry routes). Operator runbook: [`README.md`](README.md) §6–9 and §11. Measurements: [`m3-verification.md`](m3-verification.md), [`m4-verification.md`](m4-verification.md) |
 
 ## Why there are two contracts
 
@@ -48,6 +48,8 @@ Status codes are part of the contract: a client may switch on them.
 |---|---|
 | `POST /v1/enroll` | an **enrollment token** in the body (single-use by default) |
 | `POST /v1/robots/<id>/dispatch`, `GET /v1/audit` | an **operator token** as `Authorization: Bearer <token>` |
+| `POST …/revisions/<rev>/promote` | an **operator token** |
+| `POST …/revisions/<rev>` (map upload) | none, but the `robot_id` must be enrolled — see [the registry](#the-map-registry-m4) |
 | everything else | none — see the security note below |
 
 Operator tokens are minted on the fleet box, against the registry file, never
@@ -88,6 +90,12 @@ GET  /v1/audit[?limit=&robot_id=]        what was dispatched, by whom
 GET  /v1/maps                            basemaps this server can serve
 GET  /v1/maps/<site>/<floor>/map.json    resolution + origin + size
 GET  /v1/maps/<site>/<floor>/map.png     the basemap image
+GET  /v1/maps/<site>/<floor>/zones.json  the floor's taught zones
+GET  /v1/sites                           the registry: every floor + its canonical revision
+GET  /v1/sites/<site>/floors/<floor>     every revision, validated, with provenance
+POST     …/revisions/<rev>               upload a candidate revision (a robot)
+GET      …/revisions/<rev>/bundle.tar.gz pull a revision (a robot)
+POST     …/revisions/<rev>/promote       make it canonical (an operator)
 GET  /                                   the operator UI (static files)
 ```
 
@@ -199,14 +207,159 @@ py = height - (wy - origin_y) / resolution      # image y is top-down
 `404` for a site/floor with no published map; `400` for a name that is not a
 plain directory label (which is also the whole path-traversal story).
 
-**This is a provisional source, not the registry.** The server reads **site
-bundles exactly as `sites.py` writes them** — `<maps-dir>/<site>/floors/<floor>/map/`,
-published symlink and all — from `--maps-dir` (default `$MOTE_FLEET_HOME/sites`),
-which today an operator seeds with an `rsync` from a robot. **M4** makes the
-fleet server the canonical registry with server-side validation and revision
-promotion; when it does, these two routes keep their shape and change where the
-bytes come from. That is the seam, and it is why the UI reads a bundle rather
-than a bespoke map format.
+**These routes kept their shape across M4 and changed their source.** The bytes
+now come from the registry below rather than from whatever an operator last
+rsynced onto the box, `map.json` gained `revision`, and `/v1/maps` gained
+`revision` + `candidates` per floor. Adding fields bumps nothing; a client that
+ignores them is unaffected. The reader is no longer hand-rolled either: it is
+`mote_bringup.bundle`, the same ROS-free module the robot writes revisions with
+(fleet.md Q4) — which is what makes "the server validates what the robot saved"
+a shared definition rather than two that agree by convention.
+
+A floor that was seeded by `rsync` before M4 still works: `sites()` walks the
+bundle layout, not a table, so such a floor appears with no upload history and
+serves normally. It cannot be *promoted* onto until its `map/` directory is a
+symlink into `maps/<rev>/` — the API says so with a `409` rather than
+overwriting the directory.
+
+### `GET /v1/maps/<site>/<floor>/zones.json`
+
+The floor's taught places, in the same map frame as the basemap, so the
+dashboard can draw them and an operator can see the `goto` targets they are
+about to type.
+
+```json
+{"schema":1,"site":"home","floor":"ground","frame_id":"map","zones":[
+ {"name":"kitchen","x":1.0,"y":2.0,"yaw":0.0,"radius":1.5},
+ {"name":"ward","x":4.0,"y":1.0,"polygon":[[3,0],[5,0],[5,2],[3,2]]}]}
+```
+
+Read from the **canonical revision's** `zones.yaml`, falling back to the
+floor-level file for a bundle seeded by rsync. `404` for a floor with no taught
+zones — an empty list would claim the floor has none, which is a different
+statement.
+
+---
+
+## The map registry (M4)
+
+The fleet server is the source of truth for sites, floors and map revisions.
+The shape of it is one rule:
+
+> **Uploading is not publishing.** A revision that arrives is a *candidate*: it
+> is validated, stored, recorded, and changes nothing. An operator promotes one,
+> which flips the floor's `map` symlink and publishes the retained
+> [`current`](control-plane.md#current) topic every agent pulls from.
+
+That is also the conflict answer. Two robots that map the same floor produce two
+candidates, both kept, neither merged — a map frame's origin is an accident of
+where SLAM started, so merging two frames would break every taught zone
+coordinate (fleet.md Q4). The loser is retained for audit.
+
+**A revision is an immutable directory, and distribution is a copy plus one
+atomic flip** — the model `sites.py` already used locally, unchanged. The wire
+form is a flat gzipped tar of the revision's files with the floor's `zones.yaml`
+packed in beside them, because zones are coordinates in that revision's frame
+and must travel with it. Packing is deterministic, so a revision always packs to
+the same bytes and the digest announced on the retained topic keeps matching
+what the download route serves.
+
+### `GET /v1/sites`
+
+```json
+{"schema":1,"sites":[{"site":"home","floor":"ground","canonical":"20260727T101500",
+ "candidates":["20260728T090412"],"revisions":["20260727T101500","20260728T090412"]}]}
+```
+
+### `GET /v1/sites/<site>/floors/<floor>`
+
+Every revision the floor holds, **re-validated on read** — a revision on disk
+can rot (a restore, a half-copied backup) and "promotable" is a claim about now.
+
+```json
+{"schema":1,"site":"home","floor":"ground","canonical":"20260727T101500",
+ "revisions":[{"revision":"20260727T101500","canonical":true,"ok":true,
+   "errors":[],"warnings":[],"uploaded_at":"2026-07-27T10:21:44Z","robot_id":"mote-01",
+   "bytes":186349,"sha256":"sha256:6f1c…","zones":["kitchen","ward"],
+   "map":{"image":"map.png","resolution":0.05,"origin":[-2.9,-2.9,0.0],"width":438,"height":238},
+   "occupancy":{"total":104244,"free":0.899,"occupied":0.05,"unknown":0.051},
+   "url":"/v1/sites/home/floors/ground/revisions/20260727T101500/bundle.tar.gz"}]}
+```
+
+### `POST /v1/sites/<site>/floors/<floor>/revisions/<rev>?robot_id=<id>`
+
+Body: the packed revision (`application/gzip`), ≤64 MB. `pixi run publish-map`
+is the robot-side caller.
+
+| Status | Meaning |
+|---|---|
+| `201` | stored as a candidate; the body says under which id |
+| `400` | not a readable bundle, a bad name, or no `robot_id` |
+| `404` | no such robot in this fleet |
+| `413` | larger than the ceiling |
+| `422` | a readable bundle that is **not a usable map revision**; `errors` says why |
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":"20260728T090412",
+ "canonical":"20260727T101500","promoted":false,"warnings":[],
+ "url":"/v1/sites/home/floors/ground/revisions/20260728T090412/bundle.tar.gz"}
+```
+
+**The stored id may not be the proposed one.** Revision ids are per-second
+timestamps, so two robots mapping one floor in the same second collide; the
+second is stored as `<rev>-2` rather than overwriting the first, and the
+response says so. Re-uploading byte-identical content is a retry and mints
+nothing.
+
+**Server-side validation** is `mote_bringup.bundle` — the *same* module the
+robot refused to save an incomplete revision with, run again because an upload
+can truncate where a local save could not. It checks: every required file
+present and non-empty; `map.yaml` parses with a positive resolution, a finite
+origin, an image that is a plain file name, and thresholds the right way round;
+the image is a PNG whose dimensions are sane and match `map_raw.png` if that is
+present (they are the same frame); the posegraph is there, or mapping can never
+be continued in this frame; `meta.yaml` provenance; and **the occupancy is not
+degenerate** — a revision can have every file in place and still be a uniform
+grey rectangle, which is what a mapping run that never got going looks like.
+
+**Why this route has no credential.** Everything it can do is inert: a candidate
+changes no floor, is bounded in size and count, and is recorded in the audit log
+against the robot that sent it. The write that *does* change something —
+promote — is the operator's. M7 replaces the `robot_id` check with a per-robot
+credential.
+
+### `POST /v1/sites/<site>/floors/<floor>/revisions/<rev>/promote`
+
+Operator token required. Body `{"schema": 1}`.
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":"20260728T090412",
+ "url":"…/bundle.tar.gz","sha256":"sha256:1a2b…","bytes":186349,
+ "promoted_by":"michael","warnings":[],"announced":true,"detail":"",
+ "topic":"mote/v1/registry/site/home/floor/ground/current","audit_id":12}
+```
+
+| Status | Meaning |
+|---|---|
+| `200` | the floor is on this revision — see `announced` |
+| `401` | no usable operator token (recorded as an anonymous attempt) |
+| `404` | no such revision |
+| `409` | the floor's `map` is a plain directory, not a published revision |
+| `422` | the revision is not promotable; `errors` says why |
+
+**`announced` is separate from success on purpose.** The symlink flip is the
+fact; the retained announcement is best effort. A broker that is down must not
+leave a floor half-promoted, so the flip stands, the response says the fleet was
+not told, and the server re-announces every floor at startup — which is what
+repairs it.
+
+### `GET …/revisions/<rev>/bundle.tar.gz`
+
+The packed revision, with the digest in `X-Bundle-Sha256`. An agent pulls this
+after the retained announcement, checks the digest, stages the whole revision in
+a temporary directory, renames it into `maps/<rev>/`, and flips the local `map`
+symlink — so a half-transferred revision is never visible and nothing has to be
+undone if the transfer dies.
 
 ---
 

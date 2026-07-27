@@ -89,6 +89,15 @@
     "battery": {
       "type": ["object", "null"],
       "description": "Battery status object, reserved for future use and always null."
+    },
+    "map": {
+      "type": ["object", "null"],
+      "description": "The map revision this robot is running, so the fleet can see a robot that has not picked up the floor's canonical one.",
+      "properties": {
+        "site": {"type": "string", "description": "Site the revision belongs to."},
+        "floor": {"type": "string", "description": "Floor the revision belongs to."},
+        "revision": {"type": ["string", "null"], "description": "Revision id, or null if this floor has no map."}
+      }
     }
   }
 }

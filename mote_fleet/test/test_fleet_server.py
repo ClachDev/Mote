@@ -7,136 +7,29 @@ parses, and the fact that a bad request is answered rather than dropped.
 
 The one thing stubbed is the broker: dispatch's publisher is injected, so the
 authorize → audit → publish order is tested here and the real MQTT hop is tested
-where it belongs, against a real broker in ``test_e2e_fleet.py``.
+where it belongs, against a real broker in ``test_e2e_fleet.py``. The live
+server, and the helpers for talking to it, are ``conftest.py`` +
+``api_harness.py``; the map registry's own routes are ``test_map_registry.py``.
 """
 
-import json
-import struct
-import threading
-import urllib.error
-import urllib.request
-import zlib
-
-import pytest
-from fleet_server import serve
+from api_harness import (
+    enroll,
+    expect_error,
+    get,
+    get_bytes,
+    post,
+    post_raw,
+)
 
 from mote_fleet import protocol
 
 
-class FakeBroker:
-    """Stands in for ``BrokerLink``. ``fail`` is how "the broker is down" is
-    tested without taking a broker down."""
-
-    def __init__(self):
-        self.published = []
-        self.fail = ""
-
-    def publish(self, topic, payload):
-        if self.fail:
-            return False, self.fail
-        self.published.append((topic, json.loads(payload)))
-        return True, ""
-
-    def close(self):
-        pass
-
-
-def write_png(path, width, height):
-    """A real (grey) PNG, so the server's header reader is tested against the
-    format rather than against a fixture that agrees with it."""
-
-    def chunk(kind, data):
-        return (
-            struct.pack(">I", len(data))
-            + kind
-            + data
-            + struct.pack(">I", zlib.crc32(kind + data))
-        )
-
-    raw = b"".join(b"\x00" + b"\x80" * width for _ in range(height))
-    path.write_bytes(
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw))
-        + chunk(b"IEND", b"")
-    )
-
-
-def write_bundle(root, site, floor, *, width=40, height=30):
-    """A site bundle as ``sites.py`` writes one, published symlink and all."""
-    revision = root / site / "floors" / floor / "maps" / "20260726T120000"
-    revision.mkdir(parents=True)
-    (revision / "map.yaml").write_text(
-        "image: map.png\nmode: trinary\nresolution: 0.050\n"
-        "origin: [-2.927, -2.934, 0]\nnegate: 0\n"
-        "occupied_thresh: 0.65\nfree_thresh: 0.196\n"
-    )
-    write_png(revision / "map.png", width, height)
-    (revision.parent.parent / "map").symlink_to(
-        revision.relative_to(revision.parent.parent)
-    )
-    return revision
-
-
-@pytest.fixture
-def server(tmp_path):
-    maps = tmp_path / "sites"
-    maps.mkdir()
-    write_bundle(maps, "home", "ground")
-    httpd = serve(
-        db=tmp_path / "registry.db",
-        host="127.0.0.1",
-        port=0,
-        broker_host="fleet-box",
-        broker_port=1883,
-        publisher=FakeBroker(),
-        maps_dir=maps,
-    )
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}"
-    yield httpd
-    httpd.shutdown()
-    httpd.server_close()
-
-
-def get(server, path, token=None):
-    request = urllib.request.Request(server.url + path)
-    if token:
-        request.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return response.status, json.loads(response.read())
-
-
-def get_bytes(server, path):
-    with urllib.request.urlopen(server.url + path, timeout=10) as response:
-        return response.status, response.headers["Content-Type"], response.read()
-
-
-def post(server, path, payload, token=None):
-    request = urllib.request.Request(
-        server.url + path,
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    if token:
-        request.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return response.status, json.loads(response.read())
-
-
-def enroll(server, fingerprint, **extra):
-    token = extra.pop("token", None) or server.registry.new_token()
+def dispatch(server, robot_id, command, token=None, **extra):
     return post(
         server,
-        "/v1/enroll",
-        {
-            "schema": protocol.SCHEMA,
-            "token": token,
-            "fingerprint": fingerprint,
-            **extra,
-        },
+        f"/v1/robots/{robot_id}/dispatch",
+        {"schema": protocol.SCHEMA, "command": command, **extra},
+        token=token,
     )
 
 
@@ -177,13 +70,6 @@ def test_one_robot_can_be_fetched_by_id(server):
     enroll(server, "serial:aaa")
     status, body = get(server, "/v1/robots/mote-01")
     assert (status, body["robot_id"]) == (200, "mote-01")
-
-
-def expect_error(call, code):
-    with pytest.raises(urllib.error.HTTPError) as caught:
-        call()
-    assert caught.value.code == code
-    return json.loads(caught.value.read())
 
 
 def test_unknown_robot_is_404(server):
@@ -232,12 +118,7 @@ def test_a_conflicting_requested_id_is_409(server):
 
 
 def test_a_non_json_body_is_400(server):
-    request = urllib.request.Request(
-        server.url + "/v1/enroll", data=b"{not json", method="POST"
-    )
-    with pytest.raises(urllib.error.HTTPError) as caught:
-        urllib.request.urlopen(request, timeout=10)
-    assert caught.value.code == 400
+    expect_error(lambda: post_raw(server, "/v1/enroll", b"{not json"), 400)
 
 
 # ---- the dashboard's bootstrap ----------------------------------------------
@@ -278,33 +159,14 @@ def test_the_ui_cannot_serve_files_outside_itself(server):
 # ---- dispatch: authorize, audit, publish ------------------------------------
 
 
-@pytest.fixture
-def operator(server):
-    return server.registry.new_operator(name="michael")
-
-
-@pytest.fixture
-def robot(server):
-    enroll(server, "serial:aaa", name="Scout")
-    return "mote-01"
-
-
-def dispatch(server, robot_id, command, token=None, **extra):
-    return post(
-        server,
-        f"/v1/robots/{robot_id}/dispatch",
-        {"schema": protocol.SCHEMA, "command": command, **extra},
-        token=token,
-    )
-
-
 def test_a_dispatch_is_published_with_a_correlation_id(server, operator, robot):
     status, body = dispatch(server, robot, "goto kitchen", token=operator)
     assert status == 202
     assert body["command"] == "goto kitchen"
     assert body["issued_by"] == "ui:michael"
-    topic, payload = server.publisher.published[0]
-    assert topic == "mote/v1/mote-01/task/command"
+    topic, payload, retain = server.publisher.published[0]
+    # Never retained: a retained command re-fires on every reconnect.
+    assert (topic, retain) == ("mote/v1/mote-01/task/command", False)
     assert payload["command"] == "goto kitchen"
     assert payload["id"] == body["id"]
     assert payload["schema"] == protocol.SCHEMA
@@ -392,7 +254,16 @@ def test_audit_can_be_filtered_by_robot(server, operator, robot):
 def test_maps_are_listed_from_the_site_bundles(server):
     status, body = get(server, "/v1/maps")
     assert status == 200
-    assert body["maps"] == [{"site": "home", "floor": "ground"}]
+    # The route kept its shape across M4 and gained the canonical revision it
+    # is showing — which is the one thing a viewer cannot work out itself.
+    assert body["maps"] == [
+        {
+            "site": "home",
+            "floor": "ground",
+            "revision": "20260726T120000",
+            "candidates": 0,
+        }
+    ]
 
 
 def test_a_floors_map_metadata_carries_the_transform(server):

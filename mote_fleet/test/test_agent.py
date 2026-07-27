@@ -397,3 +397,117 @@ def test_pose_follows_the_map_frame_transform(fleet):
     assert pose["yaw"] == pytest.approx(math.pi / 2, abs=1e-3)
     # The coordinate travels with the floor whose map frame it is measured in.
     assert (pose["site"], pose["floor"]) == ("home", "ground")
+
+
+# ---- the map registry ---------------------------------------------------
+
+
+def announce(fleet, revision, site="home", floor="ground", **extra):
+    """Deliver a retained ``current`` announcement, as the broker would on
+    connect."""
+    protocol = fleet.protocol
+    payload = protocol.current(
+        site,
+        floor,
+        revision,
+        url=f"/v1/sites/{site}/floors/{floor}/revisions/{revision}/bundle.tar.gz",
+        **extra,
+    )
+    fleet.mqtt.deliver(protocol.registry_topic(site, floor), protocol.encode(payload))
+    fleet.spin(0.3)
+    return payload
+
+
+def test_connecting_subscribes_to_every_floors_canonical_revision(fleet):
+    fleet.mqtt.connect()
+    assert fleet.protocol.any_floor() in fleet.mqtt.subscriptions
+
+
+def test_an_announcement_for_this_robots_floor_is_pulled(fleet, monkeypatch):
+    """The agent does not fetch on the paho thread — it hands the work to its
+    worker — so what is asserted is that the pull happened with the announced
+    revision, not how it got there."""
+    from mote_fleet import mapsync
+
+    pulled = []
+
+    def fake_pull(server, announcement, **kwargs):
+        pulled.append((server, announcement["revision"]))
+        return {
+            "action": "installed",
+            "site": announcement["site"],
+            "floor": announcement["floor"],
+            "revision": announcement["revision"],
+        }
+
+    monkeypatch.setattr(mapsync, "pull", fake_pull)
+    fleet.mqtt.connect()
+    announce(fleet, "20260727T101500")
+    fleet.spin(0.5)
+    assert pulled == [("http://fleet:8080", "20260727T101500")]
+
+
+def test_a_floor_this_robot_has_never_been_on_is_ignored(fleet, monkeypatch):
+    from mote_fleet import mapsync
+
+    monkeypatch.setattr(
+        mapsync, "pull", lambda *a, **k: pytest.fail("should not have pulled")
+    )
+    fleet.mqtt.connect()
+    announce(fleet, "20260727T101500", site="warehouse", floor="mezzanine")
+    fleet.spin(0.3)
+
+
+def test_an_announcement_of_the_revision_already_running_pulls_nothing(
+    fleet, monkeypatch
+):
+    """Retained means this arrives on every reconnect, so the common case is
+    an announcement of the map the robot is already on."""
+    from mote_bringup import sites
+
+    from mote_fleet import mapsync
+
+    floor_dir = sites.floor_dir("home", "ground")
+    (floor_dir / "maps" / "20260727T101500").mkdir(parents=True)
+    sites._publish_revision(floor_dir, "20260727T101500")
+    monkeypatch.setattr(
+        mapsync, "pull", lambda *a, **k: pytest.fail("should not have pulled")
+    )
+    fleet.mqtt.connect()
+    announce(fleet, "20260727T101500")
+    fleet.spin(0.3)
+
+
+def test_health_reports_the_map_revision_this_robot_is_running(fleet):
+    from mote_bringup import sites
+
+    floor_dir = sites.floor_dir("home", "ground")
+    (floor_dir / "maps" / "20260727T101500").mkdir(parents=True)
+    sites._publish_revision(floor_dir, "20260727T101500")
+    fleet.mqtt.connect()
+    fleet.spin(0.4)
+    reported = fleet.mqtt.last(fleet.protocol.HEALTH)["map"]
+    assert reported == {
+        "site": "home",
+        "floor": "ground",
+        "revision": "20260727T101500",
+    }
+
+
+def test_health_reports_no_revision_when_the_floor_has_no_map(fleet):
+    fleet.mqtt.connect()
+    fleet.spin(0.4)
+    assert fleet.mqtt.last(fleet.protocol.HEALTH)["map"]["revision"] is None
+
+
+def test_a_malformed_announcement_is_ignored(fleet, monkeypatch):
+    from mote_fleet import mapsync
+
+    monkeypatch.setattr(
+        mapsync, "pull", lambda *a, **k: pytest.fail("should not have pulled")
+    )
+    fleet.mqtt.connect()
+    fleet.mqtt.deliver(
+        fleet.protocol.registry_topic("home", "ground"), b'{"schema": 99}'
+    )
+    fleet.spin(0.3)

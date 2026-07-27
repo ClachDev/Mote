@@ -61,6 +61,9 @@ kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera
 # would ship it to the robot and break the robot's submodule refs.
 sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
 save-map = "ros2 run mote_bringup site save-map"
+# Offer the saved map to the fleet registry as a candidate (docs/fleet/
+# registry.md). Separate from save-map because saving must work offline.
+publish-map = "ros2 run mote_fleet publish-map"
 clean-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.cli"
 save-zone = "ros2 run mote_tasks save_zone"
 site = "ros2 run mote_bringup site"
