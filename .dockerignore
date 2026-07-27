@@ -1,8 +1,12 @@
-# The inference image needs only the wire package and tools (see
-# mote_perception/deploy/Dockerfile); everything else is build-context weight the
-# daemon would upload for nothing. pixi.lock alone is ~2 MB, .pixi/ and build/ are
-# gigabytes.
+# Two images are built from this repo — the inference server
+# (mote_perception/deploy/Dockerfile) and the fleet server
+# (mote_fleet/deploy/Dockerfile) — and between them they need a dozen files.
+# Everything else is build-context weight the daemon would upload for nothing:
+# pixi.lock alone is ~2 MB, .pixi/ and build/ are gigabytes. So the rule is deny
+# all, allow the files each image copies; adding a COPY means adding a line here.
 *
+
+# --- inference server ---
 !mote_perception/mote_perception/__init__.py
 !mote_perception/mote_perception/depth_wire.py
 !mote_perception/mote_perception/detect_wire.py
@@ -11,3 +15,17 @@
 !mote_perception/tools/inference_server.py
 !mote_perception/tools/model_host.py
 !mote_perception/tools/prefetch_models.py
+!mote_perception/tools/probe.py
+
+# --- fleet server ---
+!mote_fleet/mote_fleet/__init__.py
+!mote_fleet/mote_fleet/protocol.py
+!mote_fleet/server/fleet_server.py
+!mote_fleet/server/registry.py
+!mote_fleet/server/fleetctl.py
+# The dashboard is static files the API serves, so it ships in the same image.
+!mote_fleet/server/ui/
+!mote_fleet/server/ui/**
+
+# --- inference deploy drill (deploy/test) ---
+!mote_perception/deploy/test/stub_server.py

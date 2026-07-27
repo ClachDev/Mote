@@ -54,6 +54,7 @@ COPY mote_perception/tools/depth_server.py \
      mote_perception/tools/inference_server.py \
      mote_perception/tools/model_host.py \
      mote_perception/tools/prefetch_models.py \
+     mote_perception/tools/probe.py \
      /app/tools/
 
 # Bake the weights. Runs on the build machine's CPU — no GPU needed to build.
@@ -62,6 +63,13 @@ RUN python /app/tools/prefetch_models.py
 # Depth, detect. Published to the host with -p; the supervisor binds 0.0.0.0
 # inside the container, which is a private namespace, not the LAN.
 EXPOSE 5601 5602
+
+# Liveness only — the sentinel is answered before the model has ever loaded, so
+# it says "the process is serving", not "this build works". The update pipeline
+# (deploy/inference-deploy.sh) runs the same probe *with* a real frame against a
+# candidate on a shadow port, which is what a health gate has to mean here.
+HEALTHCHECK --interval=60s --timeout=20s --start-period=30s --retries=3 \
+    CMD python /app/tools/probe.py --no-infer --timeout 10 || exit 1
 
 # The supervisor runs every service in SERVICES and exits if any dies, so the
 # container's restart policy (not a bespoke supervisor loop) is what brings it

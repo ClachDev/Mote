@@ -23,3 +23,7 @@ sweep_results/
 # Rendered cloud-init (`pixi run provision`): carries a Tailscale auth key and a
 # wifi passphrase, so it must never be committed even by accident.
 user-data
+
+# The fleet box's own deployment config (mote_fleet/deploy/.env): host-specific,
+# and it names the broker address robots dial. env.example is the committed one.
+mote_fleet/deploy/.env

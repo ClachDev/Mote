@@ -129,7 +129,7 @@ the M2 decision.
 Found by the broker refusing to start:
 
 ```console
-$ pixi run fleet-broker
+$ pixi run fleet-broker          # then the conda binary; since Ms, `--local`
 1785082301: Error: Websockets support not available.
 1785082301: Error found at …/mote_fleet/server/mosquitto.conf:27.
 ```

@@ -293,8 +293,20 @@ role and [`benchmarks/`](benchmarks/README.md) for numbers.
 - `tools/model_host.py` — on-demand model loading: the servers load on the first
   request and release the model (and its VRAM) after `--idle-timeout` seconds
   idle, so the inference machine stays usable as a normal PC between missions.
+- `tools/probe.py` — the deployment's gate, and the one tool that lives *inside*
+  the image: health **plus a real synthetic frame** through each service, so a
+  build that listens but cannot infer fails it. `inference-health` is its
+  robot-side sibling (same sentinel, but it resolves `inference_host` from
+  `perception.yaml` and needs yaml, which the image does not carry).
 - `deploy/Dockerfile` — the inference-server image (depth + detect, CUDA torch,
   model weights baked in), built and pushed to GHCR by
   `.github/workflows/inference-image.yml`. The host runs one `docker run`; it
   never needs the repo. Servers report the image's baked `MOTE_VERSION` in the
   health blob, so `inference-health` warns on robot/server version skew.
+- `deploy/inference-deploy.sh` — the update pipeline: probe a candidate on shadow
+  ports while the current version keeps serving, cut over, roll back if the live
+  probe fails. One file on the host, no repo. See
+  [`docs/fleet/server-pipelines.md`](../docs/fleet/server-pipelines.md).
+- `deploy/test/` (`pixi run deploy-test`) — that pipeline exercised end to end
+  with stub images that speak the real wire protocol: four checks, a minute, no
+  GPU, on any machine with docker.

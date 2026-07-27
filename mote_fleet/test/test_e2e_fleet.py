@@ -22,145 +22,34 @@ it skips and the fake-client tests in ``test_agent.py`` carry the coverage.
 import json
 import os
 import random
-import shutil
-import socket
-import subprocess
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
-rclpy = pytest.importorskip("rclpy")
-mqtt = pytest.importorskip("paho.mqtt.client")
-
-
-def mosquitto_bin() -> str | None:
-    """The broker binary, or None.
-
-    conda-forge installs the broker into ``$PREFIX/sbin`` and only the clients
-    into ``bin``, and pixi puts only ``bin`` on PATH — so ``which mosquitto``
-    says no in an environment that has it.
-    """
-    prefix = os.environ.get("CONDA_PREFIX")
-    if prefix:
-        candidate = Path(prefix) / "sbin" / "mosquitto"
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return shutil.which("mosquitto")
-
-
-BROKER_BIN = mosquitto_bin()
-
-pytestmark = pytest.mark.skipif(
-    BROKER_BIN is None,
-    reason="needs a mosquitto broker (pixi run -e dev / -e fleet)",
+# Importing the harness first is deliberate: it skips this module when rclpy,
+# paho or a broker binary is missing, before the ROS imports below would fail.
+from fleet_harness import (
+    ZONES,
+    Broker,
+    MockNav,
+    Operator,
+    needs_broker,
+    spin_until,
 )
 
-from nav2_msgs.action import NavigateToPose  # noqa: E402
-from rclpy.action import ActionServer  # noqa: E402
+import rclpy  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
-from rclpy.node import Node  # noqa: E402
 from rclpy.parameter import Parameter  # noqa: E402
 
-ZONES = """\
-frame_id: map
-zones:
-  kitchen: {x: -1.5, y: 0.5, yaw: 0.0, radius: 1.5}
-  lab: {x: 4.0, y: -2.0}
-"""
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
-class MockNav(Node):
-    """Nav2's action server, minus Nav2."""
-
-    def __init__(self):
-        super().__init__("mock_nav")
-        self.goals = []
-        self.server = ActionServer(
-            self, NavigateToPose, "navigate_to_pose", self.execute
-        )
-
-    def execute(self, goal_handle):
-        self.goals.append(goal_handle.request.pose)
-        goal_handle.succeed()
-        return NavigateToPose.Result()
-
-
-class Operator:
-    """The off-robot side: publishes commands, collects everything retained."""
-
-    def __init__(self, port):
-        self.messages = []
-        self.client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2, client_id="operator"
-        )
-        self.client.on_message = self._on_message
-        self.client.connect("127.0.0.1", port, keepalive=30)
-        self.client.subscribe("mote/v1/#", qos=1)
-        self.client.loop_start()
-
-    def _on_message(self, _client, _userdata, message):
-        self.messages.append((message.topic, json.loads(message.payload)))
-
-    def of(self, leaf):
-        return [payload for topic, payload in self.messages if topic.endswith(leaf)]
-
-    def statuses(self, command_id):
-        return [
-            payload
-            for payload in self.of("task/status")
-            if payload.get("id") == command_id
-        ]
-
-    def dispatch(self, robot_id, text):
-        from mote_fleet import protocol
-
-        payload = protocol.command(text, issued_by="e2e")
-        self.client.publish(
-            protocol.topic(robot_id, protocol.COMMAND),
-            protocol.encode(payload),
-            qos=1,
-            retain=False,
-        )
-        return payload["id"]
-
-    def close(self):
-        self.client.loop_stop()
-        self.client.disconnect()
+pytestmark = needs_broker
 
 
 @pytest.fixture
 def broker(tmp_path):
-    port = free_port()
-    conf = tmp_path / "mosquitto.conf"
-    conf.write_text(
-        f"listener {port} 127.0.0.1\nallow_anonymous true\npersistence false\n"
-    )
-    process = subprocess.Popen(
-        [BROKER_BIN, "-c", str(conf)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                break
-        except OSError:
-            time.sleep(0.1)
-    else:
-        process.kill()
-        pytest.fail("mosquitto did not start")
-    yield port
-    process.terminate()
-    process.wait(timeout=10)
+    server = Broker(tmp_path).start()
+    yield server.port
+    server.stop()
 
 
 @pytest.fixture
@@ -180,15 +69,6 @@ def fleet_api(tmp_path, broker):
     yield server
     server.shutdown()
     server.server_close()
-
-
-def spin_until(executor, condition, timeout=30.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if condition():
-            return True
-        executor.spin_once(timeout_sec=0.05)
-    return condition()
 
 
 def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api):

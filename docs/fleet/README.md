@@ -20,8 +20,7 @@ milestones after these are in
 | `pixi run tailnet` | join this machine to the Tailscale overlay |
 | `pixi run provision` | render cloud-init user-data for a clean Pi |
 | `pixi run dds-check` | DDS participant-slot headroom on this host |
-| `pixi run fleet-broker-ws` | the MQTT control plane, with WebSockets (fleet box) |
-| `pixi run fleet-broker` | the same, from conda — no WebSockets, no dashboard |
+| `pixi run fleet-broker` | the MQTT control plane, with WebSockets (a container) |
 | `pixi run fleet-server` | fleet API + operator dashboard (fleet box) |
 | `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, audit, watch |
 | `pixi run enroll` | ask the server for this robot's identity |
@@ -404,18 +403,29 @@ are ROS-free, so the box needs no robot software; the `fleet` pixi environment
 carries nothing but a broker and Python.
 
 ```bash
-pixi run -e fleet fleet-broker-ws                     # MQTT: 1883, WebSockets: 9001
+pixi run fleet-broker                                 # MQTT: 1883, WebSockets: 9001
 pixi run -e fleet fleet-server -- --broker-host fleet-box   # API + UI, port 8080
 ```
 
 **Why the broker runs in a container.** The dashboard (§9) subscribes to the
 control plane straight from the browser, and a browser cannot speak raw MQTT —
 it needs the broker's WebSocket listener. conda-forge's mosquitto is built
-without one, so `fleet-broker-ws` runs `eclipse-mosquitto` under Docker with the
-same `mosquitto.conf` this repo ships. `pixi run -e fleet fleet-broker` is still
-there for a box with no Docker: robots and `fleetctl` work exactly as before,
-and it tells you on startup that the dashboard will not. The reasoning and the
-measurement are in [`m3-verification.md`](m3-verification.md) §1.
+without one, so `fleet-broker` runs `eclipse-mosquitto` under Docker with the
+same `mosquitto.conf` this repo ships — which is also exactly what the deployed
+fleet box runs. For a box with no Docker there is `fleet-broker-local`, which
+uses conda's binary: robots and `fleetctl` work exactly as before, and it tells
+you on startup that the dashboard will not.
+
+```bash
+pixi run -e fleet fleet-broker-local                  # a box with no docker
+```
+
+It lives in the `fleet` environment rather than beside `fleet-broker` because
+that is where the binary it runs comes from — the container needs docker, not an
+environment.
+
+The reasoning and the measurement are in
+[`m3-verification.md`](m3-verification.md) §1.
 
 State lives in **`$MOTE_FLEET_HOME`** (default `~/.mote-fleet`) — the registry
 database, the broker's retained messages, and the site bundles the dashboard
@@ -436,8 +446,28 @@ already trusted on. Per-robot broker credentials and operator auth everywhere
 are M7; the shape of what changes is in
 [`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
 
-To run it unattended, wrap the two commands in systemd units on that box. They
-are deliberately *not* part of `pixi run setup`, which provisions robots.
+**That is the workstation shape.** A real fleet box runs both processes as
+containers, from [`mote_fleet/deploy/`](../../mote_fleet/deploy) — a compose
+file, an image and one script — with `docker` as the only thing installed on it.
+The broker is the same `eclipse-mosquitto` container `fleet-broker` runs,
+reading the same `mosquitto.conf`, but as a restarting service beside the API
+rather than a foreground command. That directory is also where the update,
+rollback, backup and restore story lives, and it is what "rebuild the fleet
+server from scratch" means in practice:
+
+```bash
+cp env.example .env && $EDITOR .env       # BROKER_HOST = the address robots dial
+./fleet-deploy.sh up                      # gated on /healthz answering
+./fleet-deploy.sh fleetctl operator new --name you   # dispatch needs one
+./fleet-deploy.sh fleetctl token new                 # then enroll a robot
+```
+
+The runbook is [`server-pipelines.md`](server-pipelines.md); what was measured
+is [`ms-verification.md`](ms-verification.md). Two differences from running it
+by hand: the containers restart themselves, so there are no systemd units to
+write (the fleet box is deliberately not covered by `pixi run setup`, which
+provisions robots), and `fleetctl` runs *inside* the server container, because
+that is where the registry file lives.
 
 ---
 

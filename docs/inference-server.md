@@ -109,6 +109,9 @@ Arguments after the image name pass through to both servers.
 
 ## Updating
 
+The manual version is two commands and a re-run, or the equivalent buttons in
+Docker Desktop's GUI:
+
 ```
 docker pull ghcr.io/clachdev/mote-inference:latest
 docker rm -f mote-inference
@@ -116,8 +119,34 @@ docker run -d --gpus all --restart unless-stopped -p 5601:5601 -p 5602:5602 \
   --name mote-inference ghcr.io/clachdev/mote-inference:latest
 ```
 
-Two commands and a re-run, or the equivalent buttons in Docker Desktop's GUI. CI
-([`inference-image.yml`](../.github/workflows/inference-image.yml)) builds and
+That deploys whatever it pulled, though — including a build that starts, listens,
+and cannot infer. [`deploy/inference-deploy.sh`](../mote_perception/deploy/inference-deploy.sh)
+is the same thing with a gate in front of it:
+
+```
+./inference-deploy.sh up          # first deploy
+./inference-deploy.sh update      # pull, verify on a shadow port, cut over
+./inference-deploy.sh rollback
+./inference-deploy.sh status
+```
+
+`update` starts the candidate as a *second* container on ports 5611/5612 while
+the current one keeps serving, and makes it prove itself with
+[`tools/probe.py`](../mote_perception/tools/probe.py) — the health sentinel
+**and a real synthetic frame through both services**. The frame is the point: a
+health check is answered before the model has ever loaded, so it cannot see a
+broken weight download, a CUDA/driver mismatch, or a torch build that faults on
+the first forward pass. A candidate that fails is removed and the update aborts
+with the running version untouched; one that passes takes the served ports, is
+probed again, and is rolled back automatically if *that* fails.
+
+It is one file, curled onto the host once, and it stays one file — every check
+runs inside the image being deployed, so the GPU box still installs nothing.
+The full rationale, including why the cutover is a stop-then-start rather than a
+port flip pushed out to the robots, is in
+[`docs/fleet/server-pipelines.md`](fleet/server-pipelines.md).
+
+CI ([`inference-image.yml`](../.github/workflows/inference-image.yml)) builds and
 pushes to GHCR when the server files change on `main`, on a tag, or on demand;
 `latest` tracks main and `sha-` / version tags let a host pin a known-good build
 and roll back.

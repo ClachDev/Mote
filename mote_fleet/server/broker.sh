@@ -6,16 +6,22 @@
 # broker's retained state belongs with the registry database, not in a git tree
 # that a redeploy replaces. Same split as the robot's MOTE_HOME.
 #
-# WEBSOCKETS. M3's dashboard subscribes to the control plane straight from the
-# browser, which means the broker needs a `protocol websockets` listener -- and
-# conda-forge's mosquitto is built without libwebsockets (measured: it refuses
-# to start, docs/fleet/m1-verification.md S4). So there are two ways to run it:
+# WEBSOCKETS, and why the default is a container. M3's dashboard subscribes to
+# the control plane straight from the browser, which means the broker needs a
+# `protocol websockets` listener -- and conda-forge's mosquitto is built without
+# libwebsockets (measured: it refuses to start,
+# docs/fleet/m1-verification.md S4). So the broker anyone should run is
+# mosquitto in a container, which is also exactly what the deployed fleet box
+# runs (mote_fleet/deploy/docker-compose.yml): same image, same config file.
 #
-#   pixi run fleet-broker       conda's mosquitto; MQTT only when that build has
-#                               no websockets, and it says so on startup
-#   pixi run fleet-broker-ws    mosquitto in a container, websockets and all --
-#                               what the fleet box runs, and it needs no pixi
-#                               environment at all
+#   pixi run fleet-broker                  the container: MQTT 1883 + WS 9001
+#   pixi run -e fleet fleet-broker-local   conda's mosquitto (--local), for a
+#                                          box with no docker. Robots, fleetctl
+#                                          and the fleet API work; the dashboard
+#                                          does not, and it says so on startup.
+#                                          It is also the binary the real-broker
+#                                          tests use, which is why that package
+#                                          is a dependency of the fleet env.
 #
 # The config is one file either way. This script strips the websockets stanza
 # out of a copy when the local binary cannot honour it, rather than shipping two
@@ -26,19 +32,24 @@ FLEET_HOME="${MOTE_FLEET_HOME:-$HOME/.mote-fleet}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CONF="$HERE/mosquitto.conf"
 IMAGE="${MOTE_BROKER_IMAGE:-eclipse-mosquitto:2}"
-MODE=local
+MODE=docker
 
-if [ "${1:-}" = "--docker" ]; then
-    MODE=docker
-    shift
-fi
+case "${1:-}" in
+    --local)
+        MODE=local
+        shift
+        ;;
+    --docker) # the default; accepted so a caller can be explicit
+        shift
+        ;;
+esac
 
 mkdir -p "$FLEET_HOME"
 
 if [ "$MODE" = docker ]; then
     if ! command -v docker >/dev/null; then
-        echo "no docker on PATH — install it, or run 'pixi run fleet-broker' for" >&2
-        echo "an MQTT-only broker (no dashboard; see this script's header)" >&2
+        echo "no docker on PATH — install it, or pass --local for an MQTT-only" >&2
+        echo "broker from conda (no dashboard; see this script's header)" >&2
         exit 1
     fi
     # --network host: the broker must be reachable at the fleet box's own
@@ -79,8 +90,8 @@ else
     sed '/^# >>> websockets/,/^# <<< websockets/d' "$CONF" >"$RUNTIME_CONF"
     echo "broker: $BROKER (NO websockets)   state: $FLEET_HOME   config: $RUNTIME_CONF"
     echo "  the fleet dashboard needs MQTT-over-WebSockets and this build has" >&2
-    echo "  none — run 'pixi run fleet-broker-ws' instead for the container" >&2
-    echo "  broker. Robots, fleetctl and the fleet API are unaffected." >&2
+    echo "  none — drop --local to run the container broker instead. Robots," >&2
+    echo "  fleetctl and the fleet API are unaffected." >&2
 fi
 
 cd "$FLEET_HOME"
