@@ -139,6 +139,31 @@ def _drive_to(bus, cfg, joint, rad: float, settle_s: float) -> None:
     time.sleep(settle_s)
 
 
+def _apply_gains_for_trial(bus, cfg, joint, kp: int, kd: int, ki: int) -> bool:
+    """Put the servo on the trial's gains, torque cycled so they are in force.
+
+    The gains are EEPROM registers, and whether a servo already holding torque
+    picks up a change mid-hold is exactly the kind of thing this tool exists to
+    stop us assuming: a servo that latched its gains at torque-enable would run
+    every trial at the same gain and report a droop that does not respond to kp.
+    So each trial drops torque, writes, and re-enables against the joint's
+    *present* position — seeded first, or the servo drives to whatever stale
+    goal its register holds.
+
+    The joint is briefly limp, which is the same condition the driver starts in:
+    the arm must be resting in a pose it holds unsupported before a sweep.
+    """
+    bus.set_torque(joint.id, False)
+    if not bus.write_gains(joint.id, kp, kd, ki):
+        return False
+    counts = bus.read_position(joint.id)
+    if counts is None:
+        return False
+    bus.write_goal(joint.id, counts, cfg.moving_speed, cfg.moving_acc)
+    bus.set_torque(joint.id, True)
+    return True
+
+
 def _run_trial(bus, cfg, joint, start_rad, goal_rad, hold_s, rate_hz) -> list[Sample]:
     """Command one step and sample the joint until the hold ends.
 
@@ -220,7 +245,9 @@ def _cmd_sweep(cfg, bus, args) -> None:
     )
     print(
         "\nTHIS MOVES THE ARM and writes servo EEPROM. Only this joint is "
-        "torqued; the rest stay limp. Clear its path first."
+        "torqued; the rest stay limp, and this one goes briefly limp between "
+        "trials — so the arm must already be resting in a pose it holds "
+        "unsupported. Clear its path first."
     )
     if not args.yes:
         if input("proceed? [y/N] ").strip().lower() not in ("y", "yes"):
@@ -230,12 +257,8 @@ def _cmd_sweep(cfg, bus, args) -> None:
     results = []
     aborted = None
     try:
-        counts = bus.read_position(joint.id)
-        bus.write_goal(joint.id, counts, cfg.moving_speed, cfg.moving_acc)
-        bus.set_torque(joint.id, True)
-
         for kp, kd, ki in grid:
-            if not bus.write_gains(joint.id, kp, kd, ki):
+            if not _apply_gains_for_trial(bus, cfg, joint, kp, kd, ki):
                 aborted = f"could not verify kp={kp} kd={kd} ki={ki} on the servo"
                 break
 
@@ -286,13 +309,10 @@ def _cmd_sweep(cfg, bus, args) -> None:
         # put the position back, the EEPROM back, and the torque off.
         try:
             _drive_to(bus, cfg, joint, start_rad, settle_s=1.0)
-        except BusError:
-            pass
-        restored = bus.write_gains(joint.id, *original)
-        try:
             bus.set_torque(joint.id, False)
         except BusError:
             pass
+        restored = bus.write_gains(joint.id, *original)
         print(
             f"\nrestored kp={original[0]} kd={original[1]} ki={original[2]}"
             if restored

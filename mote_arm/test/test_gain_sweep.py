@@ -52,6 +52,9 @@ class FakeServo:
         self.torque = False
         self.goals = []
         self.gain_writes = []
+        # Ordered ("gains", value) / ("torque", bool) events, so a test can ask
+        # whether a gain was written while the servo was holding torque.
+        self.events = []
         self.temps = list(temps or [])
         self.temperature = 30
         self.readable = True
@@ -62,6 +65,7 @@ class FakeServo:
 
     def write_gains(self, _id, kp, kd, ki):
         self.gain_writes.append((kp, kd, ki))
+        self.events.append(("gains", (kp, kd, ki)))
         self.gains = (kp, kd, ki)
         return True
 
@@ -78,6 +82,7 @@ class FakeServo:
 
     def set_torque(self, _id, enable):
         self.torque = enable
+        self.events.append(("torque", enable))
 
     def write_goal(self, _id, counts, _speed, _acc):
         self.goals.append(counts)
@@ -130,6 +135,23 @@ def test_sweep_measures_error_falling_as_kp_rises(out_file, capsys):
     printed = capsys.readouterr().out
     assert "proportional droop" in printed
     assert servo.gain_writes[:2] == [(16, 32, 0), (32, 32, 0)]
+
+
+def test_every_trial_writes_its_gains_with_torque_off(out_file):
+    """A servo that latched its gains at torque-enable would run every trial at
+    the same gain, so a mid-hold write is never trusted."""
+    servo = FakeServo(gains=(16, 32, 0))
+    arm_gains._cmd_sweep(make_config(), servo, sweep_args(out=out_file))
+
+    torqued = False
+    writes = 0
+    for kind, value in servo.events:
+        if kind == "torque":
+            torqued = value
+        else:
+            assert not torqued, f"gains {value} written while holding torque"
+            writes += 1
+    assert writes == 3  # two trials, plus the restore
 
 
 def test_sweep_restores_the_original_gains_and_leaves_the_joint_limp(out_file):

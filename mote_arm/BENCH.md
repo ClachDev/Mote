@@ -136,7 +136,8 @@ Gains live in servo EEPROM, so they are hardware config, not software config:
 Choose them from a measurement, not from a datasheet default.
 
 Stop the driver first (`arm-gains` opens the bus itself) and clear the joint's
-path — this step moves the arm.
+path — this step moves the arm. Park the arm in a pose it holds unsupported:
+each trial drops torque briefly to write the gains, so a raised pose would sag.
 
 1. `pixi run arm-gains show` — what the servos actually hold right now.
 2. `pixi run arm-gains sweep --joint elbow_flex --kp 16,32,64,128` — steps the

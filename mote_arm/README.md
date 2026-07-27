@@ -280,6 +280,14 @@ It closes with a one-line verdict reading the sweep as droop or as saturation,
 and writes every sample to `~/.mote/arm_gain_sweeps/<stamp>.json` so a run can be
 re-read or plotted later rather than believed from a terminal.
 
+Each trial writes its gains with torque **off** and then re-enables against the
+joint's present position. Gains are EEPROM registers, and a servo that latched
+them at torque-enable would run every trial at the same gain and report a droop
+that mysteriously ignores `kp` — the sweep exists to stop us assuming that away.
+The consequence is that the joint goes briefly limp between trials, so the arm
+must be resting in a pose it holds unsupported (the same condition `arm_driver`
+starts in).
+
 The sweep moves the arm and writes EEPROM, so it is a bench tool with the
 guards to match: it torques **only** the swept joint and leaves the rest limp,
 refuses a step that would clamp against the soft limits (trials that command
