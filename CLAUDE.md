@@ -257,7 +257,13 @@ section. Contains:
   joint the package no longer has, and rejects inverted limits. Deleting the
   file reverts to the defaults. The file stores each measurement beside its
   value, including `homing_offset` — the only record of what went into servo
-  EEPROM. **Poses must be re-taught after the save, never before.** Three
+  EEPROM. **Taught poses are migrated automatically** (`poses.shift_poses`) — a pose is
+  radians about the zero and the shift is exactly what calibration computed, so
+  re-teaching by hand is pointless work; the old file is kept as `.bak` and any
+  pose landing outside the new limits is reported, never clamped. **One
+  confirmation only**, at the EEPROM write: torque release is done not asked
+  (the arm is already limp unless a driver was SIGKILLed, detected via the
+  torque register) and saving is the command's purpose. Three
   different files are called some form of robot config: `$MOTE_HOME/arm.yaml`
   (this arm's calibration), `$MOTE_HOME/robot.yaml` (fleet identity), and
   `mote_description/config/robot.yaml` (shared hardware description). Measurements + the offsets

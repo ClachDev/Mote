@@ -238,8 +238,19 @@ nowhere else and is the only record if a servo is swapped. Writes go through a
 temporary file, and the result is validated through `ArmConfig` before it lands,
 because this is what supplies the soft limits that stop the arm.
 
-**Re-teach poses last.** Doing it before the file is updated records them
-against a zero that is about to change.
+**Taught poses are migrated for you.** A pose is stored as radians about the
+zero, so moving the zero changes which physical position each number names — but
+the correction is exactly the shift the calibration just computed, so the poses
+are rewritten rather than re-taught. They keep pointing where they always did,
+and the previous file is kept as `.bak`. A pose that would land outside the new
+limits is reported rather than silently clamped: that means it was taught
+somewhere the arm can no longer reach, which is a decision, not an adjustment.
+
+**One confirmation, at the EEPROM write.** Everything else follows from having
+run the command: torque is released without asking (the arm is already limp
+unless a driver was killed outright, which is detected by reading the torque
+register), and the result is saved without asking, since saving it is what the
+command is for.
 
 ### Named poses, and narrowing the envelope
 

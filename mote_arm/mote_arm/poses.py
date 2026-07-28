@@ -60,6 +60,39 @@ def save_pose(
     return p
 
 
+def shift_poses(
+    taught: dict[str, dict[str, float]],
+    shifts: dict[str, float],
+) -> dict[str, dict[str, float]]:
+    """Re-express taught poses about a moved zero, preserving where they point.
+
+    A pose is stored as radians from the joint's zero, so moving the zero
+    silently changes which physical position each number names. The correction
+    is exact and known — it is the same shift the calibration computed — so the
+    poses can simply be rewritten rather than re-taught by hand, which would
+    mean physically posing the arm again for no reason.
+
+    Joints absent from ``shifts`` keep their stored value.
+    """
+    return {
+        name: {joint: value + shifts.get(joint, 0.0) for joint, value in joints.items()}
+        for name, joints in taught.items()
+    }
+
+
+def save_poses(
+    taught: dict[str, dict[str, float]],
+    path: Path | str | None = None,
+) -> Path:
+    """Replace the whole pose file, keeping a .bak of what was there."""
+    p = Path(path) if path is not None else poses_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if p.exists():
+        p.with_suffix(p.suffix + ".bak").write_text(p.read_text())
+    p.write_text(yaml.safe_dump({"poses": taught}, sort_keys=True))
+    return p
+
+
 def envelope(
     taught: dict[str, dict[str, float]],
     margin: float = 0.0,

@@ -117,17 +117,16 @@ this arm `shoulder_pan` and `wrist_roll` both did.
 
 ### Then, in this order
 
-It then shows each joint's limits before and after and asks before saving them
-to `~/.mote/arm.yaml` — this robot's own calibration, not the repo. Say yes.
+It then shows each joint's limits before and after and saves them to
+`~/.mote/arm.yaml` — this robot's own calibration, not the repo.
 
-It also lists every taught pose the changed zeros invalidate. **Re-teach those
-last**, after the file is written, or they record against a zero that is about
-to change:
+Taught poses are re-expressed about the new zeros automatically and keep
+pointing where they did; the old file is kept as `.bak`. Any pose that lands
+outside the new limits is named — that one was taught somewhere the arm cannot
+now reach and needs a decision.
 
 ```
 pixi run arm-check          # rad column reads ~0.000 at the centred pose
-pixi run arm                # in another terminal
-pixi run arm-pose save home
 ```
 
 Nothing in the repo changes — the calibration is per-robot state under

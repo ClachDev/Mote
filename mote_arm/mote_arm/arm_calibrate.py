@@ -263,6 +263,28 @@ def _reading_moved_as_expected(bus, joint, was, existing, wanted) -> str | None:
     )
 
 
+def _go_limp(bus, cfg, args) -> None:
+    """Make sure nothing is holding, warning only if something actually is.
+
+    The arm is limp already in almost every case: this tool refuses to start
+    while another process holds the port, so the driver is not running, and the
+    driver leaves the arm limp on shutdown. The exception is a driver killed
+    outright, which leaves torque enabled in servo RAM — so check rather than
+    ask, and say something only when the arm is about to drop.
+    """
+    holding = [j.name for j in cfg.joints if bus.read_torque(j.id)]
+    if holding:
+        print(f"\n{', '.join(holding)} are holding and are about to go limp —")
+        print("support the arm before continuing.")
+        if not _confirm("ready? [y/N] ", args.yes):
+            raise SystemExit("aborted; nothing changed")
+    for joint in cfg.joints:
+        try:
+            bus.set_torque(joint.id, False)
+        except BusError as exc:
+            print(f"  {joint.name}: {exc}")
+
+
 def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
     """Record every joint's range at once while the operator moves them."""
     print("\n=== 1 of 2: sweep the joints ===")
@@ -318,25 +340,6 @@ def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
     )
 
 
-def _invalidated_poses(cfg, calibrated) -> list[str]:
-    """Taught poses that a changed zero has silently redefined.
-
-    A pose is stored as radians about the zero, so moving the zero changes which
-    physical position each stored number names. Pure query: the caller decides
-    how loudly to say it.
-    """
-    moved = {
-        name: shift
-        for name, cal in calibrated.items()
-        if (
-            shift := zero_shift(
-                cfg.joint(name).zero_counts, cal.zero_counts, cfg.joint(name).invert
-            )
-        )
-    }
-    return sorted(pose_impact(poses.load_poses(), moved))
-
-
 def _save(cfg, calibrated, offsets, recorded, args) -> bool:
     """Write this robot's calibration, showing what changes and asking first."""
     document = calibration_document(
@@ -344,7 +347,7 @@ def _save(cfg, calibrated, offsets, recorded, args) -> bool:
     )
     path = config.calibration_path()
 
-    print(f"\n{path}\n")
+    print(f"\n{path}")
     for spec in cfg.joints:
         entry = document["joints"].get(spec.name)
         if entry is None:
@@ -355,11 +358,6 @@ def _save(cfg, calibrated, offsets, recorded, args) -> bool:
             f"{spec.zero_counts:<5} ->  {entry['min']:+.3f}..{entry['max']:+.3f} "
             f"@ {entry['zero']}"
         )
-
-    if not _confirm("\nsave? [y/N] ", args.yes):
-        print("not saved. The servo offsets have still changed — re-run to save,")
-        print("or `pixi run arm-offsets restore` to undo them.")
-        return False
 
     # Refuse to save anything the config layer would not load: this file
     # supplies the soft limits that stop the arm.
@@ -445,16 +443,7 @@ def _run(bus, cfg, selected, args) -> None:
             "calibrating (see `pixi run arm-check`)."
         )
 
-    print("\nThe arm will go LIMP so you can move it by hand — support it first,")
-    print("an unsupported arm falls when torque is released.")
-    if not _confirm("release torque? [y/N] ", args.yes):
-        raise SystemExit("aborted; nothing changed")
-    for joint in cfg.joints:
-        try:
-            bus.set_torque(joint.id, False)
-        except BusError as exc:
-            print(f"  {joint.name}: {exc}")
-    print("torque off.")
+    _go_limp(bus, cfg, args)
 
     recorders, misses = _phase_ranges(bus, selected, args.rate)
     if misses:
@@ -518,26 +507,66 @@ def _run(bus, cfg, selected, args) -> None:
             "\nconfig no longer matches its hardware. Do not run `pixi run arm`"
             "\nuntil this is re-run or the offsets are restored."
         )
-    _next_steps(cfg, calibrated, written)
+    _migrate_poses(cfg, calibrated)
+    _next_steps(written)
 
 
-def _next_steps(cfg, calibrated, written) -> None:
-    """What the operator has to do now, and nothing else."""
-    steps = []
-    if written:
-        steps.append("pixi run arm-check          # rad reads ~0 at mid-travel")
-    stale = _invalidated_poses(cfg, calibrated)
-    steps += [f"pixi run arm-pose save {name}" for name in stale]
-    if not steps:
-        return
-    if stale:
-        print(
-            f"\n{len(stale)} taught pose(s) are now wrong — a pose is stored as "
-            "radians\nfrom the zero, and the zeros moved. Re-teach them:"
+def _migrate_poses(cfg, calibrated) -> None:
+    """Rewrite taught poses about the new zeros, so none has to be re-taught.
+
+    The shift is exactly what the calibration already computed, and applying it
+    keeps every pose pointing at the same physical position. A pose that would
+    land outside the new soft limits is reported rather than silently clamped —
+    that means it was taught against something the arm can no longer reach, and
+    is the operator's call.
+    """
+    shifts = {
+        name: shift
+        for name, cal in calibrated.items()
+        if (
+            shift := zero_shift(
+                cfg.joint(name).zero_counts, cal.zero_counts, cfg.joint(name).invert
+            )
         )
-    print()
-    for step in steps:
-        print(f"  {step}")
+    }
+    taught = poses.load_poses()
+    if not shifts or not taught:
+        return
+
+    affected = pose_impact(taught, shifts)
+    if not affected:
+        return
+
+    migrated = poses.shift_poses(taught, shifts)
+    limits = {name: (cal.min_rad, cal.max_rad) for name, cal in calibrated.items()}
+    unreachable = {
+        pose: [
+            joint
+            for joint, value in joints.items()
+            if joint in limits and not limits[joint][0] <= value <= limits[joint][1]
+        ]
+        for pose, joints in migrated.items()
+    }
+    unreachable = {p: j for p, j in unreachable.items() if j}
+
+    path = poses.save_poses(migrated)
+    print(
+        f"\n{len(affected)} taught pose(s) re-expressed about the new zeros "
+        f"({path});\nthey still point where they always did. Previous file kept "
+        "as .bak."
+    )
+    for pose in sorted(affected):
+        print(f"  {pose}")
+    if unreachable:
+        print("\nbut these now sit outside the calibrated limits:")
+        for pose, joints in sorted(unreachable.items()):
+            print(f"  {pose:<16} {', '.join(joints)}")
+        print("  They were taught somewhere the arm cannot reach — re-teach them.")
+
+
+def _next_steps(written) -> None:
+    if written:
+        print("\n  pixi run arm-check          # rad reads ~0 at mid-travel")
 
 
 if __name__ == "__main__":

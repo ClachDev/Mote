@@ -262,6 +262,11 @@ class FeetechBus:
             load=load,
         )
 
+    def read_torque(self, servo_id: int) -> bool | None:
+        """True if the servo is currently holding, None if unreadable."""
+        value = self._read(1, servo_id, _TORQUE_ENABLE)
+        return None if value is None else bool(value)
+
     def set_torque(self, servo_id: int, enable: bool) -> None:
         comm, err = self._packet.write1ByteTxRx(
             self._port, servo_id, _TORQUE_ENABLE, 1 if enable else 0
