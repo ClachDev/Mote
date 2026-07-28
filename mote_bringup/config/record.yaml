@@ -18,7 +18,11 @@ streams:
       - /tf
       - /tf_static
       - /scan_filtered
+      # The drive mux's output plus both its inputs: the output alone cannot
+      # say which source was driving, and after a takeover that is the question.
       - /diff_drive_controller/cmd_vel
+      - /cmd_vel_nav
+      - /cmd_vel_teleop_stamped
       - /diff_drive_controller/odom
       - /goal_pose
       # RViz's Nav2 Goal tool sends the goal over the navigate_to_pose action,

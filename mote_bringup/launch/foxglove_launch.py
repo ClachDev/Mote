@@ -35,6 +35,11 @@ CAPABILITIES = [
     "assets",
 ]
 
+# The drive mux's teleop input (config/twist_mux.yaml). Named for the difference
+# that matters at this seam: the panel's own topic carries an unstamped Twist,
+# this one the TwistStamped the mux and the controller speak.
+TELEOP_TOPIC = "/cmd_vel_teleop_stamped"
+
 
 def generate_launch_description():
     bringup_share = get_package_share_directory("mote_bringup")
@@ -59,6 +64,8 @@ def generate_launch_description():
 
     # Foxglove's Teleop panel publishes geometry_msgs/Twist and only that, while
     # DiffDriveController consumes TwistStamped -- see twist_relay's docstring.
+    # The stamped result is the drive mux's teleop input, not the controller's
+    # topic: the mux is what lets it pre-empt an active Nav2 goal.
     teleop_relay = Node(
         package="mote_bringup",
         executable="twist_relay",
@@ -66,7 +73,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("teleop")),
         remappings=[
             ("cmd_vel_in", LaunchConfiguration("teleop_topic")),
-            ("cmd_vel_out", "/diff_drive_controller/cmd_vel"),
+            ("cmd_vel_out", TELEOP_TOPIC),
         ],
         **respawn,
     )

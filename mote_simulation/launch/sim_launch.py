@@ -164,6 +164,16 @@ def generate_launch_description():
         launch_arguments={"use_sim_time": "true"}.items(),
     )
 
+    # The drive mux, from the same file the robot's base uses: Nav2 publishes
+    # /cmd_vel_nav rather than the controller's topic now, so a sim base without
+    # a mux would silently drop every nav command.
+    twist_mux = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(bringup_share, "launch", "twist_mux_launch.py")
+        ),
+        launch_arguments={"use_sim_time": "true"}.items(),
+    )
+
     # mode:=mapping|nav runs the *real* mission launch headless on top of the sim,
     # with base:=false so it skips the hardware drivers this sim stands in for.
     # The launch files themselves define what each mode means, so the sim and the
@@ -285,6 +295,7 @@ def generate_launch_description():
             ),
             laser_filter,
             localization,
+            twist_mux,
             mission("mapping_launch.py", "mapping"),
             OpaqueFunction(function=nav_mission),
             OpaqueFunction(function=task_layer),
