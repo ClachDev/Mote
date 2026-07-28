@@ -343,12 +343,17 @@ def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
     )
 
 
-def _save(cfg, calibrated, offsets, recorded) -> bool:
+def _save(cfg, calibrated, offsets, recorded) -> None:
     """Write this robot's calibration.
 
     The numbers themselves are not reprinted: the swept ranges were on screen a
     moment ago, the limits are those pulled inward by ``--margin``, and the file
     is the record — it keeps each value next to the measurement it came from.
+
+    Every way of failing here carries the recovery, because the servo zeros have
+    already moved by the time this runs. A failure leaves hardware that is
+    calibrated and a config file that is not — the one state in which the soft
+    limits describe a frame the arm no longer uses.
     """
     document = calibration_document(
         list(cfg.joints), calibrated, recorded, offsets=offsets
@@ -359,11 +364,32 @@ def _save(cfg, calibrated, offsets, recorded) -> bool:
     try:
         config.apply_calibration(cfg, document)
     except Exception as exc:  # noqa: BLE001 - any validation failure is fatal
-        raise SystemExit(f"refusing to save: {exc}")
+        _abort_unsaved(f"refusing to save: {exc}", offsets)
 
-    saved = save_calibration(document)
+    try:
+        saved = save_calibration(document)
+    except Exception as exc:  # noqa: BLE001 - a file that did not land is fatal
+        _abort_unsaved(f"could not write the calibration: {exc}", offsets)
     print(f"\nsaved to {saved}")
-    return True
+
+
+def _abort_unsaved(why: str, offsets: dict[str, int]) -> None:
+    """Stop, saying whether the servos are now ahead of the config file.
+
+    ``offsets`` is empty under ``--skip-homing``, where no EEPROM was touched
+    and an unsaved file leaves nothing inconsistent behind.
+    """
+    if not offsets:
+        raise SystemExit(why)
+    raise SystemExit(
+        f"{why}\n\n"
+        "The servos have already been centred, so their zeros no longer match\n"
+        "the limits in this file:\n"
+        f"    {config.calibration_path()}\n"
+        "Do not run `pixi run arm` until this is re-run and saves, or the\n"
+        "servos are put back with:\n"
+        "    pixi run arm-offsets restore"
+    )
 
 
 def _check_sweep(joint, sweep, args) -> None:
@@ -494,16 +520,9 @@ def _run(bus, cfg, selected, args) -> None:
         for name, reason in sorted(skipped.items()):
             print(f"  {name:<16} {reason}")
 
-    written = _save(cfg, calibrated, offsets, recorded)
-
-    if not written and not args.skip_homing:
-        print(
-            "\nWARNING: the servo zeros moved but were not saved, so the arm's"
-            "\nconfig no longer matches its hardware. Do not run `pixi run arm`"
-            "\nuntil this is re-run or the offsets are restored."
-        )
+    _save(cfg, calibrated, offsets, recorded)
     _migrate_poses(cfg, calibrated)
-    _next_steps(written)
+    _next_steps()
 
 
 def _migrate_poses(cfg, calibrated) -> None:
@@ -559,9 +578,8 @@ def _migrate_poses(cfg, calibrated) -> None:
         print("  They were taught somewhere the arm cannot reach — re-teach them.")
 
 
-def _next_steps(written) -> None:
-    if written:
-        print("\n  pixi run arm-check          # rad reads ~0 at mid-travel")
+def _next_steps() -> None:
+    print("\n  pixi run arm-check          # rad reads ~0 at mid-travel")
 
 
 if __name__ == "__main__":

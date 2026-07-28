@@ -128,6 +128,12 @@ not the repo — and says so in one line. The numbers are not reprinted: the swe
 ranges were on screen a moment ago, the limits are those pulled inward by
 `--margin`, and the file keeps each value next to the measurement it came from.
 
+**If the save fails** — validation rejects the document, or the file cannot be
+written — the servos have already been centred, so the arm is calibrated and the
+file is not. It says so and names `pixi run arm-offsets restore`. Do one or the
+other before `pixi run arm`: until then the soft limits describe a frame the
+servos have stopped using.
+
 Taught poses are re-expressed about the new zeros automatically and keep
 pointing where they did; the old file is kept as `.bak`. Any pose that lands
 outside the new limits is named — that one was taught somewhere the arm cannot

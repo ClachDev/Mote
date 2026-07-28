@@ -645,3 +645,28 @@ def test_saved_swept_counts_are_the_travel_ends_not_the_raw_limits():
     cal = calibrate.calibrate_centred(cfg.joint("elbow_flex"), sweep.result())
     doc = calibrate.calibration_document(list(cfg.joints), {"elbow_flex": cal}, "now")
     assert doc["joints"]["elbow_flex"]["swept_counts"] == [3900, 294]
+
+
+def test_a_failed_save_after_centring_says_the_servos_are_ahead_of_the_file():
+    """The zeros are already in EEPROM by then, so the config no longer fits.
+
+    This is the one state where the soft limits describe a frame the arm has
+    stopped using, so the message has to carry the way back out of it.
+    """
+    from mote_arm import arm_calibrate
+
+    with pytest.raises(SystemExit) as exc:
+        arm_calibrate._abort_unsaved("refusing to save: bad", {"elbow_flex": 1551})
+    said = str(exc.value)
+    assert "refusing to save: bad" in said
+    assert "already been centred" in said
+    assert "arm-offsets restore" in said
+
+
+def test_a_failed_save_under_skip_homing_leaves_nothing_to_recover():
+    """No EEPROM was touched, so an unsaved file is just an unsaved file."""
+    from mote_arm import arm_calibrate
+
+    with pytest.raises(SystemExit) as exc:
+        arm_calibrate._abort_unsaved("refusing to save: bad", {})
+    assert str(exc.value) == "refusing to save: bad"
