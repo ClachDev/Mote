@@ -549,34 +549,6 @@ def test_missing_calibration_file_is_empty_not_an_error(tmp_path):
     assert config_mod.load_calibration(tmp_path / "nope.yaml") == {}
 
 
-def test_range_row_is_the_same_shape_for_every_joint():
-    """The bench complaint: one joint showed dashes where the others had numbers.
-
-    A joint whose travel crosses the encoder zero gets centred like any other
-    and ends up with an ordinary band, so its row must not look special.
-    """
-    crosses_zero = _row([(3900 + i * 10) % COUNTS_PER_REV for i in range(50)], now=10)
-    ordinary = _row(_ramp(1000, 1490), now=1200)
-    assert "-" not in crosses_zero
-    assert crosses_zero.count(" rad") == ordinary.count(" rad") == 1
-    # Same travel, so the same reported range.
-    assert crosses_zero.split()[-2] == ordinary.split()[-2]
-
-
-def test_range_row_does_not_count_how_often_the_operator_waved_the_joint():
-    """Two passes over the boundary describe the same travel as one."""
-    lap = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
-    back = list(reversed(lap))
-    assert _row(lap + back, now=3900) == _row(lap + back + lap + back, now=3900)
-
-
-def test_range_row_reports_the_true_travel_across_the_boundary():
-    """Raw min/max would claim ~4090 counts; the real travel is 490."""
-    row = _row([(3900 + i * 10) % COUNTS_PER_REV for i in range(50)], now=10)
-    assert "0.75 rad" in row
-    assert "4093" not in row and "3900" not in row
-
-
 def test_range_row_reports_a_joint_that_never_answered():
     from mote_arm import arm_calibrate
 
@@ -621,3 +593,55 @@ arm:
 lidar:
   port: /dev/mote_lidar
 """
+
+
+def test_range_row_shows_both_ends_so_you_can_see_which_still_needs_reaching():
+    """The total alone cannot say which end is short — the ends can."""
+    partial = _row(_ramp(1000, 2000), now=2000)
+    assert " 1000" in partial and " 2000" in partial
+    extended = _row(_ramp(1000, 2000) + _ramp(2000, 3000), now=3000)
+    assert " 1000" in extended and " 3000" in extended
+
+
+def test_range_row_ends_are_real_positions_even_across_the_boundary():
+    """A joint crossing zero ran 3900 -> 294, not the raw min/max 4 and 4093."""
+    lap = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
+    row = _row(lap, now=294)
+    assert " 3900" in row and " 294" in row
+    assert "0.75 rad" in row
+
+
+def test_range_row_is_the_same_shape_for_every_joint():
+    """Every joint gets numbers in every column; none is the odd one out."""
+    crosses_zero = _row([(3900 + i * 10) % COUNTS_PER_REV for i in range(50)], now=10)
+    ordinary = _row(_ramp(1000, 1490), now=1200)
+    assert "-" not in crosses_zero
+    assert len(crosses_zero.split()) == len(ordinary.split())
+
+
+def test_range_row_does_not_count_how_often_the_operator_waved_the_joint():
+    """Two passes over the boundary describe the same travel as one."""
+    lap = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
+    back = list(reversed(lap))
+    assert _row(lap + back, now=3900) == _row(lap + back + lap + back, now=3900)
+
+
+def test_travel_ends_match_the_raw_limits_when_nothing_wrapped():
+    sweep = _record("j", _ramp(1000, 3000)).result()
+    assert sweep.travel_ends == (sweep.min_counts, sweep.max_counts)
+
+
+def test_travel_ends_run_high_to_low_across_the_boundary():
+    """First end above second is what 'up through zero and out again' looks like."""
+    sweep = _record("j", [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]).result()
+    low, high = sweep.travel_ends
+    assert (low, high) == (3900, (3900 + 490) % COUNTS_PER_REV)
+    assert low > high
+
+
+def test_saved_swept_counts_are_the_travel_ends_not_the_raw_limits():
+    cfg = _two_joint_config()
+    sweep = _record("elbow_flex", [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)])
+    cal = calibrate.calibrate_centred(cfg.joint("elbow_flex"), sweep.result())
+    doc = calibrate.calibration_document(list(cfg.joints), {"elbow_flex": cal}, "now")
+    assert doc["joints"]["elbow_flex"]["swept_counts"] == [3900, 294]

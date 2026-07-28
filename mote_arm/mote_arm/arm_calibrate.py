@@ -273,7 +273,9 @@ def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
     )
 
     recorders = {j.name: SweepRecorder(j.name) for j in joints}
-    table = _LiveTable("", f"  {'joint':<16}{'now':>6}{'swept':>13}")
+    table = _LiveTable(
+        "", f"  {'joint':<16}{'now':>6}{'end':>7}{'end':>7}{'swept':>13}"
+    )
     done = _wait_for_enter()
     period = 1.0 / rate_hz
     misses = 0
@@ -298,17 +300,22 @@ def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
 def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
     """One row, the same shape for every joint.
 
-    Only the swept range is shown, not the raw encoder min/max. Those are
-    meaningless for a joint whose travel crosses the encoder's zero — its raw
-    range reads 17 to 4093 — and showing a blank for that joint alone made it
-    look special when it is not: it gets centred like the others and ends up
-    with an ordinary band. The range comes off the unwrapped stream, so it is
-    the true travel for every joint, and it is the number that tells you
-    whether you have reached both stops yet.
+    The two ends of travel are shown as well as the total, because the total
+    alone cannot tell you *which* end still needs reaching — you can see one end
+    parked on a stop while the other has not got there yet. They come off the
+    unwrapped stream, so they are real encoder positions even for a joint whose
+    travel crosses zero, where the raw min and max would read 17 and 4093 and
+    describe the encoder rather than the joint. Such a joint shows its first end
+    larger than its second, which is what crossing zero looks like.
     """
     if rec.samples == 0:
-        return f"  {name:<16}{'-':>6}   no readings"
-    return f"  {name:<16}{now if now is not None else '':>6}{rec.unwrapped_span * RAD_PER_COUNT:>9.2f} rad"
+        return f"  {name:<16}{'-':>6}{'-':>7}{'-':>7}   no readings"
+    low, high = rec.travel_ends
+    span = rec.unwrapped_span * RAD_PER_COUNT
+    return (
+        f"  {name:<16}{now if now is not None else '':>6}"
+        f"{low:>7}{high:>7}{span:>9.2f} rad"
+    )
 
 
 def _invalidated_poses(cfg, calibrated) -> list[str]:

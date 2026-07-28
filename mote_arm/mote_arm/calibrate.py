@@ -111,6 +111,23 @@ class Sweep:
         return round((self.min_counts + self.max_counts) / 2)
 
     @property
+    def travel_ends(self) -> tuple[int, int]:
+        """The encoder counts at the two ends of the travel.
+
+        Taken from the unwrapped stream and mapped back, so they are the real
+        endpoints even for a joint whose travel crosses 0/4095 — where the raw
+        min and max are 17 and 4093 and describe the encoder rather than the
+        joint. For a sweep that never wrapped these are exactly the raw min and
+        max; for one that did, the first number is larger than the second,
+        which is precisely what "runs up through zero and out the other side"
+        looks like.
+        """
+        return (
+            self.unwrapped_min % COUNTS_PER_REV,
+            self.unwrapped_max % COUNTS_PER_REV,
+        )
+
+    @property
     def measured_centre(self) -> int:
         """The raw encoder count at the middle of the *measured* travel.
 
@@ -190,6 +207,11 @@ class SweepRecorder:
     def unwrapped_span(self) -> int:
         """Live span across the sweep so far, true even once it has wrapped."""
         return self._u_max - self._u_min
+
+    @property
+    def travel_ends(self) -> tuple[int, int]:
+        """Live equivalent of ``Sweep.travel_ends``, for the running display."""
+        return (self._u_min % COUNTS_PER_REV, self._u_max % COUNTS_PER_REV)
 
     def result(self) -> Sweep:
         if self._samples == 0:
@@ -469,7 +491,9 @@ def calibration_document(
             "min": round(cal.min_rad, 4),
             "max": round(cal.max_rad, 4),
             "swept_rad": round(cal.sweep.span_rad, 4),
-            "swept_counts": [cal.sweep.min_counts, cal.sweep.max_counts],
+            # The ends of travel, not the raw min/max: for a joint that crossed
+            # 0/4095 those would read 17 and 4093 and describe the encoder.
+            "swept_counts": list(cal.sweep.travel_ends),
             "samples": cal.sweep.samples,
             "margin": cal.margin,
             "zero_source": cal.zero_source,
