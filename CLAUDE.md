@@ -229,12 +229,19 @@ section. Contains:
   revert, so `robot.yaml`'s `arm.gains` is the source of truth and this tool
   reconciles hardware with it. The arm shipped `Kp=16`, which left permanent
   droop under load (the servo settles where `Kp x error` balances the holding
-  torque; `Ki=0` never integrates it away). Measured on elbow at -0.200 rad:
-  Kp=16 -> error 0.071 at load 196/1000; Kp=32 -> error 0.033 at load 176 —
-  error halves as Kp doubles at ~constant load, so it was droop, NOT torque
-  saturation, and the 5 V supply was never the binding constraint. **Kp=32
-  (wheel/STS3215 default) is applied**; the arm now completes the full 3.19 rad
-  home<->reachy move both ways with 0.02-0.06 rad residual. Gotcha: an EEPROM
+  torque; `Ki=0` never integrates it away). Swept on elbow at -0.200 rad:
+  Kp=16/32/64/128 -> error 0.068/0.031/0.014/0.008 rad at load 188/168/144/144
+  of 1000, no ripple or reversals anywhere — error falls 8.2x for an 8x gain
+  rise at a load nowhere near saturation, so it is droop, NOT torque
+  saturation, and the 5 V supply was never the binding constraint (repeated to
+  1-2 counts; same law on a 1.0 rad step and at double speed). **Kp=64 is
+  applied**, not the better-scoring 128: the sweep only measures an unloaded
+  static hold, and a stiffer loop reacts harder to the payloads and collisions
+  a fetch arm exists for — revisit with a payload, not from the table. **Ki
+  stays 0**: ki=8 closes the error to 0.001 rad but stretches settling 0.46s ->
+  2.12s, which `arm-pose`'s 20 Hz streamed setpoints never wait for. The arm
+  completes the full 3.19 rad home<->reachy move both ways with 0.012-0.028 rad
+  residual (0.026-0.041 at Kp=32). Gotcha: an EEPROM
   read-back races the relock — wait ~150 ms and read twice, or a single read can
   return a garbled 250 and make a successful write look failed. `sweep` is how a
   gain is chosen rather than guessed: it steps one joint (`elbow_flex` — the only

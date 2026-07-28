@@ -110,6 +110,8 @@ def sweep_args(**overrides):
         hold=0.05,
         rate=200.0,
         max_temp=55,
+        speed=None,
+        acc=None,
         out=None,
         yes=True,
     )

@@ -134,8 +134,15 @@ def _read_rad(bus, joint) -> float | None:
     return None if counts is None else joint.counts_to_rad(counts)
 
 
-def _drive_to(bus, cfg, joint, rad: float, settle_s: float) -> None:
-    bus.write_goal(joint.id, joint.rad_to_counts(rad), cfg.moving_speed, cfg.moving_acc)
+def _drive_to(
+    bus, cfg, joint, rad: float, settle_s: float, speed=None, acc=None
+) -> None:
+    bus.write_goal(
+        joint.id,
+        joint.rad_to_counts(rad),
+        cfg.moving_speed if speed is None else speed,
+        cfg.moving_acc if acc is None else acc,
+    )
     time.sleep(settle_s)
 
 
@@ -164,19 +171,27 @@ def _apply_gains_for_trial(bus, cfg, joint, kp: int, kd: int, ki: int) -> bool:
     return True
 
 
-def _run_trial(bus, cfg, joint, start_rad, goal_rad, hold_s, rate_hz) -> list[Sample]:
+def _run_trial(
+    bus, cfg, joint, start_rad, goal_rad, hold_s, rate_hz, speed=None, acc=None
+) -> list[Sample]:
     """Command one step and sample the joint until the hold ends.
 
     Sampling is paced against a monotonic clock rather than by sleeping a fixed
     interval, so a slow bus transaction shortens the next sleep instead of
     stretching the whole trace and quietly changing what a timestamp means.
+
+    The return to the start uses the config's gentle speed whatever the trial
+    runs at: only the measured step should be aggressive.
     """
     _drive_to(bus, cfg, joint, start_rad, settle_s=1.5)
 
     period = 1.0 / rate_hz
     samples: list[Sample] = []
     bus.write_goal(
-        joint.id, joint.rad_to_counts(goal_rad), cfg.moving_speed, cfg.moving_acc
+        joint.id,
+        joint.rad_to_counts(goal_rad),
+        cfg.moving_speed if speed is None else speed,
+        cfg.moving_acc if acc is None else acc,
     )
     t0 = time.monotonic()
     next_sample = t0
@@ -263,7 +278,15 @@ def _cmd_sweep(cfg, bus, args) -> None:
                 break
 
             samples = _run_trial(
-                bus, cfg, joint, start_rad, goal_rad, args.hold, args.rate
+                bus,
+                cfg,
+                joint,
+                start_rad,
+                goal_rad,
+                args.hold,
+                args.rate,
+                speed=args.speed,
+                acc=args.acc,
             )
             if not samples:
                 aborted = f"kp={kp} kd={kd} ki={ki}: the joint returned no readings"
@@ -361,8 +384,8 @@ def _report_sweep(cfg, joint, results, args, start_rad, goal_rad) -> None:
                 "joint": joint.name,
                 "servo_id": joint.id,
                 "port": cfg.port,
-                "moving_speed": cfg.moving_speed,
-                "moving_acc": cfg.moving_acc,
+                "moving_speed": args.speed if args.speed else cfg.moving_speed,
+                "moving_acc": args.acc if args.acc else cfg.moving_acc,
                 "start_rad": start_rad,
                 "goal_rad": goal_rad,
                 "hold_s": args.hold,
@@ -414,6 +437,16 @@ def main() -> None:
     p_sweep.add_argument("--ki", default="0", help="ki values to try")
     p_sweep.add_argument(
         "--kd", default="", help="kd values to try (default: robot.yaml)"
+    )
+    p_sweep.add_argument(
+        "--speed",
+        type=int,
+        help="servo speed for the measured step, steps/s (default: robot.yaml's "
+        "moving_speed). A gain that holds a slow move can still overshoot a fast "
+        "one, so raising this is how the top of a kp range is tested",
+    )
+    p_sweep.add_argument(
+        "--acc", type=int, help="servo acceleration for the step (default: robot.yaml)"
     )
     p_sweep.add_argument(
         "--hold",

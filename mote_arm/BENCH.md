@@ -194,10 +194,15 @@ Already verified on the robot (2026-07-25):
 - [x] `min`/`max` in `robot.yaml` derived from taught poses, not guessed
 - [x] servo gains applied and verified (`pixi run arm-gains`), full
       home<->reachy move completed both ways
+- [x] gains chosen from a sweep, not a default: Kp=64 applied to all six,
+      residual on the full move now 0.012-0.028 rad (2026-07-28)
 
 Still open:
 
 - [ ] the other five joints jogged and direction-checked (`invert`)
 - [ ] `home:` taught at a true mechanical zero (optional — re-teach poses after)
-- [ ] optional: small `Ki` to remove the residual 1-3.5 deg droop (step 5c's
-      `--ki` sweep, on an unloaded joint first — windup risks a lunge)
+- [x] `Ki` tested and rejected for now (step 5c's `--ki` sweep: ki=8 closes the
+      error to 0.001 rad but quadruples settling time)
+- [ ] re-check the gain with a payload on the gripper — the sweep only measures
+      an unloaded static hold, which is why Kp=64 was taken over a better-scoring
+      128
