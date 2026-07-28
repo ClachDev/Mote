@@ -369,6 +369,19 @@ def centred_limits(
     return (lo, hi) if not invert else (-hi, -lo)
 
 
+# A joint that swept most of a revolution probably has no stops at all and was
+# simply being rotated. LeRobot hard-codes SO-101's wrist_roll as a "full turn
+# motor" and skips recording its range for exactly this reason; this is the same
+# judgement made from the measurement instead of from the joint's name, so it
+# also catches a differently-built arm.
+NEAR_FULL_TURN = 0.9
+
+
+def is_near_full_turn(sweep: Sweep) -> bool:
+    """True if the travel is suspiciously close to a whole revolution."""
+    return NEAR_FULL_TURN * COUNTS_PER_REV <= sweep.unwrapped_span < COUNTS_PER_REV
+
+
 def _reject_continuous(sweep: Sweep) -> None:
     if sweep.unwrapped_span >= COUNTS_PER_REV:
         # No homing offset can rescue this: the joint simply does not fit in a

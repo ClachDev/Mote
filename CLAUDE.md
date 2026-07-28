@@ -225,9 +225,14 @@ section. Contains:
   offset first — assuming zero would double-count on a re-run — and verifies
   afterwards that each reading moved by exactly the delta written, which is what
   would catch a wrong sign encoding. **Deliberately NOT LeRobot's order:** theirs
-  asks the operator to hold every joint at mid-travel first and takes the zero
-  from that pose, which is an awkward unbalanced position and less accurate than
-  the measurement the sweep takes anyway. **Offsets are modular** (`present =
+  asks the operator to hold every joint at mid-travel first (one `input()`, all
+  six motors from that one pose) and takes the zero from it — awkward, and less
+  accurate than the measurement the sweep takes anyway. Their order is
+  load-bearing for *them*: `record_ranges_of_motion` is a plain min/max with no
+  wraparound handling, so centring first is what keeps the sweep off the
+  boundary. Sweeping first means it can wrap, so `SweepRecorder` unwraps and the
+  centre comes from the unwrapped stream. LeRobot is Apache-2.0; no code copied,
+  only the shape of the flow. **Offsets are modular** (`present =
   (actual - offset) mod 4096`), so a result outside the register's ±2047 is
   folded, never rejected — rejecting one aborted a real bench run. **Centring is
   not optional polish:** without it a joint whose travel straddles the encoder
@@ -245,7 +250,13 @@ section. Contains:
   each; **after a run robot.yaml is stale until the block is pasted and rebuilt,
   and poses must be re-taught only after that**. Measurements + the offsets
   (their only record outside EEPROM) go to `~/.mote/arm_calibration.yaml`.
-  `--skip-homing` re-measures ranges without writing anything. The maths is
+  Warns (without refusing) when a joint sweeps >90% of a revolution — it
+  probably spins freely and its "limits" are just where the operator stopped;
+  LeRobot hard-codes SO-101's `wrist_roll` as a full-turn motor for this reason
+  and this arm's measured 5.88 rad. The live table states `spans 0/4095` rather
+  than counting crossings: a count grows every time the operator waves the joint
+  and reads like N faults. `--skip-homing` re-measures ranges without writing
+  anything. The maths is
   ROS-free and unit-tested (`test_calibrate.py`).
 - `arm_offsets` (`pixi run arm-offsets show|backup|restore|set`) — the offset
   register is the **only arm state with no copy outside the servo**, so

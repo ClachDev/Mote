@@ -562,3 +562,70 @@ def test_offsets_backup_preserves_negative_values(tmp_path):
         tmp_path / "b.yaml",
     )
     assert calibrate.load_offsets_backup(path)["shoulder_lift"] == -1723
+
+
+def _row(samples, now=None):
+    from mote_arm import arm_calibrate
+
+    return arm_calibrate._range_row(
+        "shoulder_pan", _record("shoulder_pan", samples), now
+    )
+
+
+def test_range_row_does_not_count_how_often_the_operator_waved_the_joint():
+    """The bench complaint: 'WRAP x4' grew on every pass over the boundary.
+
+    Two out-and-back passes cross the boundary four times but describe exactly
+    the same travel, so the row must read identically.
+    """
+    lap = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
+    back = list(reversed(lap))
+    once = _row(lap + back)
+    twice = _row(lap + back + lap + back)
+    assert once == twice
+    assert "x4" not in twice and "x2" not in twice
+    assert "spans 0/4095" in twice
+
+
+def test_range_row_blanks_the_raw_limits_for_a_spanning_joint():
+    """17 and 4093 describe the encoder, not the joint — so do not show them."""
+    lap = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
+    row = _row(lap)
+    columns, _, _flag = row.partition("spans")
+    assert "3900" not in columns and "4090" not in columns
+    assert columns.count("-") == 2  # both raw-limit cells blanked
+    # The span is still truthful and is the column to watch.
+    assert "0.75 rad" in columns
+
+
+def test_range_row_shows_real_limits_for_an_ordinary_joint():
+    row = _row(_ramp(1000, 3000))
+    assert "1000" in row and "3000" in row
+    assert "spans" not in row
+
+
+def test_range_row_reports_a_joint_that_never_answered():
+    from mote_arm import arm_calibrate
+
+    row = arm_calibrate._range_row("gripper", calibrate.SweepRecorder("gripper"), None)
+    assert "no readings" in row
+
+
+def test_near_full_turn_flags_a_probably_continuous_joint():
+    """wrist_roll measured 5.88 rad on the real arm — 94% of a revolution."""
+    span = int(0.94 * COUNTS_PER_REV)
+    sweep = _record("wrist_roll", _ramp(0, span)).result()
+    assert calibrate.is_near_full_turn(sweep)
+
+
+def test_an_ordinary_joint_is_not_flagged_as_continuous():
+    assert not calibrate.is_near_full_turn(_record("j", _ramp(1000, 3400)).result())
+
+
+def test_a_joint_past_a_full_turn_is_rejected_not_merely_flagged():
+    """Beyond a revolution there is nothing to flag — it cannot be calibrated."""
+    samples = [(i * 40) % COUNTS_PER_REV for i in range(220)]
+    sweep = _record("wrist_roll", samples).result()
+    assert not calibrate.is_near_full_turn(sweep)
+    with pytest.raises(calibrate.CalibrationError, match="revolution"):
+        calibrate.centred_limits(sweep)

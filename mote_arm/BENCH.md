@@ -76,9 +76,11 @@ joints in any order; all six are recorded at once in a live table:
 Press **Enter** once every joint has been to both stops.
 
 **Expected:** a span per joint matching what you felt (the big joints measured
-3.4–4.1 rad; the gripper ~2.3). A `WRAP` flag here is fine and expected on any
-joint whose travel crosses the encoder's 0/4095 boundary — phase 2 is about to
-fix exactly that. Anything that cannot be calibrated says why and keeps its
+3.4–4.1 rad; the gripper ~2.3). A `spans 0/4095` note is fine and expected on
+any joint whose travel crosses the encoder boundary — phase 2 is about to fix
+exactly that, and the raw min/max are blanked for those joints because the
+encoder numbers (17, 4093) describe the encoder rather than the travel. Watch
+the span column, which is correct either way. Anything that cannot be calibrated says why and keeps its
 existing values; see the failure table below.
 
 ### Phase 2 — centre the zeros (writes servo EEPROM)

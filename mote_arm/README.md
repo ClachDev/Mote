@@ -146,12 +146,24 @@ register (EEPROM, `SMS_STS_OFS_L/H`, address 31). The servo reports
 `present = actual - offset`, so this re-centres the joint's whole travel inside
 the 0–4095 encoder frame. The arm can be left wherever the sweep ended.
 
-**Why the centre comes from the sweep.** LeRobot's flow asks the operator to
-first hold the arm with every joint at mid-travel and takes the zero from that
-pose. That works, but it is an awkward, unbalanced position to hold, and
-eyeballing the middle is less accurate than the measurement the sweep is about to
-take anyway. Taking it from the sweep is both easier and better — and it still
-works for a joint that crossed the wrap mid-sweep, because the recorder unwraps.
+**Why the centre comes from the sweep.** LeRobot's `calibrate()` opens with a
+single `input("Move {robot} to the middle of its range of motion and press
+ENTER")` and takes every motor's zero from that one pose. It is an awkward,
+unbalanced position to hold all six joints in, and eyeballing the middle is less
+accurate than the measurement the sweep is about to take anyway.
+
+That ordering is *load-bearing for them*, though, not incidental:
+`record_ranges_of_motion` is a plain `min`/`max` over raw positions with **no
+wraparound handling at all**. Centring first is what guarantees the sweep never
+crosses 0/4095, which is what makes plain min/max safe. Sweeping first, as we do,
+means the sweep *can* cross it — so `SweepRecorder` unwraps, and the centre is
+recovered from the unwrapped stream. The trade is a small heuristic (a jump of
+more than half a revolution between samples is a crossing, which no hand-moved
+joint can produce at 20 Hz) in exchange for deleting the awkward step. It also
+means a wrapped sweep is handled rather than silently mis-recorded.
+
+LeRobot is Apache-2.0, so borrowing their code would be permitted with
+attribution; none is copied here — only the shape of the flow.
 
 **Centring is what makes the limits describable at all.** A joint whose travel
 straddles the encoder's 0/4095 boundary has a raw min and max that say nothing
@@ -176,6 +188,13 @@ Four things it refuses to guess at, rather than emit plausible-looking numbers:
   to calibrate against and fits no single-turn frame. Reported as its own case,
   because unlike a wrap there is no remedy — leave it out with `--joints`.
 - **A range too short to survive the margin at both ends.**
+
+And it *warns*, without refusing, when a joint sweeps more than 90% of a
+revolution: that usually means it spins freely and the "limits" are just where
+you stopped. LeRobot hard-codes the SO-101's `wrist_roll` as a full-turn motor
+and skips recording its range for this reason; this arm's `wrist_roll` measured
+5.88 rad, 94% of a turn, which fits. Exclude such a joint with `--joints` and
+drive it in relative terms.
 - Under `--skip-homing` only, where the zero is not being moved: **an encoder
   wrap**, and **a zero the joint could never reach** (a band excluding 0 rad —
   the defect in the pre-calibration `shoulder_pan` limits, whose

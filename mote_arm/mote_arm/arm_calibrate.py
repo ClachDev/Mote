@@ -56,6 +56,7 @@ from mote_arm.calibrate import (
     calibrate_joint,
     centred_limits,
     homing_offset,
+    is_near_full_turn,
     joints_block,
     limits_from_sweep,
     pose_impact,
@@ -166,6 +167,14 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
                 "angle the arm reports."
             )
         existing[joint.name] = current
+
+    spanning = [j.name for j in joints if recorders[j.name].wraps]
+    if spanning:
+        print(
+            f"\n{len(spanning)} joint(s) span the 0/4095 boundary "
+            f"({', '.join(spanning)}).\nThat is what this phase fixes: after "
+            "centring, their travel sits wholly inside\nthe encoder's range."
+        )
 
     wanted: dict[str, int] = {}
     print(f"\n{'joint':<16}{'mid-travel':>11}{'offset':>8}{'->':>4}{'new':>7}")
@@ -295,15 +304,27 @@ def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
 
 
 def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
+    """One live row. Nothing here counts how many times the operator moved.
+
+    An earlier version showed the raw crossing count ("WRAP x4"), which grows
+    every time a joint is waved back and forth over the boundary and reads like
+    four faults rather than one joint that straddles zero. The row now states
+    the fact, not the tally, so it stops changing once it is true — and the raw
+    min/max are blanked for such a joint, because 17 and 4093 describe the
+    encoder, not the travel. The span is computed on the unwrapped stream, so it
+    stays correct either way and is the column to watch while sweeping.
+    """
     if rec.samples == 0:
         return f"  {name:<16}{'-':>6}{'-':>6}{'-':>6}{'no readings':>10}"
     span = rec.unwrapped_span
-    flag = f"  WRAP x{rec.wraps}" if rec.wraps else ""
     shown = f"{now:>6}" if now is not None else f"{'':>6}"
-    return (
-        f"  {name:<16}{rec.min_counts:>6}{shown}{rec.max_counts:>6}"
-        f"{span * RAD_PER_COUNT:>8.2f} rad{flag}"
-    )
+    if rec.wraps:
+        lo = hi = f"{'-':>6}"
+        flag = "  spans 0/4095"
+    else:
+        lo, hi = f"{rec.min_counts:>6}", f"{rec.max_counts:>6}"
+        flag = ""
+    return f"  {name:<16}{lo}{shown}{hi}{span * RAD_PER_COUNT:>8.2f} rad{flag}"
 
 
 def _warn_about_poses(cfg, calibrated) -> None:
@@ -483,6 +504,16 @@ def _run(bus, cfg, selected, args) -> None:
         print(
             f"  {name:<16} {cal.min_rad:+.3f} to {cal.max_rad:+.3f} rad "
             f"about zero {cal.zero_counts} ({cal.sweep.span_rad:.2f} rad swept)"
+        )
+
+    spinners = [n for n, c in calibrated.items() if is_near_full_turn(c.sweep)]
+    if spinners:
+        print(
+            f"\nNOTE: {', '.join(spinners)} swept most of a full revolution. If a "
+            "joint\nspins freely it has no stops to calibrate against and these "
+            "limits are just\nwhere you happened to stop — exclude it with "
+            "--joints and drive it in relative\nterms. (LeRobot treats the "
+            "SO-101's wrist_roll as exactly this case.)"
         )
 
     _warn_about_poses(cfg, calibrated)
