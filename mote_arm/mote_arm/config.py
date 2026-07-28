@@ -12,7 +12,9 @@ maths (clamping, conversions, validation) can be unit-tested without hardware.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import yaml
 
@@ -23,15 +25,21 @@ RAD_PER_COUNT = 2.0 * math.pi / COUNTS_PER_REV
 
 @dataclass(frozen=True)
 class JointSpec:
-    """One arm servo: its bus ID, soft limits, zero offset, and direction."""
+    """One arm servo: its bus ID, soft limits, zero offset, and direction.
+
+    ``zero_counts`` is deliberately not called "home". "home" is the name of a
+    taught rest pose in ``arm_poses.yaml``; after calibration 0 rad is the
+    middle of the joint's travel, a different place entirely. Keeping the two
+    words apart is the whole point of the name.
+    """
 
     name: str
     id: int
     min_rad: float
     max_rad: float
-    # Raw encoder count that corresponds to 0 rad (the joint's mechanical zero).
-    # Taught at the bench; defaults to the servo mid-point.
-    home_counts: int = COUNTS_PER_REV // 2
+    # Raw encoder count that corresponds to 0 rad. Set by `arm-calibrate`;
+    # defaults to the servo mid-point.
+    zero_counts: int = COUNTS_PER_REV // 2
     # True if the joint's positive direction is opposite the servo's.
     invert: bool = False
 
@@ -45,7 +53,7 @@ class JointSpec:
 
     def counts_to_rad(self, counts: int) -> float:
         """Convert a raw encoder reading to radians about the joint zero."""
-        return self.sign * (counts - self.home_counts) * RAD_PER_COUNT
+        return self.sign * (counts - self.zero_counts) * RAD_PER_COUNT
 
     def rad_to_counts(self, rad: float) -> int:
         """Convert a joint angle to a raw encoder goal, clamped to [0, 4095].
@@ -54,7 +62,7 @@ class JointSpec:
         first so that a limit breach is a deliberate, visible decision rather
         than a silent saturation at the encoder edge.
         """
-        counts = round(self.home_counts + self.sign * rad / RAD_PER_COUNT)
+        counts = round(self.zero_counts + self.sign * rad / RAD_PER_COUNT)
         return max(0, min(COUNTS_PER_REV - 1, counts))
 
 
@@ -117,7 +125,11 @@ class ArmConfig:
                 id=int(entry["id"]),
                 min_rad=float(entry["min"]),
                 max_rad=float(entry["max"]),
-                home_counts=int(entry.get("home", COUNTS_PER_REV // 2)),
+                # `home:` is the pre-calibration spelling, still accepted so an
+                # un-migrated robot.yaml keeps working.
+                zero_counts=int(
+                    entry.get("zero", entry.get("home", COUNTS_PER_REV // 2))
+                ),
                 invert=bool(entry.get("invert", False)),
             )
             if spec.min_rad > spec.max_rad:
@@ -178,6 +190,61 @@ class ArmConfig:
             return ArmConfig.from_dict(yaml.safe_load(f))
 
 
+def calibration_path() -> Path:
+    """Where this robot's measured arm calibration lives.
+
+    Per-robot state under ``MOTE_HOME``, not packaged config: the zeros and
+    limits are measurements of one physical arm, every robot's differ, and the
+    package directory is read-only once installed from a conda channel. Same
+    rule as ``~/.mote/camera_calibration.yaml`` and the site bundles.
+    """
+    return Path(os.environ.get("MOTE_HOME", "~/.mote")).expanduser() / "arm.yaml"
+
+
+def apply_calibration(cfg: "ArmConfig", data: dict | None) -> "ArmConfig":
+    """Overlay measured per-joint zero/limits onto the packaged defaults.
+
+    Only ``zero``/``min``/``max`` are overridden — the measurements. Bus ids,
+    names, direction and gains stay with the package, because they describe the
+    design rather than this particular arm, and a joint absent from the
+    calibration simply keeps its packaged values. A calibration naming a joint
+    the package does not have is ignored rather than fatal, so removing a joint
+    upstream cannot brick a robot that still has an old file.
+    """
+    joints = ((data or {}).get("joints")) or {}
+    if not joints:
+        return cfg
+    updated = []
+    for spec in cfg.joints:
+        entry = joints.get(spec.name)
+        if not entry:
+            updated.append(spec)
+            continue
+        merged = JointSpec(
+            name=spec.name,
+            id=spec.id,
+            min_rad=float(entry.get("min", spec.min_rad)),
+            max_rad=float(entry.get("max", spec.max_rad)),
+            zero_counts=int(entry.get("zero", spec.zero_counts)),
+            invert=spec.invert,
+        )
+        if merged.min_rad > merged.max_rad:
+            raise ValueError(
+                f"calibration for {spec.name!r}: min {merged.min_rad} > max "
+                f"{merged.max_rad}"
+            )
+        updated.append(merged)
+    return replace(cfg, joints=tuple(updated))
+
+
+def load_calibration(path=None) -> dict:
+    """This robot's arm calibration, or an empty dict if it has never run."""
+    p = Path(path) if path is not None else calibration_path()
+    if not p.exists():
+        return {}
+    return yaml.safe_load(p.read_text()) or {}
+
+
 def default_robot_yaml() -> str:
     """Locate robot.yaml in the installed mote_description share."""
     from ament_index_python.packages import get_package_share_directory
@@ -186,5 +253,6 @@ def default_robot_yaml() -> str:
 
 
 def load() -> ArmConfig:
-    """Load the arm config from the installed robot.yaml."""
-    return ArmConfig.from_yaml_file(default_robot_yaml())
+    """The packaged arm config with this robot's calibration applied."""
+    cfg = ArmConfig.from_yaml_file(default_robot_yaml())
+    return apply_calibration(cfg, load_calibration())

@@ -135,7 +135,7 @@ def _cmd_limits(node: PoseClient, args) -> None:
         print(
             f"    - {{name: {joint.name + ',':<16} id: {joint.id}, "
             f"min: {lo:>7.3f}, max: {hi:>7.3f}, "
-            f"home: {joint.home_counts:>4}, invert: {str(joint.invert).lower()}}}{note}"
+            f"zero: {joint.zero_counts:>4}, invert: {str(joint.invert).lower()}}}{note}"
         )
 
     print("\n# sanity check against the taught poses:")

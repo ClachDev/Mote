@@ -14,6 +14,7 @@ is only needed at runtime on the robot.
 from __future__ import annotations
 
 import os
+import struct
 import time
 from dataclasses import dataclass
 
@@ -27,6 +28,11 @@ _MODE = 33
 _KP = 21
 _KD = 22
 _KI = 23
+# SMS_STS_OFS_L/H: the position-correction offset, in EEPROM. The servo reports
+# `present = actual - offset`, so writing it moves where the joint's zero sits
+# in the 0-4095 encoder frame. This is what stops a joint's travel straddling
+# the 0/4095 wrap; see mote_arm/calibrate.py.
+_HOMING_OFFSET = 31
 _PRESENT_POSITION = 56
 _PRESENT_LOAD = 60
 _PRESENT_VOLTAGE = 62
@@ -35,6 +41,28 @@ _PRESENT_TEMPERATURE = 63
 # STS/SMS is little-endian: protocol_end 0 in scservo_sdk terms.
 _PROTOCOL_END = 0
 _MODE_POSITION = 0
+
+# One encoder turn, in counts. Duplicated from config.COUNTS_PER_REV rather than
+# imported, to keep this module's dependencies to the SDK alone.
+COUNTS_PER_TURN = 4096
+
+# The offset register is sign-magnitude, not two's complement: bit 11 is the
+# sign and bits 0-10 the magnitude, so it spans +-2047.
+OFFSET_SIGN_BIT = 0x800
+OFFSET_MAX = 0x7FF
+
+
+def encode_sign_magnitude(value: int) -> int:
+    """Encode a signed offset for the servo's sign-magnitude register."""
+    if abs(value) > OFFSET_MAX:
+        raise ValueError(f"offset {value} outside the register's +-{OFFSET_MAX} range")
+    return (abs(value) | OFFSET_SIGN_BIT) if value < 0 else value
+
+
+def decode_sign_magnitude(raw: int) -> int:
+    """Decode a sign-magnitude register value back to a signed offset."""
+    magnitude = raw & OFFSET_MAX
+    return -magnitude if raw & OFFSET_SIGN_BIT else magnitude
 
 
 @dataclass
@@ -159,33 +187,75 @@ class FeetechBus:
     def _ok(self, comm: int, err: int) -> bool:
         return comm == self._comm_success and err == 0
 
+    def _read(self, width: int, servo_id: int, address: int) -> int | None:
+        """Read a 1- or 2-byte register, or None if the read did not come back.
+
+        Every SDK read goes through here because ``read2ByteTxRx`` indexes the
+        received buffer *before* checking it is long enough, so a short reply
+        raises IndexError rather than reporting a failure. On a busy shared bus
+        that turned a dropped packet into a crash — mid-EEPROM-write, on real
+        hardware. A read that does not come back is a None, never an exception.
+        """
+        reader = (
+            self._packet.read1ByteTxRx if width == 1 else self._packet.read2ByteTxRx
+        )
+        # Drop anything still sitting in the input buffer first. A reply that
+        # arrived late — after an EEPROM write, say — would otherwise be
+        # consumed as the answer to *this* request, and a register read that
+        # silently returns the previous register's value is worse than a failure.
+        if self._port is not None and hasattr(self._port, "clearPort"):
+            try:
+                self._port.clearPort()
+            except OSError:
+                pass
+        try:
+            value, comm, err = reader(self._port, servo_id, address)
+        except (IndexError, TypeError, struct.error):
+            return None
+        return value if self._ok(comm, err) else None
+
+    def read_position_settled(
+        self, servo_id: int, tolerance: int = 3, attempts: int = 5
+    ) -> int | None:
+        """A position confirmed by two agreeing reads, for use after a write.
+
+        The single read this replaces was observed returning the *offset*
+        register's value right after that register had been written — 3902,
+        which is exactly -1854 in the servo's sign-magnitude encoding. Agreement
+        within ``tolerance`` counts rejects a stale reply while still allowing
+        the count or two of drift a limp arm shows between two reads.
+        """
+        for _ in range(attempts):
+            first = self._read(2, servo_id, _PRESENT_POSITION)
+            time.sleep(0.05)
+            second = self._read(2, servo_id, _PRESENT_POSITION)
+            if first is not None and second is not None:
+                if min(abs(first - second), COUNTS_PER_TURN - abs(first - second)) <= (
+                    tolerance
+                ):
+                    return second
+            time.sleep(0.1)
+        return None
+
     def ping(self, servo_id: int) -> bool:
-        _model, comm, err = self._packet.ping(self._port, servo_id)
+        try:
+            _model, comm, err = self._packet.ping(self._port, servo_id)
+        except (IndexError, TypeError, struct.error):
+            return False
         return self._ok(comm, err)
 
     def read_position(self, servo_id: int) -> int | None:
         """Return raw encoder counts (0-4095), or None on comms failure."""
-        pos, comm, err = self._packet.read2ByteTxRx(
-            self._port, servo_id, _PRESENT_POSITION
-        )
-        return pos if self._ok(comm, err) else None
+        return self._read(2, servo_id, _PRESENT_POSITION)
 
     def read_health(self, servo_id: int) -> ServoHealth | None:
         pos = self.read_position(servo_id)
         if pos is None:
             return None
-        volt, comm, err = self._packet.read1ByteTxRx(
-            self._port, servo_id, _PRESENT_VOLTAGE
-        )
-        temp, comm2, err2 = self._packet.read1ByteTxRx(
-            self._port, servo_id, _PRESENT_TEMPERATURE
-        )
-        raw_load, comm3, err3 = self._packet.read2ByteTxRx(
-            self._port, servo_id, _PRESENT_LOAD
-        )
-        if not (
-            self._ok(comm, err) and self._ok(comm2, err2) and self._ok(comm3, err3)
-        ):
+        volt = self._read(1, servo_id, _PRESENT_VOLTAGE)
+        temp = self._read(1, servo_id, _PRESENT_TEMPERATURE)
+        raw_load = self._read(2, servo_id, _PRESENT_LOAD)
+        if volt is None or temp is None or raw_load is None:
             return None
         return ServoHealth(
             id=servo_id,
@@ -194,6 +264,11 @@ class FeetechBus:
             temperature=temp,
             load=_decode_load(raw_load),
         )
+
+    def read_torque(self, servo_id: int) -> bool | None:
+        """True if the servo is currently holding, None if unreadable."""
+        value = self._read(1, servo_id, _TORQUE_ENABLE)
+        return None if value is None else bool(value)
 
     def read_position_load(self, servo_id: int) -> tuple[int, int] | None:
         """Return (raw counts, signed load), or None on comms failure.
@@ -247,8 +322,8 @@ class FeetechBus:
 
     def _read_mode(self, servo_id: int, attempts: int = 3) -> int | None:
         for attempt in range(attempts):
-            mode, comm, err = self._packet.read1ByteTxRx(self._port, servo_id, _MODE)
-            if self._ok(comm, err):
+            mode = self._read(1, servo_id, _MODE)
+            if mode is not None:
                 return mode
             if attempt + 1 < attempts:
                 time.sleep(0.05)
@@ -272,8 +347,7 @@ class FeetechBus:
         return None
 
     def _read_gain_reg(self, servo_id: int, addr: int) -> int | None:
-        value, comm, err = self._packet.read1ByteTxRx(self._port, servo_id, addr)
-        return value if self._ok(comm, err) else None
+        return self._read(1, servo_id, addr)
 
     def write_gains(self, servo_id: int, kp: int, kd: int, ki: int) -> bool:
         """Write the position-loop gains to EEPROM and verify they took.
@@ -293,6 +367,60 @@ class FeetechBus:
             # The read-back races the relock; give the servo time to settle.
             time.sleep(0.15)
             if self.read_gains(servo_id) == want:
+                return True
+        return False
+
+    def read_homing_offset(self, servo_id: int) -> int | None:
+        """Return the servo's position-correction offset, or None if unreadable.
+
+        Read twice and trusted only when both agree, for the same reason as
+        ``read_gains``: this bus returns the occasional garbled byte, and a
+        wrong offset here would silently move every angle the arm reports.
+        """
+        for _ in range(5):
+            first = self._read_offset_once(servo_id)
+            time.sleep(0.05)
+            second = self._read_offset_once(servo_id)
+            if first is not None and first == second:
+                return decode_sign_magnitude(first)
+            time.sleep(0.1)
+        return None
+
+    def _read_offset_once(self, servo_id: int) -> int | None:
+        return self._read(2, servo_id, _HOMING_OFFSET)
+
+    def read_homing_offset_raw(self, servo_id: int) -> int | None:
+        """The offset register's undecoded value, for diagnosing the decoding.
+
+        ``read_homing_offset`` applies the sign-magnitude interpretation. When
+        that interpretation is what is in doubt, this is the number to look at.
+        """
+        for _ in range(5):
+            first = self._read_offset_once(servo_id)
+            time.sleep(0.05)
+            if first is not None and first == self._read_offset_once(servo_id):
+                return first
+            time.sleep(0.1)
+        return None
+
+    def write_homing_offset(self, servo_id: int, offset: int) -> bool:
+        """Write the position-correction offset to EEPROM and verify it took.
+
+        Returns True only once a confirmed read-back matches, so a caller never
+        reports success on an unverified change to persistent servo config.
+        Torque must be off: the offset moves the position frame, and a torqued
+        servo would chase its old goal into the new frame.
+        """
+        encoded = encode_sign_magnitude(offset)
+        for _ in range(4):
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 0)
+            time.sleep(0.05)
+            self._packet.write2ByteTxRx(self._port, servo_id, _HOMING_OFFSET, encoded)
+            time.sleep(0.05)
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 1)
+            # The read-back races the relock; give the servo time to settle.
+            time.sleep(0.15)
+            if self.read_homing_offset(servo_id) == offset:
                 return True
         return False
 

@@ -23,7 +23,8 @@ pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks
 pixi run arm            # SO-101 arm driver: joint states + safe jog control
 pixi run arm-jog        # Interactive per-joint jog CLI (needs `pixi run arm`)
 pixi run arm-check      # Standalone arm bus enumeration + health (read-only)
-pixi run arm-pose       # Teach/replay named arm poses; derive soft limits
+pixi run arm-calibrate  # Range calibration: centre the joints, sweep, emit limits
+pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi-powersave + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -196,7 +197,7 @@ than pulling `torch` onto the lean Pi env — the sole new dep is the pure-Pytho
 `feetech-servo-sdk` (`scservo_sdk`). All arm config (port, baud, servo IDs,
 per-joint soft limits, home offsets, direction) lives in `robot.yaml`'s `arm:`
 section. Contains:
-- `config.py` — parses `arm:`; encoder<->radian conversion + soft-limit clamping
+- `config.py` — parses `arm:`; encoder<->radian conversion about `zero` + soft-limit clamping
   (ROS-free, unit-tested in `test/`).
 - `bus.py` — `FeetechBus`, a thin `scservo_sdk` wrapper (lazy import so
   build/lint/test stay hardware-free); register map matches `mote_hardware`.
@@ -207,12 +208,112 @@ section. Contains:
 - `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client* of the
   driver (publishes clamped `arm/goal`, torque-off on exit). No bus contention.
 - `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
-  + `--save-home` calibration snapshot. Run with the driver stopped (same port).
+  + `--save-zero` calibration snapshot. Run with the driver stopped (same port).
+- **`zero` is not `home`.** `robot.yaml`'s `arm.joints[].zero` is the encoder
+  count reading 0 rad — after calibration, the *middle* of the joint's travel.
+  `home` is a taught *pose* in `~/.mote/arm_poses.yaml`, normally the arm's rest
+  position. Both were spelled "home" until 2026-07-28 and it confused an
+  operator at the bench, so the config key is `zero:` (`home:` still parses),
+  `jog`'s command is `zero` (`home` aliases it with a note), and `arm-check` has
+  `--save-zero`. Do not reintroduce the collision.
+- `calibrate.py` + `arm_calibrate` (`pixi run arm-calibrate`) — **where the soft
+  limits come from**, in LeRobot's two phases. A bus owner, not a driver client
+  (the driver reports radians about the very zero under replacement, and the arm
+  must stay limp). **Phase 1** records every joint at once in one live table (not one at a time).
+  **Phase 2** moves each joint's zero to the *measured* middle of that sweep, by
+  writing the servo's position-correction register (EEPROM, `SMS_STS_OFS_L/H` =
+  address 31, sign-magnitude with bit 11 the sign): `present = actual - offset`,
+  so this re-centres the travel in the 0-4095 frame. It reads the *existing*
+  offset first — assuming zero would double-count on a re-run — and verifies
+  afterwards that each reading moved by exactly the delta written, which is what
+  would catch a wrong sign encoding. **Deliberately NOT LeRobot's order:** theirs
+  asks the operator to hold every joint at mid-travel first (one `input()`, all
+  six motors from that one pose) and takes the zero from it — awkward, and less
+  accurate than the measurement the sweep takes anyway. Their order is
+  load-bearing for *them*: `record_ranges_of_motion` is a plain min/max with no
+  wraparound handling, so centring first is what keeps the sweep off the
+  boundary. Sweeping first means it can wrap, so `SweepRecorder` unwraps and the
+  centre comes from the unwrapped stream. LeRobot is Apache-2.0; no code copied,
+  only the shape of the flow. **Offsets are modular** (`present =
+  (actual - offset) mod 4096`), so a result outside the register's ±2047 is
+  folded, never rejected — rejecting one aborted a real bench run. **Centring is
+  not optional polish:** without it a joint whose travel straddles the encoder
+  wrap cannot be described by any zero/limit pair, and on the real arm 2 of 6
+  joints (`shoulder_pan`, `wrist_roll`) did exactly that; there is no software
+  workaround, since the goal register is 0-4095 too. The emitted band is the
+  swept range pulled *inward* by `--margin` (0.05 rad) — the opposite direction
+  to `arm-pose limits` — and is symmetric about zero by construction, so it can
+  never exclude its own zero (**the defect in the committed `shoulder_pan`
+  limits: [0.010, 0.229] does not contain 0**). Refuses on travel exceeding one
+  revolution (a continuous joint — no remedy, exclude it) and on a range too
+  short for the margin; `--skip-homing` additionally hits the wrap and
+  unreachable-zero cases, since it leaves the zero where it is.
+  **It saves to `$MOTE_HOME/arm.yaml`, NOT the repo.** Zeros and limits are measurements of one physical arm, so they are
+  per-robot state like `camera_calibration.yaml` and the site bundles — and
+  `mote_description/config/robot.yaml` is shared by the fleet and read-only once
+  installed from a channel. The package keeps the design (ids, names, direction,
+  gains) plus defaults for an uncalibrated arm; `config.apply_calibration`
+  overlays this robot's measured `zero`/`min`/`max` at load time, ignores a
+  joint the package no longer has, and rejects inverted limits. Deleting the
+  file reverts to the defaults. The file stores each measurement beside its
+  value, including `homing_offset` — the only record of what went into servo
+  EEPROM. **Taught poses are migrated automatically** (`poses.shift_poses`) — a pose is
+  radians about the zero and the shift is exactly what calibration computed, so
+  re-teaching by hand is pointless work; the old file is kept as `.bak` and any
+  pose landing outside the new limits is reported, never clamped. **One
+  confirmation only**, at the EEPROM write: torque release is done not asked
+  (the arm is already limp unless a driver was SIGKILLed, detected via the
+  torque register) and saving is the command's purpose. Three
+  different files are called some form of robot config: `$MOTE_HOME/arm.yaml`
+  (this arm's calibration), `$MOTE_HOME/robot.yaml` (fleet identity), and
+  `mote_description/config/robot.yaml` (shared hardware description).
+  A continuously-rotating joint is detectable **only** by being rotated past a
+  whole turn (the refusal above); rotated less it is indistinguishable from a
+  stopped joint, so do not add a threshold below one — it would miss most cases
+  and fire on long-but-stopped joints. LeRobot instead hard-codes SO-101's
+  `wrist_roll` as full-turn and skips its range; this arm's measures 5.88 rad
+  (94%), so whether it truly has stops is unsettled. The live table shows
+  `now`, both ends of travel, and the swept total, identically for every joint:
+  the ends come off the *unwrapped* stream, so they are real positions even for a
+  joint crossing 0/4095 (where the raw min/max read 17..4093 and describe the
+  encoder, not the joint) and such a joint simply reads `low` above `high`.
+  `--skip-homing` re-measures ranges without writing anything. The maths is
+  ROS-free and unit-tested (`test_calibrate.py`).
+- `arm_offsets` (`pixi run arm-offsets show|backup|restore|set`) — the offset
+  register is the **only arm state with no copy outside the servo**, so
+  overwriting it destroys the previous value. `arm-calibrate` snapshots the
+  existing offsets to `~/.mote/arm_offsets_backup.yaml` before its first write,
+  writes/verifies/confirms each servo one at a time, and on any failure stops
+  and points here — *including* a failure to save `arm.yaml` afterwards, which
+  leaves servos calibrated and the config file not, so the soft limits would
+  describe a frame the arm has stopped using. This exists because a run once
+  died mid-write on a dropped serial read, leaving a part-calibrated arm with no
+  way back. **Servos can
+  arrive with non-zero offsets** (this arm: 2027, -1723, 1772, -1706, -40,
+  1317), so the existing value is always read and folded in.
+- **Reads on this bus are hazardous twice over, and `FeetechBus._read` is the
+  single choke point for both.** It clears the input buffer before every read,
+  because a late reply is otherwise consumed as the answer to the *next*
+  request: observed on hardware as a PRESENT_POSITION read returning 3902, which
+  is exactly the -1854 just written to the offset register in sign-magnitude.
+  Anything read right after an EEPROM write needs `read_position_settled` /
+  `read_gains`-style two-agreeing-reads, not a single read. And: `scservo_sdk`'s
+  `read2ByteTxRx` indexes the reply buffer before checking its length, so a
+  dropped packet raises `IndexError` rather than reporting failure — which
+  crashed the above. A read that does not come back is `None`, never an
+  exception.
 - `poses.py` + `arm_pose` (`pixi run arm-pose`) — teach/replay named poses
   (`~/.mote/arm_poses.yaml`, `MOTE_HOME`-overridable), the arm's analogue of
-  `save-zone`. **The committed soft limits are the envelope of physically vetted
-  poses** (`arm-pose limits`), not guesses; `go` refuses moves over
-  `--max-travel`. Changing `home` invalidates stored poses.
+  `save-zone`. `go` refuses moves over `--max-travel`. Changing `home`
+  invalidates stored poses. `arm-pose limits` is **not** the calibration path:
+  it widens outward from taught poses, so it only describes where the arm has
+  been and never finds the stops (which is why the committed limits give barely
+  moved joints a near-zero band) — its remaining use is *narrowing* to a working
+  envelope inside calibrated hard stops. The committed values are still that old
+  envelope output, flagged as provisional in `robot.yaml` pending a real
+  calibration pass (`mote_arm/BENCH.md` step 3) — a real run showed the as-found
+  parked pose sits within ~20 counts of a hard stop on most joints, which is why
+  those bands are ~0.2 rad against the 3.4-3.6 rad the joints actually travel.
 - The arm links/joints are added to `mote.urdf.xacro` behind an `arm:=true`
   default (the sim passes `arm:=false`); joint names match `robot.yaml` and
   `/joint_states` so robot_state_publisher animates the arm in TF.

@@ -24,11 +24,10 @@ servos:
 # Consumed by mote_arm (driver, jog CLI, arm_check) and by the arm section of
 # mote.urdf.xacro. There is no leader arm — this is the follower only.
 #
-# CALIBRATION STATUS: min/max are conservative placeholders and `home` values
-# are the arm's as-found resting counts, NOT taught mechanical zeros. Pose each
-# joint at its true zero and re-run `pixi run arm-check -- --save-home` (see
-# mote_arm/BENCH.md), then update here — robot.yaml is the single source of
-# truth, so nothing else needs editing.
+# CALIBRATION STATUS: the min/max and `zero` below are uncalibrated defaults.
+# Calibration is per-robot and does not edit this file — `pixi run arm-calibrate`
+# (mote_arm/BENCH.md step 3) saves to `$MOTE_HOME/arm.yaml`, which overrides
+# these three fields per joint at load time. See DEFAULTS ONLY below.
 #
 # WIRING: the arm SHARES the drive-wheel bus (verified on the robot: IDs 1-6
 # for the arm, 7/9 for the wheels, all on /dev/mote_servos). Consequences:
@@ -68,29 +67,44 @@ arm:
     kp: 64
     kd: 32
     ki: 0
-  # min/max are soft limits in radians about each joint's zero; home is the raw
-  # encoder count (0-4095) at that zero (the arm's as-found parked pose, which
-  # measured within 0.003 rad of the taught "home" pose on every joint but pan).
+  # min/max are soft limits in radians about each joint's zero; `zero` is the
+  # raw encoder count (0-4095) that reads 0 rad.
   #
-  # These limits are NOT guesses — they are the envelope of poses a human
-  # physically posed the arm into and vetted ("home" and "reachy", taught
-  # 2026-07-25), widened by a 0.10 rad margin, as emitted by
-  # `pixi run arm-pose limits`. Every position inside the band therefore lies
-  # between two vetted poses. Joints that barely moved between the two poses get
-  # a correspondingly tight band — that is the point, not a bug: nothing may
-  # travel further than a human has demonstrated is safe.
+  # `zero` is NOT the arm's rest pose. After calibration 0 rad is the middle of
+  # each joint's travel; the rest pose is a taught pose called "home" in
+  # ~/.mote/arm_poses.yaml. The two were both called "home" until 2026-07-28,
+  # which is exactly why this key is now spelled `zero` (`home:` is still
+  # accepted for an un-migrated file).
   #
-  # To widen the envelope, pose the arm somewhere new, `arm-pose save <name>`,
-  # then re-run `arm-pose limits` and paste the result here. Changing `home`
-  # invalidates stored poses (they are recorded in radians about it), so re-teach
-  # poses after any re-home.
+  # Calibration is `pixi run arm-calibrate`: it sweeps every joint to its
+  # mechanical stops, writes each servo's homing-offset register so the measured
+  # mid-travel reads 2048, and saves the resulting zeros and limits to
+  # `$MOTE_HOME/arm.yaml`. Centring matters — without it a joint whose travel
+  # straddles the encoder's 0/4095 wrap cannot be described by any zero/limit
+  # pair at all, and two of six joints on the first real arm did.
+  #
+  # A pose is stored as radians about its joint's `zero`, so moving a zero
+  # changes which physical position each number names. `arm-calibrate` rewrites
+  # the taught poses by exactly the shift it applied, so they keep pointing
+  # where they did; only a pose left outside the new limits needs a decision.
+  #
+  # DEFAULTS ONLY — a calibrated robot overrides `zero`/`min`/`max` per joint
+  # from `$MOTE_HOME/arm.yaml` (written by `pixi run arm-calibrate`), because
+  # those are measurements of one physical arm and every arm's differ. What
+  # stays here is the design: ids, names, direction, gains.
+  #
+  # These particular numbers are the old pose-envelope output (`arm-pose
+  # limits`) and describe where one arm had *been*, not where it can go — the
+  # parked pose it was measured from sits within ~20 counts of a hard stop on
+  # most joints, and shoulder_pan's [0.010, 0.229] does not contain its own
+  # zero. Treat them as a conservative placeholder until a robot calibrates.
   joints:
-    - {name: shoulder_pan,  id: 1, min:  0.010, max: 0.229, home: 3013, invert: false}
-    - {name: shoulder_lift, id: 2, min: -0.102, max: 0.100, home: 1483, invert: false}
-    - {name: elbow_flex,    id: 3, min: -3.291, max: 0.103, home: 2931, invert: false}
-    - {name: wrist_flex,    id: 4, min: -3.226, max: 0.097, home: 2767, invert: false}
-    - {name: wrist_roll,    id: 5, min: -0.098, max: 0.102, home:  731, invert: false}
-    - {name: gripper,       id: 6, min: -0.102, max: 0.098, home: 2056, invert: false}
+    - {name: shoulder_pan,  id: 1, min:  0.010, max: 0.229, zero: 3013, invert: false}
+    - {name: shoulder_lift, id: 2, min: -0.102, max: 0.100, zero: 1483, invert: false}
+    - {name: elbow_flex,    id: 3, min: -3.291, max: 0.103, zero: 2931, invert: false}
+    - {name: wrist_flex,    id: 4, min: -3.226, max: 0.097, zero: 2767, invert: false}
+    - {name: wrist_roll,    id: 5, min: -0.098, max: 0.102, zero:  731, invert: false}
+    - {name: gripper,       id: 6, min: -0.102, max: 0.098, zero: 2056, invert: false}
 
 # Sensors
 lidar:
