@@ -70,6 +70,7 @@ import os
 import re
 import socket
 import sys
+import traceback
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -635,6 +636,14 @@ class FleetHandler(BaseHTTPRequestHandler):
                 exc.code, {"schema": protocol.SCHEMA, "error": str(exc), **exc.detail}
             )
             return
+        except Exception as exc:
+            # An audit row opened as 'receiving' has to be closed on every
+            # path, or an upload that crashes the handler leaves a row that
+            # says the transfer is still in progress for ever.
+            registry.finish(entry["id"], "failed", f"{type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._error(500, "the bundle could not be stored")
+            return
         registry.finish(entry["id"], "stored", "; ".join(report.warnings))
         print(
             f"map upload {site}/{floor}/{stored} from {robot_id} "
@@ -701,6 +710,14 @@ class FleetHandler(BaseHTTPRequestHandler):
             self._send(
                 exc.code, {"schema": protocol.SCHEMA, "error": str(exc), **exc.detail}
             )
+            return
+        except Exception as exc:
+            # An audit row opened as 'receiving' has to be closed on every
+            # path, or an upload that crashes the handler leaves a row that
+            # says the transfer is still in progress for ever.
+            registry.finish(entry["id"], "failed", f"{type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._error(500, "the bundle could not be stored")
             return
         announced, detail = self.server.announce(promoted)
         registry.finish(

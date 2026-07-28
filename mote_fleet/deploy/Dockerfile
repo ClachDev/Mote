@@ -30,7 +30,7 @@ ENV MOTE_VERSION=${MOTE_VERSION} \
 # the robot's MOTE_HOME.
 ENV MOTE_FLEET_HOME=/var/lib/mote-fleet
 
-RUN pip install --no-cache-dir "paho-mqtt>=2,<3"
+RUN pip install --no-cache-dir "paho-mqtt>=2,<3" "pyyaml>=6,<7"
 
 # The layout the server already expects: fleet_server.py puts its parent's
 # parent on sys.path and imports `mote_fleet.protocol` from there, and finds the
@@ -41,9 +41,10 @@ COPY mote_fleet/mote_fleet/__init__.py \
      mote_fleet/mote_fleet/protocol.py \
      /app/mote_fleet/
 # The map registry validates uploaded bundles with the *same* module the robot
-# writes them with (fleet.md Q4). It is stdlib-only and ROS-free for exactly
-# this reason, so the two files come across and nothing else from mote_bringup
-# does — no ROS, no PyYAML, no checkout.
+# writes them with (fleet.md Q4). It is ROS-free for exactly this reason, so
+# the two files come across and nothing else from mote_bringup does — no ROS,
+# no checkout. Its one third-party import is PyYAML, installed above: the
+# library that writes these files is the right one to read them with.
 COPY mote_bringup/mote_bringup/__init__.py \
      mote_bringup/mote_bringup/bundle.py \
      /app/mote_bringup/

@@ -336,6 +336,10 @@ inference-prefetch-rocm = "python -u mote_perception/tools/prefetch_models.py"
 # with no docker. It has no websockets, which is why it is neither default.
 mosquitto = ">=2.0,<3"
 paho-mqtt = ">=2,<3"
+# The bundle validator reads bundle YAML with the same library that writes it
+# (mote_bringup/bundle.py). A second, hand-rolled reader was tried and silently
+# disagreed with safe_dump on non-ASCII zone names.
+pyyaml = ">=6,<7"
 pytest = ">=8,<9"
 
 [feature.fleet.tasks]

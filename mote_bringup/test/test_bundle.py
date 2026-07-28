@@ -1,11 +1,12 @@
-"""The shared bundle module: the YAML subset, the validator, and the wire form.
+"""The shared bundle module: reading a bundle, validating it, and its wire form.
 
 Two ends depend on this file agreeing with itself — a robot writing a map
-revision and a fleet server deciding whether to serve it — and one of them has
-no PyYAML, so the parser here is first-party. That makes the differential test
-below the important one: every bundle YAML file committed in this repo is parsed
-both ways and must come out identical. A parser that is *nearly* right about an
-origin puts every robot in the wrong place.
+revision and a fleet server deciding whether to serve it — so the tests that
+matter most here read what the **real writers** actually emit. An earlier
+version of this module parsed YAML itself and was tested against the bundle
+files that happened to be committed; all of those passed while
+``segment-map``'s and ``save-zone``'s output did not parse at all, because no
+committed file had that shape. The corpus is not the contract: the writers are.
 """
 
 import gzip
@@ -21,80 +22,83 @@ from mote_bringup import bundle
 REPO = Path(__file__).resolve().parents[2]
 
 
-# ---- the YAML subset ----------------------------------------------------
+# ---- what the real writers emit -----------------------------------------
+#
+# Every one of these calls the actual production writer and reads the file back
+# through the validator's own reader. They are the regression test for the
+# hand-rolled parser this module used to carry.
 
 
-def committed_yaml() -> list[Path]:
-    """Every YAML file that is part of a site bundle in this repository."""
-    roots = [
-        REPO / "mote_simulation" / "sim_home" / "sites",
-        REPO / "mote_simulation" / "worlds",
-        REPO / "mote_tasks" / "config",
+def test_segment_map_output_is_a_bundle_this_can_read(tmp_path):
+    """`pixi run segment-map --write` (#69) proposes polygon zones.
+
+    Its writer emits a block sequence of flow pairs for the vertex list — the
+    exact shape the hand-rolled parser rejected, which made the whole path
+    segment a floor -> publish-map fail with a 422.
+    """
+    from mote_bringup.map_cleanup.room_segmentation import Room
+    from mote_bringup.map_cleanup.rooms_cli import merge_into_zones
+
+    path = tmp_path / "zones.yaml"
+    rooms = [
+        Room(
+            name="room_1",
+            polygon=[(0.0, 0.0), (4.0, 0.0), (4.0, 3.0), (0.0, 3.0)],
+            pose=(1.25, 3.4),
+            area_m2=12.0,
+            clearance_m=1.2,
+        )
     ]
-    found = []
-    for root in roots:
-        found += sorted(p for p in root.rglob("*.yaml") if p.is_file())
-    return found
+    added, _ = merge_into_zones(path, rooms)
+    assert added == ["room_1"]
 
-
-@pytest.mark.parametrize("path", committed_yaml(), ids=lambda p: p.name)
-def test_the_subset_parser_agrees_with_pyyaml(path):
+    zones = bundle.read_zones(path)["zones"]
+    assert zones["room_1"]["polygon"][2] == [4.0, 3.0]
     assert bundle.load_yaml(path.read_text()) == yaml.safe_load(path.read_text())
 
 
-def test_multi_line_flow_mappings_and_polygon_lists():
-    """The hospital's room zones are written this way by the world generator:
-    a flow mapping that wraps onto a second line, holding a list of vertices."""
-    parsed = bundle.load_yaml(
-        "zones:\n"
-        "  ward: {x: 1.0, y: 2.0, yaw: 1.571,\n"
-        "    polygon: [[0, 0], [2, 0], [2, 2], [0, 2]]}\n"
-    )
-    assert parsed["zones"]["ward"]["polygon"][2] == [2, 2]
-    assert parsed["zones"]["ward"]["x"] == 1.0
-
-
-def test_comments_and_quotes_do_not_confuse_each_other():
-    parsed = bundle.load_yaml(
-        "# leading comment\nsaved: '2026-07-27T10:15:00'  # when\n"
-        "note: 'a # inside quotes'\n"
-    )
-    assert parsed == {"saved": "2026-07-27T10:15:00", "note": "a # inside quotes"}
-
-
-def test_scalars_keep_their_types():
-    parsed = bundle.load_yaml(
-        "i: 3\nf: 0.05\nt: true\nf2: false\nn: null\ntilde: ~\ns: trinary\n"
-    )
-    assert parsed == {
-        "i": 3,
-        "f": 0.05,
-        "t": True,
-        "f2": False,
-        "n": None,
-        "tilde": None,
-        "s": "trinary",
-    }
-
-
-def test_block_sequences_nest():
-    assert bundle.load_yaml("a:\n  - 1\n  - 2\nb:\n  c: 3\n") == {
-        "a": [1, 2],
-        "b": {"c": 3},
-    }
-
-
 @pytest.mark.parametrize(
-    "text",
+    "name",
     [
-        "a: &anchor 1\n",  # anchors would need a reference table
-        "a: [1, 2\n",  # never closed
-        "just a scalar and: then: two colons\n",
+        "Café",  # safe_dump escapes it; the old reader returned Caf\xE9 silently
+        "Matron's office",  # single-quoted by the dumper; the old reader raised
+        "ward east",
     ],
 )
-def test_constructs_outside_the_subset_are_refused_not_guessed(text):
-    with pytest.raises(bundle.BundleError):
-        bundle.load_yaml(text)
+def test_a_zone_name_survives_the_round_trip(tmp_path, name):
+    path = tmp_path / "zones.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"zones": {name: {"x": 1.0, "y": 2.0, "yaw": 0.0}}},
+            sort_keys=False,
+            default_flow_style=None,
+        )
+    )
+    assert name in bundle.read_zones(path)["zones"]
+
+
+def test_a_saved_revision_validates(tmp_path, monkeypatch):
+    """sites.save_map writes site.yaml/meta.yaml; the server reads them."""
+    import sys
+
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path / "home"))
+    sys.path.insert(0, str(REPO / "mote_bringup"))
+    from mote_bringup import sites
+
+    sites.create("home", "ground")
+    floor = sites.floor_dir("home", "ground")
+    rev = floor / "maps" / "20260728T090412"
+    revision(rev)
+    site_yaml = floor.parents[1] / "site.yaml"
+    assert bundle.load_yaml(site_yaml.read_text())["name"] == "home"
+    assert bundle.validate(rev, require_posegraph=False).ok
+
+
+def test_not_yaml_at_all_is_a_bundle_error(tmp_path):
+    path = tmp_path / "zones.yaml"
+    path.write_text("zones: [1, 2\n")
+    with pytest.raises(bundle.BundleError, match="not valid YAML"):
+        bundle.read_zones(path)
 
 
 # ---- map.yaml -----------------------------------------------------------
@@ -175,7 +179,7 @@ def test_a_zone_that_is_not_a_place_is_refused(tmp_path, text, message):
 # ---- the occupancy image ------------------------------------------------
 
 
-def png(path, width, height, values, colour=0, depth=8):
+def png(path, width, height, values, colour=0, depth=8, **kwargs):
     """A greyscale PNG built here rather than by an image library, so the
     decoder is tested against the format."""
 
@@ -187,13 +191,34 @@ def png(path, width, height, values, colour=0, depth=8):
             + struct.pack(">I", zlib.crc32(kind + data))
         )
 
+    marker = bytes([kwargs.get("filter_type", 0)])
     raw = b"".join(
-        b"\x00" + bytes(values(x, y) for x in range(width)) for y in range(height)
+        marker + bytes(values(x, y) for x in range(width)) for y in range(height)
     )
     Path(path).write_bytes(
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, depth, colour, 0, 0, 0))
         + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+def raw_png(path, width, height, idat: bytes):
+    """A PNG whose IDAT is supplied verbatim — for streams that do not match
+    the dimensions the header declares."""
+
+    def chunk(kind, data):
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    Path(path).write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+        + chunk(b"IDAT", idat)
         + chunk(b"IEND", b"")
     )
 
@@ -207,9 +232,57 @@ def test_occupancy_counts_a_real_saved_map():
 
 
 def test_occupancy_says_why_when_it_cannot_read_the_pixels(tmp_path):
+    """A palette PNG is valid and unreadable here — a warning, not an error,
+    because map_server can still serve it."""
     path = tmp_path / "map.png"
     png(path, 4, 4, lambda x, y: 254, depth=8, colour=3)
-    assert "palette" in bundle.occupancy(path)["reason"]
+    counts = bundle.occupancy(path)
+    assert "palette" in counts["reason"]
+    assert not counts["corrupt"]
+
+
+def test_an_unknown_filter_byte_is_reported_not_raised(tmp_path):
+    """validate() promises never to raise; the decoder must keep that promise.
+
+    An upload whose map.png carries filter byte 9 used to reach the HTTP
+    handler as a BundleError, which meant no response at all and an audit row
+    wedged at 'receiving'.
+    """
+    path = tmp_path / "map.png"
+    png(path, 4, 4, lambda x, y: 254, filter_type=9)
+    assert "filter" in bundle.occupancy(path)["reason"]
+
+    rev = revision(tmp_path / "20260727T101500")
+    png(rev / "map.png", 20, 20, lambda x, y: 254, filter_type=9)
+    report = bundle.validate(rev)  # must not raise
+    assert not report.ok
+    assert any("filter" in e for e in report.errors)
+
+
+def test_a_decompression_bomb_is_refused_by_the_declared_size(tmp_path):
+    """A 1x1 PNG carrying 64 MB of compressed zeroes inflated to 786 MB of RSS
+    before anything looked at the header it had already parsed."""
+    path = tmp_path / "map.png"
+    bomb = zlib.compress(bytes(64 * 1024 * 1024), 9)
+    raw_png(path, 1, 1, bomb)
+    counts = bundle.occupancy(path)
+    assert counts["reason"] == "image data is larger than its dimensions allow"
+    assert counts["corrupt"]
+
+
+def test_a_map_that_fails_the_extent_check_is_not_then_decoded(tmp_path):
+    """The sanity check has already failed; decoding a million pixels in pure
+    python afterwards only spends time on a revision that is being refused."""
+    rev = revision(
+        tmp_path / "20260727T101500",
+        map_yaml="image: map.png\nmode: trinary\nresolution: 5000\n"
+        "origin: [0, 0, 0]\nnegate: 0\n"
+        "occupied_thresh: 0.65\nfree_thresh: 0.196\n",
+    )
+    report = bundle.validate(rev)
+    assert not report.ok
+    assert any("check the resolution" in e for e in report.errors)
+    assert report.occupancy is None
 
 
 def test_png_size_reads_the_header_not_the_image():

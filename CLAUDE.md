@@ -128,13 +128,20 @@ map frame's origin is an accident of where SLAM started (an id collision, ids
 being per-second timestamps, stores the second as `<rev>-2`). **The shared,
 ROS-free validator the design asked for is `mote_bringup/bundle.py`** — the
 bundle's *content* (what a revision must hold, whether the map inside is usable,
-how it packs for a wire) as against `sites.py`'s *layout* — stdlib-only, with its
-own YAML-subset parser differential-tested against PyYAML on every bundle file in
-the repo, and a pure-Python PNG decoder so "the occupancy is not degenerate" can
-actually be checked (~155 ns/px; 0.14 s for the 1158x761 hospital map). It lives
-in `mote_bringup` because the layout is `sites.py`'s and `mote_fleet` already
-depends on it — the reverse would be a package cycle — and the deploy image
-copies just those two ROS-free files, so the fleet box still installs no ROS.
+how it packs for a wire) as against `sites.py`'s *layout* — with a pure-Python
+PNG decoder so "the occupancy is not degenerate" can actually be checked
+(~155 ns/px; 0.14 s for the 1158x761 hospital map). It lives in `mote_bringup`
+because the layout is `sites.py`'s and `mote_fleet` already depends on it — the
+reverse would be a package cycle — and the deploy image copies just those two
+ROS-free files, so the fleet box still installs no ROS. It reads YAML with
+**PyYAML**, which the fleet image installs: it first shipped with a hand-rolled
+parser to keep the server's dependency list at exactly "python", and that was
+wrong three ways — the list already had paho in it, PyYAML is what *writes*
+these files, and the second reader disagreed with it in service (a zone named
+`Café` came back as `Caf\xE9` **silently**, and the block-sequence-of-flow-pairs
+polygon that `segment-map` and `save-zone` emit did not parse at all, so #69's
+output was a bundle M4 refused). Stdlib-only still holds for `protocol.py` and
+for the PNG reader, which is 140 lines against Pillow's 4 MB.
 `save-map` now runs the same check locally, so a map the server would refuse is
 refused while the mapping session is still up. On the robot, `mote_fleet/
 mapsync.py` + a worker thread in the agent stage a pulled revision in a temp
@@ -176,7 +183,7 @@ A `ros2_control` `SystemInterface` plugin (`MoteHardware`) that drives two Feete
 Contains `urdf/mote.urdf.xacro` and `config/robot.yaml`. The xacro loads robot.yaml at processing time and uses those values directly — no xacro args are needed or accepted. The `<ros2_control>` tag embeds the servo params so they reach `MoteHardware::on_init`.
 
 ### `mote_bringup` (Python/ament)
-Launch files, config, udev rules, NetworkManager drop-ins, systemd services, and the fleet foundation: `mote_home.py` (per-robot state root), `identity.py` (`identity` console script), `provision.py` + `provisioning/user-data.template` (`provision`), `dds_participants.py` (`dds_participants`), `twist_relay.py` (`twist_relay`, the Foxglove teleop seam), the `foxglove/` layout, and `tailscale/install.sh`, plus `bundle.py` — the site bundle's *content*: a stdlib-only, ROS-free reader/validator/packer for a map revision, shared with the fleet server's registry (M4) so both ends check a revision with the same code. See Fleet above.
+Launch files, config, udev rules, NetworkManager drop-ins, systemd services, and the fleet foundation: `mote_home.py` (per-robot state root), `identity.py` (`identity` console script), `provision.py` + `provisioning/user-data.template` (`provision`), `dds_participants.py` (`dds_participants`), `twist_relay.py` (`twist_relay`, the Foxglove teleop seam), the `foxglove/` layout, and `tailscale/install.sh`, plus `bundle.py` — the site bundle's *content*: a ROS-free reader/validator/packer for a map revision, shared with the fleet server's registry (M4) so both ends check a revision with the same code. See Fleet above.
 
 **On-robot reliability** (see `mote_bringup/README.md`): `pixi run robot`/`mapping` include the health monitor, so a manual run publishes `/health` too; the systemd units are installed by `pixi run setup` but **not enabled** (autostart would drain the battery on a desk — opt in with `systemctl enable --now mote-bringup mote-health`). the systemd services restart with backoff and never permanently give up (`Restart=always`, `RestartSec`/`RestartSteps`/`RestartMaxDelaySec`, `StartLimitIntervalSec=0`), order after the udev-tagged `dev-mote_*.device` units, and bound the journal. A pre-flight self-check (`self_check.py`, run as `mote-bringup`'s `ExecStartPre`; `pixi run self-check`) gates bringup on servo ping + lidar/camera/disk/clock/config and keeps the robot idle with a clear reason on failure. A health monitor (`health_monitor.py`, `mote-health.service` with a `Type=notify` watchdog; `pixi run health`) publishes per-subsystem `diagnostic_msgs/DiagnosticArray` on `/diagnostics_agg` and a single OK/DEGRADED/FAULT summary on `/health`. Driver and nav2 nodes are `respawn=True` for per-node recovery under the whole-service systemd restart. Battery voltage is **not** software-measurable (the power bank exposes no telemetry); `system_monitor` reports the Pi's `get_throttled` flags as the only power signal — read via **`vcgencmd`**, since the Pi 4 sysfs node does not exist on a Pi 5, alongside the Active Cooler's `fan_rpm` from the `pwmfan` hwmon.
 

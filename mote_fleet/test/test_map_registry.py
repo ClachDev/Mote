@@ -151,6 +151,28 @@ def test_a_degenerate_map_is_refused(server, robot, tmp_path):
     assert any("no free space" in error for error in body["errors"])
 
 
+def test_an_undecodable_image_answers_and_closes_its_audit_row(server, robot, tmp_path):
+    """A map.png with an invalid scanline filter byte.
+
+    The decoder used to raise through validate() — which documents that it
+    never does — so the handler died with no HTTP response at all and left the
+    upload's audit row saying 'receiving' for ever. The bytes are the point:
+    this is what a truncated or bit-flipped transfer looks like, which is the
+    case the server-side re-validation exists for.
+    """
+    directory = write_revision(tmp_path / "corrupt")
+    write_png(directory / "map.png", 40, 30, fill=b"\xfe", filter_type=9)
+    blob = bundle.pack(directory)
+
+    body = expect_error(lambda: upload(server, blob), 422)
+    assert any("readable PNG" in error for error in body["errors"])
+
+    operator_token = server.registry.new_operator(name="auditor")
+    _, audit = get(server, "/v1/audit", token=operator_token)
+    row = next(r for r in audit["audit"] if r["action"] == "map.upload")
+    assert row["result"] != "receiving"
+
+
 def test_something_that_is_not_a_bundle_is_refused(server, robot):
     body = expect_error(lambda: upload(server, b"not a tarball at all"), 400)
     assert "bundle" in body["error"]

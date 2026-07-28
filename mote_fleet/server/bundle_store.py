@@ -43,7 +43,8 @@ from pathlib import Path
 # and this server imports it two ways: from the sibling package directory in a
 # checkout, and from beside ``mote_fleet`` in the deploy image, where only the
 # two ROS-free files are copied. Neither needs ROS on the box — that is the
-# whole point of ``bundle`` being stdlib-only (fleet.md Q4).
+# whole point of ``bundle`` being ROS-free (fleet.md Q4). Its only third-party
+# import is PyYAML, which the deploy image installs beside paho.
 for _candidate in (
     Path(__file__).resolve().parents[1],
     Path(__file__).resolve().parents[2] / "mote_bringup",
@@ -297,7 +298,16 @@ class BundleStore:
                 bundle.unpack(blob, staging)
             except bundle.BundleError as exc:
                 raise StoreError(str(exc), 400) from exc
-            report = bundle.validate(staging)
+            try:
+                report = bundle.validate(staging)
+            except bundle.BundleError as exc:
+                # validate() documents that it reports rather than raises, and
+                # it is tested that way. Belt and braces: a validator that
+                # breaks that promise on some input nobody thought of should
+                # still be a 422 about the bundle, not a dropped socket.
+                raise StoreError(
+                    f"the bundle could not be validated: {exc}", 422
+                ) from exc
             if not report.ok:
                 raise StoreError(
                     f"the bundle is not a usable map revision: {report.summary()}",

@@ -84,7 +84,8 @@ dispatch would fail with a broker-unreachable 503. It defaults to
 `--broker-host`, so nothing outside a container topology needs it.
 
 If GHCR is unreachable, or you are deploying from a checkout, add `--build`:
-the image is stdlib-only python and builds in seconds on the box itself,
+the image is a python base plus two pure wheels and builds in seconds on the
+box itself,
 including on a Pi.
 
 ### State, and what a backup has to contain

@@ -51,7 +51,7 @@ class FakeBroker:
         pass
 
 
-def write_png(path, width, height, fill=b"\x80"):
+def write_png(path, width, height, fill=b"\x80", filter_type=0):
     """A real PNG, so the header reader and the occupancy decoder are tested
     against the format rather than against a fixture that agrees with them."""
 
@@ -63,7 +63,7 @@ def write_png(path, width, height, fill=b"\x80"):
             + struct.pack(">I", zlib.crc32(kind + data))
         )
 
-    raw = b"".join(b"\x00" + fill * width for _ in range(height))
+    raw = b"".join(bytes([filter_type]) + fill * width for _ in range(height))
     Path(path).write_bytes(
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))

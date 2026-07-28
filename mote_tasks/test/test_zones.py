@@ -1,5 +1,7 @@
 import math
 
+import yaml
+
 import pytest
 
 from mote_tasks.zones import (
@@ -176,3 +178,26 @@ def test_append_zone_keeps_a_polygon_but_radius_replaces_it(tmp_path):
     # ...but an explicit --radius is a deliberate new footprint.
     append_zone(path, "ward", 1.5, 0.5, 0.0, radius=3.0)
     assert load_zones(str(path))["ward"].footprint.radius == pytest.approx(3.0)
+
+
+def test_save_zone_output_is_readable_by_the_bundle_validator(tmp_path):
+    """`save-zone` writes the file the fleet server has to validate on upload.
+
+    The two live in different packages and are written and read by different
+    code, so the round trip is only true if something checks it. It was not:
+    the polygon shape this dumper emits did not parse (m4-verification.md §2).
+    """
+    from mote_bringup import bundle
+
+    path = tmp_path / "zones.yaml"
+    append_zone(path, "kitchen", 1.0, 2.0, 0.5, radius=1.5)
+    append_zone(path, "ward_east", 4.0, 1.0, 0.0)
+    data = yaml.safe_load(path.read_text())
+    data["zones"]["ward_east"]["polygon"] = [[3.0, 0.0], [5.0, 0.0], [5.0, 2.0]]
+    path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=None))
+    append_zone(path, "ward_east", 4.1, 1.1, 0.0)  # re-teach: keeps the outline
+
+    zones = bundle.read_zones(path)["zones"]
+    assert zones["kitchen"]["radius"] == 1.5
+    assert zones["ward_east"]["polygon"][2] == [5.0, 2.0]
+    assert load_zones(str(path))["ward_east"].footprint is not None

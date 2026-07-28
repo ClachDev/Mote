@@ -10,14 +10,25 @@ re-validates it before making it canonical (fleet.md Q4) because an upload can
 truncate where a local save could not. One module, imported by both, rather
 than a second implementation on the server that agrees only by convention.
 
-That is also why this file is **stdlib-only and ROS-free**, the same discipline
-as :mod:`mote_fleet.protocol` and ``mote_perception/depth_wire.py``. There is
-no PyYAML here either: the fleet server's whole dependency list is "python",
-and the bundle's YAML is a small, known subset — flat scalars in ``map.yaml``,
-one nesting level in ``meta.yaml``, and flow-style mappings with polygon lists
-in ``zones.yaml``. :func:`load_yaml` parses exactly that subset and refuses the
-rest rather than half-understanding it; ``test_bundle.py`` differential-tests it
-against PyYAML on every bundle file committed in this repo.
+That is also why this file is **ROS-free**, the same discipline as
+:mod:`mote_fleet.protocol` and ``mote_perception/depth_wire.py``: the fleet
+server has no ROS, no framework and no checkout, and this file is the one thing
+it imports from the robot's side of the tree.
+
+It is *not* dependency-free, and that was a correction. It first shipped with a
+hand-rolled parser for "the YAML subset bundles are written in", to keep the
+server's dependency list at exactly "python". Three things were wrong with that.
+The list was already "python plus paho"; PyYAML is the library that *writes*
+these files, so a second reader can only ever approximate it; and it did — a
+zone called ``Café`` came back as ``Caf\xe9`` with no error at all, an
+apostrophe in a room name raised, and the block-sequence-of-flow-pairs shape
+that ``safe_dump(default_flow_style=None)`` emits for a polygon — i.e. the
+output of ``segment-map`` and ``save-zone`` — did not parse. Parsing input this
+module exists to distrust is the last place to save a 200 KB pure-Python wheel,
+so it reads YAML with PyYAML and the fleet image installs it. The stdlib-only
+rule still holds where it earns its keep: :mod:`mote_fleet.protocol`, and the
+PNG reader below, which is 140 lines against Pillow's 4 MB and is only ever
+pointed at one well-specified format.
 
 What a validated revision has to contain::
 
@@ -43,6 +54,8 @@ import tarfile
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import yaml
 
 SCHEMA = 1
 
@@ -94,6 +107,11 @@ FREE_MIN = 230
 #: revision of a big floor can be almost entirely unknown.
 MIN_FREE_FRACTION = 0.001
 
+#: An occupancy map this reader will decode, in raw bytes. Sized so the
+#: 1158x761 hospital floor (0.9 MB) has three orders of magnitude of headroom
+#: while a decompression bomb does not: the decoder inflates to this at most.
+MAX_PIXELS = 512 * 1024 * 1024
+
 #: No floor is 10 km across. A resolution/size pair that claims otherwise is a
 #: units mistake, and it would blow up every consumer's view transform.
 MAX_EXTENT_M = 10_000.0
@@ -104,246 +122,30 @@ class BundleError(ValueError):
 
 
 # --------------------------------------------------------------------------
-# the YAML subset
+# the YAML the bundle is written in
 # --------------------------------------------------------------------------
 
 
 def load_yaml(text: str):
-    """Parse the YAML subset site bundles are written in.
+    """Parse bundle YAML, raising :class:`BundleError` rather than a YAMLError.
 
-    Block mappings and sequences by indentation, flow mappings and sequences
-    (which may span lines — the hospital's polygons do), comments, and plain
-    scalars. Anchors, tags, multi-line scalars, multiple documents and merge
-    keys are **not** supported and raise: silently mis-reading a map's origin
-    would put every robot in the wrong place, so an unknown construct is an
-    error rather than a guess.
+    PyYAML, deliberately — see this module's docstring. The only thing added
+    here is the error type, so that every "this bundle is not readable" failure
+    reaches a caller as one exception class.
     """
-    lines = []
-    for number, raw in enumerate(text.splitlines(), start=1):
-        content = _strip_comment(raw)
-        if not content.strip():
-            continue
-        if content.lstrip().startswith(("---", "...")):
-            continue
-        if content.lstrip().startswith(("&", "*", "!", ">", "|")):
-            raise BundleError(f"line {number}: unsupported YAML construct {content!r}")
-        lines.append((len(content) - len(content.lstrip()), content.strip(), number))
-    if not lines:
-        return None
-    value, index = _parse_block(lines, 0, lines[0][0])
-    if index != len(lines):
-        raise BundleError(f"line {lines[index][2]}: unexpected indentation")
-    return value
-
-
-def _strip_comment(line: str) -> str:
-    quote = ""
-    for index, char in enumerate(line):
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char == "#" and (index == 0 or line[index - 1] in " \t"):
-            return line[:index]
-    return line
-
-
-def _parse_block(lines, index: int, indent: int):
-    """One block collection at ``indent``. Returns ``(value, next_index)``."""
-    if lines[index][1].startswith("- ") or lines[index][1] == "-":
-        return _parse_sequence(lines, index, indent)
-    return _parse_mapping(lines, index, indent)
-
-
-def _parse_sequence(lines, index: int, indent: int):
-    items = []
-    while index < len(lines) and lines[index][0] == indent:
-        line_indent, content, number = lines[index]
-        if not (content.startswith("- ") or content == "-"):
-            break
-        rest = content[1:].strip()
-        index += 1
-        if not rest:
-            if index < len(lines) and lines[index][0] > line_indent:
-                value, index = _parse_block(lines, index, lines[index][0])
-            else:
-                value = None
-        elif _open_flow(rest):
-            joined, index = _join_flow(lines, index, rest, number)
-            value = parse_flow(joined)
-        else:
-            value = _scalar(rest, number)
-        items.append(value)
-    return items, index
-
-
-def _parse_mapping(lines, index: int, indent: int):
-    mapping = {}
-    while index < len(lines) and lines[index][0] == indent:
-        _, content, number = lines[index]
-        if content.startswith("- "):
-            break
-        key, separator, rest = _split_key(content)
-        if not separator:
-            raise BundleError(f"line {number}: expected 'key: value', got {content!r}")
-        key = _scalar(key.strip(), number)
-        rest = rest.strip()
-        index += 1
-        if not rest:
-            if index < len(lines) and lines[index][0] > indent:
-                value, index = _parse_block(lines, index, lines[index][0])
-            else:
-                value = None
-        elif _open_flow(rest):
-            joined, index = _join_flow(lines, index, rest, number)
-            value = parse_flow(joined)
-        else:
-            value = _scalar(rest, number)
-        mapping[key] = value
-    return mapping, index
-
-
-def _split_key(content: str):
-    """Split ``key: value`` at the first ``:`` outside quotes and brackets."""
-    quote, depth = "", 0
-    for index, char in enumerate(content):
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-        elif char == ":" and depth == 0:
-            if index + 1 == len(content) or content[index + 1] in " \t":
-                return content[:index], ":", content[index + 1 :]
-    return content, "", ""
-
-
-def _open_flow(text: str) -> bool:
-    return text.startswith(("[", "{"))
-
-
-def _join_flow(lines, index: int, first: str, number: int):
-    """Consume lines until the flow collection started in ``first`` closes."""
-    joined = first
-    while _flow_depth(joined) > 0:
-        if index >= len(lines):
-            raise BundleError(f"line {number}: unterminated flow collection")
-        joined += " " + lines[index][1]
-        index += 1
-    if _flow_depth(joined) < 0:
-        raise BundleError(f"line {number}: unbalanced brackets")
-    return joined, index
-
-
-def _flow_depth(text: str) -> int:
-    quote, depth = "", 0
-    for char in text:
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-    return depth
-
-
-def parse_flow(text: str):
-    """Parse one flow collection or scalar, e.g. ``{x: 1, polygon: [[0, 0]]}``."""
-    value, offset = _flow_value(text, 0)
-    if text[offset:].strip():
-        raise BundleError(f"trailing text after value: {text[offset:]!r}")
-    return value
-
-
-def _flow_value(text: str, index: int):
-    index = _skip_space(text, index)
-    if index >= len(text):
-        raise BundleError("expected a value")
-    if text[index] == "[":
-        return _flow_collection(text, index, "]")
-    if text[index] == "{":
-        return _flow_collection(text, index, "}")
-    return _flow_scalar(text, index)
-
-
-def _flow_collection(text: str, index: int, closer: str):
-    items, mapping = [], {}
-    index = _skip_space(text, index + 1)
-    while index < len(text) and text[index] != closer:
-        key_or_value, index = _flow_value(text, index)
-        index = _skip_space(text, index)
-        if closer == "}":
-            if index >= len(text) or text[index] != ":":
-                raise BundleError(f"expected ':' after key {key_or_value!r}")
-            value, index = _flow_value(text, index + 1)
-            mapping[key_or_value] = value
-        else:
-            items.append(key_or_value)
-        index = _skip_space(text, index)
-        if index < len(text) and text[index] == ",":
-            index = _skip_space(text, index + 1)
-    if index >= len(text):
-        raise BundleError(f"expected '{closer}'")
-    return (mapping if closer == "}" else items), index + 1
-
-
-def _flow_scalar(text: str, index: int):
-    if text[index] in "\"'":
-        quote = text[index]
-        end = text.find(quote, index + 1)
-        if end < 0:
-            raise BundleError(f"unterminated string at offset {index}")
-        return text[index + 1 : end], end + 1
-    end = index
-    while end < len(text) and text[end] not in ",:[]{}":
-        end += 1
-    return _scalar(text[index:end].strip(), None), end
-
-
-def _skip_space(text: str, index: int) -> int:
-    while index < len(text) and text[index] in " \t":
-        index += 1
-    return index
-
-
-def _scalar(token: str, number):
-    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
-        return token[1:-1]
-    lowered = token.lower()
-    if lowered in ("null", "~", ""):
-        return None
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
     try:
-        return int(token)
-    except ValueError:
-        pass
-    try:
-        return float(token)
-    except ValueError:
-        pass
-    where = f"line {number}: " if number else ""
-    if token.startswith(("&", "*", "!")):
-        raise BundleError(f"{where}unsupported YAML construct {token!r}")
-    if ": " in token:
-        # `a: b: c` is a nested mapping in real YAML and a string here, so it
-        # is refused rather than read as a value nobody wrote.
-        raise BundleError(f"{where}ambiguous value {token!r} — quote it")
-    return token
+        return yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise BundleError(f"not valid YAML: {_one_line(exc)}") from exc
+
+
+def _one_line(exc) -> str:
+    """PyYAML's errors are multi-line and end up in HTTP bodies and logs."""
+    return " ".join(str(exc).split())
 
 
 def load_yaml_file(path) -> dict:
-    """``load_yaml`` over a file, as a mapping. Raises BundleError."""
+    """:func:`load_yaml` over a file, as a mapping. Raises BundleError."""
     path = Path(path)
     try:
         text = path.read_text()
@@ -500,18 +302,21 @@ def occupancy(path) -> dict:
     revision can have every file in place, a sane ``map.yaml``, and still be a
     uniform grey rectangle. Nothing else in the pipeline looks at the pixels.
 
-    Decoded here rather than with an image library because the fleet server has
-    no dependencies, and an 8-bit greyscale PNG is zlib plus five one-line
-    filters. Anything else (16-bit, palette, interlaced) returns ``reason``
-    instead of counts — unreadable pixels are a thing to report, not to guess.
+    Decoded here rather than with an image library: an 8-bit greyscale PNG is
+    zlib plus five one-line filters, against 4 MB of Pillow on a box whose whole
+    job is answering HTTP. Anything this cannot read returns ``reason`` instead
+    of counts — unreadable pixels are a thing to report, not to guess — with
+    ``corrupt`` saying which kind: a flavour this decoder does not do (16-bit,
+    palette, interlaced) is a map somebody else can still serve, while a stream
+    that contradicts its own header is what a truncated upload looks like.
     """
     try:
         blob = Path(path).read_bytes()
     except OSError as exc:
-        return {"reason": str(exc)}
+        return {"reason": str(exc), "corrupt": False}
     rows = _decode_png_gray(blob)
-    if isinstance(rows, str):
-        return {"reason": rows}
+    if isinstance(rows, dict):
+        return rows
     free = occupied = unknown = 0
     for row in rows:
         for value in row:
@@ -523,7 +328,7 @@ def occupancy(path) -> dict:
                 unknown += 1
     total = free + occupied + unknown
     if not total:
-        return {"reason": "the image has no pixels"}
+        return {"reason": "the image has no pixels", "corrupt": True}
     return {
         "total": total,
         "free": round(free / total, 6),
@@ -532,10 +337,28 @@ def occupancy(path) -> dict:
     }
 
 
+def _broken(reason: str) -> dict:
+    """A PNG that no reader will accept: the bytes are wrong."""
+    return {"reason": reason, "corrupt": True}
+
+
+def _unsupported(reason: str) -> dict:
+    """A valid PNG in a flavour this decoder does not do."""
+    return {"reason": reason, "corrupt": False}
+
+
 def _decode_png_gray(blob: bytes):
-    """Rows of 8-bit samples from the first channel, or a reason it cannot be."""
+    """Rows of 8-bit samples from the first channel, or why not.
+
+    A failure is ``{"reason": ..., "corrupt": bool}``. The distinction is the
+    one :func:`validate` acts on: a PNG this reader does not *support* (16-bit,
+    palette, interlaced) is a map somebody else can still serve, so it costs
+    the occupancy check and a warning. A PNG that is *broken* — a bad filter
+    byte, a short IDAT, a stream that does not match its own header — is what a
+    truncated upload looks like, and no consumer will read it either.
+    """
     if blob[:8] != b"\x89PNG\r\n\x1a\n":
-        return "not a PNG"
+        return _broken("not a PNG")
     width = height = depth = colour = interlace = None
     data = bytearray()
     offset = 8
@@ -546,7 +369,7 @@ def _decode_png_gray(blob: bytes):
         offset += 12 + length
         if kind == b"IHDR":
             if len(body) < 13:
-                return "truncated IHDR"
+                return _broken("truncated IHDR")
             width = int.from_bytes(body[0:4], "big")
             height = int.from_bytes(body[4:8], "big")
             depth, colour, _, _, interlace = body[8:13]
@@ -555,23 +378,34 @@ def _decode_png_gray(blob: bytes):
         elif kind == b"IEND":
             break
     if width is None:
-        return "no IHDR"
+        return _broken("no IHDR")
     if depth != 8:
-        return f"bit depth {depth} is not 8"
+        return _unsupported(f"bit depth {depth} is not 8")
     if interlace:
-        return "interlaced"
+        return _unsupported("interlaced")
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
     if channels is None:
-        return f"unknown colour type {colour}"
+        return _unsupported(f"unknown colour type {colour}")
     if colour == 3:
-        return "palette images carry no occupancy value"
-    try:
-        raw = zlib.decompress(bytes(data))
-    except zlib.error as exc:
-        return f"corrupt image data: {exc}"
+        return _unsupported("palette images carry no occupancy value")
     stride = width * channels
-    if len(raw) < (stride + 1) * height:
-        return "truncated image data"
+    expected = (stride + 1) * height
+    if expected > MAX_PIXELS:
+        return _unsupported(
+            f"image is {width}x{height}, larger than this reader will decode"
+        )
+    # Inflate no further than the header says the image is. A PNG that declares
+    # itself 1x1 and carries 256 MB of compressed zeroes is otherwise a
+    # decompression bomb on a route that, until M7, anything on the tailnet can
+    # reach: 261 KB in, 786 MB of RSS out.
+    try:
+        raw = zlib.decompressobj().decompress(bytes(data), expected + 1)
+    except zlib.error as exc:
+        return _broken(f"corrupt image data: {exc}")
+    if len(raw) > expected:
+        return _broken("image data is larger than its dimensions allow")
+    if len(raw) < expected:
+        return _broken("truncated image data")
     rows = []
     previous = bytearray(stride)
     position = 0
@@ -579,6 +413,8 @@ def _decode_png_gray(blob: bytes):
         filter_type = raw[position]
         line = bytearray(raw[position + 1 : position + 1 + stride])
         position += 1 + stride
+        if filter_type > 4:
+            return _broken(f"unknown PNG filter {filter_type}")
         _unfilter(filter_type, line, previous, channels)
         rows.append(line[::channels] if channels > 1 else line)
         previous = line
@@ -586,6 +422,9 @@ def _decode_png_gray(blob: bytes):
 
 
 def _unfilter(filter_type: int, line: bytearray, previous: bytearray, channels: int):
+    """Reverse one scanline filter, in place. Callers check the type first:
+    every failure in this decoder is a returned reason, never an exception, or
+    :func:`validate` cannot honour its own "never raises" contract."""
     if filter_type == 0:
         return
     for index in range(len(line)):
@@ -598,10 +437,8 @@ def _unfilter(filter_type: int, line: bytearray, previous: bytearray, channels: 
             line[index] = (line[index] + up) & 0xFF
         elif filter_type == 3:
             line[index] = (line[index] + (left + up) // 2) & 0xFF
-        elif filter_type == 4:
-            line[index] = (line[index] + _paeth(left, up, upper_left)) & 0xFF
         else:
-            raise BundleError(f"unknown PNG filter {filter_type}")
+            line[index] = (line[index] + _paeth(left, up, upper_left)) & 0xFF
 
 
 def _paeth(left: int, up: int, upper_left: int) -> int:
@@ -747,6 +584,7 @@ def _validate_image(revision_dir: Path, report: Report):
             f"{image.name} spans {extent:.0f} m at "
             f"{report.map['resolution']} m/px — check the resolution"
         )
+        return
 
     # The raw and the cleaned map are the same frame with different pixels
     # (sites._promote_cleaned), so a size that differs means one of them is
@@ -762,9 +600,11 @@ def _validate_image(revision_dir: Path, report: Report):
 
     report.occupancy = occupancy(image)
     if "reason" in report.occupancy:
-        report.warnings.append(
-            f"could not read occupancy: {report.occupancy['reason']}"
-        )
+        note = f"could not read occupancy: {report.occupancy['reason']}"
+        if report.occupancy.get("corrupt"):
+            report.errors.append(f"{image.name} is not a readable PNG — {note}")
+        else:
+            report.warnings.append(note)
         return
     if report.occupancy["free"] < MIN_FREE_FRACTION:
         report.errors.append(

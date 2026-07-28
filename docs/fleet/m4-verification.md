@@ -48,32 +48,58 @@ announces; the second robot ends up with a revision that passes validation, a
 `resolve_map()` that `nav2_launch.py` would find, the zones from the map's own
 frame, and a health payload reporting the revision it is actually running.
 
-## 2. The shared validator, checked against PyYAML
+## 2. The shared validator, and the parser that is no longer in it
 
-The fleet server has no PyYAML — its whole dependency list is "python" plus paho
-— so `mote_bringup/bundle.py` parses the YAML subset site bundles are written in.
-A parser that is *nearly* right about an origin puts every robot in the wrong
-place, so it is differential-tested against PyYAML on **every bundle YAML file
-committed in this repository** (16 files: three sim worlds' `site.yaml`,
-`zones.yaml`, `map.yaml` and `meta.yaml`, the three `worlds/*.zones.yaml`
-including the hospital's multi-line flow mappings with polygon vertex lists, and
-`mote_tasks/config/zones.default.yaml`).
+This section originally recorded a hand-rolled YAML parser, differential-tested
+against PyYAML on every bundle file committed in the repo, and reported that all
+16 agreed. They did. **The corpus was not the contract**, and review found the
+gap: nothing committed here has the shape `yaml.safe_dump(default_flow_style=None)`
+emits for a polygon, which is what `segment-map` (#69) and `save-zone` actually
+write —
+
+```console
+$ python -c "…safe_dump({'zones': {'room_1': {'polygon': [[0,0],[4,0],[4,3]]}}}, default_flow_style=None)"
+zones:
+  room_1:
+    polygon:
+    - [0.0, 0.0]
+    - [4.0, 0.0]
+    - [4.0, 3.0]
+
+$ bundle.read_zones(...)
+BundleError: line 6: unexpected indentation
+```
+
+so the path *segment a floor into rooms → `publish-map`* was a 422. Two more
+divergences from the same writer settings: `Matron's office` raised, and — the
+bad one — a zone named `Café` came back as `Caf\xE9` **with no error at all**,
+because `safe_dump` escapes non-ASCII and the reader stripped quotes without
+unescaping.
+
+The fix is not a better parser. The dependency list the parser existed to
+protect was already "python **plus paho**", PyYAML is the library that *writes*
+these files, and a 200 KB pure wheel is a cheap price for not approximating it.
+`bundle.py` now calls `yaml.safe_load`; the fleet image installs `pyyaml` on the
+same `pip install` line as paho; 256 lines went with it.
+
+What replaced the corpus test is the writers themselves — `merge_into_zones`
+from `segment-map`, `append_zone` from `save-zone`, and `sites.create` — called
+for real and read back through the validator:
 
 ```console
 $ pixi run -e dev python -m pytest mote_bringup/test/test_bundle.py -q
-57 passed
+44 passed
 ```
-
-Constructs outside the subset — anchors, unterminated flow collections, and
-`a: b: c`, which is a nested mapping in real YAML and would silently become the
-string `"b: c"` here — raise rather than being half-understood.
 
 ## 3. Validation and packing cost, on real maps
 
-The occupancy check decodes the PNG in pure Python (zlib plus five one-line
-filters), because the alternative is an image dependency on the fleet box. That
-is the one place where "no dependencies" costs measurable time, so it was
-measured on the three committed sim maps, best of three runs:
+The occupancy check still decodes the PNG in pure Python (zlib plus five
+one-line filters). That one stayed first-party where the YAML parser did not,
+and the reasons are different in kind: it reads one rigidly specified binary
+format rather than text a dumper wrote, it is 140 lines against Pillow's 4 MB,
+and it reports what it cannot read instead of guessing. It is the one place
+where "no image library" costs measurable time, so it was measured on the three
+committed sim maps, best of three runs:
 
 | Map | Size | Occupancy decode | Full `validate()` | `pack()` | Packed |
 |---|---|---|---|---|---|
@@ -98,6 +124,12 @@ mode, uid/gid and mtime, and a zeroed gzip mtime). That is what lets the
 registry announce a digest and then re-pack the stored files to serve it,
 instead of keeping the uploaded bytes on disk beside the files unpacked from
 them.
+
+**Corrupt is now distinguished from unsupported** (§8): a PNG this reader does
+not *support* — 16-bit, palette, interlaced — is a map `map_server` can still
+serve, so it costs the occupancy check and a warning; a PNG that is *broken* —
+bad filter byte, short IDAT, a stream that does not match its own header — is
+what a truncated upload looks like and is an error.
 
 The same run also demonstrates the error/warning split on real data: all three
 sim revisions validate `ok=True` with a warning that `map.posegraph`/`map.data`
@@ -151,18 +183,22 @@ naming the operator — from a click.
 ## 5. What the test suite covers
 
 ```console
-$ pixi run -e dev python -m pytest mote_fleet/test mote_bringup/test/test_bundle.py -q
-247 passed in 70.03s
+$ pixi run -e dev python -m pytest mote_fleet/test mote_bringup/test/test_bundle.py \
+      mote_tasks/test -q
+265 passed in 84.40s
 $ pixi run -e dev node --test mote_fleet/test/ui_test.mjs
 # pass 16
 ```
 
-The M4 half of that: `test_bundle.py` (57 — the parser, the validator's refusals,
-the tar's refusals including a hand-built hostile archive), `test_map_registry.py`
-(27 — every registry route over a real socket), `test_mapsync.py` (14 — the
+The M4 half of that: `test_bundle.py` (43 — what the real writers emit, the
+validator's refusals, the PNG decoder's two corruption cases, and the tar's
+refusals including a hand-built hostile archive), `test_map_registry.py`
+(28 — every registry route over a real socket), `test_mapsync.py` (13 — the
 robot's staging, flip, zone adoption and digest check against a live server, no
 ROS), seven added to `test_agent.py` (subscribe, route, pull, ignore, report),
-five to `test_protocol.py`, three to `ui_test.mjs`, and the e2e run in §1.
+five to `test_protocol.py`, three to `ui_test.mjs`, one to `mote_tasks`'
+`test_zones.py` (save-zone's output, read back through the validator that has to
+accept it), and the e2e run in §1.
 
 ## 6. Deltas from the design sketch
 
@@ -220,3 +256,48 @@ still up.
 - **The `-2` id qualifier is tested, not observed in the wild.** It needs two
   robots saving maps in the same second, which is exactly the case that will not
   show up until M6.
+
+## 8. What review found, and what changed
+
+Five findings on the first pass ([PR #70](https://github.com/ClachDev/Mote/pull/70)),
+all reproduced by execution rather than read off the diff. What each one turned
+into:
+
+1. **`segment-map`'s output was a bundle this branch refused** (blocking). The
+   subject of §2: fixed by deleting the hand-rolled parser rather than
+   extending it. The replacement tests call the real writers, because the
+   original ones only ever saw files that happened to be committed.
+2. **~400 lines re-implementing PyYAML and a PNG reader.** Half taken: PyYAML is
+   in, the PNG decoder stays, and §3 says why the two are not the same call.
+3. **`validate()` broke its own "never raises" contract** (blocking). `_unfilter`
+   raised `BundleError` on an unknown scanline filter, which no caller on the
+   upload path caught: the client saw `RemoteDisconnected` with no HTTP status,
+   and because the handler died between `registry.record` and `registry.finish`,
+   the audit row stayed at `receiving` for ever. Three changes: the decoder
+   *reports* every failure and never raises; `bundle_store.accept` treats a
+   validator that raises anyway as a 422; and the upload handler closes its
+   audit row on any exception, so no row can be wedged mid-transfer by a bug
+   that has not been thought of yet. The corrupt/unsupported split in §3 came
+   out of this — a bad filter byte now fails the revision instead of merely
+   skipping the occupancy check.
+4. **Unbounded `zlib.decompress` on the upload path.** IHDR is parsed before the
+   inflate, so the bound was free:
+
+   ```console
+   $ # a 64 KB PNG whose header declares it 1x1, carrying 64 MB compressed
+   bomb PNG on disk: 65295 bytes, declares itself 1x1, inflates to 67108864 bytes
+   occupancy() -> {'reason': 'image data is larger than its dimensions allow',
+                   'corrupt': True}
+   0.2 ms, peak RSS 67 MB (unchanged across the call)
+   ```
+
+   Before: 786 MB of RSS for a 261 KB upload, which at the 64 MB `MAX_UPLOAD`
+   scaled to ~64 GB. Also from this finding: a map that already failed the
+   `MAX_EXTENT_M` sanity check no longer gets decoded pixel-by-pixel afterwards.
+5. **The fleet image would not rebuild for its own validator.** `fleet-image.yml`
+   triggered on five paths; the Dockerfile COPYs eight. `bundle.py`,
+   `bundle_store.py` and `server/ui/**` added, with a comment saying the two
+   lists have to agree.
+
+Not changed: the `-2` revision qualifier, the promote race, and pruning are all
+still reasoned rather than measured (§7).
