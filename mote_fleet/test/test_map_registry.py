@@ -273,9 +273,35 @@ def test_a_promotion_that_cannot_be_announced_still_happened(
 def test_startup_re_announces_what_is_actually_published(server):
     """Which is what repairs a promotion made while the broker was down, and a
     broker that lost its retained state with its volume."""
-    assert server.announce_all() == 1
+    assert server.announce_all() == (1, True)
     announcement = server.publisher.retained(protocol.registry_topic(SITE, FLOOR))
     assert announcement["revision"] == "20260726T120000"
+
+
+def test_startup_reannounce_retries_until_the_broker_answers(server, robot, tmp_path):
+    """The compose start races: the server and mosquitto come up together, so
+    the first publish usually fails. One attempt would leave every retained
+    topic stale until somebody restarted the server."""
+    upload(server, packed_revision(tmp_path))
+    operator_token = server.registry.new_operator(name="op")
+    promote(server, "20260727T101500", operator_token)
+
+    # Both shapes a broker that is not up yet produces: a refusal, and a
+    # socket error out of paho.
+    failures = {"left": 2}
+
+    def flaky(topic, payload, **kwargs):
+        if failures["left"] == 2:
+            failures["left"] -= 1
+            return False, "not connected"
+        if failures["left"]:
+            failures["left"] -= 1
+            raise OSError("broker is still starting")
+        return True, ""
+
+    server.publisher.publish = flaky
+    assert server.announce_all_until_delivered(attempts=5, first_delay=0.01) == 1
+    assert failures["left"] == 0
 
 
 def test_a_promotion_is_audited(server, robot, operator, tmp_path):

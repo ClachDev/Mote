@@ -62,7 +62,7 @@ kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera
 sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
 save-map = "ros2 run mote_bringup site save-map"
 # Offer the saved map to the fleet registry as a candidate (docs/fleet/
-# registry.md). Separate from save-map because saving must work offline.
+# fleet-api.md). Separate from save-map because saving must work offline.
 publish-map = "ros2 run mote_fleet publish-map"
 clean-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.cli"
 # Propose a zone per room of a saved map, so a floor starts with its rooms named
@@ -171,6 +171,12 @@ filelock = ">=3.12.2"
 libcap = ">=2.77,<3"
 lttng-ust = ">=2.13.9,<3"
 ninja = ">=1.13.2,<2"
+# The robot reads its own saved maps back through mote_bringup/bundle.py (the
+# same validator the fleet server runs on an upload), so the image library that
+# validator uses has to be here too. Pillow rather than the opencv the cleaning
+# pass uses: the fleet server runs this file as well, and opencv is not a
+# dependency to put in a container whose whole job is answering HTTP.
+pillow = ">=10,<13"
 pkg-config = ">=0.29.2,<0.30"
 ros-jazzy-ament-cmake-auto = ">=2.5.5,<3"
 ros-jazzy-ament-lint-auto = ">=0.17.4,<0.18"
@@ -336,10 +342,12 @@ inference-prefetch-rocm = "python -u mote_perception/tools/prefetch_models.py"
 # with no docker. It has no websockets, which is why it is neither default.
 mosquitto = ">=2.0,<3"
 paho-mqtt = ">=2,<3"
-# The bundle validator reads bundle YAML with the same library that writes it
-# (mote_bringup/bundle.py). A second, hand-rolled reader was tried and silently
-# disagreed with safe_dump on non-ASCII zone names.
+# The bundle validator reads bundle YAML and bundle maps with the same
+# libraries that write them (mote_bringup/bundle.py). Hand-rolled readers for
+# both were tried and both were wrong: the parser silently mangled non-ASCII
+# zone names, and the PNG decoder raised through a "never raises" contract.
 pyyaml = ">=6,<7"
+pillow = ">=10,<13"
 pytest = ">=8,<9"
 
 [feature.fleet.tasks]

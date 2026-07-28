@@ -128,20 +128,21 @@ map frame's origin is an accident of where SLAM started (an id collision, ids
 being per-second timestamps, stores the second as `<rev>-2`). **The shared,
 ROS-free validator the design asked for is `mote_bringup/bundle.py`** — the
 bundle's *content* (what a revision must hold, whether the map inside is usable,
-how it packs for a wire) as against `sites.py`'s *layout* — with a pure-Python
-PNG decoder so "the occupancy is not degenerate" can actually be checked
-(~155 ns/px; 0.14 s for the 1158x761 hospital map). It lives in `mote_bringup`
+how it packs for a wire) as against `sites.py`'s *layout* — and a real
+occupancy check ("the map is not degenerate") over the map's own pixels. It
+lives in `mote_bringup`
 because the layout is `sites.py`'s and `mote_fleet` already depends on it — the
 reverse would be a package cycle — and the deploy image copies just those two
-ROS-free files, so the fleet box still installs no ROS. It reads YAML with
-**PyYAML**, which the fleet image installs: it first shipped with a hand-rolled
-parser to keep the server's dependency list at exactly "python", and that was
-wrong three ways — the list already had paho in it, PyYAML is what *writes*
-these files, and the second reader disagreed with it in service (a zone named
-`Café` came back as `Caf\xE9` **silently**, and the block-sequence-of-flow-pairs
-polygon that `segment-map` and `save-zone` emit did not parse at all, so #69's
-output was a bundle M4 refused). Stdlib-only still holds for `protocol.py` and
-for the PNG reader, which is 140 lines against Pillow's 4 MB.
+ROS-free files, so the fleet box still installs no ROS. It reads YAML with **PyYAML** and
+maps with **Pillow**, both installed in the fleet image: it first shipped with
+hand-rolled readers for both, to keep the server's dependency list at exactly
+"python", and **that rule was never in the design** — `fleet.md` asks only for
+ROS-free and torch-free. Both hand-rolled readers were wrong in ways the
+libraries are not (a zone named `Café` came back as `Caf\xE9` **silently**, the
+polygon shape `segment-map` and `save-zone` emit did not parse at all so #69's
+output was a bundle M4 refused, and the PNG decoder raised through a "never
+raises" contract and left an upload with no HTTP response). Stdlib-only still
+holds where the design does put it: `protocol.py`.
 `save-map` now runs the same check locally, so a map the server would refuse is
 refused while the mapping session is still up. On the robot, `mote_fleet/
 mapsync.py` + a worker thread in the agent stage a pulled revision in a temp

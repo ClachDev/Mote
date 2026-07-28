@@ -128,11 +128,18 @@ class BundleStore:
         return found
 
     def revisions(self, site: str, floor: str) -> list[str]:
+        """Every stored revision, newest last.
+
+        Dot-directories are skipped because an upload in flight stages inside
+        ``maps/`` (``accept``), and a staging directory is not a revision until
+        it is renamed into place: listing one shows a reader half a bundle, and
+        pruning one deletes a *concurrent* upload's work.
+        """
         maps = self.floor_dir(site, floor) / "maps"
-        return (
-            sorted(p.name for p in maps.iterdir() if p.is_dir())
-            if maps.is_dir()
-            else []
+        if not maps.is_dir():
+            return []
+        return sorted(
+            p.name for p in maps.iterdir() if p.is_dir() and not p.name.startswith(".")
         )
 
     def canonical(self, site: str, floor: str) -> str | None:
@@ -181,10 +188,14 @@ class BundleStore:
                 upload = json.loads(upload_file.read_text())
             except ValueError:
                 upload = {}
-        # Re-validated on read rather than trusting what was recorded on the
-        # way in: a revision on disk can rot (a restore, a half-copied backup),
-        # and "promotable" is a claim about now.
-        report = bundle.validate(directory, require_posegraph=False)
+        # The report recorded at upload is reused while the revision is
+        # untouched, because this runs for every revision of a floor on every
+        # dashboard floor-switch. `mtime` on the directory changes if anything
+        # is added, removed or renamed inside it, which is what a restore or a
+        # half-copied backup looks like — that re-validates. `promote` always
+        # re-validates regardless, so the claim that gates publishing is never
+        # a cached one.
+        report = self._report(directory, upload)
         return {
             "revision": revision,
             "canonical": revision == (canonical or self.canonical(site, floor)),
@@ -194,8 +205,30 @@ class BundleStore:
             "bytes": upload.get("bytes"),
             "sha256": upload.get("sha256"),
             "url": self.bundle_url(site, floor, revision),
-            **report.as_dict(),
+            **report,
         }
+
+    def _report(self, directory: Path, upload: dict) -> dict:
+        """The stored validation payload if it still describes what is on disk,
+        else a fresh one (which is then stored).
+
+        A payload rather than a :class:`bundle.Report`, because ``as_dict`` is
+        lossy — it reduces zones to their names — so a Report rebuilt from one
+        would quietly differ from a validated one.
+        """
+        stored = upload.get("report")
+        if stored and upload.get("validated_mtime") == _mtime(directory):
+            return stored
+        report = bundle.validate(directory, require_posegraph=False)
+        upload_file = directory / UPLOAD_JSON
+        if upload_file.is_file():
+            upload["report"] = report.as_dict()
+            upload["validated_mtime"] = _mtime(directory)
+            try:
+                upload_file.write_text(json.dumps(upload, indent=2))
+            except OSError:
+                pass  # a read-only store still answers, just without the cache
+        return report.as_dict()
 
     def bundle_url(self, site: str, floor: str, revision: str) -> str:
         return f"/v1/sites/{site}/floors/{floor}/revisions/{revision}/bundle.tar.gz"
@@ -417,6 +450,14 @@ class BundleStore:
         for revision in revisions:
             if revision not in keep:
                 shutil.rmtree(self.floor_dir(site, floor) / "maps" / revision, True)
+
+
+def _mtime(directory: Path) -> int:
+    """Whole nanoseconds, so the value round-trips through JSON exactly."""
+    try:
+        return directory.stat().st_mtime_ns
+    except OSError:
+        return 0
 
 
 def _now() -> str:

@@ -15,20 +15,22 @@ That is also why this file is **ROS-free**, the same discipline as
 server has no ROS, no framework and no checkout, and this file is the one thing
 it imports from the robot's side of the tree.
 
-It is *not* dependency-free, and that was a correction. It first shipped with a
-hand-rolled parser for "the YAML subset bundles are written in", to keep the
-server's dependency list at exactly "python". Three things were wrong with that.
-The list was already "python plus paho"; PyYAML is the library that *writes*
-these files, so a second reader can only ever approximate it; and it did — a
-zone called ``Café`` came back as ``Caf\xe9`` with no error at all, an
-apostrophe in a room name raised, and the block-sequence-of-flow-pairs shape
-that ``safe_dump(default_flow_style=None)`` emits for a polygon — i.e. the
-output of ``segment-map`` and ``save-zone`` — did not parse. Parsing input this
-module exists to distrust is the last place to save a 200 KB pure-Python wheel,
-so it reads YAML with PyYAML and the fleet image installs it. The stdlib-only
-rule still holds where it earns its keep: :mod:`mote_fleet.protocol`, and the
-PNG reader below, which is 140 lines against Pillow's 4 MB and is only ever
-pointed at one well-specified format.
+What the design asks of this file is precisely that — **ROS-free and
+torch-free**, so a container with neither can run it. It is not dependency-free,
+and twice in review that distinction had to be relearned: a hand-rolled YAML
+parser and a hand-rolled PNG decoder were both written to satisfy a stricter
+rule ("stdlib only") that the design never set, and both were wrong in ways the
+libraries are not.
+
+The parser mangled a zone called ``Café`` into ``Caf\xe9`` with no error at all,
+raised on an apostrophe, and could not read the polygon shape
+``safe_dump(default_flow_style=None)`` emits — i.e. the output of
+``segment-map`` and ``save-zone``, so a segmented floor could not be published.
+The decoder shipped an unhandled exception that dropped the upload connection
+outright and an unbounded inflate. Both now use the library that the rest of
+the system already uses to write and read these files: PyYAML and Pillow, which
+the fleet image installs beside paho. Parsing input this module exists to
+distrust is the last place to save a few megabytes.
 
 What a validated revision has to contain::
 
@@ -51,11 +53,16 @@ import gzip
 import hashlib
 import io
 import tarfile
-import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from PIL import Image, UnidentifiedImageError
+
+# A map an order of magnitude past the largest floor anyone has mapped here
+# (the 1158x761 hospital) is a decompression bomb, not a building. Pillow
+# enforces this itself, so the bound and the check are the library's.
+Image.MAX_IMAGE_PIXELS = 64 * 1024 * 1024
 
 SCHEMA = 1
 
@@ -106,11 +113,6 @@ FREE_MIN = 230
 #: degenerate"). The free floor is deliberately tiny — a legitimate first
 #: revision of a big floor can be almost entirely unknown.
 MIN_FREE_FRACTION = 0.001
-
-#: An occupancy map this reader will decode, in raw bytes. Sized so the
-#: 1158x761 hospital floor (0.9 MB) has three orders of magnitude of headroom
-#: while a decompression bomb does not: the decoder inflates to this at most.
-MAX_PIXELS = 512 * 1024 * 1024
 
 #: No floor is 10 km across. A resolution/size pair that claims otherwise is a
 #: units mistake, and it would blow up every consumer's view transform.
@@ -279,20 +281,19 @@ def _polygon(where: str, name, polygon) -> list:
 
 
 def png_size(path) -> tuple[int, int] | None:
-    """Pixel dimensions from a PNG header.
+    """Pixel dimensions of a map image, or None if it cannot be read.
 
-    Reading 24 bytes beats making a browser wait for the image to decode before
-    it can place a robot, and beats a Pillow dependency for two numbers at a
-    fixed offset.
+    ``Image.open`` is lazy — it parses the header and stops — so this costs no
+    more than reading the bytes by hand did, and it is right about formats this
+    module never anticipated.
     """
     try:
-        with open(path, "rb") as handle:
-            header = handle.read(24)
-    except OSError:
+        with Image.open(path) as image:
+            return image.size
+    except (OSError, ValueError):
+        # UnidentifiedImageError and DecompressionBombError are both subclasses
+        # of these; a size nobody can read is None, whatever the reason.
         return None
-    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
-        return None
-    return int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")
 
 
 def occupancy(path) -> dict:
@@ -302,158 +303,40 @@ def occupancy(path) -> dict:
     revision can have every file in place, a sane ``map.yaml``, and still be a
     uniform grey rectangle. Nothing else in the pipeline looks at the pixels.
 
-    Decoded here rather than with an image library: an 8-bit greyscale PNG is
-    zlib plus five one-line filters, against 4 MB of Pillow on a box whose whole
-    job is answering HTTP. Anything this cannot read returns ``reason`` instead
-    of counts — unreadable pixels are a thing to report, not to guess — with
-    ``corrupt`` saying which kind: a flavour this decoder does not do (16-bit,
-    palette, interlaced) is a map somebody else can still serve, while a stream
-    that contradicts its own header is what a truncated upload looks like.
+    Failures are returned, never raised — :func:`validate` documents that it
+    reports rather than throws, and the upload path depends on it. ``corrupt``
+    separates "these bytes are not an image anyone can read", which fails a
+    revision, from "this image is not one I can count", which only costs the
+    check.
     """
     try:
-        blob = Path(path).read_bytes()
+        with Image.open(path) as image:
+            grey = image.convert("L")
+            counts = grey.histogram()
+    except Image.DecompressionBombError as exc:
+        return {"reason": f"decompression bomb: {_one_line(exc)}", "corrupt": True}
+    except UnidentifiedImageError:
+        return {"reason": "not an image this can read", "corrupt": True}
     except OSError as exc:
-        return {"reason": str(exc), "corrupt": False}
-    rows = _decode_png_gray(blob)
-    if isinstance(rows, dict):
-        return rows
-    free = occupied = unknown = 0
-    for row in rows:
-        for value in row:
-            if value <= OCCUPIED_MAX:
-                occupied += 1
-            elif value >= FREE_MIN:
-                free += 1
-            else:
-                unknown += 1
-    total = free + occupied + unknown
+        # Pillow raises OSError for a truncated or damaged file, which is what
+        # a half-finished upload looks like.
+        return {"reason": f"could not decode: {_one_line(exc)}", "corrupt": True}
+    except ValueError as exc:
+        return {"reason": f"could not convert to greyscale: {_one_line(exc)}"}
+
+    if len(counts) < 256:
+        return {"reason": f"expected 256 grey levels, got {len(counts)}"}
+    occupied = sum(counts[: OCCUPIED_MAX + 1])
+    free = sum(counts[FREE_MIN:])
+    total = sum(counts)
     if not total:
         return {"reason": "the image has no pixels", "corrupt": True}
     return {
         "total": total,
         "free": round(free / total, 6),
         "occupied": round(occupied / total, 6),
-        "unknown": round(unknown / total, 6),
+        "unknown": round((total - free - occupied) / total, 6),
     }
-
-
-def _broken(reason: str) -> dict:
-    """A PNG that no reader will accept: the bytes are wrong."""
-    return {"reason": reason, "corrupt": True}
-
-
-def _unsupported(reason: str) -> dict:
-    """A valid PNG in a flavour this decoder does not do."""
-    return {"reason": reason, "corrupt": False}
-
-
-def _decode_png_gray(blob: bytes):
-    """Rows of 8-bit samples from the first channel, or why not.
-
-    A failure is ``{"reason": ..., "corrupt": bool}``. The distinction is the
-    one :func:`validate` acts on: a PNG this reader does not *support* (16-bit,
-    palette, interlaced) is a map somebody else can still serve, so it costs
-    the occupancy check and a warning. A PNG that is *broken* — a bad filter
-    byte, a short IDAT, a stream that does not match its own header — is what a
-    truncated upload looks like, and no consumer will read it either.
-    """
-    if blob[:8] != b"\x89PNG\r\n\x1a\n":
-        return _broken("not a PNG")
-    width = height = depth = colour = interlace = None
-    data = bytearray()
-    offset = 8
-    while offset + 8 <= len(blob):
-        length = int.from_bytes(blob[offset : offset + 4], "big")
-        kind = blob[offset + 4 : offset + 8]
-        body = blob[offset + 8 : offset + 8 + length]
-        offset += 12 + length
-        if kind == b"IHDR":
-            if len(body) < 13:
-                return _broken("truncated IHDR")
-            width = int.from_bytes(body[0:4], "big")
-            height = int.from_bytes(body[4:8], "big")
-            depth, colour, _, _, interlace = body[8:13]
-        elif kind == b"IDAT":
-            data += body
-        elif kind == b"IEND":
-            break
-    if width is None:
-        return _broken("no IHDR")
-    if depth != 8:
-        return _unsupported(f"bit depth {depth} is not 8")
-    if interlace:
-        return _unsupported("interlaced")
-    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
-    if channels is None:
-        return _unsupported(f"unknown colour type {colour}")
-    if colour == 3:
-        return _unsupported("palette images carry no occupancy value")
-    stride = width * channels
-    expected = (stride + 1) * height
-    if expected > MAX_PIXELS:
-        return _unsupported(
-            f"image is {width}x{height}, larger than this reader will decode"
-        )
-    # Inflate no further than the header says the image is. A PNG that declares
-    # itself 1x1 and carries 256 MB of compressed zeroes is otherwise a
-    # decompression bomb on a route that, until M7, anything on the tailnet can
-    # reach: 261 KB in, 786 MB of RSS out.
-    try:
-        raw = zlib.decompressobj().decompress(bytes(data), expected + 1)
-    except zlib.error as exc:
-        return _broken(f"corrupt image data: {exc}")
-    if len(raw) > expected:
-        return _broken("image data is larger than its dimensions allow")
-    if len(raw) < expected:
-        return _broken("truncated image data")
-    rows = []
-    previous = bytearray(stride)
-    position = 0
-    for _ in range(height):
-        filter_type = raw[position]
-        line = bytearray(raw[position + 1 : position + 1 + stride])
-        position += 1 + stride
-        if filter_type > 4:
-            return _broken(f"unknown PNG filter {filter_type}")
-        _unfilter(filter_type, line, previous, channels)
-        rows.append(line[::channels] if channels > 1 else line)
-        previous = line
-    return rows
-
-
-def _unfilter(filter_type: int, line: bytearray, previous: bytearray, channels: int):
-    """Reverse one scanline filter, in place. Callers check the type first:
-    every failure in this decoder is a returned reason, never an exception, or
-    :func:`validate` cannot honour its own "never raises" contract."""
-    if filter_type == 0:
-        return
-    for index in range(len(line)):
-        left = line[index - channels] if index >= channels else 0
-        up = previous[index]
-        upper_left = previous[index - channels] if index >= channels else 0
-        if filter_type == 1:
-            line[index] = (line[index] + left) & 0xFF
-        elif filter_type == 2:
-            line[index] = (line[index] + up) & 0xFF
-        elif filter_type == 3:
-            line[index] = (line[index] + (left + up) // 2) & 0xFF
-        else:
-            line[index] = (line[index] + _paeth(left, up, upper_left)) & 0xFF
-
-
-def _paeth(left: int, up: int, upper_left: int) -> int:
-    estimate = left + up - upper_left
-    distances = (
-        abs(estimate - left),
-        abs(estimate - up),
-        abs(estimate - upper_left),
-    )
-    smallest = min(distances)
-    if distances[0] == smallest:
-        return left
-    if distances[1] == smallest:
-        return up
-    return upper_left
 
 
 # --------------------------------------------------------------------------

@@ -458,8 +458,8 @@ class MoteAgent(Node):
         self._diagnostics_at = time.monotonic()
 
     def _active_site_now(self) -> tuple[str, str] | None:
-        """The active site/floor, uncached — read on the paho thread when an
-        announcement arrives, where a 30 s stale answer could skip a pull."""
+        """The active site/floor, uncached — read on the executor thread via
+        _drain_inbound, where a 30 s stale answer could skip a pull."""
         try:
             return sites.active()
         except Exception:  # a malformed active.yaml must not stop reporting

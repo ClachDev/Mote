@@ -93,30 +93,26 @@ $ pixi run -e dev python -m pytest mote_bringup/test/test_bundle.py -q
 
 ## 3. Validation and packing cost, on real maps
 
-The occupancy check still decodes the PNG in pure Python (zlib plus five
-one-line filters). That one stayed first-party where the YAML parser did not,
-and the reasons are different in kind: it reads one rigidly specified binary
-format rather than text a dumper wrote, it is 140 lines against Pillow's 4 MB,
-and it reports what it cannot read instead of guessing. It is the one place
-where "no image library" costs measurable time, so it was measured on the three
-committed sim maps, best of three runs:
+The occupancy check reads the map with **Pillow** — see §8; it was a
+hand-rolled pure-Python decoder until the second review round. Measured on the
+three committed sim maps, best of three runs, before and after:
 
-| Map | Size | Occupancy decode | Full `validate()` | `pack()` | Packed |
-|---|---|---|---|---|---|
-| `mote_world` | 117×117 (13.7 k px) | 1.6 ms | 1.7 ms | 0.2 ms | 705 B |
-| `office_world` | 438×238 (104 k px) | 13.1 ms | 13.3 ms | 0.2 ms | 2.9 kB |
-| `hospital_world` | 1158×761 (881 k px) | 137.0 ms | 138.5 ms | 0.9 ms | 46.5 kB |
+| Map | Size | Occupancy decode | | Full `validate()` | `pack()` | Packed |
+|---|---|---|---|---|---|---|
+| | | *hand-rolled* | *Pillow* | | | |
+| `mote_world` | 117×117 (13.7 k px) | 1.6 ms | **0.1 ms** | 0.6 ms | 0.2 ms | 705 B |
+| `office_world` | 438×238 (104 k px) | 13.1 ms | **0.2 ms** | 0.7 ms | 0.2 ms | 2.9 kB |
+| `hospital_world` | 1158×761 (881 k px) | 137.0 ms | **2.4 ms** | 3.1 ms | 0.9 ms | 46.5 kB |
 
-**~155 ns/pixel**, i.e. 0.14 s for a 58×38 m hospital floor. It runs once per
-upload and once per `GET /v1/sites/<site>/floors/<floor>`, never on a request a
-robot is waiting on. If a floor an order of magnitude larger ever appears, the
-counting loop is the thing to replace (`bytes.translate` + `count` per row),
-not the design.
+**57× faster on the largest map, and the answers are identical** — the free /
+occupied / unknown fractions below are the same to six decimal places under
+both decoders, which is the cross-check that the swap changed no validation
+outcome.
 
-The same run measured the fractions the degeneracy check reads — `mote_world`
-0.947 free / 0.043 occupied / 0.010 unknown, `office_world` 0.899 / 0.050 /
-0.051, `hospital_world` 0.517 / 0.028 / 0.454 — which is why the "no free space"
-floor is set at 0.1%: a legitimate first revision of a big floor is nearly half
+The fractions the degeneracy check reads: `mote_world` 0.947 free / 0.043
+occupied / 0.010 unknown, `office_world` 0.899 / 0.050 / 0.051,
+`hospital_world` 0.517 / 0.028 / 0.454 — which is why the "no free space" floor
+is set at 0.1%: a legitimate first revision of a big floor is nearly half
 unknown, and only a map that never got going has *nothing* free.
 
 **Packing is byte-identical across runs** for all three (fixed member order,
@@ -125,11 +121,12 @@ registry announce a digest and then re-pack the stored files to serve it,
 instead of keeping the uploaded bytes on disk beside the files unpacked from
 them.
 
-**Corrupt is now distinguished from unsupported** (§8): a PNG this reader does
-not *support* — 16-bit, palette, interlaced — is a map `map_server` can still
-serve, so it costs the occupancy check and a warning; a PNG that is *broken* —
-bad filter byte, short IDAT, a stream that does not match its own header — is
-what a truncated upload looks like and is an error.
+**Corrupt is distinguished from unreadable**: a PNG that is *broken* — a bad
+scanline filter, a header that does not match its data — is what a truncated
+upload looks like and fails the revision; anything Pillow opens is counted,
+which now includes the palette and 16-bit images the hand-rolled decoder had to
+skip. The degeneracy check therefore covers *more* revisions than it did, not
+fewer.
 
 The same run also demonstrates the error/warning split on real data: all three
 sim revisions validate `ok=True` with a warning that `map.posegraph`/`map.data`
@@ -298,6 +295,51 @@ into:
    triggered on five paths; the Dockerfile COPYs eight. `bundle.py`,
    `bundle_store.py` and `server/ui/**` added, with a comment saying the two
    lists have to agree.
+
+### Second round
+
+A further review (Fable) found one **merge-blocking** defect and five smaller
+ones. All are fixed here.
+
+- **The fleet image did not build.** `.dockerignore` is a deny-all allowlist
+  whose own comment says "adding a COPY means adding a line here", and this
+  branch added three COPYs without adding the lines:
+  `"/mote_fleet/server/bundle_store.py": not found`. The irony is exact — §5 of
+  the first round found the *sibling* bug (the workflow's trigger paths out of
+  step with the Dockerfile) and fixed that list while missing the third list
+  that has to agree. There were three hand-synced lists; the PR itself proved
+  the failure mode. Now: the allowlist is fixed, and `fleet-image.yml` **builds
+  on pull requests** touching those paths (without pushing), which is the check
+  that would have caught it. Verified by building the image here — 152 MB, and
+  `bundle`, `PIL`, `yaml` and `paho` all import inside it.
+- **The PNG decoder is gone**, replaced by Pillow (§3). It was the last
+  hand-rolled reader, and the last thing standing on the invented "stdlib-only"
+  rule. This also cost a correction: `pillow` was *not* already in the robot
+  env — it is declared only under `[feature.inference*]`, and the robot's image
+  library is opencv — so this adds a dependency to the default env as well as
+  the fleet image.
+- **`announce_all` was one-shot.** It runs on a daemon thread at startup
+  "because the broker may be starting alongside us", but a failed publish broke
+  the loop and left every retained topic stale until the next restart — the
+  opposite of the self-repair it exists for. Now retries with backoff (~2 min)
+  and treats a raising publisher the same as a refusing one, since on a daemon
+  thread an exception is a silent death.
+- **`describe()` re-validated every revision on every read**, including the
+  full pixel decode, on a route the dashboard hits at every floor switch. Now
+  reuses the report stored at upload while the directory's `mtime` is
+  unchanged; `promote` still always re-validates, so the claim that gates
+  publishing is never a cached one.
+- **Upload staging directories were listed and prunable.** `mkdtemp` stages
+  inside `maps/`, and `revisions()` returned every directory — so a read could
+  see half a bundle and one upload's prune could delete another's in-flight
+  work. `revisions()` now skips dot-directories.
+- Two cosmetic fixes: a copy-pasted 500 message in `_promote` that talked about
+  uploads, and a `pixi.toml` comment pointing at `docs/fleet/registry.md`, which
+  does not exist.
+
+Also corrected in this round, and worth recording because it is the same
+mistake in a different place: the image-size claims. Comments said "tens of
+megabytes"; the built image measures **152 MB**.
 
 Not changed: the `-2` revision qualifier, the promote race, and pruning are all
 still reasoned rather than measured (§7).

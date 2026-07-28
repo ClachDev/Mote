@@ -180,8 +180,13 @@ def test_a_zone_that_is_not_a_place_is_refused(tmp_path, text, message):
 
 
 def png(path, width, height, values, colour=0, depth=8, **kwargs):
-    """A greyscale PNG built here rather than by an image library, so the
-    decoder is tested against the format."""
+    """A PNG assembled byte by byte rather than by an image library.
+
+    Worth keeping now that Pillow does the reading: these fixtures are the only
+    way to hand the validator a *deliberately broken* image — a bad scanline
+    filter, a header claiming more pixels than the data holds — which is what a
+    truncated upload looks like and what the server has to answer for.
+    """
 
     def chunk(kind, data):
         return (
@@ -192,33 +197,18 @@ def png(path, width, height, values, colour=0, depth=8, **kwargs):
         )
 
     marker = bytes([kwargs.get("filter_type", 0)])
-    raw = b"".join(
-        marker + bytes(values(x, y) for x in range(width)) for y in range(height)
-    )
+    if kwargs.get("blank"):
+        # A header that claims a huge image, with one row of data behind it:
+        # the shape of a decompression bomb, without writing one to disk.
+        raw = marker + bytes(1)
+    else:
+        raw = b"".join(
+            marker + bytes(values(x, y) for x in range(width)) for y in range(height)
+        )
     Path(path).write_bytes(
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, depth, colour, 0, 0, 0))
         + chunk(b"IDAT", zlib.compress(raw))
-        + chunk(b"IEND", b"")
-    )
-
-
-def raw_png(path, width, height, idat: bytes):
-    """A PNG whose IDAT is supplied verbatim — for streams that do not match
-    the dimensions the header declares."""
-
-    def chunk(kind, data):
-        return (
-            struct.pack(">I", len(data))
-            + kind
-            + data
-            + struct.pack(">I", zlib.crc32(kind + data))
-        )
-
-    Path(path).write_bytes(
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
-        + chunk(b"IDAT", idat)
         + chunk(b"IEND", b"")
     )
 
@@ -231,42 +221,53 @@ def test_occupancy_counts_a_real_saved_map():
     assert abs(counts["free"] + counts["occupied"] + counts["unknown"] - 1.0) < 1e-6
 
 
-def test_occupancy_says_why_when_it_cannot_read_the_pixels(tmp_path):
-    """A palette PNG is valid and unreadable here — a warning, not an error,
-    because map_server can still serve it."""
+def test_a_palette_png_is_counted_rather_than_skipped(tmp_path):
+    """The hand-rolled decoder gave up on palette images and warned. Pillow
+    resolves the palette, so a map saved in one is checked like any other —
+    the degeneracy check covers more revisions than it used to, not fewer."""
     path = tmp_path / "map.png"
     png(path, 4, 4, lambda x, y: 254, depth=8, colour=3)
     counts = bundle.occupancy(path)
-    assert "palette" in counts["reason"]
-    assert not counts["corrupt"]
+    assert "reason" not in counts
+    assert counts["total"] == 16
 
 
-def test_an_unknown_filter_byte_is_reported_not_raised(tmp_path):
-    """validate() promises never to raise; the decoder must keep that promise.
-
-    An upload whose map.png carries filter byte 9 used to reach the HTTP
-    handler as a BundleError, which meant no response at all and an audit row
-    wedged at 'receiving'.
-    """
+def test_a_broken_png_is_reported_not_raised(tmp_path):
+    """validate() promises never to raise; reading pixels must keep that
+    promise. An upload whose map.png carries an invalid scanline filter byte
+    used to reach the HTTP handler as an exception, which meant no response at
+    all and an audit row wedged at 'receiving'."""
     path = tmp_path / "map.png"
     png(path, 4, 4, lambda x, y: 254, filter_type=9)
-    assert "filter" in bundle.occupancy(path)["reason"]
+    counts = bundle.occupancy(path)
+    assert counts["corrupt"]
 
     rev = revision(tmp_path / "20260727T101500")
     png(rev / "map.png", 20, 20, lambda x, y: 254, filter_type=9)
     report = bundle.validate(rev)  # must not raise
     assert not report.ok
-    assert any("filter" in e for e in report.errors)
+    assert any("readable PNG" in e for e in report.errors)
 
 
-def test_a_decompression_bomb_is_refused_by_the_declared_size(tmp_path):
-    """A 1x1 PNG carrying 64 MB of compressed zeroes inflated to 786 MB of RSS
-    before anything looked at the header it had already parsed."""
+def test_something_that_is_not_an_image_at_all(tmp_path):
     path = tmp_path / "map.png"
-    bomb = zlib.compress(bytes(64 * 1024 * 1024), 9)
-    raw_png(path, 1, 1, bomb)
+    path.write_bytes(b"this is not a PNG")
     counts = bundle.occupancy(path)
-    assert counts["reason"] == "image data is larger than its dimensions allow"
+    assert counts["corrupt"]
+    assert bundle.png_size(path) is None
+
+
+def test_a_decompression_bomb_is_refused(tmp_path):
+    """A PNG whose header claims more pixels than any building has.
+
+    Pillow enforces this with MAX_IMAGE_PIXELS, which bundle.py sets; the
+    hand-rolled decoder this replaced had to grow the bound after review found
+    a 261 KB upload that inflated to 786 MB.
+    """
+    path = tmp_path / "map.png"
+    png(path, 40_000, 40_000, lambda x, y: 254, blank=True)
+    counts = bundle.occupancy(path)
+    assert "bomb" in counts["reason"]
     assert counts["corrupt"]
 
 

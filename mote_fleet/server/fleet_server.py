@@ -72,6 +72,7 @@ import socket
 import sys
 import traceback
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -712,12 +713,12 @@ class FleetHandler(BaseHTTPRequestHandler):
             )
             return
         except Exception as exc:
-            # An audit row opened as 'receiving' has to be closed on every
-            # path, or an upload that crashes the handler leaves a row that
-            # says the transfer is still in progress for ever.
+            # An audit row opened as 'promoting' has to be closed on every
+            # path, or a promote that crashes the handler leaves a row that
+            # says the promotion is still in progress for ever.
             registry.finish(entry["id"], "failed", f"{type(exc).__name__}: {exc}")
             traceback.print_exc()
-            self._error(500, "the bundle could not be stored")
+            self._error(500, "the revision could not be promoted")
             return
         announced, detail = self.server.announce(promoted)
         registry.finish(
@@ -865,8 +866,12 @@ class FleetServer(ThreadingHTTPServer):
             retain=True,
         )
 
-    def announce_all(self) -> int:
+    def announce_all(self) -> tuple[int, bool]:
         """Re-announce every floor's canonical revision from what is on disk.
+
+        Returns ``(announced, complete)`` — ``complete`` is False when a publish
+        failed, which means the broker is unreachable rather than that a
+        particular floor is bad, so the caller should retry the whole sweep.
 
         Run at startup: the symlink is the truth about what is canonical, so a
         promotion that could not reach the broker at the time — or a broker
@@ -887,19 +892,25 @@ class FleetServer(ThreadingHTTPServer):
                     file=sys.stderr,
                 )
                 continue
-            ok, detail = self.announce(
-                {
-                    "site": floor["site"],
-                    "floor": floor["floor"],
-                    "revision": floor["canonical"],
-                    "url": self.store.bundle_url(
-                        floor["site"], floor["floor"], floor["canonical"]
-                    ),
-                    "sha256": bundle.digest(blob),
-                    "bytes": len(blob),
-                    "promoted_by": "",
-                }
-            )
+            try:
+                ok, detail = self.announce(
+                    {
+                        "site": floor["site"],
+                        "floor": floor["floor"],
+                        "revision": floor["canonical"],
+                        "url": self.store.bundle_url(
+                            floor["site"], floor["floor"], floor["canonical"]
+                        ),
+                        "sha256": bundle.digest(blob),
+                        "bytes": len(blob),
+                        "promoted_by": "",
+                    }
+                )
+            except Exception as exc:
+                # This runs on a daemon thread at startup, where an exception
+                # is a silent death and every floor stays stale. A publisher
+                # that raises means the same thing as one that returns False.
+                ok, detail = False, f"{type(exc).__name__}: {exc}"
             if ok:
                 announced += 1
             else:
@@ -907,8 +918,42 @@ class FleetServer(ThreadingHTTPServer):
                     f"cannot announce {floor['site']}/{floor['floor']}: {detail}",
                     file=sys.stderr,
                 )
-                break
-        return announced
+                return announced, False
+        return announced, True
+
+    def announce_all_until_delivered(
+        self, attempts: int = 8, first_delay: float = 1.0
+    ) -> int:
+        """:meth:`announce_all`, retried while the broker is unreachable.
+
+        The normal compose start races: this server and mosquitto come up
+        together, so the first publish usually fails. One attempt would leave
+        the retained topics stale until somebody restarted the server, which is
+        the opposite of the self-repair this exists to provide. Backs off to
+        roughly two minutes total and then gives up loudly — by then the broker
+        is not merely slow.
+        """
+        delay = first_delay
+        for attempt in range(1, attempts + 1):
+            announced, complete = self.announce_all()
+            if complete:
+                if announced:
+                    print(f"re-announced {announced} floor(s)", file=sys.stderr)
+                return announced
+            if attempt < attempts:
+                print(
+                    f"announce incomplete (attempt {attempt}/{attempts}), "
+                    f"retrying in {delay:.0f}s",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 30.0)
+        print(
+            "gave up re-announcing canonical maps — robots may pull a stale "
+            "revision until this server restarts",
+            file=sys.stderr,
+        )
+        return 0
 
 
 def default_maps_dir() -> str:
@@ -1038,7 +1083,7 @@ def main(argv=None):
     # Reconcile the retained registry topics with what is actually published on
     # disk. In its own thread because the broker may be starting alongside us
     # and the API must not wait for it.
-    threading.Thread(target=server.announce_all, daemon=True).start()
+    threading.Thread(target=server.announce_all_until_delivered, daemon=True).start()
     if not server.registry.operators():
         print(
             "no operator tokens exist yet — dispatch will refuse every request. "

@@ -73,9 +73,10 @@ no framework, no ament. `protocol` is the wire the robot and the server agree
 on, and `bundle` is the *bundle format* they agree on, so the server validates
 an uploaded map revision with the same code that wrote it rather than a second
 implementation that agrees by convention (`fleet.md` Q4). `protocol` is
-stdlib-only; `bundle` additionally imports PyYAML, which the image installs
-beside paho — reading these files with anything other than the library that
-writes them is exactly the second implementation the rule exists to avoid. Server state lives in `$MOTE_FLEET_HOME` (default
+stdlib-only; `bundle` additionally imports PyYAML and Pillow, which the image
+installs beside paho — reading these files with anything other than the
+libraries that write them is exactly the second implementation the rule exists
+to avoid, and both hand-rolled readers it shipped with proved the point. Server state lives in `$MOTE_FLEET_HOME` (default
 `~/.mote-fleet`), with the site bundles under `sites/`.
 
 `http.server` rather than a web framework stays a floor, not an aspiration: a

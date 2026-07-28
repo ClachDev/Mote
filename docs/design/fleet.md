@@ -987,9 +987,10 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   `mote_bringup/bundle.py` rather than a `mote_fleet` module, because the bundle
   layout is `sites.py`'s and the other direction would be a package cycle — the
   deploy image copies the two ROS-free files, so the fleet box still installs no
-  ROS, and it reads bundle YAML with **PyYAML**, the library that writes it,
-  after a hand-rolled reader shipped and silently disagreed with `safe_dump`
-  (ledger §2); **uploads carry no operator credential** (they name an enrolled robot,
+  ROS, and it reads bundle YAML with **PyYAML** and maps with
+  **Pillow** — the libraries that write them — after hand-rolled readers for
+  both shipped and were wrong (ledger §2, §8); the constraint this note states
+  is ROS-free and torch-free, which neither library breaks; **uploads carry no operator credential** (they name an enrolled robot,
   are bounded, audited, and change nothing) until M7 gives robots one; the flip
   and the announcement are reported separately, because a broker that is down
   must not leave a floor half-promoted — the server re-announces every floor at

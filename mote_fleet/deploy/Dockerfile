@@ -5,10 +5,12 @@
 # through the prefix.dev channel (fleet.md, "The other pipelines"). It is a
 # container image and a compose file, versioned in this repo.
 #
-# python:3.12-slim with one dependency: paho, which the server needs only on the
-# mediated-dispatch path (BrokerLink). Everything else is stdlib, which is why
-# the fleet box needs neither ROS nor a checkout, and why this image is tens of
-# megabytes and builds in seconds — on the box itself if GHCR is unreachable.
+# python:3.12-slim plus three pure-python wheels: paho for the mediated-dispatch
+# path (BrokerLink), and PyYAML + Pillow for the map registry's validator, which
+# reads bundle YAML and occupancy PNGs with the same libraries that write them.
+# No ROS and no checkout — that is what the design asks of this box (fleet.md
+# Q4), not a dependency count. Measured 152 MB, and it builds in seconds, so a
+# box that cannot reach GHCR can build it from a checkout.
 #
 # Build (normally CI, see .github/workflows/fleet-image.yml):
 #   docker build -f mote_fleet/deploy/Dockerfile \
@@ -30,7 +32,7 @@ ENV MOTE_VERSION=${MOTE_VERSION} \
 # the robot's MOTE_HOME.
 ENV MOTE_FLEET_HOME=/var/lib/mote-fleet
 
-RUN pip install --no-cache-dir "paho-mqtt>=2,<3" "pyyaml>=6,<7"
+RUN pip install --no-cache-dir "paho-mqtt>=2,<3" "pyyaml>=6,<7" "pillow>=10,<13"
 
 # The layout the server already expects: fleet_server.py puts its parent's
 # parent on sys.path and imports `mote_fleet.protocol` from there, and finds the
@@ -43,8 +45,8 @@ COPY mote_fleet/mote_fleet/__init__.py \
 # The map registry validates uploaded bundles with the *same* module the robot
 # writes them with (fleet.md Q4). It is ROS-free for exactly this reason, so
 # the two files come across and nothing else from mote_bringup does — no ROS,
-# no checkout. Its one third-party import is PyYAML, installed above: the
-# library that writes these files is the right one to read them with.
+# no checkout. Its third-party imports are PyYAML and Pillow, installed above:
+# the libraries that write these files are the right ones to read them with.
 COPY mote_bringup/mote_bringup/__init__.py \
      mote_bringup/mote_bringup/bundle.py \
      /app/mote_bringup/
