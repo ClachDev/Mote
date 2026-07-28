@@ -97,7 +97,7 @@ Commands:
   <n>            select joint by number
   + / -          jog selected joint by +step / -step
   step <rad>     set jog step (default 0.05 rad)
-  home           move selected joint to 0 rad
+  zero           move selected joint to 0 rad (mid-travel, NOT the rest pose)
   torque on|off  enable (hold) / disable (limp) torque
   status         print all joints
   help           show this help
@@ -157,10 +157,15 @@ def _repl(node: JogClient) -> None:
             tgt = next_target(node.base_for(joint), delta, joint)
             node.send(joint, tgt)
             print(f"{joint.name} -> {tgt:+.3f} rad")
-        elif cmd == "home":
+        elif cmd in ("zero", "home"):
+            if cmd == "home":
+                # "home" is the name of a taught rest pose; 0 rad is the middle
+                # of the joint's travel, a different place. Renamed rather than
+                # removed, so the old reflex still works and says so.
+                print("note: 'home' is now 'zero' — 0 rad is mid-travel.")
             tgt = joint.clamp_rad(0.0)
             node.send(joint, tgt)
-            print(f"{joint.name} -> {tgt:+.3f} rad (home)")
+            print(f"{joint.name} -> {tgt:+.3f} rad (zero)")
         elif cmd == "torque" and len(parts) == 2:
             node.set_torque(parts[1].lower() in ("on", "true", "1", "hold"))
         elif cmd == "status":

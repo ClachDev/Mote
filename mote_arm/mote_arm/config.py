@@ -23,15 +23,21 @@ RAD_PER_COUNT = 2.0 * math.pi / COUNTS_PER_REV
 
 @dataclass(frozen=True)
 class JointSpec:
-    """One arm servo: its bus ID, soft limits, zero offset, and direction."""
+    """One arm servo: its bus ID, soft limits, zero offset, and direction.
+
+    ``zero_counts`` is deliberately not called "home". "home" is the name of a
+    taught rest pose in ``arm_poses.yaml``; after calibration 0 rad is the
+    middle of the joint's travel, a different place entirely. Keeping the two
+    words apart is the whole point of the name.
+    """
 
     name: str
     id: int
     min_rad: float
     max_rad: float
-    # Raw encoder count that corresponds to 0 rad (the joint's mechanical zero).
-    # Taught at the bench; defaults to the servo mid-point.
-    home_counts: int = COUNTS_PER_REV // 2
+    # Raw encoder count that corresponds to 0 rad. Set by `arm-calibrate`;
+    # defaults to the servo mid-point.
+    zero_counts: int = COUNTS_PER_REV // 2
     # True if the joint's positive direction is opposite the servo's.
     invert: bool = False
 
@@ -45,7 +51,7 @@ class JointSpec:
 
     def counts_to_rad(self, counts: int) -> float:
         """Convert a raw encoder reading to radians about the joint zero."""
-        return self.sign * (counts - self.home_counts) * RAD_PER_COUNT
+        return self.sign * (counts - self.zero_counts) * RAD_PER_COUNT
 
     def rad_to_counts(self, rad: float) -> int:
         """Convert a joint angle to a raw encoder goal, clamped to [0, 4095].
@@ -54,7 +60,7 @@ class JointSpec:
         first so that a limit breach is a deliberate, visible decision rather
         than a silent saturation at the encoder edge.
         """
-        counts = round(self.home_counts + self.sign * rad / RAD_PER_COUNT)
+        counts = round(self.zero_counts + self.sign * rad / RAD_PER_COUNT)
         return max(0, min(COUNTS_PER_REV - 1, counts))
 
 
@@ -117,7 +123,11 @@ class ArmConfig:
                 id=int(entry["id"]),
                 min_rad=float(entry["min"]),
                 max_rad=float(entry["max"]),
-                home_counts=int(entry.get("home", COUNTS_PER_REV // 2)),
+                # `home:` is the pre-calibration spelling, still accepted so an
+                # un-migrated robot.yaml keeps working.
+                zero_counts=int(
+                    entry.get("zero", entry.get("home", COUNTS_PER_REV // 2))
+                ),
                 invert=bool(entry.get("invert", False)),
             )
             if spec.min_rad > spec.max_rad:

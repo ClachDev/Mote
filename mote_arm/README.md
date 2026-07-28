@@ -28,13 +28,15 @@ stack). We chose direct Feetech control:
    same mechanism; we don't need LeRobot's dataset format to unblock the
    follow-up. If we later want that format for learning, we can convert bags or
    run LeRobot off-board.
-4. **Calibration is cheap for a bring-up.** Per-joint soft limits + a home
-   offset in `robot.yaml`, taught with a short scripted bench procedure (see
-   `BENCH.md`) — no calibration wizard required.
+4. **We can borrow the calibration flow without the framework.** LeRobot's
+   `lerobot-calibrate` is two phases — write each servo's homing offset so
+   mid-travel reads 2048, then record every joint's range in one sweep — and
+   both are plain register operations on a bus we already drive. `pixi run
+   arm-calibrate` implements that flow directly (see `BENCH.md`).
 
 Everything hardware lives in `mote_description/config/robot.yaml` (`arm:`
 section): the single source of truth for the port, baud, servo IDs, per-joint
-soft limits, home offsets, and direction.
+soft limits, zero offsets, and direction.
 
 ### Why not an existing ROS 2 SO-101 stack?
 
@@ -98,49 +100,83 @@ conversions are verified without hardware.
 | Piece | What it is |
 |-------|------------|
 | `config.py` | Parses the `arm:` section; encoder<->radian conversion + soft-limit clamping. |
-| `bus.py` | `FeetechBus` — thin `scservo_sdk` wrapper (ping, read position/health, torque, position goal). Lazy SDK import. |
+| `bus.py` | `FeetechBus` — thin `scservo_sdk` wrapper (ping, read position/health, torque, position goal, homing offset). Lazy SDK import. |
 | `arm_driver` (node) | **Single bus owner.** Publishes `/joint_states` for the arm, accepts absolute goals on `arm/goal`, exposes `arm/set_torque`. `pixi run arm`. |
 | `jog` (CLI) | Interactive per-joint jog. A *client* of the driver — publishes clamped `arm/goal`, calls `arm/set_torque`. `pixi run arm-jog`. |
-| `arm_check` (tool) | Standalone enumeration + health + home snapshot. Read-only; run with the driver stopped. `pixi run arm-check`. |
-| `calibrate.py` / `arm_calibrate` | Guided range calibration: sweep each joint to its stops, emit `robot.yaml` limits. `pixi run arm-calibrate`. |
+| `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only; run with the driver stopped. `pixi run arm-check`. |
+| `calibrate.py` / `arm_calibrate` | Two-phase range calibration: write the homing offsets, sweep every joint at once, emit `robot.yaml` limits. `pixi run arm-calibrate`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
+
+## `zero` and `home` are different things
+
+Worth stating plainly, because the two were both called "home" until 2026-07-28
+and it confused an operator at the bench:
+
+| Term | What it is | Where it lives |
+|------|------------|----------------|
+| **zero** | The encoder count that reads 0 rad. After calibration, the *middle of the joint's travel*. | `robot.yaml`, `arm.joints[].zero` |
+| **home** | A taught *pose*, normally the arm's rest position. Nothing to do with 0 rad. | `~/.mote/arm_poses.yaml` |
+
+So `arm-jog`'s command to drive a joint to 0 rad is `zero`, not `home` (`home`
+still works and says so), and `pixi run arm-pose go home` moves to the rest pose.
 
 ## Where the soft limits come from
 
-**`pixi run arm-calibrate`.** It walks the six joints in servo-command order;
-for each, you move the limp joint gently to both mechanical stops by hand while
-it watches the encoder live, and it emits a ready-to-paste `arm.joints` block:
+**`pixi run arm-calibrate`**, in two phases — the same shape as LeRobot's
+`lerobot-calibrate`:
 
 ```
-pixi run arm-calibrate                        # home = the mid-point of each sweep
-pixi run arm-calibrate -- --home capture      # pose a zero per joint instead
+pixi run arm-calibrate                        # both phases
+pixi run arm-calibrate -- --skip-homing       # ranges only; writes nothing
 pixi run arm-calibrate -- --joints wrist_roll # redo one joint
 ```
 
-The band it emits is the swept range pulled **inward** by `--margin` (0.05 rad),
-because a hard stop is where the operator stopped pushing — a soft limit has to
-sit short of it. It opens the serial bus directly, like `arm-check`, so run it
-with the driver stopped: the driver reports radians about the very `home` being
-replaced, and the arm has to stay limp throughout. The one write it makes is
-torque *off*, and it asks first, because an unsupported arm falls when it goes
-limp.
+**Phase 1 — centre the joints.** You park the arm with every joint near the
+middle of its travel and press Enter. Each servo's position-correction register
+(EEPROM, `SMS_STS_OFS_L/H`, address 31) is written so that pose reads 2048; the
+servo reports `present = actual - offset`, so this re-centres the joint's whole
+travel inside the 0–4095 encoder frame. That pose becomes 0 rad.
 
-Three things it refuses to guess at, rather than emit plausible-looking numbers:
+**Phase 2 — record the ranges.** You move every joint to both of its mechanical
+stops, in any order, while one live table records **all six at once**. One Enter
+ends it. The band emitted is the swept range pulled **inward** by `--margin`
+(0.05 rad), because a hard stop is where the operator stopped pushing — a soft
+limit has to sit short of it.
 
-- **An encoder wrap.** A joint whose travel crosses the 12-bit 0/4095 boundary
-  has a raw min/max that says nothing about its span, and no `home`/limit pair
-  in that scheme can describe it (`rad_to_counts` clamps at the encoder edge).
-  The wrap is detected, reported, and the joint keeps its existing values with
-  the reason on the line above it. Fix it by re-homing that servo so its
-  mid-range sits away from the boundary, then sweep it again.
-- **A zero it could never reach.** If `home` lands within a margin of a stop,
-  the band would exclude 0 rad and the joint could not be commanded home — which
-  is exactly the defect in the pre-calibration `shoulder_pan` limits.
+**Phase 1 is what makes phase 2 trustworthy.** Without it, a joint whose travel
+happens to straddle the encoder's 0/4095 boundary reports a raw min and max that
+say nothing about its real span, and no zero/limit pair in that frame can
+describe it — `rad_to_counts` clamps at the encoder edge. Measured on the real
+arm, **two of six joints did exactly that** (`shoulder_pan` and `wrist_roll`).
+Re-centring them is the fix; there is no software workaround, because the
+servo's own goal register is 0–4095 too.
+
+It opens the serial bus directly, like `arm-check`, so run it with the driver
+stopped: the driver reports radians about the very zero being replaced, and the
+arm has to stay limp throughout. It asks before releasing torque (an unsupported
+arm falls) and again before the EEPROM write.
+
+Four things it refuses to guess at, rather than emit plausible-looking numbers:
+
+- **Travel beyond one revolution.** A continuously-rotating joint has no stops
+  to calibrate against and fits no single-turn frame. Reported as its own case,
+  because unlike a wrap there is no remedy — leave it out with `--joints`.
+- **An encoder wrap** that survived phase 1 — the safety net proving phase 1 did
+  its job. The joint keeps its existing values with the reason above its line.
+- **A zero it could never reach.** If the zero lands within a margin of a stop,
+  the band would exclude 0 rad — exactly the defect in the pre-calibration
+  `shoulder_pan` limits, whose band `[0.010, 0.229]` does not contain 0.
 - **A range too short to survive the margin at both ends.**
 
-It also warns, *before* emitting anything, which taught poses a changed `home`
-invalidates and by how many radians each has shifted. What was measured is
-recorded in `~/.mote/arm_calibration.yaml` for provenance.
+It also names, *before* emitting anything, the taught poses that a changed zero
+invalidates, and prints the `arm-pose save` line to re-teach each. What was
+measured — including the homing offsets, which otherwise exist only in EEPROM —
+is recorded in `~/.mote/arm_calibration.yaml`.
+
+**After a run, `robot.yaml` is stale until you paste.** The offsets have moved,
+so the old `zero` counts no longer describe the hardware. Paste the block,
+`pixi run build`, *then* re-teach poses — in that order, or the poses are taught
+against a zero that is about to change.
 
 ### Named poses, and narrowing the envelope
 
@@ -225,25 +261,29 @@ part of the mission bringup; run it explicitly with `pixi run arm`.
 
 ## Calibration
 
-The committed `home:` values are the arm's **as-found resting counts** read off
-the robot, not taught mechanical zeros. So "0 rad" currently means "the pose it
-was parked in". That is a deliberately safe reference — jog steps stay small
-because they start from the measured position — but it is not yet a real zero.
+The committed `zero:` values are the arm's **as-found resting counts** read off
+the robot, not measured mid-travel. A real calibration run showed why that is
+bad: the parked pose sits within ~20 counts of a hard stop on `shoulder_lift`,
+`elbow_flex` and `gripper`, so "0 rad" currently means "jammed against the
+stop", and the committed bands (~0.2 rad) are a small fraction of the ~3.4–3.6
+rad these joints actually travel.
 
 See `BENCH.md` for the full runbook. In short:
 
 1. `pixi run arm-check` — confirm every joint responds; note IDs.
-2. `pixi run arm-calibrate` — sweep every joint to its stops; paste the emitted
-   `arm.joints` block into `robot.yaml` and `pixi run build`. This sets `home`
+2. `pixi run arm-calibrate` — centre the joints, sweep them, paste the emitted
+   `arm.joints` block into `robot.yaml`, `pixi run build`. This sets `zero`
    *and* `min`/`max` together, which is the point: limits only mean something
    relative to the zero they were measured about.
-3. Jog each joint (`pixi run arm-jog`) and flip `invert` for any that moves
+3. Re-teach any poses it named (`pixi run arm-pose save <name>`), *after* the
+   rebuild.
+4. Jog each joint (`pixi run arm-jog`) and flip `invert` for any that moves
    opposite the expected sign. `invert` changes what the limits mean, so
    re-calibrate after changing it.
 
-`arm-check -- --save-home` still prints a bare `home:` snapshot of the current
-pose. It is a one-joint-at-a-time convenience, not calibration: it measures no
-range, so the limits stay whatever they were.
+`arm-check -- --save-zero` still prints a bare `zero:` snapshot of the current
+pose. It is a convenience, not calibration: it measures no range and writes no
+offset, so the limits stay whatever they were.
 
 ## Verified on hardware
 

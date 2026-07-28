@@ -1,27 +1,36 @@
-"""Guided range calibration: sweep each joint to its stops, emit robot.yaml.
+"""Guided range calibration, LeRobot-style: centre the joints, then sweep them.
 
-Walks the six joints in servo-command order. For each, the operator moves the
-limp joint gently to both mechanical stops by hand while the tool watches the
-encoder live; it then emits an ``arm.joints`` block whose soft limits are the
-measured travel pulled inward by a margin.
+Two phases, and the first is what makes the second trustworthy:
 
-    pixi run arm-calibrate                 # home = the mid-point of each sweep
-    pixi run arm-calibrate -- --home capture   # pose a zero per joint instead
-    pixi run arm-calibrate -- --joints wrist_roll,gripper   # redo two joints
+1. **Homing offsets.** You park the arm with every joint near the middle of its
+   travel; each servo's position-correction register is written so that pose
+   reads 2048. This re-centres every joint's travel inside the 0-4095 encoder
+   frame, which is what stops a joint's range straddling the wrap. It writes
+   EEPROM, so it asks first.
+2. **Ranges.** You move every joint to both of its mechanical stops while a
+   single live table records all six at once. One Enter ends it.
+
+    pixi run arm-calibrate
+    pixi run arm-calibrate -- --skip-homing        # ranges only, writes nothing
+    pixi run arm-calibrate -- --joints wrist_roll  # redo one joint
 
 This replaces ``arm-pose limits`` as the way soft limits are set. That command
-widens *outward* from poses a human has already vetted, which can only ever
-describe where the arm has been — it never learns where the stops are, and a
+widens *outward* from poses a human has already vetted, which only ever
+describes where the arm has been — it never learns where the stops are, and a
 joint that barely moved between two taught poses ends up with a near-zero band.
 Calibration measures the stops directly and works inward from them.
 
 **It opens the serial bus directly**, like ``arm_check`` and ``arm_gains``, so
 run it with the driver stopped. It is a bus owner rather than an ``arm_driver``
-client for two reasons: the driver reports radians about the very ``home`` this
-tool exists to replace, so a client would be measuring against the offset under
-test; and the arm must be limp and back-drivable throughout, which is the
-opposite of what the driver is for. The one write it makes is torque *off* — it
-never commands a goal.
+client for two reasons: the driver reports radians about the very zero this tool
+exists to replace, so a client would be measuring against the offset under test;
+and the arm must be limp and back-drivable throughout, which is the opposite of
+what the driver is for.
+
+Note the vocabulary. ``zero`` is where 0 rad sits — after calibration, the
+middle of each joint's travel. ``home`` is a *taught pose* in
+``arm_poses.yaml``, usually the arm's rest position. They are different places
+and this tool never conflates them.
 """
 
 from __future__ import annotations
@@ -35,14 +44,16 @@ from datetime import datetime, timezone
 from mote_arm import config, poses
 from mote_arm.bus import BusError, FeetechBus, port_holders
 from mote_arm.calibrate import (
+    CENTRE_COUNTS,
     DEFAULT_MARGIN,
     CalibrationError,
     SweepRecorder,
     calibrate_joint,
-    home_shift,
+    homing_offset,
     joints_block,
     pose_impact,
     save_record,
+    zero_shift,
 )
 from mote_arm.config import RAD_PER_COUNT
 
@@ -71,7 +82,7 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
 
 
 def _wait_for_enter() -> threading.Event:
-    """Event set when the operator presses Enter, so the sweep can poll on."""
+    """Event set when the operator presses Enter, so a loop can poll on it."""
     done = threading.Event()
 
     def wait() -> None:
@@ -85,105 +96,194 @@ def _wait_for_enter() -> threading.Event:
     return done
 
 
-def _sweep(bus, joint, rate_hz: float) -> tuple[SweepRecorder, int]:
-    recorder = SweepRecorder(joint.name)
+class _LiveTable:
+    """A table that redraws over itself, so the whole arm is visible at once.
+
+    Falls back to printing nothing when stdout is not a terminal: the cursor
+    control would otherwise fill a log with escape codes.
+    """
+
+    def __init__(self, header: str, columns: str):
+        self.header = header
+        self.columns = columns
+        self._lines = 0
+        self._tty = sys.stdout.isatty()
+
+    def draw(self, rows: list[str]) -> None:
+        if not self._tty:
+            return
+        if self._lines:
+            sys.stdout.write(f"\033[{self._lines}A")
+        out = [self.header, self.columns, *rows]
+        for line in out:
+            sys.stdout.write(f"\r{line}\033[K\n")
+        sys.stdout.flush()
+        self._lines = len(out)
+
+    def final(self, rows: list[str]) -> None:
+        """Leave the finished table on screen, drawing it if we never could."""
+        if self._tty:
+            self.draw(rows)
+            return
+        for line in [self.header, self.columns, *rows]:
+            print(line)
+
+
+def _read_all(bus, joints) -> dict[str, int | None]:
+    return {j.name: bus.read_position(j.id) for j in joints}
+
+
+def _phase_offsets(bus, joints, args) -> dict[str, int] | None:
+    """Write each servo's homing offset so the parked pose reads centre."""
+    print("\n=== Phase 1 of 2: centre the joints ===")
+    print(
+        "Move the arm so EVERY joint sits near the middle of its travel — not\n"
+        "against any stop — then press Enter. That pose becomes 0 rad."
+    )
+    input()
+
+    present = _read_all(bus, joints)
+    unreadable = [n for n, p in present.items() if p is None]
+    if unreadable:
+        raise SystemExit(f"could not read position for {unreadable} — check wiring")
+
+    existing: dict[str, int] = {}
+    for joint in joints:
+        current = bus.read_homing_offset(joint.id)
+        if current is None:
+            raise SystemExit(
+                f"could not read {joint.name}'s existing homing offset. Refusing "
+                "to write a new one blind — a wrong offset silently moves every "
+                "angle the arm reports."
+            )
+        existing[joint.name] = current
+
+    wanted: dict[str, int] = {}
+    print(f"\n{'joint':<16}{'now':>6}{'offset':>8}{'->':>4}{'new':>7}")
+    for joint in joints:
+        try:
+            new = homing_offset(present[joint.name], existing[joint.name])
+        except CalibrationError as exc:
+            raise SystemExit(f"{joint.name}: {exc}")
+        wanted[joint.name] = new
+        print(
+            f"{joint.name:<16}{present[joint.name]:>6}"
+            f"{existing[joint.name]:>8}{'->':>4}{new:>7}"
+        )
+
+    stale = {n: v for n, v in wanted.items() if v != existing[n]}
+    if not stale:
+        print("\nevery servo is already centred here — nothing to write.")
+        return wanted
+
+    print(
+        f"\nThis writes the position-correction register of {len(stale)} servo(s) "
+        "— EEPROM,\na persistent hardware change. Afterwards the zero counts in "
+        "robot.yaml are\nstale until you paste the block this prints at the end."
+    )
+    if not _confirm("write homing offsets? [y/N] ", args.yes):
+        raise SystemExit("aborted; nothing written")
+
+    failed = []
+    for joint in joints:
+        if joint.name not in stale:
+            continue
+        ok = bus.write_homing_offset(joint.id, wanted[joint.name])
+        print(f"  {joint.name:<16} {'written and verified' if ok else 'FAILED'}")
+        if not ok:
+            failed.append(joint.name)
+    if failed:
+        raise SystemExit(f"could not verify the homing offset on: {failed}")
+
+    # Prove it took where it matters: the joints should now read centre.
+    time.sleep(0.2)
+    after = _read_all(bus, joints)
+    drift = {n: p for n, p in after.items() if p is None or abs(p - CENTRE_COUNTS) > 40}
+    if drift:
+        print(
+            f"\nWARNING: after writing, {sorted(drift)} do not read near "
+            f"{CENTRE_COUNTS}.\nThe arm may have moved while limp, which is "
+            "harmless, but if it persists\nthe offset did not take."
+        )
+    else:
+        print(f"\nall joints now read within 40 counts of {CENTRE_COUNTS}.")
+    return wanted
+
+
+def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
+    """Record every joint's range at once while the operator moves them."""
+    print("\n=== Phase 2 of 2: record the ranges ===")
+    print(
+        "Move each joint gently to both of its mechanical stops, then leave the\n"
+        "arm somewhere safe. The stop is where it resists — do not force it.\n"
+        "Take the joints in any order; all of them are being recorded.\n"
+        "\nPress Enter when every joint has been to both stops."
+    )
+
+    recorders = {j.name: SweepRecorder(j.name) for j in joints}
+    table = _LiveTable("", f"  {'joint':<16}{'min':>6}{'now':>6}{'max':>6}{'span':>10}")
     done = _wait_for_enter()
     period = 1.0 / rate_hz
     misses = 0
+    last: dict[str, int | None] = {j.name: None for j in joints}
     while not done.is_set():
-        counts = bus.read_position(joint.id)
-        if counts is None:
-            misses += 1
-        else:
-            recorder.add(counts)
-            span = recorder.unwrapped_span
-            flag = f"  WRAPPED x{recorder.wraps}" if recorder.wraps else ""
-            print(
-                f"\r  now {counts:>4}   min {recorder.min_counts:>4}   "
-                f"max {recorder.max_counts:>4}   span {span:>4} counts "
-                f"({span * RAD_PER_COUNT:5.3f} rad){flag}   ",
-                end="",
-                flush=True,
-            )
+        rows = []
+        for joint in joints:
+            counts = bus.read_position(joint.id)
+            rec = recorders[joint.name]
+            if counts is None:
+                misses += 1
+            else:
+                rec.add(counts)
+                last[joint.name] = counts
+            rows.append(_range_row(joint.name, rec, counts))
+        table.draw(rows)
         time.sleep(period)
-    print()
-    return recorder, misses
+    table.final([_range_row(j.name, recorders[j.name], last[j.name]) for j in joints])
+    return recorders, misses
 
 
-def _capture_home(bus, joint) -> int | None:
-    print(
-        f"  now move {joint.name} to the pose that should read 0 rad, then press Enter."
+def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
+    if rec.samples == 0:
+        return f"  {name:<16}{'-':>6}{'-':>6}{'-':>6}{'no readings':>10}"
+    span = rec.unwrapped_span
+    flag = f"  WRAP x{rec.wraps}" if rec.wraps else ""
+    shown = f"{now:>6}" if now is not None else f"{'':>6}"
+    return (
+        f"  {name:<16}{rec.min_counts:>6}{shown}{rec.max_counts:>6}"
+        f"{span * RAD_PER_COUNT:>8.2f} rad{flag}"
     )
-    input()
-    for _ in range(5):
-        counts = bus.read_position(joint.id)
-        if counts is not None:
-            return counts
-        time.sleep(0.1)
-    return None
-
-
-def _report_sweep(recorder: SweepRecorder, misses: int) -> None:
-    span = recorder.unwrapped_span
-    travel = f"{span} counts ({span * RAD_PER_COUNT:.3f} rad)"
-    if recorder.wraps:
-        print(
-            f"  raw readings {recorder.min_counts}-{recorder.max_counts}, "
-            f"true travel {travel}, from {recorder.samples} samples"
-        )
-        print(
-            f"  WRAP: the reading jumped past 0/4095 {recorder.wraps} time(s), so "
-            "the raw range is not this joint's range."
-        )
-    else:
-        print(
-            f"  swept {recorder.min_counts}-{recorder.max_counts}, {travel}, "
-            f"from {recorder.samples} samples"
-        )
-    if misses:
-        print(f"  {misses} reading(s) did not come back — bus contention or wiring")
 
 
 def _warn_about_poses(cfg, calibrated) -> None:
-    """Name the taught poses a re-home would invalidate, before emitting it."""
+    """Name the taught poses a changed zero invalidates, before emitting it."""
     shifts = {
-        name: home_shift(
-            cfg.joint(name).home_counts, cal.home_counts, cfg.joint(name).invert
+        name: zero_shift(
+            cfg.joint(name).zero_counts, cal.zero_counts, cfg.joint(name).invert
         )
         for name, cal in calibrated.items()
     }
     moved = {n: s for n, s in shifts.items() if s != 0.0}
     if not moved:
-        print(
-            "\nhome is unchanged on every calibrated joint — taught poses still hold."
-        )
+        print("\nzero is unchanged on every joint — taught poses still hold.")
         return
-
-    print(f"\nhome MOVED on {len(moved)} joint(s):")
-    for name, shift in sorted(moved.items()):
-        old = cfg.joint(name).home_counts
-        print(
-            f"  {name:<16} {old} -> {calibrated[name].home_counts} counts "
-            f"({shift:+.4f} rad)"
-        )
 
     taught = poses.load_poses()
     impact = pose_impact(taught, moved)
     if not impact:
         print(
-            f"  no taught poses are affected ({len(taught)} pose(s) in "
-            f"{poses.poses_path()})"
+            f"\nzero moved on {len(moved)} joint(s); no taught poses are affected "
+            f"({len(taught)} pose(s) in {poses.poses_path()})."
         )
         return
     print(
-        "\nPOSES INVALIDATED: poses are stored in radians about home, so after "
-        "pasting\nthis block the poses below name different physical positions "
-        "and must be\nre-taught (`pixi run arm-pose save <name>`). The shift per "
-        "joint is shown."
+        f"\nRE-TEACH THESE POSES. A pose is stored as radians from the zero, and "
+        f"the\nzero moved on {len(moved)} joint(s), so these now name different "
+        "physical\npositions. Paste the block below and `pixi run build` FIRST, "
+        "then re-teach:"
     )
-    for pose, affected in sorted(impact.items()):
-        joints = ", ".join(f"{n} {s:+.4f} rad" for n, s in sorted(affected.items()))
-        print(f"  {pose:<16} {joints}")
+    for pose in sorted(impact):
+        print(f"  pixi run arm-pose save {pose}")
 
 
 def _select(cfg, spec_names: str):
@@ -198,7 +298,7 @@ def _select(cfg, spec_names: str):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Guided full-range arm calibration (sweep to the stops)"
+        description="Guided full-range arm calibration (centre, then sweep)"
     )
     parser.add_argument("--robot-yaml", default="", help="override robot.yaml path")
     parser.add_argument(
@@ -215,11 +315,10 @@ def main() -> None:
         f"(default {DEFAULT_MARGIN})",
     )
     parser.add_argument(
-        "--home",
-        choices=("mid", "capture"),
-        default="mid",
-        help="'mid' derives home from the middle of each sweep; 'capture' asks "
-        "you to pose a zero per joint (default: mid)",
+        "--skip-homing",
+        action="store_true",
+        help="skip phase 1: record ranges against the zeros already in "
+        "robot.yaml and write nothing to the servos",
     )
     parser.add_argument(
         "--rate", type=float, default=20.0, help="encoder sample rate, Hz"
@@ -244,7 +343,7 @@ def main() -> None:
     try:
         _run(bus, cfg, selected, args)
     except KeyboardInterrupt:
-        print("\ninterrupted — nothing was written", file=sys.stderr)
+        print("\ninterrupted", file=sys.stderr)
     finally:
         bus.close()
 
@@ -274,60 +373,47 @@ def _run(bus, cfg, selected, args) -> None:
             print(f"  {joint.name}: {exc}")
     print("torque off — the arm is back-drivable.")
 
+    offsets: dict[str, int] = {}
+    if args.skip_homing:
+        print("\n--skip-homing: keeping the zeros already in robot.yaml.")
+        zeros = {j.name: j.zero_counts for j in selected}
+        source = "kept from robot.yaml"
+    else:
+        offsets = _phase_offsets(bus, selected, args) or {}
+        zeros = {j.name: CENTRE_COUNTS for j in selected}
+        source = "centred by a homing offset"
+
+    recorders, misses = _phase_ranges(bus, selected, args.rate)
+    if misses:
+        print(f"\n{misses} reading(s) did not come back — bus contention or wiring")
+
     calibrated: dict = {}
     chosen = {j.name for j in selected}
     failures: dict[str, str] = {
         j.name: "not selected this run" for j in cfg.joints if j.name not in chosen
     }
-    for index, joint in enumerate(selected, 1):
-        print(f"\n[{index}/{len(selected)}] {joint.name} (id {joint.id})")
-        print(
-            "  Move it gently to one mechanical stop, then to the other, then "
-            "back to a\n  safe resting position. Do not force it — the stop is "
-            "where it resists.\n  Press Enter when done."
-        )
-        recorder, misses = _sweep(bus, joint, args.rate)
-        if recorder.samples == 0:
+    for joint in selected:
+        rec = recorders[joint.name]
+        if rec.samples == 0:
             failures[joint.name] = "no encoder readings"
-            print("  no readings — skipping this joint")
             continue
-        _report_sweep(recorder, misses)
-        if recorder.wraps:
-            # Say so before asking for a zero pose: no home can rescue a wrapped
-            # sweep, and prompting for one would waste the operator's time.
-            failures[joint.name] = "sweep crossed the encoder 0/4095 boundary"
-            print(
-                "  NOT CALIBRATED: re-home the servo so this joint's mid-range "
-                "sits away\n  from the 0/4095 boundary (see mote_arm/BENCH.md), "
-                "then sweep it again."
-            )
-            continue
-
-        home_counts = None
-        if args.home == "capture":
-            home_counts = _capture_home(bus, joint)
-            if home_counts is None:
-                failures[joint.name] = "could not read the captured home pose"
-                print("  could not read a position — skipping this joint")
-                continue
-            print(f"  home captured at {home_counts} counts")
-
         try:
             calibrated[joint.name] = calibrate_joint(
-                joint, recorder.result(), home_counts, args.margin
+                joint, rec.result(), zeros[joint.name], args.margin, source
             )
         except CalibrationError as exc:
             failures[joint.name] = exc.reason
-            print(f"  NOT CALIBRATED: {exc}")
-            continue
-        cal = calibrated[joint.name]
-        print(
-            f"  limits {cal.min_rad:+.3f} to {cal.max_rad:+.3f} rad about "
-            f"home {cal.home_counts} ({cal.home_source})"
-        )
+            print(f"\n{joint.name} NOT CALIBRATED: {exc}")
 
     if not calibrated:
         raise SystemExit("\nno joint was calibrated — nothing to emit")
+
+    print("\ncalibrated:")
+    for name, cal in calibrated.items():
+        print(
+            f"  {name:<16} {cal.min_rad:+.3f} to {cal.max_rad:+.3f} rad "
+            f"about zero {cal.zero_counts} ({cal.sweep.span_rad:.2f} rad swept)"
+        )
 
     _warn_about_poses(cfg, calibrated)
 
@@ -335,12 +421,20 @@ def _run(bus, cfg, selected, args) -> None:
     print("\nPaste into robot.yaml's arm: section, then `pixi run build`:\n")
     print(joints_block(list(cfg.joints), calibrated, failures, recorded))
 
-    if failures:
-        print(f"\n{len(failures)} joint(s) kept their existing values:")
-        for name, reason in sorted(failures.items()):
+    real = {n: r for n, r in failures.items() if n in chosen}
+    if real:
+        print("\nNOT calibrated, kept their existing values:")
+        for name, reason in sorted(real.items()):
             print(f"  {name:<16} {reason}")
+    if not args.skip_homing:
+        print(
+            "\nThe servos' homing offsets have changed, so robot.yaml is now "
+            "STALE.\nDo not run `pixi run arm` until you have pasted the block "
+            "above and rebuilt:\nthe driver would read every angle against the "
+            "old zero."
+        )
     if not args.no_record:
-        path = save_record(calibrated, recorded)
+        path = save_record(calibrated, recorded, offsets=offsets)
         print(f"\nmeasurements recorded in {path}")
 
 

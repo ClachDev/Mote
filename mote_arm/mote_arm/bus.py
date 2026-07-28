@@ -27,6 +27,11 @@ _MODE = 33
 _KP = 21
 _KD = 22
 _KI = 23
+# SMS_STS_OFS_L/H: the position-correction offset, in EEPROM. The servo reports
+# `present = actual - offset`, so writing it moves where the joint's zero sits
+# in the 0-4095 encoder frame. This is what stops a joint's travel straddling
+# the 0/4095 wrap; see mote_arm/calibrate.py.
+_HOMING_OFFSET = 31
 _PRESENT_POSITION = 56
 _PRESENT_LOAD = 60
 _PRESENT_VOLTAGE = 62
@@ -35,6 +40,24 @@ _PRESENT_TEMPERATURE = 63
 # STS/SMS is little-endian: protocol_end 0 in scservo_sdk terms.
 _PROTOCOL_END = 0
 _MODE_POSITION = 0
+
+# The offset register is sign-magnitude, not two's complement: bit 11 is the
+# sign and bits 0-10 the magnitude, so it spans +-2047.
+OFFSET_SIGN_BIT = 0x800
+OFFSET_MAX = 0x7FF
+
+
+def encode_sign_magnitude(value: int) -> int:
+    """Encode a signed offset for the servo's sign-magnitude register."""
+    if abs(value) > OFFSET_MAX:
+        raise ValueError(f"offset {value} outside the register's +-{OFFSET_MAX} range")
+    return (abs(value) | OFFSET_SIGN_BIT) if value < 0 else value
+
+
+def decode_sign_magnitude(raw: int) -> int:
+    """Decode a sign-magnitude register value back to a signed offset."""
+    magnitude = raw & OFFSET_MAX
+    return -magnitude if raw & OFFSET_SIGN_BIT else magnitude
 
 
 @dataclass
@@ -272,6 +295,49 @@ class FeetechBus:
             # The read-back races the relock; give the servo time to settle.
             time.sleep(0.15)
             if self.read_gains(servo_id) == want:
+                return True
+        return False
+
+    def read_homing_offset(self, servo_id: int) -> int | None:
+        """Return the servo's position-correction offset, or None if unreadable.
+
+        Read twice and trusted only when both agree, for the same reason as
+        ``read_gains``: this bus returns the occasional garbled byte, and a
+        wrong offset here would silently move every angle the arm reports.
+        """
+        for _ in range(5):
+            first = self._read_offset_once(servo_id)
+            time.sleep(0.05)
+            second = self._read_offset_once(servo_id)
+            if first is not None and first == second:
+                return decode_sign_magnitude(first)
+            time.sleep(0.1)
+        return None
+
+    def _read_offset_once(self, servo_id: int) -> int | None:
+        raw, comm, err = self._packet.read2ByteTxRx(
+            self._port, servo_id, _HOMING_OFFSET
+        )
+        return raw if self._ok(comm, err) else None
+
+    def write_homing_offset(self, servo_id: int, offset: int) -> bool:
+        """Write the position-correction offset to EEPROM and verify it took.
+
+        Returns True only once a confirmed read-back matches, so a caller never
+        reports success on an unverified change to persistent servo config.
+        Torque must be off: the offset moves the position frame, and a torqued
+        servo would chase its old goal into the new frame.
+        """
+        encoded = encode_sign_magnitude(offset)
+        for _ in range(4):
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 0)
+            time.sleep(0.05)
+            self._packet.write2ByteTxRx(self._port, servo_id, _HOMING_OFFSET, encoded)
+            time.sleep(0.05)
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 1)
+            # The read-back races the relock; give the servo time to settle.
+            time.sleep(0.15)
+            if self.read_homing_offset(servo_id) == offset:
                 return True
         return False
 

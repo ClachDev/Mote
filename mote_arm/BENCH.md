@@ -16,7 +16,7 @@ any rewiring or recalibration. What is still open:
 - **Step 3 — one full calibration pass.** This is the important one. The
   committed limits are still the old pose-envelope output: they describe where
   the arm has been, not where it can go, and `shoulder_pan`'s band excludes its
-  own zero so that joint can never be commanded home. `pixi run arm-calibrate`
+  own zero so that joint can never be commanded to 0 rad. `pixi run arm-calibrate`
   measures the stops directly; until it has been run on the real arm, every
   limit below is provisional.
 - **Steps 5–6 for the other five joints** — only `elbow_flex` was jogged and
@@ -61,47 +61,86 @@ opens the serial bus directly.
 pixi run arm-calibrate
 ```
 
-For each of the six joints in turn it prints a live readout and waits:
+### Phase 1 — centre the joints (writes servo EEPROM)
 
-1. Move the joint **gently** to one mechanical stop. The stop is where it
-   resists — do not force it, and do not use it to "find" extra range.
-2. Move it to the other stop, watching `min`/`max`/`span` grow on the readout.
-3. Move it back to a safe resting position and press **Enter**.
-
-**Expected per joint:** a swept span matching what you felt (a full-travel joint
-is ~2–4 rad; the gripper much less), then a printed band a little inside it.
-Anything that does not calibrate says why and keeps its existing values — see
-the failure table below.
-
-Use `--home capture` instead if you want a deliberate zero: after each sweep it
-asks you to park that joint at the pose which should read 0 rad. Park it well
-away from the stops, or the band would exclude its own zero and it is rejected.
-
-Before emitting anything it lists every taught pose that a changed `home`
-invalidates. **Those poses must be re-taught** (`pixi run arm-pose save <name>`)
-— they are stored in radians about home, so afterwards they name different
-physical positions.
-
-Finally, paste the printed `arm.joints` block over the one in
-`mote_description/config/robot.yaml`, then:
+It asks you to **park the arm with every joint near the middle of its travel**,
+then press Enter. That pose becomes 0 rad. It shows what it intends to write and
+asks before touching EEPROM:
 
 ```
+joint              now  offset  ->    new
+shoulder_pan       454       0  ->  -1594
+...
+write homing offsets? [y/N]
+```
+
+**Expected:** every servo `written and verified`, then `all joints now read
+within 40 counts of 2048`. This is the step that stops a joint's travel
+straddling the encoder's 0/4095 wrap — on this arm, `shoulder_pan` and
+`wrist_roll` both did before it existed.
+
+Park it *near* the middle; it does not have to be exact. What matters is that no
+joint is against a stop, or its band would exclude its own zero and it is
+rejected.
+
+### Phase 2 — record the ranges
+
+Move each joint **gently** to both of its mechanical stops — the stop is where it
+resists, do not force it, and do not use it to "find" extra range. Take the
+joints in any order; all six are recorded at once in a live table:
+
+```
+  joint              min   now   max      span
+  shoulder_pan       698  2103  3378    4.11 rad
+  ...
+```
+
+Press **Enter** once every joint has been to both stops.
+
+**Expected:** a span per joint matching what you felt (the big joints measured
+3.4–4.1 rad; the gripper ~2.3), no `WRAP` flags, then a printed band a little
+inside each. Anything that does not calibrate says why and keeps its existing
+values — see the failure table below.
+
+### Then, in this order
+
+It lists every taught pose the changed zeros invalidate, and prints the command
+to re-teach each. **Order matters:**
+
+```
+# 1. paste the printed arm.joints block over the one in
+#    mote_description/config/robot.yaml, then:
 pixi run build
-pixi run arm-check     # the rad column should read ~0.000 at each new home
+pixi run arm-check              # rad column reads ~0.000 at the centred pose
+# 2. only now re-teach the poses it named:
+pixi run arm      # in another terminal
+pixi run arm-pose save home
 ```
 
-What was measured is kept in `~/.mote/arm_calibration.yaml`.
+Re-teaching *before* the rebuild records the poses against the old zero, which
+is about to change — they would be wrong again immediately. Until you paste,
+`robot.yaml` is stale: the offsets have moved but its `zero` counts have not, so
+do not run the driver in between.
+
+What was measured is kept in `~/.mote/arm_calibration.yaml`, including the
+homing offsets — the only record of them outside servo EEPROM.
 
 ### When a joint does not calibrate
 
 | Reported | What to do |
 |----------|------------|
-| `sweep crossed the encoder 0/4095 boundary` | That joint's travel straddles the encoder wrap, so no `home`/limit pair can describe it. Re-home the servo (re-seat the horn, or re-zero it) so its mid-range sits away from the boundary, then `pixi run arm-calibrate -- --joints <name>`. |
-| `home too close to a stop; zero would be unreachable` | Only with `--home capture`. Re-run that joint and park it further from the stops. |
+| `travel exceeds one revolution; joint is continuous` | The joint spins freely and has no stops to calibrate against. Exclude it: `--joints` the others. |
+| `sweep crossed the encoder 0/4095 boundary` | Phase 1 did not centre this joint — usually it was against a stop when you parked it. Re-run and park it nearer the middle of its travel. |
+| `zero too close to a stop; zero would be unreachable` | Same cause, same fix. |
 | `swept only X rad, too short for the margin` | The sweep did not reach both stops — redo it. If the joint really is that short, lower `--margin`. |
+| `needed offset exceeds the servo's correction range` | The joint is more than half a revolution from centre. Move it nearer the middle before phase 1. |
 
 A joint that fails keeps its previous values, with the reason as a comment above
 its line, so pasting the block never silently reverts a joint to a guess.
+
+`--skip-homing` records ranges against the zeros already in `robot.yaml` and
+writes nothing to the servos — for re-measuring after a calibrated arm has been
+disturbed, not for a first pass.
 
 ## Step 4 — joint states live in ROS
 
@@ -140,7 +179,7 @@ For **each** joint in turn (arm supported, ready to cut power):
    the commanded direction, and `/joint_states` (Terminal B) track it.
    - If the joint moves the **wrong way**, set `invert: true` for it in
      `robot.yaml`, rebuild, and repeat.
-4. `home` returns it to 0 rad.
+4. `zero` returns it to 0 rad (mid-travel, not the rest pose).
 
 Only `elbow_flex` has been done this way; the remaining five are open. See
 README's "Verified on hardware" for what the elbow run showed.
@@ -211,8 +250,9 @@ Still open:
 
 - [ ] **Step 3: one full `pixi run arm-calibrate` pass on the real arm**, its
       block pasted into `robot.yaml`, and any taught poses it named re-taught
-- [ ] no joint reports an encoder wrap during that pass (if one does, re-home
-      that servo away from the 0/4095 boundary and sweep it again)
+- [ ] phase 1 wrote and verified a homing offset on every servo, and no joint
+      reports an encoder wrap in phase 2 (two did before phase 1 existed)
+- [ ] the poses `arm-calibrate` named were re-taught AFTER the rebuild
 - [ ] `shoulder_pan` can be commanded to 0 rad afterwards (today its band
       excludes its own zero)
 - [ ] the other five joints jogged and direction-checked (`invert`)

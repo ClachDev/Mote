@@ -133,14 +133,14 @@ def test_clamp_within_and_outside():
     assert j.clamp_rad(-2.0) == -1.0
 
 
-def test_zero_is_home_counts():
-    j = JointSpec("j", 1, min_rad=-3, max_rad=3, home_counts=2048)
+def test_zero_is_zero_counts():
+    j = JointSpec("j", 1, min_rad=-3, max_rad=3, zero_counts=2048)
     assert j.rad_to_counts(0.0) == 2048
     assert j.counts_to_rad(2048) == 0.0
 
 
 def test_conversion_roundtrip():
-    j = JointSpec("j", 1, min_rad=-3, max_rad=3, home_counts=2048)
+    j = JointSpec("j", 1, min_rad=-3, max_rad=3, zero_counts=2048)
     for rad in (-1.0, -0.25, 0.0, 0.5, 1.2):
         counts = j.rad_to_counts(rad)
         back = j.counts_to_rad(counts)
@@ -148,19 +148,19 @@ def test_conversion_roundtrip():
 
 
 def test_quarter_turn_is_ninety_degrees():
-    j = JointSpec("j", 1, min_rad=-3, max_rad=3, home_counts=0)
+    j = JointSpec("j", 1, min_rad=-3, max_rad=3, zero_counts=0)
     assert j.rad_to_counts(math.pi / 2) == COUNTS_PER_REV // 4
 
 
 def test_invert_flips_direction():
-    fwd = JointSpec("f", 1, min_rad=-3, max_rad=3, home_counts=2048, invert=False)
-    inv = JointSpec("i", 1, min_rad=-3, max_rad=3, home_counts=2048, invert=True)
+    fwd = JointSpec("f", 1, min_rad=-3, max_rad=3, zero_counts=2048, invert=False)
+    inv = JointSpec("i", 1, min_rad=-3, max_rad=3, zero_counts=2048, invert=True)
     assert fwd.rad_to_counts(0.5) > 2048
     assert inv.rad_to_counts(0.5) < 2048
 
 
 def test_rad_to_counts_saturates_at_encoder_edge():
-    j = JointSpec("j", 1, min_rad=-100, max_rad=100, home_counts=2048)
+    j = JointSpec("j", 1, min_rad=-100, max_rad=100, zero_counts=2048)
     # A wildly out-of-range angle never produces an invalid encoder value.
     assert 0 <= j.rad_to_counts(50.0) <= COUNTS_PER_REV - 1
     assert 0 <= j.rad_to_counts(-50.0) <= COUNTS_PER_REV - 1

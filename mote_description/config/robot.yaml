@@ -24,11 +24,10 @@ servos:
 # Consumed by mote_arm (driver, jog CLI, arm_check) and by the arm section of
 # mote.urdf.xacro. There is no leader arm — this is the follower only.
 #
-# CALIBRATION STATUS: min/max are conservative placeholders and `home` values
-# are the arm's as-found resting counts, NOT taught mechanical zeros. Pose each
-# joint at its true zero and re-run `pixi run arm-check -- --save-home` (see
-# mote_arm/BENCH.md), then update here — robot.yaml is the single source of
-# truth, so nothing else needs editing.
+# CALIBRATION STATUS: not yet calibrated. min/max and `zero` below predate
+# `pixi run arm-calibrate`; run it (mote_arm/BENCH.md step 3) and paste its
+# block over the joints: list — robot.yaml is the single source of truth, so
+# nothing else needs editing.
 #
 # WIRING: the arm SHARES the drive-wheel bus (verified on the robot: IDs 1-6
 # for the arm, 7/9 for the wheels, all on /dev/mote_servos). Consequences:
@@ -56,33 +55,40 @@ arm:
     kp: 32
     kd: 32
     ki: 0
-  # min/max are soft limits in radians about each joint's zero; home is the raw
-  # encoder count (0-4095) at that zero.
+  # min/max are soft limits in radians about each joint's zero; `zero` is the
+  # raw encoder count (0-4095) that reads 0 rad.
   #
-  # These come from `pixi run arm-calibrate`: the operator sweeps each limp joint
-  # to both mechanical stops by hand and the tool emits this block, the band
-  # being the measured travel pulled INWARD by a margin. It is the only method
-  # that learns where the stops actually are.
+  # `zero` is NOT the arm's rest pose. After calibration 0 rad is the middle of
+  # each joint's travel; the rest pose is a taught pose called "home" in
+  # ~/.mote/arm_poses.yaml. The two were both called "home" until 2026-07-28,
+  # which is exactly why this key is now spelled `zero` (`home:` is still
+  # accepted for an un-migrated file).
+  #
+  # These come from `pixi run arm-calibrate`, which works in two phases: it
+  # writes each servo's homing-offset register so the parked mid-travel pose
+  # reads 2048, then records every joint's range in one sweep and emits this
+  # block with the band pulled INWARD from the measured stops. Phase 1 matters:
+  # without it a joint whose travel straddles the encoder's 0/4095 wrap cannot
+  # be described by any zero/limit pair at all — measured on this arm, two of
+  # six joints did exactly that.
   #
   # THE VALUES BELOW PREDATE THAT TOOL. They are the older pose-envelope output
-  # (`arm-pose limits`): the extremes of two vetted poses ("home" and "reachy",
-  # taught 2026-07-25) widened by 0.10 rad, plus the arm's as-found parked counts
-  # as home. Safe, but they describe where the arm has *been* rather than where
-  # it can go, so joints that barely moved between those two poses carry a
-  # near-zero band — and shoulder_pan's [0.010, 0.229] excludes its own zero, so
-  # that joint can never be commanded home. Run a calibration pass
-  # (mote_arm/BENCH.md step 3) and paste the result over this block.
+  # (`arm-pose limits`): the extremes of two vetted poses widened by 0.10 rad,
+  # plus the arm's as-found parked counts as zero. They describe where the arm
+  # has *been*, not where it can go — and a real calibration run showed the
+  # parked pose sits within ~20 counts of a hard stop on most joints, which is
+  # why the bands are so tight and lopsided. shoulder_pan's [0.010, 0.229] does
+  # not even contain its own zero. Run BENCH.md step 3 and paste over this.
   #
-  # Changing `home` invalidates stored poses (they are recorded in radians about
-  # it), so re-teach poses after any re-home — `arm-calibrate` names the ones
-  # affected before it emits anything.
+  # Changing a `zero` invalidates stored poses (they are radians about it), so
+  # re-teach them afterwards — `arm-calibrate` names which ones.
   joints:
-    - {name: shoulder_pan,  id: 1, min:  0.010, max: 0.229, home: 3013, invert: false}
-    - {name: shoulder_lift, id: 2, min: -0.102, max: 0.100, home: 1483, invert: false}
-    - {name: elbow_flex,    id: 3, min: -3.291, max: 0.103, home: 2931, invert: false}
-    - {name: wrist_flex,    id: 4, min: -3.226, max: 0.097, home: 2767, invert: false}
-    - {name: wrist_roll,    id: 5, min: -0.098, max: 0.102, home:  731, invert: false}
-    - {name: gripper,       id: 6, min: -0.102, max: 0.098, home: 2056, invert: false}
+    - {name: shoulder_pan,  id: 1, min:  0.010, max: 0.229, zero: 3013, invert: false}
+    - {name: shoulder_lift, id: 2, min: -0.102, max: 0.100, zero: 1483, invert: false}
+    - {name: elbow_flex,    id: 3, min: -3.291, max: 0.103, zero: 2931, invert: false}
+    - {name: wrist_flex,    id: 4, min: -3.226, max: 0.097, zero: 2767, invert: false}
+    - {name: wrist_roll,    id: 5, min: -0.098, max: 0.102, zero:  731, invert: false}
+    - {name: gripper,       id: 6, min: -0.102, max: 0.098, zero: 2056, invert: false}
 
 # Sensors
 lidar:

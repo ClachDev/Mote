@@ -1,23 +1,32 @@
-"""Range calibration: swept encoder counts -> home offset and soft limits.
+"""Range calibration: swept encoder counts -> zero offset and soft limits.
 
 The arm's soft limits should describe where the joint can physically go, which
-means measuring the mechanical stops. An operator sweeps each limp joint to both
-stops by hand while the tool watches the encoder; this module turns that stream
-of raw counts into a ``robot.yaml`` ``arm.joints`` block.
+means measuring the mechanical stops. This module turns a stream of raw encoder
+counts into a ``robot.yaml`` ``arm.joints`` block.
 
-Two things make that more than a min/max:
+The flow it serves is LeRobot's, in two phases:
 
-* **The 12-bit encoder wraps.** A joint whose travel crosses the 0/4095 boundary
-  reports a raw min and max that say nothing about its real span, and no
-  ``home``/limit pair expressed in that scheme can describe it — ``rad_to_counts``
-  clamps at the encoder edge. Wraps are detected and refused rather than turned
-  into plausible-looking numbers.
-* **Limits sit *inside* the stops.** A hard stop is where the operator stopped
-  pushing, so the emitted band is the swept range pulled *inward* by a margin.
-  This is the opposite of ``poses.envelope``, which widens outward from poses a
-  human has already vetted as safe.
+1. **Set the homing offsets.** The operator parks the arm with every joint near
+   the middle of its travel, and each servo's position-correction register
+   (EEPROM, ``SMS_STS_OFS_L/H``) is written so that pose reads 2048. The servo
+   reports ``present = actual - offset``, so this re-centres the joint's whole
+   travel within the 0-4095 encoder frame.
+2. **Record the ranges.** Every joint is swept and recorded *together* in one
+   pass, not one at a time.
 
-ROS-free and SDK-free, like ``config``: every rule above is a plain function so
+Phase 1 is what makes phase 2 trustworthy. Without it, a joint whose travel
+straddles the encoder's 0/4095 boundary reports a raw min and max that say
+nothing about its real span, and no zero/limit pair in that frame can describe
+it — ``rad_to_counts`` clamps at the encoder edge. On the real arm two of six
+joints did exactly that. The wrap check below is kept as the safety net that
+proves phase 1 did its job, not as a problem to hand back to the operator.
+
+The other rule: **limits sit *inside* the stops.** A hard stop is where the
+operator stopped pushing, so the emitted band is the swept range pulled *inward*
+by a margin — the opposite of ``poses.envelope``, which widens outward from
+poses a human has already vetted as safe.
+
+ROS-free and SDK-free, like ``config``: every rule above is a plain function, so
 it is unit-tested without an arm on the bench.
 """
 
@@ -29,11 +38,16 @@ from pathlib import Path
 
 import yaml
 
+from mote_arm.bus import OFFSET_MAX
 from mote_arm.config import COUNTS_PER_REV, RAD_PER_COUNT, JointSpec
 from mote_arm.poses import mote_home
 
 # Radians of headroom kept between a soft limit and the measured hard stop.
 DEFAULT_MARGIN = 0.05
+
+# Where phase 1 puts each joint's zero: the middle of the encoder frame, so the
+# travel has as much room as possible either side before it reaches a wrap.
+CENTRE_COUNTS = COUNTS_PER_REV // 2
 
 # A hand-moved joint cannot travel half a revolution between consecutive
 # samples, so a jump that large is the encoder wrapping past 0/4095.
@@ -169,27 +183,28 @@ class SweepRecorder:
 
 @dataclass(frozen=True)
 class JointCalibration:
-    """One joint's calibrated home and soft limits, and where they came from."""
+    """One joint's calibrated zero and soft limits, and where they came from."""
 
     name: str
     id: int
     invert: bool
-    home_counts: int
+    zero_counts: int
     min_rad: float
     max_rad: float
-    # "mid-range" (derived from the sweep) or "captured" (operator-posed zero).
-    home_source: str
+    # How the zero was arrived at: "centred" (phase 1 wrote a homing offset),
+    # "kept" (--skip-homing reused robot.yaml), or "sweep mid-point".
+    zero_source: str
     margin: float
     sweep: Sweep
 
 
 def limits_from_sweep(
     sweep: Sweep,
-    home_counts: int,
+    zero_counts: int,
     invert: bool = False,
     margin: float = DEFAULT_MARGIN,
 ) -> tuple[float, float]:
-    """Soft limits in radians about ``home_counts``, pulled inward by ``margin``.
+    """Soft limits in radians about ``zero_counts``, pulled inward by ``margin``.
 
     The stops themselves are where the operator stopped pushing, so they are the
     outer bound of what is known-reachable, not a target. Everything the caller
@@ -198,18 +213,29 @@ def limits_from_sweep(
     """
     if margin < 0:
         raise ValueError("margin must not be negative")
+    if sweep.unwrapped_span >= COUNTS_PER_REV:
+        # No homing offset can rescue this: the joint simply does not fit in a
+        # single-turn frame. Distinguished from an ordinary wrap because the
+        # remedy is different — there isn't one, short of excluding the joint.
+        raise CalibrationError(
+            f"{sweep.name}: swept {sweep.span_rad:.2f} rad, more than the one "
+            f"full revolution the encoder can express. A continuously-rotating "
+            "joint has no mechanical stops to calibrate against — leave it out "
+            "with --joints, and drive it in relative terms instead.",
+            reason="travel exceeds one revolution; joint is continuous",
+        )
     if sweep.wrapped:
         raise CalibrationError(
             f"{sweep.name}: the sweep crossed the encoder's 0/{COUNTS_PER_REV - 1} "
             f"boundary {sweep.wraps} time(s), so its raw range "
             f"({sweep.min_counts}-{sweep.max_counts}) does not describe its travel. "
-            "Re-home the servo so the joint's mid-range sits away from the "
-            "boundary (see mote_arm/BENCH.md), then sweep it again.",
+            "Re-run without --skip-homing so phase 1 re-centres this joint, and "
+            "park it nearer the middle of its travel when asked.",
             reason="sweep crossed the encoder 0/4095 boundary",
         )
-    if not sweep.min_counts <= home_counts <= sweep.max_counts:
+    if not sweep.min_counts <= zero_counts <= sweep.max_counts:
         raise CalibrationError(
-            f"{sweep.name}: home {home_counts} lies outside the swept range "
+            f"{sweep.name}: home {zero_counts} lies outside the swept range "
             f"{sweep.min_counts}-{sweep.max_counts} — the zero pose must be one "
             "the joint can actually reach.",
             reason="home lies outside the swept range",
@@ -217,8 +243,8 @@ def limits_from_sweep(
 
     sign = -1 if invert else 1
     ends = (
-        sign * (sweep.min_counts - home_counts) * RAD_PER_COUNT,
-        sign * (sweep.max_counts - home_counts) * RAD_PER_COUNT,
+        sign * (sweep.min_counts - zero_counts) * RAD_PER_COUNT,
+        sign * (sweep.max_counts - zero_counts) * RAD_PER_COUNT,
     )
     lo, hi = min(ends), max(ends)
     if hi - lo <= 2 * margin:
@@ -244,43 +270,69 @@ def limits_from_sweep(
 def calibrate_joint(
     spec: JointSpec,
     sweep: Sweep,
-    home_counts: int | None = None,
+    zero_counts: int | None = None,
     margin: float = DEFAULT_MARGIN,
+    zero_source: str = "",
 ) -> JointCalibration:
     """Turn one sweep into a calibrated joint.
 
-    ``home_counts`` is an operator-captured zero pose; without one, home is the
-    mid-point of the sweep. Which of the two was used is carried on the result so
-    the emitted YAML can say so rather than leaving it to be inferred.
+    ``zero_counts`` is where 0 rad sits — normally ``CENTRE_COUNTS``, since
+    phase 1 has just written the homing offsets that put it there. Without one
+    it falls back to the mid-point of the sweep. ``zero_source`` records which,
+    so the emitted YAML says it rather than leaving it to be inferred.
     """
     if sweep.wrapped:
         # Reported by limits_from_sweep, but mid_counts would be nonsense first.
-        limits_from_sweep(sweep, spec.home_counts, spec.invert, margin)
-    source = "captured" if home_counts is not None else "mid-range"
-    home = sweep.mid_counts if home_counts is None else int(home_counts)
-    lo, hi = limits_from_sweep(sweep, home, spec.invert, margin)
+        limits_from_sweep(sweep, spec.zero_counts, spec.invert, margin)
+    zero = sweep.mid_counts if zero_counts is None else int(zero_counts)
+    source = zero_source or ("sweep mid-point" if zero_counts is None else "measured")
+    lo, hi = limits_from_sweep(sweep, zero, spec.invert, margin)
     return JointCalibration(
         name=spec.name,
         id=spec.id,
         invert=spec.invert,
-        home_counts=home,
+        zero_counts=zero,
         min_rad=lo,
         max_rad=hi,
-        home_source=source,
+        zero_source=source,
         margin=margin,
         sweep=sweep,
     )
 
 
-def home_shift(old_home: int, new_home: int, invert: bool = False) -> float:
-    """Radians a stored pose value moves by when ``home`` changes.
+def homing_offset(
+    present_counts: int,
+    existing_offset: int,
+    centre: int = CENTRE_COUNTS,
+) -> int:
+    """The offset that makes the joint's current pose read ``centre``.
 
-    Poses are recorded in radians about home, so re-homing silently redefines
-    every one of them: the same stored number now names a different physical
-    position, off by exactly this much.
+    The servo reports ``present = actual - offset``, so the actual encoder angle
+    is ``present + existing_offset`` and the offset wanted is that minus the
+    target. ``existing_offset`` must be the value currently in the register, not
+    assumed zero: re-running calibration on an already-offset servo would
+    otherwise double-count it and move the zero by the old offset again.
+    """
+    offset = present_counts + existing_offset - centre
+    if abs(offset) > OFFSET_MAX:
+        raise CalibrationError(
+            f"the offset needed ({offset}) exceeds the servo's +-{OFFSET_MAX} "
+            "correction range. The joint is more than half a revolution from "
+            "centre — move it nearer the middle of its travel and retry.",
+            reason="needed offset exceeds the servo's correction range",
+        )
+    return offset
+
+
+def zero_shift(old_zero: int, new_zero: int, invert: bool = False) -> float:
+    """Radians a stored pose value moves by when a joint's zero changes.
+
+    Poses are recorded in radians about the zero, so re-zeroing silently
+    redefines every one of them: the same stored number now names a different
+    physical position, off by exactly this much.
     """
     sign = -1 if invert else 1
-    return sign * (old_home - new_home) * RAD_PER_COUNT
+    return sign * (old_zero - new_zero) * RAD_PER_COUNT
 
 
 def pose_impact(
@@ -302,12 +354,12 @@ def pose_impact(
 
 
 def _joint_line(
-    name: str, joint_id: int, lo: float, hi: float, home: int, invert: bool
+    name: str, joint_id: int, lo: float, hi: float, zero: int, invert: bool
 ) -> str:
     return (
         f"    - {{name: {name + ',':<16} id: {joint_id}, "
         f"min: {lo:>7.3f}, max: {hi:>7.3f}, "
-        f"home: {home:>4}, invert: {str(invert).lower()}}}"
+        f"zero: {zero:>4}, invert: {str(invert).lower()}}}"
     )
 
 
@@ -328,14 +380,16 @@ def joints_block(
     done = list(calibrated.values())
     if done:
         margins = "/".join(f"{m:.3f}" for m in sorted({c.margin for c in done}))
-        sources = ", ".join(sorted({c.home_source for c in done}))
+        sources = ", ".join(sorted({c.zero_source for c in done}))
         lines += textwrap.wrap(
             f"Soft limits measured by sweeping each joint to its mechanical stops "
             f"({len(done)} joint(s)"
             + (f", {recorded}" if recorded else "")
             + f"). The band is the swept range pulled INWARD by {margins} rad, so a "
             "soft limit always stops short of the stop it was measured from. "
-            f"home: {sources}.",
+            f"zero: {sources}. NOTE zero is the middle of each joint's travel, "
+            "not the arm's rest pose — the rest pose is a taught pose named "
+            "'home' in arm_poses.yaml.",
             width=78,
             initial_indent="  # ",
             subsequent_indent="  # ",
@@ -351,7 +405,7 @@ def joints_block(
                     cal.id,
                     cal.min_rad,
                     cal.max_rad,
-                    cal.home_counts,
+                    cal.zero_counts,
                     cal.invert,
                 )
                 + f"  # swept {cal.sweep.min_counts}-{cal.sweep.max_counts}"
@@ -365,7 +419,7 @@ def joints_block(
                 joint.id,
                 joint.min_rad,
                 joint.max_rad,
-                joint.home_counts,
+                joint.zero_counts,
                 joint.invert,
             )
         )
@@ -380,6 +434,7 @@ def save_record(
     calibrated: dict[str, JointCalibration],
     recorded: str,
     path: Path | str | None = None,
+    offsets: dict[str, int] | None = None,
 ) -> Path:
     """Write what was measured, so the limits in robot.yaml have a provenance.
 
@@ -387,21 +442,26 @@ def save_record(
     physical arm's stops on one day, not the repo's shared configuration.
     """
     p = Path(path) if path is not None else record_path()
-    joints = {
-        cal.name: {
+    offsets = offsets or {}
+    joints = {}
+    for cal in calibrated.values():
+        entry = {
             "id": cal.id,
             "min_counts": cal.sweep.min_counts,
             "max_counts": cal.sweep.max_counts,
             "samples": cal.sweep.samples,
             "span_rad": round(cal.sweep.span_rad, 4),
-            "home": cal.home_counts,
-            "home_source": cal.home_source,
+            "zero": cal.zero_counts,
+            "zero_source": cal.zero_source,
             "margin": cal.margin,
             "min": round(cal.min_rad, 4),
             "max": round(cal.max_rad, 4),
         }
-        for cal in calibrated.values()
-    }
+        # The offset lives in servo EEPROM, where nothing else records it; if
+        # a servo is swapped this is the only note of what the old one carried.
+        if cal.name in offsets:
+            entry["homing_offset"] = offsets[cal.name]
+        joints[cal.name] = entry
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
         yaml.safe_dump({"recorded": recorded, "joints": joints}, sort_keys=True)

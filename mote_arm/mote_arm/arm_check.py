@@ -2,13 +2,15 @@
 
 Opens the arm bus directly (no ROS node), pings every configured joint, and
 prints position / voltage / temperature / load. It can also dump a robot.yaml
-``home:`` snippet from the arm's current pose (``--save-home``) for calibration.
+``zero:`` snippet from the arm's current pose (``--save-zero``). That is a
+convenience, not calibration: it measures no range, so the limits stay as they
+were. `pixi run arm-calibrate` is what sets zeros and limits together.
 
 Read-only: it never enables torque or commands a goal, so it is the safe first
 contact with the arm. Run it with the driver NOT running — the arm shares the
 drive-wheel bus, so only one process may hold the port:
     pixi run arm-check
-    pixi run arm-check -- --save-home
+    pixi run arm-check -- --save-zero
 """
 
 from __future__ import annotations
@@ -29,9 +31,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="SO-101 arm bus check")
     parser.add_argument("--robot-yaml", default="", help="override robot.yaml path")
     parser.add_argument(
+        "--save-zero",
         "--save-home",
+        dest="save_zero",
         action="store_true",
-        help="print a robot.yaml home: snippet from the current pose",
+        help="print a robot.yaml zero: snippet from the current pose",
     )
     args = parser.parse_args()
 
@@ -60,7 +64,7 @@ def main() -> None:
     except BusError as exc:
         raise SystemExit(f"cannot open bus: {exc}")
 
-    homes: list[tuple[str, int]] = []
+    zeros: list[tuple[str, int]] = []
     missing = []
     try:
         print(
@@ -73,7 +77,7 @@ def main() -> None:
                 missing.append(joint)
                 print(f"{joint.name:<14} {joint.id:>3}   --- NO RESPONSE ---")
                 continue
-            homes.append((joint.name, health.position))
+            zeros.append((joint.name, health.position))
             print(
                 f"{joint.name:<14} {joint.id:>3} {health.position:>5} "
                 f"{joint.counts_to_rad(health.position):>+7.3f} "
@@ -91,11 +95,13 @@ def main() -> None:
     else:
         print("\nall configured joints responded.")
 
-    if args.save_home and homes:
-        print("\ncalibration snapshot — pose each joint at its mechanical zero,")
-        print("then paste these 'home:' values into robot.yaml's arm.joints:")
-        for name, counts in homes:
-            print(f"    # {name}: home: {counts}")
+    if args.save_zero and zeros:
+        print(
+            "\nsnapshot of the current pose (this sets no limits — see arm-calibrate):"
+        )
+        print("paste these 'zero:' values into robot.yaml's arm.joints:")
+        for name, counts in zeros:
+            print(f"    # {name}: zero: {counts}")
 
 
 if __name__ == "__main__":
