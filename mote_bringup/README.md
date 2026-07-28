@@ -83,9 +83,12 @@ An interactive `pixi run` keeps stock discovery.
 
 **Three layers of process recovery** (see also `test/chaos/`):
 
-1. **Node crash** → the launch system relaunches just that node
-   (`respawn=True` on the drivers in `mote_launch.py` and the nav2 servers in
-   `nav2_launch.py`; the nav2 lifecycle managers reconnect the respawned node).
+1. **Process crash** → the launch system relaunches just that process
+   (`respawn=True` on the drivers in `mote_launch.py` and on the Nav2 container
+   in `nav2_launch.py`). Nav2 is composed, so its granularity is the whole stack
+   rather than the individual server: the container respawns, the launch file
+   reloads the components into it, and the lifecycle managers — components
+   themselves — re-activate everything on the way back up.
 2. **Launch/process crash** → systemd restarts the whole service.
 3. **Health-monitor hang** → the `WatchdogSec` watchdog restarts `mote-health`.
 
