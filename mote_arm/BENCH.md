@@ -119,23 +119,23 @@ this arm `shoulder_pan` and `wrist_roll` both did.
 
 ### Then, in this order
 
-It lists every taught pose the changed zeros invalidate, and prints the command
-to re-teach each. **Order matters:**
+It then shows a diff of `mote_description/config/robot.yaml` and asks before
+writing the new limits in — only between the `# BEGIN arm.joints` / `# END
+arm.joints` markers, leaving the rest of the file untouched. Say yes.
+
+It also lists every taught pose the changed zeros invalidate. **Re-teach those
+last**, after the file is written, or they record against a zero that is about
+to change:
 
 ```
-# 1. paste the printed arm.joints block over the one in
-#    mote_description/config/robot.yaml, then:
-pixi run build
-pixi run arm-check              # rad column reads ~0.000 at the centred pose
-# 2. only now re-teach the poses it named:
-pixi run arm      # in another terminal
+pixi run arm-check          # rad column reads ~0.000 at the centred pose
+pixi run arm                # in another terminal
 pixi run arm-pose save home
+git diff mote_description/config/robot.yaml   # review before committing
 ```
 
-Re-teaching *before* the rebuild records the poses against the old zero, which
-is about to change — they would be wrong again immediately. Until you paste,
-`robot.yaml` is stale: the offsets have moved but its `zero` counts have not, so
-do not run the driver in between.
+`--print-only` prints the block instead of writing, if you would rather paste it
+yourself.
 
 What was measured is kept in `~/.mote/arm_calibration.yaml`, including the
 homing offsets — the only record of them outside servo EEPROM.

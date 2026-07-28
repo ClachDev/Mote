@@ -58,6 +58,11 @@ CENTRE_COUNTS = COUNTS_PER_REV // 2
 # samples, so a jump that large is the encoder wrapping past 0/4095.
 WRAP_THRESHOLD = COUNTS_PER_REV // 2
 
+# Delimit the region of robot.yaml this tool owns. Everything outside is the
+# operator's, and is preserved byte for byte.
+BEGIN_MARKER = "# BEGIN arm.joints"
+END_MARKER = "# END arm.joints"
+
 
 class CalibrationError(ValueError):
     """A sweep that cannot be turned into limits, with the reason why.
@@ -458,12 +463,18 @@ def joints_block(
 ) -> str:
     """Render a ready-to-paste ``arm.joints`` block, in servo-command order.
 
+    Wrapped in the BEGIN/END markers ``splice_joints_block`` replaces between,
+    so the same text works whether it is written by the tool or pasted by hand.
+
     Joints that were not calibrated (skipped, or a sweep that could not be used)
-    keep their existing values and say why, so pasting the block never silently
-    reverts a joint to a guess.
+    keep their existing values and say why, so the block never silently reverts
+    a joint to a guess.
     """
     failures = failures or {}
-    lines: list[str] = []
+    lines: list[str] = [
+        f"  {BEGIN_MARKER} — rewritten by `pixi run arm-calibrate`; edits inside",
+        "  # this region are replaced wholesale, so keep anything you want above it.",
+    ]
     done = list(calibrated.values())
     if done:
         margins = "/".join(f"{m:.3f}" for m in sorted({c.margin for c in done}))
@@ -513,7 +524,37 @@ def joints_block(
                 joint.invert,
             )
         )
+    lines.append(f"  {END_MARKER}")
     return "\n".join(lines)
+
+
+def splice_joints_block(text: str, block: str) -> str:
+    """Replace the marked region of a robot.yaml with ``block``.
+
+    A textual splice rather than a YAML round-trip: dumping the parsed document
+    back out would discard every comment in the file, and this one carries the
+    reasoning behind the values. The markers make the managed region explicit,
+    so nothing has to be inferred from indentation and an operator can see
+    exactly what the tool will overwrite.
+    """
+    lines = text.splitlines(keepends=True)
+    begin = end = None
+    for i, line in enumerate(lines):
+        if begin is None and BEGIN_MARKER in line:
+            begin = i
+        elif begin is not None and END_MARKER in line:
+            end = i
+            break
+    if begin is None or end is None:
+        raise CalibrationError(
+            f"could not find the {BEGIN_MARKER} / {END_MARKER} markers in the "
+            "robot.yaml being written. Refusing to guess which lines to replace "
+            "— paste the block by hand, or restore the markers.",
+            reason="robot.yaml has no managed-region markers",
+        )
+    return (
+        "".join(lines[:begin]) + block.rstrip("\n") + "\n" + "".join(lines[end + 1 :])
+    )
 
 
 def record_path() -> Path:

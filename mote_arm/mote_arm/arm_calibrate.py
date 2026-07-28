@@ -41,10 +41,15 @@ and this tool never conflates them.
 from __future__ import annotations
 
 import argparse
+import difflib
+import os
+import pathlib
 import sys
 import threading
 import time
 from datetime import datetime, timezone
+
+import yaml
 
 from mote_arm import config, poses
 from mote_arm.bus import BusError, FeetechBus, port_holders
@@ -61,6 +66,7 @@ from mote_arm.calibrate import (
     pose_impact,
     save_offsets_backup,
     save_record,
+    splice_joints_block,
     zero_shift,
 )
 from mote_arm.config import RAD_PER_COUNT
@@ -363,6 +369,95 @@ def _warn_about_poses(cfg, calibrated) -> None:
         print(f"  pixi run arm-pose save {pose}")
 
 
+def _robot_yaml_source(args) -> str | None:
+    """The robot.yaml to edit: the source file, not the installed copy.
+
+    `colcon --symlink-install` makes the installed config a symlink back into
+    the source tree, so resolving it lands on the file worth editing. Without
+    symlink-install it lands inside `install/`, where an edit would be silently
+    thrown away by the next build — so that case is refused rather than written.
+    """
+    path = args.robot_yaml or config.default_robot_yaml()
+    real = os.path.realpath(path)
+    if f"{os.sep}install{os.sep}" in real:
+        return None
+    return real
+
+
+def _apply_to_robot_yaml(block: str, args) -> bool:
+    """Write the block into robot.yaml, showing the diff and asking first.
+
+    Returns whether robot.yaml now matches the calibration. It is worth doing
+    at all because the alternative leaves a window in which the servos have
+    been re-zeroed and robot.yaml still describes the old zeros — a window this
+    tool created and should therefore close.
+    """
+    if args.print_only:
+        print("\n--print-only: paste this into robot.yaml's arm: section.\n")
+        print(block)
+        return False
+
+    path = _robot_yaml_source(args)
+    if path is None:
+        print(
+            "\nrobot.yaml resolves inside install/, so this build is not "
+            "symlink-installed\nand an edit there would be lost on the next "
+            "build. Paste this by hand:\n"
+        )
+        print(block)
+        return False
+
+    original = pathlib.Path(path).read_text()
+    try:
+        updated = splice_joints_block(original, block)
+    except CalibrationError as exc:
+        print(f"\n{exc}\n")
+        print(block)
+        return False
+
+    # Never write a robot.yaml that would not load. This is the config every
+    # other arm tool reads, including the soft limits that stop the arm.
+    try:
+        reparsed = config.ArmConfig.from_dict(yaml.safe_load(updated))
+    except Exception as exc:  # noqa: BLE001 - any failure to reload is fatal
+        raise SystemExit(
+            f"refusing to write: the result would not load ({exc}). "
+            "Paste the block by hand and check it."
+        )
+
+    diff = list(
+        difflib.unified_diff(
+            original.splitlines(),
+            updated.splitlines(),
+            fromfile=path,
+            tofile=f"{path} (calibrated)",
+            lineterm="",
+            n=1,
+        )
+    )
+    if not diff:
+        print(f"\n{path} already matches this calibration — nothing to write.")
+        return True
+
+    print(f"\nchanges to {path}:\n")
+    for line in diff:
+        print(f"  {line}")
+
+    if not _confirm("\nwrite these to robot.yaml? [y/N] ", args.yes):
+        print("not written. The block above can still be pasted by hand:\n")
+        print(block)
+        return False
+
+    # Write via a temporary file in the same directory, so an interrupted write
+    # cannot leave a half-updated robot.yaml behind.
+    target = pathlib.Path(path)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(updated)
+    os.replace(tmp, target)
+    print(f"\nwritten to {path} ({len(reparsed.joints)} joints)")
+    return True
+
+
 def _check_sweep(joint, sweep, args) -> None:
     """Raise if this sweep cannot become limits, before any EEPROM is written."""
     if args.skip_homing:
@@ -409,6 +504,11 @@ def main() -> None:
         "--rate", type=float, default=20.0, help="encoder sample rate, Hz"
     )
     parser.add_argument("--yes", action="store_true", help="skip confirmations")
+    parser.add_argument(
+        "--print-only",
+        action="store_true",
+        help="print the arm.joints block instead of writing it into robot.yaml",
+    )
     parser.add_argument(
         "--no-record",
         action="store_true",
@@ -514,24 +614,28 @@ def _run(bus, cfg, selected, args) -> None:
     _warn_about_poses(cfg, calibrated)
 
     recorded = datetime.now(timezone.utc).strftime("measured %Y-%m-%d")
-    print("\nPaste into robot.yaml's arm: section, then `pixi run build`:\n")
-    print(joints_block(list(cfg.joints), calibrated, failures, recorded))
+    block = joints_block(list(cfg.joints), calibrated, failures, recorded)
 
     real = {n: r for n, r in failures.items() if n in chosen}
     if real:
         print("\nNOT calibrated, kept their existing values:")
         for name, reason in sorted(real.items()):
             print(f"  {name:<16} {reason}")
-    if not args.skip_homing:
-        print(
-            "\nThe servos' homing offsets have changed, so robot.yaml is now "
-            "STALE.\nDo not run `pixi run arm` until you have pasted the block "
-            "above and rebuilt:\nthe driver would read every angle against the "
-            "old zero."
-        )
     if not args.no_record:
         path = save_record(calibrated, recorded, offsets=offsets)
         print(f"\nmeasurements recorded in {path}")
+
+    written = _apply_to_robot_yaml(block, args)
+    if not written and not args.skip_homing:
+        # Only a hazard while robot.yaml still describes the old zeros. Writing
+        # it closes that window, which is the main reason this tool writes at
+        # all rather than leaving the operator to transcribe six lines.
+        print(
+            "\nThe servos' homing offsets have changed but robot.yaml has NOT "
+            "been\nupdated, so it is now stale. Do not run `pixi run arm` until "
+            "the block\nabove is in place: the driver would read every angle "
+            "against the old zero."
+        )
 
 
 if __name__ == "__main__":

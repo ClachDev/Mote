@@ -219,9 +219,22 @@ invalidates, and prints the `arm-pose save` line to re-teach each. What was
 measured — including the homing offsets, which otherwise exist only in EEPROM —
 is recorded in `~/.mote/arm_calibration.yaml`.
 
-**After a run, `robot.yaml` is stale until you paste.** The offsets have moved,
-so the old `zero` counts no longer describe the hardware. Paste the block,
-`pixi run build`, *then* re-teach poses — in that order, or the poses are taught
+**It writes `robot.yaml` for you.** After the offsets move, the committed `zero`
+counts no longer describe the hardware, so leaving the file to be transcribed by
+hand opens a window where the config is actively wrong — a window this tool
+created and should close. It shows a unified diff, asks, and replaces only the
+region between the `# BEGIN arm.joints` / `# END arm.joints` markers; everything
+else in the file, including every comment, is preserved byte for byte. It
+re-parses the result through `ArmConfig` first and refuses to write anything
+that would not load, and writes via a temporary file so an interrupted write
+cannot leave a half-updated config.
+
+`--print-only` keeps the old print-and-paste behaviour. Declining the prompt
+prints the block too. If the markers are missing, or `robot.yaml` resolves
+inside `install/` (a non-symlink build, where the edit would be lost on the next
+`pixi run build`), it says so and prints instead of writing.
+
+**Re-teach poses last.** Doing it before the file is updated records them
 against a zero that is about to change.
 
 ### Named poses, and narrowing the envelope

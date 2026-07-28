@@ -247,8 +247,15 @@ section. Contains:
   short for the margin; `--skip-homing` additionally hits the wrap and
   unreachable-zero cases, since it leaves the zero where it is. Names the
   taught poses a changed zero invalidates and prints the `arm-pose save` line for
-  each; **after a run robot.yaml is stale until the block is pasted and rebuilt,
-  and poses must be re-taught only after that**. Measurements + the offsets
+  each; **it writes robot.yaml itself** (diff + confirm), replacing only the region
+  between the `# BEGIN arm.joints` / `# END arm.joints` markers — a textual
+  splice, because a YAML round-trip would discard every comment in that file.
+  It re-parses through `ArmConfig` and refuses to write anything that would not
+  load, and resolves the *source* path (symlink-install) rather than editing
+  `install/`. This exists because the alternative leaves a window where the
+  servos are re-zeroed and robot.yaml still describes the old zeros.
+  `--print-only` keeps print-and-paste. **Poses must be re-taught after the
+  write, never before.** Measurements + the offsets
   (their only record outside EEPROM) go to `~/.mote/arm_calibration.yaml`.
   A continuously-rotating joint is detectable **only** by being rotated past a
   whole turn (the refusal above); rotated less it is indistinguishable from a

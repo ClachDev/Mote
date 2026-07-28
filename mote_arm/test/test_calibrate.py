@@ -625,3 +625,96 @@ def test_only_a_sweep_past_a_whole_turn_is_treated_as_continuous():
     two_laps = _record("wrist_roll", [(i * 40) % COUNTS_PER_REV for i in range(220)])
     with pytest.raises(calibrate.CalibrationError, match="revolution"):
         calibrate.centred_limits(two_laps.result())
+
+
+REAL_YAML = """# leading comment that must survive
+servos:
+  port: /dev/mote_servos
+  left_id: 7
+arm:
+  port: /dev/mote_servos
+  baud_rate: 1000000
+  gains:
+    kp: 32
+  # explanation the operator wrote and wants kept
+  #
+  # BEGIN arm.joints — rewritten by the tool
+  # NOT YET CALIBRATED, provisional values
+  joints:
+    - {name: elbow_flex, id: 3, min: -1.0, max: 1.0, zero: 2048, invert: false}
+    - {name: gripper, id: 6, min: -0.1, max: 0.1, zero: 2056, invert: false}
+  # END arm.joints
+
+lidar:
+  port: /dev/mote_lidar
+"""
+
+
+def _calibrated_block():
+    cfg = _two_joint_config()
+    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
+    cal = calibrate.calibrate_centred(cfg.joint("elbow_flex"), sweep)
+    return calibrate.joints_block(list(cfg.joints), {"elbow_flex": cal})
+
+
+def test_splice_replaces_only_the_marked_region():
+    out = calibrate.splice_joints_block(REAL_YAML, _calibrated_block())
+    assert "# leading comment that must survive" in out
+    assert "explanation the operator wrote and wants kept" in out
+    assert "port: /dev/mote_lidar" in out
+    assert "kp: 32" in out
+    # The provisional note inside the region is gone.
+    assert "NOT YET CALIBRATED" not in out
+
+
+def test_spliced_yaml_still_loads_and_carries_the_new_limits():
+    block = _calibrated_block()
+    out = calibrate.splice_joints_block(REAL_YAML, block)
+    loaded = ArmConfig.from_dict(yaml.safe_load(out))
+    assert [j.name for j in loaded.joints] == ["elbow_flex", "gripper"]
+    assert loaded.joint("elbow_flex").zero_counts == calibrate.CENTRE_COUNTS
+    # The uncalibrated joint keeps exactly what it had.
+    assert loaded.joint("gripper").zero_counts == 2056
+
+
+def test_splice_keeps_the_rest_of_the_file_byte_for_byte():
+    out = calibrate.splice_joints_block(REAL_YAML, _calibrated_block())
+    head = REAL_YAML.split("  # BEGIN")[0]
+    tail = REAL_YAML.split("# END arm.joints\n")[1]
+    assert out.startswith(head)
+    assert out.endswith(tail)
+
+
+def test_splice_is_idempotent():
+    block = _calibrated_block()
+    once = calibrate.splice_joints_block(REAL_YAML, block)
+    twice = calibrate.splice_joints_block(once, block)
+    assert once == twice
+
+
+def test_splice_refuses_a_file_without_markers():
+    with pytest.raises(calibrate.CalibrationError, match="markers"):
+        calibrate.splice_joints_block("arm:\n  joints:\n    - {}\n", "  x")
+
+
+def test_splice_refuses_when_the_end_marker_is_missing():
+    truncated = REAL_YAML.replace("  # END arm.joints\n", "")
+    with pytest.raises(calibrate.CalibrationError, match="markers"):
+        calibrate.splice_joints_block(truncated, _calibrated_block())
+
+
+def test_emitted_block_carries_both_markers():
+    block = _calibrated_block()
+    assert calibrate.BEGIN_MARKER in block
+    assert calibrate.END_MARKER in block
+    assert block.splitlines()[-1].strip() == calibrate.END_MARKER
+
+
+def test_the_committed_robot_yaml_has_the_markers():
+    """The real file must stay spliceable, or calibration silently degrades."""
+    from pathlib import Path
+
+    here = Path(__file__).resolve().parents[2]
+    text = (here / "mote_description" / "config" / "robot.yaml").read_text()
+    out = calibrate.splice_joints_block(text, _calibrated_block())
+    assert ArmConfig.from_dict(yaml.safe_load(out)).joint("elbow_flex")
