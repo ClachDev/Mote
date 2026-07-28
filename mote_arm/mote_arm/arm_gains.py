@@ -226,6 +226,18 @@ def _cmd_sweep(cfg, bus, args) -> None:
             "check the arm is attached and powered (`pixi run arm-check`)"
         )
 
+    # The driver is the only thing that normally fixes a servo's mode, and this
+    # tool runs with the driver stopped. A servo left in wheel mode — a re-IDed
+    # ex-wheel servo is exactly the case robot.yaml's ID guard exists for — obeys
+    # a position goal as a *speed*, so the step would become continuous rotation.
+    if not bus.ensure_position_mode(joint.id):
+        raise SystemExit(
+            f"joint {joint.name!r} (id {joint.id}) is not confirmed in position "
+            "mode, so a position goal could spin it continuously instead of "
+            "stepping. Check it with `pixi run arm-check`; a servo that cannot "
+            "be read is left untouched rather than blind-written."
+        )
+
     start_rad = _read_rad(bus, joint)
     if start_rad is None:
         raise SystemExit(f"joint {joint.name!r}: cannot read its position")
@@ -329,12 +341,20 @@ def _cmd_sweep(cfg, bus, args) -> None:
         aborted = "interrupted by the operator"
     finally:
         # Whatever happened, the joint must not be left torqued at a swept gain:
-        # put the position back, the EEPROM back, and the torque off.
+        # put the position back, the EEPROM back, and the torque off. Each step
+        # is guarded on its own — a failed drive-back must not cost the torque
+        # drop, which is the one that decides how the arm is left.
         try:
             _drive_to(bus, cfg, joint, start_rad, settle_s=1.0)
+        except BusError as exc:
+            print(f"\nWARNING: could not drive back to the start: {exc}")
+        try:
             bus.set_torque(joint.id, False)
-        except BusError:
-            pass
+        except BusError as exc:
+            print(
+                f"\nWARNING: the joint is still holding torque ({exc}) — "
+                "power-cycle the servo bus before handling the arm"
+            )
         restored = bus.write_gains(joint.id, *original)
         print(
             f"\nrestored kp={original[0]} kd={original[1]} ki={original[2]}"

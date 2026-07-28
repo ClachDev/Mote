@@ -13,6 +13,7 @@ import argparse
 
 import pytest
 from mote_arm import arm_gains, config
+from mote_arm.bus import BusError
 from mote_arm.step_response import RAD_PER_COUNT
 
 # kp * error, in rad, from the hardware measurement this task started from:
@@ -50,6 +51,10 @@ class FakeServo:
         self.gains = gains
         self.position = position
         self.torque = False
+        self.in_position_mode = True
+        # Goal writes to fail, by call index — the bus returns garbled data
+        # intermittently, so cleanup has to survive a failure mid-teardown.
+        self.failing_goals = set()
         self.goals = []
         self.gain_writes = []
         # Ordered ("gains", value) / ("torque", bool) events, so a test can ask
@@ -84,7 +89,13 @@ class FakeServo:
         self.torque = enable
         self.events.append(("torque", enable))
 
+    def ensure_position_mode(self, _id):
+        return self.in_position_mode
+
     def write_goal(self, _id, counts, _speed, _acc):
+        if len(self.goals) in self.failing_goals:
+            self.goals.append(counts)
+            raise BusError("goal write failed")
         self.goals.append(counts)
         kp = self.gains[0]
         target = counts
@@ -123,6 +134,16 @@ def sweep_args(**overrides):
 @pytest.fixture(autouse=True)
 def no_sleeping(monkeypatch):
     monkeypatch.setattr(arm_gains.time, "sleep", lambda _s: None)
+
+
+@pytest.fixture(autouse=True)
+def sandboxed_mote_home(monkeypatch, tmp_path):
+    """Keep default-path trace writes out of the developer's real ~/.mote.
+
+    Tests that expect an early refusal pass `out=None`, so a regression that
+    lets one reach the write would otherwise litter real per-robot state.
+    """
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path / "mote_home"))
 
 
 @pytest.fixture
@@ -173,6 +194,32 @@ def test_overheating_stops_the_sweep_but_still_restores(out_file):
 
     assert "70C" in str(exc.value)
     assert servo.gains == (16, 32, 0)
+    assert servo.torque is False
+
+
+def test_torque_is_dropped_even_when_the_drive_back_fails(out_file, capsys):
+    """The return drive and the torque drop are separately guarded: a servo left
+    holding a swept gain is the one outcome the cleanup exists to prevent."""
+    servo = FakeServo(gains=(16, 32, 0))
+    # Fail the cleanup's drive-back, which is the last goal write of the run.
+    servo.failing_goals = {8}
+    arm_gains._cmd_sweep(make_config(), servo, sweep_args(out=out_file))
+
+    assert servo.torque is False
+    assert servo.gains == (16, 32, 0)
+    assert "could not drive back" in capsys.readouterr().out
+
+
+def test_a_servo_not_confirmed_in_position_mode_is_refused():
+    """In wheel mode a position goal is obeyed as a speed, so the step would
+    become continuous rotation — the guard arm_driver already applies."""
+    servo = FakeServo()
+    servo.in_position_mode = False
+    with pytest.raises(SystemExit) as exc:
+        arm_gains._cmd_sweep(make_config(), servo, sweep_args())
+
+    assert "position mode" in str(exc.value)
+    assert servo.goals == []
     assert servo.torque is False
 
 
