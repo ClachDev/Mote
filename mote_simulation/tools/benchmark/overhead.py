@@ -26,6 +26,18 @@ repo root): a workstation running several worktrees — or holding a leaked stac
 from an earlier run — would otherwise have its other Nav2 processes counted as
 this one's.
 
+A Python node is invisible to that match: its executable is the interpreter, so
+every one of them shares a basename and none of them lives in the checkout.
+``--cmdline-names`` matches substrings of ``/proc/<pid>/cmdline`` instead, which
+is the only handle a Python node offers — and the only way to weigh one against
+the C++ component that replaces it. It is the looser match of the two, so it
+excludes this sampler and anything that merely names it on a command line. Pair
+it with ``--names none`` to measure *only* the named nodes, since ``--names``
+otherwise falls back to the whole Nav2 stack:
+
+    python overhead.py --names none --min-procs 1 \
+        --cmdline-names odom_tf_relay,kinematic_icp_online_node,localization_container
+
 Every row is kept, including the ones where nothing is running, so a single
 sampling session covering a whole benchmark yields both the loaded figures and
 the machine's idle baseline. That baseline is what makes the system-wide
@@ -70,18 +82,37 @@ PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 REPO = Path(__file__).resolve().parents[3]
 
 
-def matching_pids(names, exe_prefix):
-    """PIDs whose executable basename is in ``names`` and lives under ``exe_prefix``."""
+def matching_pids(names, exe_prefix, cmdline_names=()):
+    """PIDs of the processes under measurement.
+
+    Matched either on executable basename (in ``names``, under ``exe_prefix``)
+    or, for interpreted nodes that have no distinguishing executable, on a
+    substring of the command line.
+    """
     found = []
+    self_pid = os.getpid()
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
+        pid = int(entry.name)
         try:
             exe = os.readlink(entry / "exe")
         except OSError:
             continue
         if os.path.basename(exe) in names and exe.startswith(exe_prefix):
-            found.append(int(entry.name))
+            found.append(pid)
+            continue
+        if not cmdline_names or pid == self_pid:
+            continue
+        try:
+            cmdline = entry.joinpath("cmdline").read_bytes().decode(errors="replace")
+        except OSError:
+            continue
+        cmdline = cmdline.replace("\0", " ")
+        if Path(__file__).name in cmdline:
+            continue
+        if any(needle in cmdline for needle in cmdline_names):
+            found.append(pid)
     return found
 
 
@@ -115,9 +146,9 @@ def system_counters():
     return ctxt, intr
 
 
-def sample(names, exe_prefix, prev_ticks):
+def sample(names, exe_prefix, prev_ticks, cmdline_names=()):
     """One observation. Returns (row-without-rates, cpu-ticks-by-pid)."""
-    pids = matching_pids(names, exe_prefix)
+    pids = matching_pids(names, exe_prefix, cmdline_names)
     ticks = {}
     rss = 0
     for pid in pids:
@@ -137,8 +168,9 @@ def run(args):
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "overhead.csv"
     names = set(args.names.split(",")) if args.names else set(DEFAULT_NAMES)
+    cmdline_names = tuple(n for n in args.cmdline_names.split(",") if n)
 
-    _, prev_ticks = sample(names, args.exe_prefix, {})
+    _, prev_ticks = sample(names, args.exe_prefix, {}, cmdline_names)
     prev_ctxt, prev_intr = system_counters()
     prev_t = time.monotonic()
     deadline = prev_t + args.duration
@@ -151,7 +183,7 @@ def run(args):
             time.sleep(args.interval)
             now = time.monotonic()
             dt = now - prev_t
-            row, ticks = sample(names, args.exe_prefix, prev_ticks)
+            row, ticks = sample(names, args.exe_prefix, prev_ticks, cmdline_names)
             ctxt, intr = system_counters()
             w.writerow(
                 [
@@ -231,6 +263,13 @@ def main():
         default="",
         help="comma-separated executable basenames to match "
         f"(default: {','.join(DEFAULT_NAMES)})",
+    )
+    ap.add_argument(
+        "--cmdline-names",
+        default="",
+        help="comma-separated substrings matched against /proc/<pid>/cmdline, "
+        "for nodes with no distinguishing executable (any Python node). "
+        "Matched in addition to --names, and not confined to --exe-prefix",
     )
     ap.add_argument(
         "--exe-prefix",
