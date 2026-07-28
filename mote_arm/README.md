@@ -104,7 +104,7 @@ conversions are verified without hardware.
 | `arm_driver` (node) | **Single bus owner.** Publishes `/joint_states` for the arm, accepts absolute goals on `arm/goal`, exposes `arm/set_torque`. `pixi run arm`. |
 | `jog` (CLI) | Interactive per-joint jog. A *client* of the driver — publishes clamped `arm/goal`, calls `arm/set_torque`. `pixi run arm-jog`. |
 | `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only; run with the driver stopped. `pixi run arm-check`. |
-| `calibrate.py` / `arm_calibrate` | Two-phase range calibration: write the homing offsets, sweep every joint at once, emit `robot.yaml` limits. `pixi run arm-calibrate`. |
+| `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. `pixi run arm-calibrate`. |
 | `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
 
@@ -270,8 +270,10 @@ pixi run arm-pose limits          # emit limits spanning the taught poses
 
 Poses live in `~/.mote/arm_poses.yaml` (`MOTE_HOME` overrides `~/.mote`) —
 per-robot data, since a pose only means anything for one physical arm and its
-calibration. **Changing `home` invalidates stored poses** (they are recorded in
-radians about it), so re-teach after any re-home.
+calibration. A pose is recorded in radians about its joint's `zero`, so moving a
+zero changes which physical position each number names — but `arm-calibrate`
+applies exactly the shift it computed, so poses survive a recalibration without
+being re-taught. Editing a `zero` by hand does not, and invalidates them.
 
 `arm-pose limits` is **not** the calibration path. It widens *outward* from the
 extremes of the taught poses, so it can only describe where the arm has already
@@ -348,12 +350,12 @@ rad these joints actually travel.
 See `BENCH.md` for the full runbook. In short:
 
 1. `pixi run arm-check` — confirm every joint responds; note IDs.
-2. `pixi run arm-calibrate` — centre the joints, sweep them, paste the emitted
-   `arm.joints` block into `robot.yaml`, `pixi run build`. This sets `zero`
-   *and* `min`/`max` together, which is the point: limits only mean something
-   relative to the zero they were measured about.
-3. Re-teach any poses it named (`pixi run arm-pose save <name>`), *after* the
-   rebuild.
+2. `pixi run arm-calibrate` — sweep the joints, centre their zeros, save to
+   `~/.mote/arm.yaml`. No rebuild: the file is read at load time, not compiled
+   in. This sets `zero` *and* `min`/`max` together, which is the point: limits
+   only mean something relative to the zero they were measured about.
+3. Re-teach only the poses it reported as outside the new limits — the rest are
+   migrated for you.
 4. Jog each joint (`pixi run arm-jog`) and flip `invert` for any that moves
    opposite the expected sign. `invert` changes what the limits mean, so
    re-calibrate after changing it.

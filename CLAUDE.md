@@ -206,7 +206,7 @@ section. Contains:
 - `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client* of the
   driver (publishes clamped `arm/goal`, torque-off on exit). No bus contention.
 - `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
-  + `--save-home` calibration snapshot. Run with the driver stopped (same port).
+  + `--save-zero` calibration snapshot. Run with the driver stopped (same port).
 - **`zero` is not `home`.** `robot.yaml`'s `arm.joints[].zero` is the encoder
   count reading 0 rad — after calibration, the *middle* of the joint's travel.
   `home` is a taught *pose* in `~/.mote/arm_poses.yaml`, normally the arm's rest
@@ -245,10 +245,8 @@ section. Contains:
   limits: [0.010, 0.229] does not contain 0**). Refuses on travel exceeding one
   revolution (a continuous joint — no remedy, exclude it) and on a range too
   short for the margin; `--skip-homing` additionally hits the wrap and
-  unreachable-zero cases, since it leaves the zero where it is. Names the
-  taught poses a changed zero invalidates and prints the `arm-pose save` line for
-  each; **it saves to `$MOTE_HOME/arm.yaml`, NOT the repo** (shows before/after,
-  confirms). Zeros and limits are measurements of one physical arm, so they are
+  unreachable-zero cases, since it leaves the zero where it is.
+  **It saves to `$MOTE_HOME/arm.yaml`, NOT the repo.** Zeros and limits are measurements of one physical arm, so they are
   per-robot state like `camera_calibration.yaml` and the site bundles — and
   `mote_description/config/robot.yaml` is shared by the fleet and read-only once
   installed from a channel. The package keeps the design (ids, names, direction,
@@ -266,26 +264,29 @@ section. Contains:
   torque register) and saving is the command's purpose. Three
   different files are called some form of robot config: `$MOTE_HOME/arm.yaml`
   (this arm's calibration), `$MOTE_HOME/robot.yaml` (fleet identity), and
-  `mote_description/config/robot.yaml` (shared hardware description). Measurements + the offsets
-  (their only record outside EEPROM) go to `~/.mote/arm_calibration.yaml`.
+  `mote_description/config/robot.yaml` (shared hardware description).
   A continuously-rotating joint is detectable **only** by being rotated past a
   whole turn (the refusal above); rotated less it is indistinguishable from a
   stopped joint, so do not add a threshold below one — it would miss most cases
   and fire on long-but-stopped joints. LeRobot instead hard-codes SO-101's
   `wrist_roll` as full-turn and skips its range; this arm's measures 5.88 rad
-  (94%), so whether it truly has stops is unsettled. The live table shows only the swept range per joint,
-  identically for all of them: raw encoder min/max are meaningless for a joint
-  whose travel crosses zero (they read 17..4093), and blanking them for that one
-  joint made it look special when it centres like any other. `--skip-homing` re-measures ranges without writing
-  anything. The maths is
+  (94%), so whether it truly has stops is unsettled. The live table shows
+  `now`, both ends of travel, and the swept total, identically for every joint:
+  the ends come off the *unwrapped* stream, so they are real positions even for a
+  joint crossing 0/4095 (where the raw min/max read 17..4093 and describe the
+  encoder, not the joint) and such a joint simply reads `low` above `high`.
+  `--skip-homing` re-measures ranges without writing anything. The maths is
   ROS-free and unit-tested (`test_calibrate.py`).
 - `arm_offsets` (`pixi run arm-offsets show|backup|restore|set`) — the offset
   register is the **only arm state with no copy outside the servo**, so
   overwriting it destroys the previous value. `arm-calibrate` snapshots the
   existing offsets to `~/.mote/arm_offsets_backup.yaml` before its first write,
   writes/verifies/confirms each servo one at a time, and on any failure stops
-  and points here. This exists because a run once died mid-write on a dropped
-  serial read, leaving a part-calibrated arm with no way back. **Servos can
+  and points here — *including* a failure to save `arm.yaml` afterwards, which
+  leaves servos calibrated and the config file not, so the soft limits would
+  describe a frame the arm has stopped using. This exists because a run once
+  died mid-write on a dropped serial read, leaving a part-calibrated arm with no
+  way back. **Servos can
   arrive with non-zero offsets** (this arm: 2027, -1723, 1772, -1706, -40,
   1317), so the existing value is always read and folded in.
 - **Reads on this bus are hazardous twice over, and `FeetechBus._read` is the

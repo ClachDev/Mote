@@ -24,10 +24,10 @@ servos:
 # Consumed by mote_arm (driver, jog CLI, arm_check) and by the arm section of
 # mote.urdf.xacro. There is no leader arm — this is the follower only.
 #
-# CALIBRATION STATUS: not yet calibrated. min/max and `zero` below predate
-# `pixi run arm-calibrate`; run it (mote_arm/BENCH.md step 3) and paste its
-# block over the joints: list — robot.yaml is the single source of truth, so
-# nothing else needs editing.
+# CALIBRATION STATUS: the min/max and `zero` below are uncalibrated defaults.
+# Calibration is per-robot and does not edit this file — `pixi run arm-calibrate`
+# (mote_arm/BENCH.md step 3) saves to `$MOTE_HOME/arm.yaml`, which overrides
+# these three fields per joint at load time. See DEFAULTS ONLY below.
 #
 # WIRING: the arm SHARES the drive-wheel bus (verified on the robot: IDs 1-6
 # for the arm, 7/9 for the wheels, all on /dev/mote_servos). Consequences:
@@ -71,8 +71,10 @@ arm:
   # straddles the encoder's 0/4095 wrap cannot be described by any zero/limit
   # pair at all, and two of six joints on the first real arm did.
   #
-  # Changing a `zero` invalidates stored poses (they are radians about it), so
-  # re-teach them afterwards — `arm-calibrate` names which ones.
+  # A pose is stored as radians about its joint's `zero`, so moving a zero
+  # changes which physical position each number names. `arm-calibrate` rewrites
+  # the taught poses by exactly the shift it applied, so they keep pointing
+  # where they did; only a pose left outside the new limits needs a decision.
   #
   # DEFAULTS ONLY — a calibrated robot overrides `zero`/`min`/`max` per joint
   # from `$MOTE_HOME/arm.yaml` (written by `pixi run arm-calibrate`), because

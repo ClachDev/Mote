@@ -10,17 +10,28 @@ Prerequisites: servos wired and enumerated, robot powered, repo built
 ---
 
 **Steps 0, 2 and 4–7 have been run against the robot** (2026-07-25); results
-are in `README.md`. They are kept here because they are the right checks after
-any rewiring or recalibration. What is still open:
+are in `README.md`. **Step 3 was run on 2026-07-28**: all six joints swept and
+centred, offsets written and confirmed, `~/.mote/arm.yaml` saved. Measured
+travel was 4.17 / 3.65 / 3.42 / 3.61 / 5.89 / 2.29 rad — so the packaged
+`robot.yaml` bands, still the old pose-envelope output, understate the real
+range by an order of magnitude on some joints. They stay as the conservative
+default for an arm that has never been calibrated; calibration is per-robot and
+does not touch the repo.
 
-- **Step 3 — one full calibration pass.** This is the important one. The
-  committed limits are still the old pose-envelope output: they describe where
-  the arm has been, not where it can go, and `shoulder_pan`'s band excludes its
-  own zero so that joint can never be commanded to 0 rad. `pixi run arm-calibrate`
-  measures the stops directly; until it has been run on the real arm, every
-  limit below is provisional.
+These steps are kept because they are the right checks after any rewiring or
+recalibration. What is still open:
+
+- **Does the homing offset apply to commanded goals, or only to feedback?**
+  The read side is proven — positions moved by exactly the predicted delta on
+  every joint, which is what "written and confirmed" checks. The write side
+  shows up on the first `arm-jog` move after calibrating: if a commanded angle
+  lands roughly one offset away from where you asked, `config.rad_to_counts`
+  has to compensate. Try this first.
+- **Does `wrist_roll` have real stops?** It swept 5.89 rad, 94% of a turn, and
+  LeRobot treats the SO-101's as a full-turn motor. If it in fact spins freely,
+  its limits are just wherever the sweep stopped turning.
 - **Steps 5–6 for the other five joints** — only `elbow_flex` was jogged and
-  clamp-tested. The rest stay on a tight provisional envelope until Step 3 runs.
+  clamp-tested, and that was against the old envelope.
 - Nothing power-related: the earlier "5 V torque limit" was a misdiagnosis. It
   was proportional droop from `Kp=16`; `Kp=32` is now applied (see README) and
   the arm completes the full home<->reachy move. A small `Ki` would close the

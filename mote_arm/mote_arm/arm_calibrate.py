@@ -145,10 +145,6 @@ class _LiveTable:
             print(line)
 
 
-def _read_all(bus, joints) -> dict[str, int | None]:
-    return {j.name: bus.read_position(j.id) for j in joints}
-
-
 def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
     """Move each joint's zero to the middle of the range just swept.
 
