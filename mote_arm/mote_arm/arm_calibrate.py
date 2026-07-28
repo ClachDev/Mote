@@ -56,7 +56,6 @@ from mote_arm.calibrate import (
     calibrate_joint,
     centred_limits,
     homing_offset,
-    is_near_full_turn,
     joints_block,
     limits_from_sweep,
     pose_impact,
@@ -510,16 +509,6 @@ def _run(bus, cfg, selected, args) -> None:
         print(
             f"  {name:<16} {cal.min_rad:+.3f} to {cal.max_rad:+.3f} rad "
             f"about zero {cal.zero_counts} ({cal.sweep.span_rad:.2f} rad swept)"
-        )
-
-    spinners = [n for n, c in calibrated.items() if is_near_full_turn(c.sweep)]
-    if spinners:
-        print(
-            f"\nNOTE: {', '.join(spinners)} swept most of a full revolution. If a "
-            "joint\nspins freely it has no stops to calibrate against and these "
-            "limits are just\nwhere you happened to stop — exclude it with "
-            "--joints and drive it in relative\nterms. (LeRobot treats the "
-            "SO-101's wrist_roll as exactly this case.)"
         )
 
     _warn_about_poses(cfg, calibrated)

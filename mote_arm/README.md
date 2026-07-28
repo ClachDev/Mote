@@ -189,12 +189,14 @@ Four things it refuses to guess at, rather than emit plausible-looking numbers:
   because unlike a wrap there is no remedy — leave it out with `--joints`.
 - **A range too short to survive the margin at both ends.**
 
-And it *warns*, without refusing, when a joint sweeps more than 90% of a
-revolution: that usually means it spins freely and the "limits" are just where
-you stopped. LeRobot hard-codes the SO-101's `wrist_roll` as a full-turn motor
-and skips recording its range for this reason; this arm's `wrist_roll` measured
-5.88 rad, 94% of a turn, which fits. Exclude such a joint with `--joints` and
-drive it in relative terms.
+**A continuously-rotating joint is only detectable if you rotate it past a whole
+turn**, which is the one case refused above. Rotated less, it is indistinguishable
+from a joint with stops, and no threshold below a full turn helps: it would miss
+most real cases while firing on a long-but-stopped joint. LeRobot sidesteps this
+by hard-coding the SO-101's `wrist_roll` as a full-turn motor and skipping its
+range entirely. This arm's `wrist_roll` measures 5.88 rad — 94% of a turn — so
+whether it has real stops is worth settling by hand; if it spins freely, exclude
+it with `--joints` and drive it in relative terms.
 - Under `--skip-homing` only, where the zero is not being moved: **an encoder
   wrap**, and **a zero the joint could never reach** (a band excluding 0 rad —
   the defect in the pre-calibration `shoulder_pan` limits, whose

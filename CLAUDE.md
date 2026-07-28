@@ -250,10 +250,12 @@ section. Contains:
   each; **after a run robot.yaml is stale until the block is pasted and rebuilt,
   and poses must be re-taught only after that**. Measurements + the offsets
   (their only record outside EEPROM) go to `~/.mote/arm_calibration.yaml`.
-  Warns (without refusing) when a joint sweeps >90% of a revolution — it
-  probably spins freely and its "limits" are just where the operator stopped;
-  LeRobot hard-codes SO-101's `wrist_roll` as a full-turn motor for this reason
-  and this arm's measured 5.88 rad. The live table states `spans 0/4095` rather
+  A continuously-rotating joint is detectable **only** by being rotated past a
+  whole turn (the refusal above); rotated less it is indistinguishable from a
+  stopped joint, so do not add a threshold below one — it would miss most cases
+  and fire on long-but-stopped joints. LeRobot instead hard-codes SO-101's
+  `wrist_roll` as full-turn and skips its range; this arm's measures 5.88 rad
+  (94%), so whether it truly has stops is unsettled. The live table states `spans 0/4095` rather
   than counting crossings: a count grows every time the operator waves the joint
   and reads like N faults. `--skip-homing` re-measures ranges without writing
   anything. The maths is

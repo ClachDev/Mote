@@ -4,22 +4,27 @@ The arm's soft limits should describe where the joint can physically go, which
 means measuring the mechanical stops. This module turns a stream of raw encoder
 counts into a ``robot.yaml`` ``arm.joints`` block.
 
-The flow it serves is LeRobot's, in two phases:
+The flow it serves has two phases:
 
-1. **Set the homing offsets.** The operator parks the arm with every joint near
-   the middle of its travel, and each servo's position-correction register
-   (EEPROM, ``SMS_STS_OFS_L/H``) is written so that pose reads 2048. The servo
-   reports ``present = actual - offset``, so this re-centres the joint's whole
-   travel within the 0-4095 encoder frame.
-2. **Record the ranges.** Every joint is swept and recorded *together* in one
+1. **Record the ranges.** Every joint is swept and recorded *together* in one
    pass, not one at a time.
+2. **Centre the zeros.** Each joint's zero moves to the measured middle of its
+   sweep, by writing the servo's position-correction register (EEPROM,
+   ``SMS_STS_OFS_L/H``). The servo reports ``present = actual - offset``, so
+   this re-centres the joint's whole travel within the 0-4095 encoder frame.
 
-Phase 1 is what makes phase 2 trustworthy. Without it, a joint whose travel
-straddles the encoder's 0/4095 boundary reports a raw min and max that say
-nothing about its real span, and no zero/limit pair in that frame can describe
-it — ``rad_to_counts`` clamps at the encoder edge. On the real arm two of six
-joints did exactly that. The wrap check below is kept as the safety net that
-proves phase 1 did its job, not as a problem to hand back to the operator.
+Centring is what makes the limits expressible at all: a joint whose travel
+straddles the 0/4095 boundary has a raw min and max that say nothing about its
+real span, and no zero/limit pair in that frame can describe it —
+``rad_to_counts`` clamps at the encoder edge. On the real arm two of six joints
+did exactly that.
+
+LeRobot runs these the other way round, taking the zero from a pose the operator
+holds at mid-travel before sweeping. That ordering is load-bearing for them:
+their range recording is a plain min/max with no unwrapping, so centring first
+is what keeps the sweep off the boundary. Sweeping first removes an awkward step
+but means the sweep can cross it, which is why ``SweepRecorder`` unwraps and the
+centre is recovered from the unwrapped stream.
 
 The other rule: **limits sit *inside* the stops.** A hard stop is where the
 operator stopped pushing, so the emitted band is the swept range pulled *inward*
@@ -369,19 +374,6 @@ def centred_limits(
     return (lo, hi) if not invert else (-hi, -lo)
 
 
-# A joint that swept most of a revolution probably has no stops at all and was
-# simply being rotated. LeRobot hard-codes SO-101's wrist_roll as a "full turn
-# motor" and skips recording its range for exactly this reason; this is the same
-# judgement made from the measurement instead of from the joint's name, so it
-# also catches a differently-built arm.
-NEAR_FULL_TURN = 0.9
-
-
-def is_near_full_turn(sweep: Sweep) -> bool:
-    """True if the travel is suspiciously close to a whole revolution."""
-    return NEAR_FULL_TURN * COUNTS_PER_REV <= sweep.unwrapped_span < COUNTS_PER_REV
-
-
 def _reject_continuous(sweep: Sweep) -> None:
     if sweep.unwrapped_span >= COUNTS_PER_REV:
         # No homing offset can rescue this: the joint simply does not fit in a
@@ -391,7 +383,10 @@ def _reject_continuous(sweep: Sweep) -> None:
             f"{sweep.name}: swept {sweep.span_rad:.2f} rad, more than the one "
             f"full revolution the encoder can express. A continuously-rotating "
             "joint has no mechanical stops to calibrate against — leave it out "
-            "with --joints, and drive it in relative terms instead.",
+            "with --joints, and drive it in relative terms instead. (Note this "
+            "catches only a joint rotated past a whole turn: one that spins "
+            "freely but was rotated less looks exactly like a joint with stops, "
+            "and nothing in a sweep can tell them apart.)",
             reason="travel exceeds one revolution; joint is continuous",
         )
 

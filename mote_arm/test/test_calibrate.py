@@ -611,21 +611,17 @@ def test_range_row_reports_a_joint_that_never_answered():
     assert "no readings" in row
 
 
-def test_near_full_turn_flags_a_probably_continuous_joint():
-    """wrist_roll measured 5.88 rad on the real arm — 94% of a revolution."""
-    span = int(0.94 * COUNTS_PER_REV)
-    sweep = _record("wrist_roll", _ramp(0, span)).result()
-    assert calibrate.is_near_full_turn(sweep)
+def test_only_a_sweep_past_a_whole_turn_is_treated_as_continuous():
+    """No fuzzy threshold: 94% of a turn is just a long range, and is accepted.
 
+    A joint that spins freely but was rotated less than a full turn is
+    indistinguishable from one with stops, so guessing at 90% would both miss
+    most real cases and cry wolf on a long-but-stopped joint.
+    """
+    long_but_stopped = _record("wrist_roll", _ramp(0, int(0.94 * COUNTS_PER_REV)))
+    lo, hi = calibrate.centred_limits(long_but_stopped.result(), margin=0.05)
+    assert lo < 0 < hi
 
-def test_an_ordinary_joint_is_not_flagged_as_continuous():
-    assert not calibrate.is_near_full_turn(_record("j", _ramp(1000, 3400)).result())
-
-
-def test_a_joint_past_a_full_turn_is_rejected_not_merely_flagged():
-    """Beyond a revolution there is nothing to flag — it cannot be calibrated."""
-    samples = [(i * 40) % COUNTS_PER_REV for i in range(220)]
-    sweep = _record("wrist_roll", samples).result()
-    assert not calibrate.is_near_full_turn(sweep)
+    two_laps = _record("wrist_roll", [(i * 40) % COUNTS_PER_REV for i in range(220)])
     with pytest.raises(calibrate.CalibrationError, match="revolution"):
-        calibrate.centred_limits(sweep)
+        calibrate.centred_limits(two_laps.result())
