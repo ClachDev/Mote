@@ -217,23 +217,30 @@ section. Contains:
 - `calibrate.py` + `arm_calibrate` (`pixi run arm-calibrate`) — **where the soft
   limits come from**, in LeRobot's two phases. A bus owner, not a driver client
   (the driver reports radians about the very zero under replacement, and the arm
-  must stay limp). **Phase 1** parks the arm mid-travel and writes each servo's
-  position-correction register (EEPROM, `SMS_STS_OFS_L/H` = address 31,
-  sign-magnitude with bit 11 the sign, so ±2047) such that pose reads 2048:
-  `present = actual - offset`, so this re-centres the travel in the 0-4095 frame.
-  It reads the *existing* offset first — assuming zero would double-count on a
-  re-run. **Phase 2** records every joint at once in one live table (not one at a
-  time), then emits a `arm.joints` block whose band is the swept range pulled
-  *inward* by `--margin` (0.05 rad) — the opposite direction to `arm-pose
-  limits`. **Phase 1 is not optional polish:** without it a joint whose travel
-  straddles the encoder wrap cannot be described by any zero/limit pair, and on
-  the real arm 2 of 6 joints (`shoulder_pan`, `wrist_roll`) did exactly that;
-  there is no software workaround, since the goal register is 0-4095 too.
-  Refuses rather than guesses on four cases, each keeping the joint's old values
-  with the reason above its line: travel exceeding one revolution (a continuous
-  joint — no remedy, exclude it), a surviving wrap, a zero within a margin of a
-  stop (**the defect in the committed `shoulder_pan` limits: [0.010, 0.229]
-  excludes its own zero**), and a range too short for the margin. Names the
+  must stay limp). **Phase 1** records every joint at once in one live table (not one at a time).
+  **Phase 2** moves each joint's zero to the *measured* middle of that sweep, by
+  writing the servo's position-correction register (EEPROM, `SMS_STS_OFS_L/H` =
+  address 31, sign-magnitude with bit 11 the sign): `present = actual - offset`,
+  so this re-centres the travel in the 0-4095 frame. It reads the *existing*
+  offset first — assuming zero would double-count on a re-run — and verifies
+  afterwards that each reading moved by exactly the delta written, which is what
+  would catch a wrong sign encoding. **Deliberately NOT LeRobot's order:** theirs
+  asks the operator to hold every joint at mid-travel first and takes the zero
+  from that pose, which is an awkward unbalanced position and less accurate than
+  the measurement the sweep takes anyway. **Offsets are modular** (`present =
+  (actual - offset) mod 4096`), so a result outside the register's ±2047 is
+  folded, never rejected — rejecting one aborted a real bench run. **Centring is
+  not optional polish:** without it a joint whose travel straddles the encoder
+  wrap cannot be described by any zero/limit pair, and on the real arm 2 of 6
+  joints (`shoulder_pan`, `wrist_roll`) did exactly that; there is no software
+  workaround, since the goal register is 0-4095 too. The emitted band is the
+  swept range pulled *inward* by `--margin` (0.05 rad) — the opposite direction
+  to `arm-pose limits` — and is symmetric about zero by construction, so it can
+  never exclude its own zero (**the defect in the committed `shoulder_pan`
+  limits: [0.010, 0.229] does not contain 0**). Refuses on travel exceeding one
+  revolution (a continuous joint — no remedy, exclude it) and on a range too
+  short for the margin; `--skip-homing` additionally hits the wrap and
+  unreachable-zero cases, since it leaves the zero where it is. Names the
   taught poses a changed zero invalidates and prints the `arm-pose save` line for
   each; **after a run robot.yaml is stale until the block is pasted and rebuilt,
   and poses must be re-taught only after that**. Measurements + the offsets

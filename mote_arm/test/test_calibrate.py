@@ -200,6 +200,90 @@ def test_travel_beyond_one_revolution_is_its_own_diagnosis():
     assert "continuous" in exc.value.reason
 
 
+def test_measured_centre_is_the_middle_of_an_ordinary_sweep():
+    sweep = _record("j", _ramp(1000, 3000)).result()
+    assert sweep.measured_centre == 2000
+
+
+def test_measured_centre_survives_a_sweep_across_the_wrap():
+    """The reason the centre comes from the sweep and not a held pose.
+
+    A joint travelling 3900 -> 4095/0 -> 300 is centred at 4098 % 4096 == 2,
+    which raw min/max (0 and 4095) could never tell you.
+    """
+    samples = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
+    sweep = _record("j", samples).result()
+    assert sweep.wrapped
+    assert sweep.unwrapped_span == 490
+    assert sweep.measured_centre == (3900 + 245) % COUNTS_PER_REV
+
+
+def test_centred_limits_are_symmetric_about_zero():
+    sweep = _record("j", _ramp(1000, 3000)).result()
+    lo, hi = calibrate.centred_limits(sweep, margin=0.05)
+    half = 1000 * RAD_PER_COUNT
+    assert lo == pytest.approx(-half + 0.05)
+    assert hi == pytest.approx(half - 0.05)
+    assert lo < 0 < hi
+
+
+def test_centred_limits_never_exclude_their_own_zero():
+    """By construction, unlike the pose-envelope method that shipped."""
+    for lo, hi in ((1000, 3000), (10, 400), (2000, 3999), (0, 4090)):
+        sweep = _record("j", _ramp(lo, hi)).result()
+        if sweep.unwrapped_span >= COUNTS_PER_REV:
+            continue
+        band = calibrate.centred_limits(sweep, margin=0.05)
+        assert band[0] < 0 < band[1]
+
+
+def test_centred_limits_work_for_a_wrapped_sweep():
+    """limits_from_sweep must refuse this; centred_limits must not."""
+    samples = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
+    sweep = _record("j", samples).result()
+    with pytest.raises(calibrate.CalibrationError, match="boundary"):
+        calibrate.limits_from_sweep(sweep, 2048)
+    lo, hi = calibrate.centred_limits(sweep, margin=0.05)
+    assert lo < 0 < hi
+
+
+def test_calibrate_centred_puts_zero_at_the_encoder_middle():
+    sweep = _record("j", _ramp(1000, 3000)).result()
+    cal = calibrate.calibrate_centred(SPEC, sweep)
+    assert cal.zero_counts == calibrate.CENTRE_COUNTS
+    assert cal.zero_source == "the middle of the measured travel"
+
+
+def test_centred_limits_still_reject_a_continuous_joint():
+    samples = [(i * 40) % COUNTS_PER_REV for i in range(220)]
+    sweep = _record("wrist_roll", samples).result()
+    with pytest.raises(calibrate.CalibrationError, match="revolution"):
+        calibrate.centred_limits(sweep)
+
+
+def test_centring_a_wrapped_joint_moves_its_whole_travel_inside_the_frame():
+    """End to end: the shoulder_pan case, in numbers.
+
+    A joint whose stops are 3200 and 5900 in the servo's own frame wraps. After
+    the offset that centres its measured mid-travel, both stops sit inside
+    0-4095 with room to spare, which is what makes it calibratable at all.
+    """
+    low_stop, high_stop = 3200, 5900
+    samples = [
+        (low_stop + (high_stop - low_stop) * i // 60) % COUNTS_PER_REV
+        for i in range(61)
+    ]
+    sweep = _record("shoulder_pan", samples).result()
+    assert sweep.wrapped
+
+    offset = calibrate.homing_offset(sweep.measured_centre, 0)
+    moved = [(stop - offset) % COUNTS_PER_REV for stop in (low_stop, high_stop)]
+    assert all(0 <= m < COUNTS_PER_REV for m in moved)
+    # Centred: the two stops straddle 2048 roughly evenly.
+    assert min(moved) < calibrate.CENTRE_COUNTS < max(moved)
+    assert abs((min(moved) + max(moved)) // 2 - calibrate.CENTRE_COUNTS) <= 1
+
+
 def test_homing_offset_centres_the_current_pose():
     """The offset that makes 'where it is now' read 2048."""
     assert calibrate.homing_offset(3000, 0) == 3000 - 2048
@@ -219,9 +303,35 @@ def test_homing_offset_accounts_for_the_offset_already_written():
     assert calibrate.homing_offset(2548, 0) == 500
 
 
-def test_homing_offset_beyond_the_register_range_is_refused():
-    with pytest.raises(calibrate.CalibrationError, match="correction range"):
-        calibrate.homing_offset(4095, 2000)
+def test_homing_offset_folds_instead_of_refusing():
+    """The bench failure: 3056 is out of register range but equals -1040.
+
+    `present = (actual - offset) mod 4096`, so offsets are modular and an
+    arithmetic result outside the register is never a real failure. Rejecting
+    one aborted a perfectly good calibration on the real arm.
+    """
+    assert calibrate.homing_offset(4095, 1009) == -1040
+    assert 4095 + 1009 - 2048 == 3056  # what the naive arithmetic produced
+    assert abs(calibrate.homing_offset(4095, 1009)) <= bus.OFFSET_MAX
+
+
+def test_normalise_offset_is_modular_and_encodable():
+    for raw, folded in ((3056, -1040), (-3056, 1040), (0, 0), (2047, 2047)):
+        assert calibrate.normalise_offset(raw) == folded
+    # Every residue folds into something the register can actually hold.
+    for raw in range(-8000, 8000, 37):
+        folded = calibrate.normalise_offset(raw)
+        assert abs(folded) <= bus.OFFSET_MAX
+        bus.encode_sign_magnitude(folded)
+
+
+def test_normalise_offset_preserves_what_the_servo_computes():
+    """A folded offset must command the same reading as the unfolded one."""
+    for actual in (0, 500, 2048, 4095):
+        for raw in (3056, -3056, 5000):
+            unfolded = (actual - raw) % COUNTS_PER_REV
+            folded = (actual - calibrate.normalise_offset(raw)) % COUNTS_PER_REV
+            assert unfolded == folded
 
 
 def test_centre_is_the_middle_of_the_encoder_frame():
@@ -320,7 +430,7 @@ def test_emitted_block_marks_uncalibrated_joints():
         list(cfg.joints), {"elbow_flex": cal}, {"gripper": "sweep crossed the wrap"}
     )
     assert "# unchanged, sweep crossed the wrap:" in block
-    assert "swept 1000-3000" in block
+    assert "3.07 rad swept" in block  # travel, not the raw range
     # The note sits above the line it applies to, not on it.
     lines = block.splitlines()
     assert lines[

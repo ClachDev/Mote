@@ -1,14 +1,19 @@
-"""Guided range calibration, LeRobot-style: centre the joints, then sweep them.
+"""Guided range calibration: sweep every joint, then move its zero to the middle.
 
-Two phases, and the first is what makes the second trustworthy:
+Two phases, but the operator only does one thing:
 
-1. **Homing offsets.** You park the arm with every joint near the middle of its
-   travel; each servo's position-correction register is written so that pose
-   reads 2048. This re-centres every joint's travel inside the 0-4095 encoder
-   frame, which is what stops a joint's range straddling the wrap. It writes
-   EEPROM, so it asks first.
-2. **Ranges.** You move every joint to both of its mechanical stops while a
+1. **Ranges.** You move every joint to both of its mechanical stops while a
    single live table records all six at once. One Enter ends it.
+2. **Zeros.** Each joint's zero is moved to the *measured* middle of the range
+   just swept, by writing the servo's position-correction register. The arm can
+   be left wherever it ended up. It writes EEPROM, so it asks first.
+
+LeRobot's own flow asks the operator to first hold the arm with every joint at
+mid-travel and takes the zero from that pose. That works, but it is an awkward,
+unbalanced position to hold, and eyeballing the middle is less accurate than the
+measurement the sweep is about to take anyway. Taking the centre from the sweep
+gives a better zero for less effort — and it still works for a joint that
+crossed the encoder wrap during the sweep, because the recorder unwraps.
 
     pixi run arm-calibrate
     pixi run arm-calibrate -- --skip-homing        # ranges only, writes nothing
@@ -44,13 +49,15 @@ from datetime import datetime, timezone
 from mote_arm import config, poses
 from mote_arm.bus import BusError, FeetechBus, port_holders
 from mote_arm.calibrate import (
-    CENTRE_COUNTS,
     DEFAULT_MARGIN,
     CalibrationError,
     SweepRecorder,
+    calibrate_centred,
     calibrate_joint,
+    centred_limits,
     homing_offset,
     joints_block,
+    limits_from_sweep,
     pose_impact,
     save_record,
     zero_shift,
@@ -133,20 +140,22 @@ def _read_all(bus, joints) -> dict[str, int | None]:
     return {j.name: bus.read_position(j.id) for j in joints}
 
 
-def _phase_offsets(bus, joints, args) -> dict[str, int] | None:
-    """Write each servo's homing offset so the parked pose reads centre."""
-    print("\n=== Phase 1 of 2: centre the joints ===")
+def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
+    """Move each joint's zero to the middle of the range just swept.
+
+    The centre comes from the sweep, not from a pose the operator has to hold.
+    Holding all six joints at mid-travel at once is an awkward, unbalanced
+    position, and eyeballing it is less accurate than the measurement already
+    taken — so the arm can be left wherever it ended up.
+    """
+    print("\n=== Phase 2 of 2: centre the zeros ===")
     print(
-        "Move the arm so EVERY joint sits near the middle of its travel — not\n"
-        "against any stop — then press Enter. That pose becomes 0 rad."
+        "Each joint's 0 rad is being moved to the middle of the range you just\n"
+        "swept. Leave the arm where it is; this only changes what the encoders\n"
+        "report, not where the arm is."
     )
-    input()
 
-    present = _read_all(bus, joints)
-    unreadable = [n for n, p in present.items() if p is None]
-    if unreadable:
-        raise SystemExit(f"could not read position for {unreadable} — check wiring")
-
+    before = _read_all(bus, joints)
     existing: dict[str, int] = {}
     for joint in joints:
         current = bus.read_homing_offset(joint.id)
@@ -159,21 +168,18 @@ def _phase_offsets(bus, joints, args) -> dict[str, int] | None:
         existing[joint.name] = current
 
     wanted: dict[str, int] = {}
-    print(f"\n{'joint':<16}{'now':>6}{'offset':>8}{'->':>4}{'new':>7}")
+    print(f"\n{'joint':<16}{'mid-travel':>11}{'offset':>8}{'->':>4}{'new':>7}")
     for joint in joints:
-        try:
-            new = homing_offset(present[joint.name], existing[joint.name])
-        except CalibrationError as exc:
-            raise SystemExit(f"{joint.name}: {exc}")
-        wanted[joint.name] = new
+        centre = recorders[joint.name].result().measured_centre
+        wanted[joint.name] = homing_offset(centre, existing[joint.name])
         print(
-            f"{joint.name:<16}{present[joint.name]:>6}"
-            f"{existing[joint.name]:>8}{'->':>4}{new:>7}"
+            f"{joint.name:<16}{centre:>11}"
+            f"{existing[joint.name]:>8}{'->':>4}{wanted[joint.name]:>7}"
         )
 
     stale = {n: v for n, v in wanted.items() if v != existing[n]}
     if not stale:
-        print("\nevery servo is already centred here — nothing to write.")
+        print("\nevery servo is already centred — nothing to write.")
         return wanted
 
     print(
@@ -195,24 +201,46 @@ def _phase_offsets(bus, joints, args) -> dict[str, int] | None:
     if failed:
         raise SystemExit(f"could not verify the homing offset on: {failed}")
 
-    # Prove it took where it matters: the joints should now read centre.
+    _verify_offsets_moved_readings(bus, joints, before, existing, wanted)
+    return wanted
+
+
+def _verify_offsets_moved_readings(bus, joints, before, existing, wanted) -> None:
+    """Check the readings shifted by exactly what the offsets should shift them.
+
+    The read-back in ``write_homing_offset`` proves the register holds the value
+    we asked for. This proves the servo *acts* on it the way the datasheet says,
+    which also catches a wrong sign encoding: an inverted sign would move the
+    reading by twice the offset, in the wrong direction.
+    """
     time.sleep(0.2)
     after = _read_all(bus, joints)
-    drift = {n: p for n, p in after.items() if p is None or abs(p - CENTRE_COUNTS) > 40}
-    if drift:
-        print(
-            f"\nWARNING: after writing, {sorted(drift)} do not read near "
-            f"{CENTRE_COUNTS}.\nThe arm may have moved while limp, which is "
-            "harmless, but if it persists\nthe offset did not take."
-        )
-    else:
-        print(f"\nall joints now read within 40 counts of {CENTRE_COUNTS}.")
-    return wanted
+    wrong = []
+    for joint in joints:
+        was, now = before[joint.name], after[joint.name]
+        if was is None or now is None:
+            continue
+        shift = wanted[joint.name] - existing[joint.name]
+        expected = (was - shift) % 4096
+        # A few counts of slack: the arm can settle while limp between reads.
+        if min(abs(now - expected), 4096 - abs(now - expected)) > 25:
+            wrong.append((joint.name, was, expected, now))
+    if not wrong:
+        print("\noffsets verified: every reading moved by exactly what was written.")
+        return
+    print("\nWARNING: these joints did not move by the offset that was written:")
+    for name, was, expected, now in wrong:
+        print(f"  {name:<16} was {was}, expected {expected}, reads {now}")
+    print(
+        "  Either the arm moved while limp, or this servo firmware applies the\n"
+        "  correction register differently than assumed. Check a jog move before\n"
+        "  trusting the limits."
+    )
 
 
 def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
     """Record every joint's range at once while the operator moves them."""
-    print("\n=== Phase 2 of 2: record the ranges ===")
+    print("\n=== Phase 1 of 2: record the ranges ===")
     print(
         "Move each joint gently to both of its mechanical stops, then leave the\n"
         "arm somewhere safe. The stop is where it resists — do not force it.\n"
@@ -284,6 +312,14 @@ def _warn_about_poses(cfg, calibrated) -> None:
     )
     for pose in sorted(impact):
         print(f"  pixi run arm-pose save {pose}")
+
+
+def _check_sweep(joint, sweep, args) -> None:
+    """Raise if this sweep cannot become limits, before any EEPROM is written."""
+    if args.skip_homing:
+        limits_from_sweep(sweep, joint.zero_counts, joint.invert, args.margin)
+    else:
+        centred_limits(sweep, joint.invert, args.margin)
 
 
 def _select(cfg, spec_names: str):
@@ -373,40 +409,51 @@ def _run(bus, cfg, selected, args) -> None:
             print(f"  {joint.name}: {exc}")
     print("torque off — the arm is back-drivable.")
 
-    offsets: dict[str, int] = {}
-    if args.skip_homing:
-        print("\n--skip-homing: keeping the zeros already in robot.yaml.")
-        zeros = {j.name: j.zero_counts for j in selected}
-        source = "kept from robot.yaml"
-    else:
-        offsets = _phase_offsets(bus, selected, args) or {}
-        zeros = {j.name: CENTRE_COUNTS for j in selected}
-        source = "centred by a homing offset"
-
     recorders, misses = _phase_ranges(bus, selected, args.rate)
     if misses:
         print(f"\n{misses} reading(s) did not come back — bus contention or wiring")
 
-    calibrated: dict = {}
+    # Work out which sweeps are usable before touching EEPROM: a joint that
+    # cannot be calibrated should not have its zero moved either.
     chosen = {j.name for j in selected}
     failures: dict[str, str] = {
         j.name: "not selected this run" for j in cfg.joints if j.name not in chosen
     }
+    usable = []
     for joint in selected:
         rec = recorders[joint.name]
         if rec.samples == 0:
             failures[joint.name] = "no encoder readings"
             continue
         try:
-            calibrated[joint.name] = calibrate_joint(
-                joint, rec.result(), zeros[joint.name], args.margin, source
-            )
+            _check_sweep(joint, rec.result(), args)
         except CalibrationError as exc:
             failures[joint.name] = exc.reason
             print(f"\n{joint.name} NOT CALIBRATED: {exc}")
+            continue
+        usable.append(joint)
 
-    if not calibrated:
-        raise SystemExit("\nno joint was calibrated — nothing to emit")
+    if not usable:
+        raise SystemExit("\nno joint produced a usable sweep — nothing to emit")
+
+    offsets: dict[str, int] = {}
+    calibrated: dict = {}
+    if args.skip_homing:
+        print("\n--skip-homing: keeping the zeros already in robot.yaml.")
+        for joint in usable:
+            calibrated[joint.name] = calibrate_joint(
+                joint,
+                recorders[joint.name].result(),
+                joint.zero_counts,
+                args.margin,
+                "kept from robot.yaml",
+            )
+    else:
+        offsets = _phase_centre(bus, usable, recorders, args)
+        for joint in usable:
+            calibrated[joint.name] = calibrate_centred(
+                joint, recorders[joint.name].result(), args.margin
+            )
 
     print("\ncalibrated:")
     for name, cal in calibrated.items():

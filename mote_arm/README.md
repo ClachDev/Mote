@@ -126,30 +126,43 @@ still works and says so), and `pixi run arm-pose go home` moves to the rest pose
 `lerobot-calibrate`:
 
 ```
-pixi run arm-calibrate                        # both phases
+pixi run arm-calibrate                        # sweep, then centre the zeros
 pixi run arm-calibrate -- --skip-homing       # ranges only; writes nothing
 pixi run arm-calibrate -- --joints wrist_roll # redo one joint
 ```
 
-**Phase 1 — centre the joints.** You park the arm with every joint near the
-middle of its travel and press Enter. Each servo's position-correction register
-(EEPROM, `SMS_STS_OFS_L/H`, address 31) is written so that pose reads 2048; the
-servo reports `present = actual - offset`, so this re-centres the joint's whole
-travel inside the 0–4095 encoder frame. That pose becomes 0 rad.
+You sweep the joints; everything else is automatic.
 
-**Phase 2 — record the ranges.** You move every joint to both of its mechanical
+**Phase 1 — record the ranges.** You move every joint to both of its mechanical
 stops, in any order, while one live table records **all six at once**. One Enter
 ends it. The band emitted is the swept range pulled **inward** by `--margin`
 (0.05 rad), because a hard stop is where the operator stopped pushing — a soft
 limit has to sit short of it.
 
-**Phase 1 is what makes phase 2 trustworthy.** Without it, a joint whose travel
-happens to straddle the encoder's 0/4095 boundary reports a raw min and max that
-say nothing about its real span, and no zero/limit pair in that frame can
-describe it — `rad_to_counts` clamps at the encoder edge. Measured on the real
-arm, **two of six joints did exactly that** (`shoulder_pan` and `wrist_roll`).
-Re-centring them is the fix; there is no software workaround, because the
-servo's own goal register is 0–4095 too.
+**Phase 2 — centre the zeros.** Each joint's 0 rad is moved to the *measured*
+middle of the range just swept, by writing the servo's position-correction
+register (EEPROM, `SMS_STS_OFS_L/H`, address 31). The servo reports
+`present = actual - offset`, so this re-centres the joint's whole travel inside
+the 0–4095 encoder frame. The arm can be left wherever the sweep ended.
+
+**Why the centre comes from the sweep.** LeRobot's flow asks the operator to
+first hold the arm with every joint at mid-travel and takes the zero from that
+pose. That works, but it is an awkward, unbalanced position to hold, and
+eyeballing the middle is less accurate than the measurement the sweep is about to
+take anyway. Taking it from the sweep is both easier and better — and it still
+works for a joint that crossed the wrap mid-sweep, because the recorder unwraps.
+
+**Centring is what makes the limits describable at all.** A joint whose travel
+straddles the encoder's 0/4095 boundary has a raw min and max that say nothing
+about its real span, and no zero/limit pair in that frame can express it —
+`rad_to_counts` clamps at the encoder edge. Measured on the real arm, **two of
+six joints did exactly that** (`shoulder_pan` and `wrist_roll`). There is no
+software workaround: the servo's own goal register is 0–4095 too.
+
+Offsets are **modular** — `present = (actual - offset) mod 4096`, so an offset of
+3056 and one of −1040 command the same thing. An arithmetic result outside the
+register's ±2047 is therefore folded, never rejected. (Rejecting one aborted a
+real calibration run before this was understood.)
 
 It opens the serial bus directly, like `arm-check`, so run it with the driver
 stopped: the driver reports radians about the very zero being replaced, and the
@@ -161,12 +174,12 @@ Four things it refuses to guess at, rather than emit plausible-looking numbers:
 - **Travel beyond one revolution.** A continuously-rotating joint has no stops
   to calibrate against and fits no single-turn frame. Reported as its own case,
   because unlike a wrap there is no remedy — leave it out with `--joints`.
-- **An encoder wrap** that survived phase 1 — the safety net proving phase 1 did
-  its job. The joint keeps its existing values with the reason above its line.
-- **A zero it could never reach.** If the zero lands within a margin of a stop,
-  the band would exclude 0 rad — exactly the defect in the pre-calibration
-  `shoulder_pan` limits, whose band `[0.010, 0.229]` does not contain 0.
 - **A range too short to survive the margin at both ends.**
+- Under `--skip-homing` only, where the zero is not being moved: **an encoder
+  wrap**, and **a zero the joint could never reach** (a band excluding 0 rad —
+  the defect in the pre-calibration `shoulder_pan` limits, whose
+  `[0.010, 0.229]` does not contain 0). Neither can arise from the centred path,
+  where the zero *is* the middle of what was swept.
 
 It also names, *before* emitting anything, the taught poses that a changed zero
 invalidates, and prints the `arm-pose save` line to re-teach each. What was

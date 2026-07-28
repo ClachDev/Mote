@@ -61,29 +61,7 @@ opens the serial bus directly.
 pixi run arm-calibrate
 ```
 
-### Phase 1 — centre the joints (writes servo EEPROM)
-
-It asks you to **park the arm with every joint near the middle of its travel**,
-then press Enter. That pose becomes 0 rad. It shows what it intends to write and
-asks before touching EEPROM:
-
-```
-joint              now  offset  ->    new
-shoulder_pan       454       0  ->  -1594
-...
-write homing offsets? [y/N]
-```
-
-**Expected:** every servo `written and verified`, then `all joints now read
-within 40 counts of 2048`. This is the step that stops a joint's travel
-straddling the encoder's 0/4095 wrap — on this arm, `shoulder_pan` and
-`wrist_roll` both did before it existed.
-
-Park it *near* the middle; it does not have to be exact. What matters is that no
-joint is against a stop, or its band would exclude its own zero and it is
-rejected.
-
-### Phase 2 — record the ranges
+### Phase 1 — record the ranges
 
 Move each joint **gently** to both of its mechanical stops — the stop is where it
 resists, do not force it, and do not use it to "find" extra range. Take the
@@ -98,9 +76,32 @@ joints in any order; all six are recorded at once in a live table:
 Press **Enter** once every joint has been to both stops.
 
 **Expected:** a span per joint matching what you felt (the big joints measured
-3.4–4.1 rad; the gripper ~2.3), no `WRAP` flags, then a printed band a little
-inside each. Anything that does not calibrate says why and keeps its existing
-values — see the failure table below.
+3.4–4.1 rad; the gripper ~2.3). A `WRAP` flag here is fine and expected on any
+joint whose travel crosses the encoder's 0/4095 boundary — phase 2 is about to
+fix exactly that. Anything that cannot be calibrated says why and keeps its
+existing values; see the failure table below.
+
+### Phase 2 — centre the zeros (writes servo EEPROM)
+
+Automatic: each joint's 0 rad moves to the *measured* middle of the range you
+just swept. **Leave the arm wherever the sweep ended** — this changes only what
+the encoders report, not where the arm is. It shows what it intends to write and
+asks before touching EEPROM:
+
+```
+joint            mid-travel  offset  ->    new
+shoulder_pan           3522    1009  ->  -1613
+...
+write homing offsets? [y/N]
+```
+
+**Expected:** every servo `written and verified`, then `offsets verified: every
+reading moved by exactly what was written`. That last line is the real check —
+it confirms the servo *acts* on the register the way we assume, and would catch
+a wrong sign encoding.
+
+This is the step that stops a joint's travel straddling the encoder wrap. On
+this arm `shoulder_pan` and `wrist_roll` both did.
 
 ### Then, in this order
 
@@ -130,10 +131,10 @@ homing offsets — the only record of them outside servo EEPROM.
 | Reported | What to do |
 |----------|------------|
 | `travel exceeds one revolution; joint is continuous` | The joint spins freely and has no stops to calibrate against. Exclude it: `--joints` the others. |
-| `sweep crossed the encoder 0/4095 boundary` | Phase 1 did not centre this joint — usually it was against a stop when you parked it. Re-run and park it nearer the middle of its travel. |
-| `zero too close to a stop; zero would be unreachable` | Same cause, same fix. |
+| `sweep crossed the encoder 0/4095 boundary` | Only under `--skip-homing`, which does not move the zero. Run without it. |
+| `zero too close to a stop; zero would be unreachable` | Only under `--skip-homing`. Run without it and the zero is centred by construction. |
 | `swept only X rad, too short for the margin` | The sweep did not reach both stops — redo it. If the joint really is that short, lower `--margin`. |
-| `needed offset exceeds the servo's correction range` | The joint is more than half a revolution from centre. Move it nearer the middle before phase 1. |
+
 
 A joint that fails keeps its previous values, with the reason as a comment above
 its line, so pasting the block never silently reverts a joint to a guess.

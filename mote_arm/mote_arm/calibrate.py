@@ -77,12 +77,19 @@ class Sweep:
     max_counts: int
     # Times the raw reading jumped more than half a revolution between samples.
     wraps: int
-    # Span measured on the unwrapped stream, so it stays true across a wrap.
-    unwrapped_span: int
+    # The travel on the unwrapped stream, anchored so that the first sample's
+    # unwrapped value equals its raw value. These stay true across a wrap, which
+    # is what lets the measured mid-travel be recovered from a wrapped sweep.
+    unwrapped_min: int
+    unwrapped_max: int
 
     @property
     def wrapped(self) -> bool:
         return self.wraps > 0
+
+    @property
+    def unwrapped_span(self) -> int:
+        return self.unwrapped_max - self.unwrapped_min
 
     @property
     def raw_span(self) -> int:
@@ -97,6 +104,17 @@ class Sweep:
     def mid_counts(self) -> int:
         """The raw mid-point of the sweep; meaningless once ``wrapped``."""
         return round((self.min_counts + self.max_counts) / 2)
+
+    @property
+    def measured_centre(self) -> int:
+        """The raw encoder count at the middle of the *measured* travel.
+
+        Recovered through the unwrapping, so it is correct even for a sweep that
+        crossed 0/4095 — which is the whole reason the centre is taken from the
+        sweep rather than from a pose the operator has to hold.
+        """
+        mid = round((self.unwrapped_min + self.unwrapped_max) / 2)
+        return mid % COUNTS_PER_REV
 
 
 class SweepRecorder:
@@ -177,7 +195,8 @@ class SweepRecorder:
             min_counts=self._min,
             max_counts=self._max,
             wraps=self._wraps,
-            unwrapped_span=self._u_max - self._u_min,
+            unwrapped_min=self._u_min,
+            unwrapped_max=self._u_max,
         )
 
 
@@ -213,17 +232,7 @@ def limits_from_sweep(
     """
     if margin < 0:
         raise ValueError("margin must not be negative")
-    if sweep.unwrapped_span >= COUNTS_PER_REV:
-        # No homing offset can rescue this: the joint simply does not fit in a
-        # single-turn frame. Distinguished from an ordinary wrap because the
-        # remedy is different — there isn't one, short of excluding the joint.
-        raise CalibrationError(
-            f"{sweep.name}: swept {sweep.span_rad:.2f} rad, more than the one "
-            f"full revolution the encoder can express. A continuously-rotating "
-            "joint has no mechanical stops to calibrate against — leave it out "
-            "with --joints, and drive it in relative terms instead.",
-            reason="travel exceeds one revolution; joint is continuous",
-        )
+    _reject_continuous(sweep)
     if sweep.wrapped:
         raise CalibrationError(
             f"{sweep.name}: the sweep crossed the encoder's 0/{COUNTS_PER_REV - 1} "
@@ -300,28 +309,98 @@ def calibrate_joint(
     )
 
 
+def normalise_offset(offset: int) -> int:
+    """Fold an offset into the range the servo's register can hold.
+
+    The servo computes ``present = (actual - offset) mod 4096``, so offsets are
+    modular: 3056 and -1040 command exactly the same thing. Folding is therefore
+    always available, and an offset is never "out of range" — treating the raw
+    arithmetic result as a hard failure was a bug that rejected perfectly good
+    calibrations.
+
+    The register holds a sign and an 11-bit magnitude, i.e. -2047..2047: 4095 of
+    the 4096 residues. The one that cannot be named exactly is +-2048, which is
+    clamped, costing one encoder count (0.0015 rad).
+    """
+    folded = (offset + CENTRE_COUNTS) % COUNTS_PER_REV - CENTRE_COUNTS
+    return max(-OFFSET_MAX, min(OFFSET_MAX, folded))
+
+
 def homing_offset(
-    present_counts: int,
+    target_counts: int,
     existing_offset: int,
     centre: int = CENTRE_COUNTS,
 ) -> int:
-    """The offset that makes the joint's current pose read ``centre``.
+    """The offset that makes ``target_counts`` read ``centre``.
 
     The servo reports ``present = actual - offset``, so the actual encoder angle
-    is ``present + existing_offset`` and the offset wanted is that minus the
-    target. ``existing_offset`` must be the value currently in the register, not
-    assumed zero: re-running calibration on an already-offset servo would
-    otherwise double-count it and move the zero by the old offset again.
+    at the target is ``target_counts + existing_offset`` and the offset wanted is
+    that minus where we want it to read. ``existing_offset`` must be the value
+    currently in the register, not assumed zero: re-running calibration on an
+    already-offset servo would otherwise double-count it.
     """
-    offset = present_counts + existing_offset - centre
-    if abs(offset) > OFFSET_MAX:
+    return normalise_offset(target_counts + existing_offset - centre)
+
+
+def centred_limits(
+    sweep: Sweep,
+    invert: bool = False,
+    margin: float = DEFAULT_MARGIN,
+) -> tuple[float, float]:
+    """Soft limits about the middle of the measured travel.
+
+    Symmetric by construction — the zero *is* the mid-point of what was swept —
+    so unlike ``limits_from_sweep`` this can never produce a band that excludes
+    its own zero. Wrapping is irrelevant here because the span comes from the
+    unwrapped stream.
+    """
+    if margin < 0:
+        raise ValueError("margin must not be negative")
+    _reject_continuous(sweep)
+    half = sweep.unwrapped_span / 2.0 * RAD_PER_COUNT
+    if 2 * half <= 2 * margin:
         raise CalibrationError(
-            f"the offset needed ({offset}) exceeds the servo's +-{OFFSET_MAX} "
-            "correction range. The joint is more than half a revolution from "
-            "centre — move it nearer the middle of its travel and retry.",
-            reason="needed offset exceeds the servo's correction range",
+            f"{sweep.name}: swept only {2 * half:.3f} rad, which a {margin:.3f} "
+            "rad margin at each end would erase. Sweep the joint to both stops, "
+            "or lower --margin if the joint really is that short.",
+            reason=f"swept only {2 * half:.3f} rad, too short for the margin",
         )
-    return offset
+    lo, hi = -half + margin, half - margin
+    return (lo, hi) if not invert else (-hi, -lo)
+
+
+def _reject_continuous(sweep: Sweep) -> None:
+    if sweep.unwrapped_span >= COUNTS_PER_REV:
+        # No homing offset can rescue this: the joint simply does not fit in a
+        # single-turn frame. Distinguished from an ordinary wrap because the
+        # remedy is different — there isn't one, short of excluding the joint.
+        raise CalibrationError(
+            f"{sweep.name}: swept {sweep.span_rad:.2f} rad, more than the one "
+            f"full revolution the encoder can express. A continuously-rotating "
+            "joint has no mechanical stops to calibrate against — leave it out "
+            "with --joints, and drive it in relative terms instead.",
+            reason="travel exceeds one revolution; joint is continuous",
+        )
+
+
+def calibrate_centred(
+    spec: JointSpec,
+    sweep: Sweep,
+    margin: float = DEFAULT_MARGIN,
+) -> JointCalibration:
+    """Calibrate a joint whose zero will be moved to its measured mid-travel."""
+    lo, hi = centred_limits(sweep, spec.invert, margin)
+    return JointCalibration(
+        name=spec.name,
+        id=spec.id,
+        invert=spec.invert,
+        zero_counts=CENTRE_COUNTS,
+        min_rad=lo,
+        max_rad=hi,
+        zero_source="the middle of the measured travel",
+        margin=margin,
+        sweep=sweep,
+    )
 
 
 def zero_shift(old_zero: int, new_zero: int, invert: bool = False) -> float:
@@ -408,7 +487,10 @@ def joints_block(
                     cal.zero_counts,
                     cal.invert,
                 )
-                + f"  # swept {cal.sweep.min_counts}-{cal.sweep.max_counts}"
+                # The travel, not the raw min/max: for a sweep that crossed the
+                # wrap the raw range spans almost the whole frame and says
+                # nothing. The counts are kept in arm_calibration.yaml.
+                + f"  # {cal.sweep.span_rad:.2f} rad swept"
             )
             continue
         note = failures.get(joint.name, "not calibrated")
