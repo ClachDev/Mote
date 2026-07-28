@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from mote_arm import bus, calibrate
+from mote_arm import config as config_mod
 from mote_arm.config import COUNTS_PER_REV, RAD_PER_COUNT, ArmConfig, JointSpec
 
 SPEC = JointSpec(name="elbow_flex", id=3, min_rad=-1.0, max_rad=1.0, zero_counts=2048)
@@ -404,79 +405,6 @@ def _two_joint_config():
     )
 
 
-def test_emitted_block_parses_back_into_an_arm_config():
-    """The block is only useful if pasting it yields a loadable robot.yaml."""
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    cal = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
-    block = calibrate.joints_block(list(cfg.joints), {"elbow_flex": cal})
-
-    parsed = yaml.safe_load("arm:\n  port: /dev/null\n  baud_rate: 1000000\n" + block)
-    loaded = ArmConfig.from_dict(parsed)
-    assert [j.name for j in loaded.joints] == ["elbow_flex", "gripper"]
-    elbow = loaded.joint("elbow_flex")
-    assert elbow.zero_counts == cal.zero_counts
-    assert elbow.min_rad == pytest.approx(cal.min_rad, abs=5e-4)
-    # An uncalibrated joint keeps exactly what it had.
-    assert loaded.joint("gripper").zero_counts == 2056
-    assert loaded.joint("gripper").min_rad == pytest.approx(-0.1)
-
-
-def test_emitted_block_marks_uncalibrated_joints():
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    cal = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
-    block = calibrate.joints_block(
-        list(cfg.joints), {"elbow_flex": cal}, {"gripper": "sweep crossed the wrap"}
-    )
-    assert "# unchanged, sweep crossed the wrap:" in block
-    assert "3.07 rad swept" in block  # travel, not the raw range
-    # The note sits above the line it applies to, not on it.
-    lines = block.splitlines()
-    assert lines[
-        lines.index("    # unchanged, sweep crossed the wrap:") + 1
-    ].startswith("    - {name: gripper,")
-
-
-def test_emitted_block_lines_stay_readable_in_robot_yaml():
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    cal = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
-    block = calibrate.joints_block(
-        list(cfg.joints), {"elbow_flex": cal}, None, "measured 2026-07-27"
-    )
-    assert max(len(line) for line in block.splitlines()) <= 110
-
-
-def test_emitted_block_says_where_zero_came_from():
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    centred = calibrate.calibrate_joint(
-        cfg.joint("elbow_flex"), sweep, 2100, zero_source="centred"
-    )
-    block = calibrate.joints_block(list(cfg.joints), {"elbow_flex": centred}, None, "x")
-    # Single words, because the header is wrapped and a phrase may straddle lines.
-    assert "centred" in block
-    assert "inward" in block  # the direction the band is pulled
-
-    derived = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
-    assert "mid-point" in calibrate.joints_block(
-        list(cfg.joints), {"elbow_flex": derived}
-    )
-
-
-def test_emitted_block_warns_that_zero_is_not_the_rest_pose():
-    """The word collision that confused an operator at the bench, in the file."""
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    cal = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
-    block = calibrate.joints_block(list(cfg.joints), {"elbow_flex": cal})
-    assert "zero:" in block
-    assert "home:" not in block
-    flat = " ".join(line.lstrip(" #") for line in block.splitlines())
-    assert "not the rest pose" in flat
-
-
 def test_zero_is_inside_every_emitted_band():
     """Whatever the sweep, a calibrated joint can always be commanded to 0 rad."""
     cfg = _two_joint_config()
@@ -484,42 +412,6 @@ def test_zero_is_inside_every_emitted_band():
         sweep = _record("elbow_flex", _ramp(lo, hi)).result()
         cal = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep, zero)
         assert cal.min_rad <= 0.0 <= cal.max_rad
-
-
-def test_record_roundtrip(tmp_path):
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    cal = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
-    path = calibrate.save_record(
-        {"elbow_flex": cal}, "measured 2026-07-27", tmp_path / "arm_calibration.yaml"
-    )
-    data = yaml.safe_load(path.read_text())
-    assert data["recorded"] == "measured 2026-07-27"
-    entry = data["joints"]["elbow_flex"]
-    assert (entry["min_counts"], entry["max_counts"]) == (1000, 3000)
-    assert entry["zero_source"] == "sweep mid-point"
-    assert entry["span_rad"] == pytest.approx(2000 * RAD_PER_COUNT, abs=1e-3)
-    assert "homing_offset" not in entry
-
-
-def test_record_keeps_the_homing_offset_when_one_was_written(tmp_path):
-    """The offset lives only in EEPROM; this file is the sole record of it."""
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    cal = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
-    path = calibrate.save_record(
-        {"elbow_flex": cal},
-        "measured 2026-07-28",
-        tmp_path / "arm_calibration.yaml",
-        offsets={"elbow_flex": -412},
-    )
-    entry = yaml.safe_load(path.read_text())["joints"]["elbow_flex"]
-    assert entry["homing_offset"] == -412
-
-
-def test_record_path_follows_mote_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
-    assert calibrate.record_path() == tmp_path / "arm_calibration.yaml"
 
 
 def test_full_sweep_spans_a_sensible_arc():
@@ -570,6 +462,91 @@ def _row(samples, now=None):
     return arm_calibrate._range_row(
         "shoulder_pan", _record("shoulder_pan", samples), now
     )
+
+
+def _document(**kw):
+    cfg = _two_joint_config()
+    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
+    cal = calibrate.calibrate_centred(cfg.joint("elbow_flex"), sweep)
+    return cfg, calibrate.calibration_document(
+        list(cfg.joints), {"elbow_flex": cal}, "measured 2026-07-28", **kw
+    )
+
+
+def test_calibration_document_holds_only_calibrated_joints():
+    """A skipped joint is absent, so it keeps the packaged default."""
+    _cfg, doc = _document()
+    assert list(doc["joints"]) == ["elbow_flex"]
+    assert doc["recorded"] == "measured 2026-07-28"
+
+
+def test_calibration_document_carries_the_measurement_with_the_value():
+    _cfg, doc = _document()
+    entry = doc["joints"]["elbow_flex"]
+    assert entry["zero"] == calibrate.CENTRE_COUNTS
+    assert entry["swept_counts"] == [1000, 3000]
+    assert entry["swept_rad"] == pytest.approx(2000 * RAD_PER_COUNT, abs=1e-3)
+
+
+def test_calibration_document_records_the_homing_offset():
+    """It exists nowhere but servo EEPROM, so this is the only record of it."""
+    _cfg, doc = _document(offsets={"elbow_flex": -1613})
+    assert doc["joints"]["elbow_flex"]["homing_offset"] == -1613
+
+
+def test_calibration_overlays_only_the_measured_fields():
+    cfg, doc = _document()
+    merged = config_mod.apply_calibration(cfg, doc)
+    elbow = merged.joint("elbow_flex")
+    assert elbow.zero_counts == calibrate.CENTRE_COUNTS
+    assert elbow.min_rad < 0 < elbow.max_rad
+    # Identity and direction stay with the package.
+    assert (elbow.id, elbow.invert) == (3, False)
+    # An uncalibrated joint is untouched.
+    assert merged.joint("gripper").zero_counts == 2056
+    assert merged.joint("gripper").min_rad == pytest.approx(-0.1)
+
+
+def test_calibration_absent_leaves_the_packaged_config_alone():
+    cfg = _two_joint_config()
+    assert config_mod.apply_calibration(cfg, {}) == cfg
+    assert config_mod.apply_calibration(cfg, None) == cfg
+
+
+def test_calibration_for_an_unknown_joint_is_ignored():
+    """Removing a joint upstream must not brick a robot with an old file."""
+    cfg = _two_joint_config()
+    merged = config_mod.apply_calibration(cfg, {"joints": {"ghost": {"zero": 1}}})
+    assert merged == cfg
+
+
+def test_calibration_with_inverted_limits_is_refused():
+    cfg = _two_joint_config()
+    bad = {"joints": {"elbow_flex": {"min": 1.0, "max": -1.0}}}
+    with pytest.raises(ValueError):
+        config_mod.apply_calibration(cfg, bad)
+
+
+def test_saved_calibration_round_trips_and_keeps_its_header(tmp_path):
+    cfg, doc = _document(offsets={"elbow_flex": -1613})
+    path = calibrate.save_calibration(doc, tmp_path / "arm.yaml")
+    text = path.read_text()
+    assert text.startswith("# This robot's measured arm calibration")
+    unwrapped = " ".join(ln.lstrip("# ") for ln in text.splitlines())
+    assert "NOT the arm's rest pose" in unwrapped
+    loaded = config_mod.load_calibration(path)
+    assert loaded == doc
+    merged = config_mod.apply_calibration(cfg, loaded)
+    assert merged.joint("elbow_flex").zero_counts == calibrate.CENTRE_COUNTS
+
+
+def test_calibration_path_follows_mote_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
+    assert config_mod.calibration_path() == tmp_path / "arm.yaml"
+
+
+def test_missing_calibration_file_is_empty_not_an_error(tmp_path):
+    assert config_mod.load_calibration(tmp_path / "nope.yaml") == {}
 
 
 def test_range_row_is_the_same_shape_for_every_joint():
@@ -644,73 +621,3 @@ arm:
 lidar:
   port: /dev/mote_lidar
 """
-
-
-def _calibrated_block():
-    cfg = _two_joint_config()
-    sweep = _record("elbow_flex", _ramp(1000, 3000)).result()
-    cal = calibrate.calibrate_centred(cfg.joint("elbow_flex"), sweep)
-    return calibrate.joints_block(list(cfg.joints), {"elbow_flex": cal})
-
-
-def test_splice_replaces_only_the_marked_region():
-    out = calibrate.splice_joints_block(REAL_YAML, _calibrated_block())
-    assert "# leading comment that must survive" in out
-    assert "explanation the operator wrote and wants kept" in out
-    assert "port: /dev/mote_lidar" in out
-    assert "kp: 32" in out
-    # The provisional note inside the region is gone.
-    assert "NOT YET CALIBRATED" not in out
-
-
-def test_spliced_yaml_still_loads_and_carries_the_new_limits():
-    block = _calibrated_block()
-    out = calibrate.splice_joints_block(REAL_YAML, block)
-    loaded = ArmConfig.from_dict(yaml.safe_load(out))
-    assert [j.name for j in loaded.joints] == ["elbow_flex", "gripper"]
-    assert loaded.joint("elbow_flex").zero_counts == calibrate.CENTRE_COUNTS
-    # The uncalibrated joint keeps exactly what it had.
-    assert loaded.joint("gripper").zero_counts == 2056
-
-
-def test_splice_keeps_the_rest_of_the_file_byte_for_byte():
-    out = calibrate.splice_joints_block(REAL_YAML, _calibrated_block())
-    head = REAL_YAML.split("  # BEGIN")[0]
-    tail = REAL_YAML.split("# END arm.joints\n")[1]
-    assert out.startswith(head)
-    assert out.endswith(tail)
-
-
-def test_splice_is_idempotent():
-    block = _calibrated_block()
-    once = calibrate.splice_joints_block(REAL_YAML, block)
-    twice = calibrate.splice_joints_block(once, block)
-    assert once == twice
-
-
-def test_splice_refuses_a_file_without_markers():
-    with pytest.raises(calibrate.CalibrationError, match="markers"):
-        calibrate.splice_joints_block("arm:\n  joints:\n    - {}\n", "  x")
-
-
-def test_splice_refuses_when_the_end_marker_is_missing():
-    truncated = REAL_YAML.replace("  # END arm.joints\n", "")
-    with pytest.raises(calibrate.CalibrationError, match="markers"):
-        calibrate.splice_joints_block(truncated, _calibrated_block())
-
-
-def test_emitted_block_carries_both_markers():
-    block = _calibrated_block()
-    assert calibrate.BEGIN_MARKER in block
-    assert calibrate.END_MARKER in block
-    assert block.splitlines()[-1].strip() == calibrate.END_MARKER
-
-
-def test_the_committed_robot_yaml_has_the_markers():
-    """The real file must stay spliceable, or calibration silently degrades."""
-    from pathlib import Path
-
-    here = Path(__file__).resolve().parents[2]
-    text = (here / "mote_description" / "config" / "robot.yaml").read_text()
-    out = calibrate.splice_joints_block(text, _calibrated_block())
-    assert ArmConfig.from_dict(yaml.safe_load(out)).joint("elbow_flex")

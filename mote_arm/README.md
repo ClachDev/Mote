@@ -219,25 +219,24 @@ invalidates, and prints the `arm-pose save` line to re-teach each. What was
 measured — including the homing offsets, which otherwise exist only in EEPROM —
 is recorded in `~/.mote/arm_calibration.yaml`.
 
-**It writes `robot.yaml` for you.** After the offsets move, the committed `zero`
-counts no longer describe the hardware, so leaving the file to be transcribed by
-hand opens a window where the config is actively wrong — a window this tool
-created and should close. It shows a unified diff, asks, and replaces only the
-region between the `# BEGIN arm.joints` / `# END arm.joints` markers; everything
-else in the file, including every comment, is preserved byte for byte. It
-re-parses the result through `ArmConfig` first and refuses to write anything
-that would not load, and writes via a temporary file so an interrupted write
-cannot leave a half-updated config.
+**It saves the result to `~/.mote/arm.yaml`** — per-robot state, not the repo.
+It shows what each joint's limits and zero change from and to, and asks first.
 
-Declining the prompt prints the block instead, as does a missing-marker file or
-a `robot.yaml` that resolves inside `install/` (a non-symlink build, where the
-edit would be lost on the next `pixi run build`) — so a calibration is never
-simply lost.
+That location is the point. Zeros and limits are measurements of *one physical
+arm*: two robots with identical hardware have different ones, and the packaged
+`mote_description/config/robot.yaml` is shared by the whole fleet and read-only
+once installed from a channel. So the package keeps the *design* — ids, names,
+direction, gains, and conservative defaults for an arm that has never been
+calibrated — and `mote_arm.config` overlays this robot's measured
+`zero`/`min`/`max` on top at load time. Delete the file to fall back to the
+defaults. It is the same rule as `~/.mote/camera_calibration.yaml` and the site
+bundles: `MOTE_HOME` is per-robot, the package is shared.
 
-**Which `robot.yaml`?** `mote_description/config/robot.yaml`, the shared
-hardware description in the repo. Not `~/.mote/robot.yaml`, which is this
-robot's fleet identity (`robot_id`, name, site) and has nothing to do with the
-arm. The tool prints the full path above the diff.
+The file carries the measurement alongside the value — swept range, sample
+count, margin, and the `homing_offset` written to the servo, which exists
+nowhere else and is the only record if a servo is swapped. Writes go through a
+temporary file, and the result is validated through `ArmConfig` before it lands,
+because this is what supplies the soft limits that stop the arm.
 
 **Re-teach poses last.** Doing it before the file is updated records them
 against a zero that is about to change.

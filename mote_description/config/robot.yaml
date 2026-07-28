@@ -64,24 +64,26 @@ arm:
   # which is exactly why this key is now spelled `zero` (`home:` is still
   # accepted for an un-migrated file).
   #
-  # These come from `pixi run arm-calibrate`: it sweeps every joint to its
-  # mechanical stops, then writes each servo's homing-offset register so the
-  # measured mid-travel reads 2048, and rewrites the marked region below with
-  # the band pulled INWARD from those stops. Centring matters — without it a
-  # joint whose travel straddles the encoder's 0/4095 wrap cannot be described
-  # by any zero/limit pair at all, and two of this arm's six joints did.
+  # Calibration is `pixi run arm-calibrate`: it sweeps every joint to its
+  # mechanical stops, writes each servo's homing-offset register so the measured
+  # mid-travel reads 2048, and saves the resulting zeros and limits to
+  # `$MOTE_HOME/arm.yaml`. Centring matters — without it a joint whose travel
+  # straddles the encoder's 0/4095 wrap cannot be described by any zero/limit
+  # pair at all, and two of six joints on the first real arm did.
   #
   # Changing a `zero` invalidates stored poses (they are radians about it), so
   # re-teach them afterwards — `arm-calibrate` names which ones.
   #
-  # BEGIN arm.joints — rewritten by `pixi run arm-calibrate`; edits inside this
-  # region are replaced wholesale, so put anything you want to keep above it.
-  # NOT YET CALIBRATED. These are the older pose-envelope output (`arm-pose
-  # limits`): the extremes of two vetted poses widened by 0.10 rad, plus the
-  # arm's as-found parked counts as zero. They describe where the arm has
-  # *been*, not where it can go — the parked pose sits within ~20 counts of a
-  # hard stop on most joints, which is why the bands are so tight and lopsided,
-  # and shoulder_pan's [0.010, 0.229] does not contain its own zero.
+  # DEFAULTS ONLY — a calibrated robot overrides `zero`/`min`/`max` per joint
+  # from `$MOTE_HOME/arm.yaml` (written by `pixi run arm-calibrate`), because
+  # those are measurements of one physical arm and every arm's differ. What
+  # stays here is the design: ids, names, direction, gains.
+  #
+  # These particular numbers are the old pose-envelope output (`arm-pose
+  # limits`) and describe where one arm had *been*, not where it can go — the
+  # parked pose it was measured from sits within ~20 counts of a hard stop on
+  # most joints, and shoulder_pan's [0.010, 0.229] does not contain its own
+  # zero. Treat them as a conservative placeholder until a robot calibrates.
   joints:
     - {name: shoulder_pan,  id: 1, min:  0.010, max: 0.229, zero: 3013, invert: false}
     - {name: shoulder_lift, id: 2, min: -0.102, max: 0.100, zero: 1483, invert: false}
@@ -89,7 +91,6 @@ arm:
     - {name: wrist_flex,    id: 4, min: -3.226, max: 0.097, zero: 2767, invert: false}
     - {name: wrist_roll,    id: 5, min: -0.098, max: 0.102, zero:  731, invert: false}
     - {name: gripper,       id: 6, min: -0.102, max: 0.098, zero: 2056, invert: false}
-  # END arm.joints
 
 # Sensors
 lidar:

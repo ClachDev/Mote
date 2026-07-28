@@ -12,7 +12,9 @@ maths (clamping, conversions, validation) can be unit-tested without hardware.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import yaml
 
@@ -188,6 +190,61 @@ class ArmConfig:
             return ArmConfig.from_dict(yaml.safe_load(f))
 
 
+def calibration_path() -> Path:
+    """Where this robot's measured arm calibration lives.
+
+    Per-robot state under ``MOTE_HOME``, not packaged config: the zeros and
+    limits are measurements of one physical arm, every robot's differ, and the
+    package directory is read-only once installed from a conda channel. Same
+    rule as ``~/.mote/camera_calibration.yaml`` and the site bundles.
+    """
+    return Path(os.environ.get("MOTE_HOME", "~/.mote")).expanduser() / "arm.yaml"
+
+
+def apply_calibration(cfg: "ArmConfig", data: dict | None) -> "ArmConfig":
+    """Overlay measured per-joint zero/limits onto the packaged defaults.
+
+    Only ``zero``/``min``/``max`` are overridden — the measurements. Bus ids,
+    names, direction and gains stay with the package, because they describe the
+    design rather than this particular arm, and a joint absent from the
+    calibration simply keeps its packaged values. A calibration naming a joint
+    the package does not have is ignored rather than fatal, so removing a joint
+    upstream cannot brick a robot that still has an old file.
+    """
+    joints = ((data or {}).get("joints")) or {}
+    if not joints:
+        return cfg
+    updated = []
+    for spec in cfg.joints:
+        entry = joints.get(spec.name)
+        if not entry:
+            updated.append(spec)
+            continue
+        merged = JointSpec(
+            name=spec.name,
+            id=spec.id,
+            min_rad=float(entry.get("min", spec.min_rad)),
+            max_rad=float(entry.get("max", spec.max_rad)),
+            zero_counts=int(entry.get("zero", spec.zero_counts)),
+            invert=spec.invert,
+        )
+        if merged.min_rad > merged.max_rad:
+            raise ValueError(
+                f"calibration for {spec.name!r}: min {merged.min_rad} > max "
+                f"{merged.max_rad}"
+            )
+        updated.append(merged)
+    return replace(cfg, joints=tuple(updated))
+
+
+def load_calibration(path=None) -> dict:
+    """This robot's arm calibration, or an empty dict if it has never run."""
+    p = Path(path) if path is not None else calibration_path()
+    if not p.exists():
+        return {}
+    return yaml.safe_load(p.read_text()) or {}
+
+
 def default_robot_yaml() -> str:
     """Locate robot.yaml in the installed mote_description share."""
     from ament_index_python.packages import get_package_share_directory
@@ -196,5 +253,6 @@ def default_robot_yaml() -> str:
 
 
 def load() -> ArmConfig:
-    """Load the arm config from the installed robot.yaml."""
-    return ArmConfig.from_yaml_file(default_robot_yaml())
+    """The packaged arm config with this robot's calibration applied."""
+    cfg = ArmConfig.from_yaml_file(default_robot_yaml())
+    return apply_calibration(cfg, load_calibration())

@@ -19,10 +19,12 @@ crossed the encoder wrap during the sweep, because the recorder unwraps.
     pixi run arm-calibrate -- --skip-homing        # ranges only, writes nothing
     pixi run arm-calibrate -- --joints wrist_roll  # redo one joint
 
-It writes the measured limits into ``mote_description/config/robot.yaml`` — the
-shared hardware description in the repo — after showing a diff and asking. That
-is NOT ``$MOTE_HOME/robot.yaml``, which holds this robot's fleet identity and is
-unrelated to the arm.
+It saves what it measured to ``$MOTE_HOME/arm.yaml`` — per-robot state, not the
+repo. The zeros and limits describe one physical arm, so they do not belong in
+``mote_description/config/robot.yaml``, which every robot shares and which is
+read-only once the package is installed from a channel. That file keeps the
+design (ids, names, direction, gains) and the defaults an uncalibrated arm
+falls back to; ``mote_arm.config`` overlays this robot's measurements on top.
 
 This replaces ``arm-pose limits`` as the way soft limits are set. That command
 widens *outward* from poses a human has already vetted, which only ever
@@ -46,15 +48,11 @@ and this tool never conflates them.
 from __future__ import annotations
 
 import argparse
-import difflib
-import os
-import pathlib
 import sys
 import threading
 import time
 from datetime import datetime, timezone
 
-import yaml
 
 from mote_arm import config, poses
 from mote_arm.bus import BusError, FeetechBus, port_holders
@@ -64,14 +62,13 @@ from mote_arm.calibrate import (
     SweepRecorder,
     calibrate_centred,
     calibrate_joint,
+    calibration_document,
     centred_limits,
     homing_offset,
-    joints_block,
     limits_from_sweep,
     pose_impact,
+    save_calibration,
     save_offsets_backup,
-    save_record,
-    splice_joints_block,
     zero_shift,
 )
 from mote_arm.config import RAD_PER_COUNT
@@ -333,91 +330,39 @@ def _invalidated_poses(cfg, calibrated) -> list[str]:
     return sorted(pose_impact(poses.load_poses(), moved))
 
 
-def _robot_yaml_source(args) -> str | None:
-    """The robot.yaml to edit: the source file, not the installed copy.
-
-    `colcon --symlink-install` makes the installed config a symlink back into
-    the source tree, so resolving it lands on the file worth editing. Without
-    symlink-install it lands inside `install/`, where an edit would be silently
-    thrown away by the next build — so that case is refused rather than written.
-    """
-    path = args.robot_yaml or config.default_robot_yaml()
-    real = os.path.realpath(path)
-    if f"{os.sep}install{os.sep}" in real:
-        return None
-    return real
-
-
-def _apply_to_robot_yaml(block: str, args) -> bool:
-    """Write the block into robot.yaml, showing the diff and asking first.
-
-    Returns whether robot.yaml now matches the calibration. Printing a block for
-    the operator to retype was the earlier behaviour and was wrong: phase 2 moves
-    the servos' zeros, so until the file is updated it actively misdescribes the
-    hardware. The block is still printed on any path that cannot write, so a
-    calibration is never simply lost.
-
-    This edits ``mote_description/config/robot.yaml`` — the shared hardware
-    description in the repo. It is NOT ``$MOTE_HOME/robot.yaml``, which holds
-    this robot's fleet identity and has nothing to do with the arm.
-    """
-    path = _robot_yaml_source(args)
-    if path is None:
-        print(
-            "\nrobot.yaml resolves inside install/ (not a symlink-install), so an "
-            "edit\nthere would be lost on the next build. Paste this instead:\n"
-        )
-        print(block)
-        return False
-
-    original = pathlib.Path(path).read_text()
-    try:
-        updated = splice_joints_block(original, block)
-    except CalibrationError as exc:
-        print(f"\n{exc}\n")
-        print(block)
-        return False
-
-    # Never write a robot.yaml that would not load. This is the config every
-    # other arm tool reads, including the soft limits that stop the arm.
-    try:
-        reparsed = config.ArmConfig.from_dict(yaml.safe_load(updated))
-    except Exception as exc:  # noqa: BLE001 - any failure to reload is fatal
-        raise SystemExit(
-            f"refusing to write: the result would not load ({exc}). "
-            "Paste the block by hand and check it."
-        )
-
-    diff = list(
-        difflib.unified_diff(
-            original.splitlines(),
-            updated.splitlines(),
-            fromfile=path,
-            tofile=f"{path} (calibrated)",
-            lineterm="",
-            n=1,
-        )
+def _save(cfg, calibrated, offsets, recorded, args) -> bool:
+    """Write this robot's calibration, showing what changes and asking first."""
+    document = calibration_document(
+        list(cfg.joints), calibrated, recorded, offsets=offsets
     )
-    if not diff:
-        print(f"\n{path} already matches this calibration — nothing to write.")
-        return True
+    path = config.calibration_path()
 
     print(f"\n{path}\n")
-    for line in diff:
-        print(f"  {line}")
+    for spec in cfg.joints:
+        entry = document["joints"].get(spec.name)
+        if entry is None:
+            print(f"  {spec.name:<16} unchanged")
+            continue
+        print(
+            f"  {spec.name:<16} {spec.min_rad:+.3f}..{spec.max_rad:+.3f} @ "
+            f"{spec.zero_counts:<5} ->  {entry['min']:+.3f}..{entry['max']:+.3f} "
+            f"@ {entry['zero']}"
+        )
 
-    if not _confirm("\nwrite? [y/N] ", args.yes):
-        print("not written. The block above can still be pasted by hand:\n")
-        print(block)
+    if not _confirm("\nsave? [y/N] ", args.yes):
+        print("not saved. The servo offsets have still changed — re-run to save,")
+        print("or `pixi run arm-offsets restore` to undo them.")
         return False
 
-    # Write via a temporary file in the same directory, so an interrupted write
-    # cannot leave a half-updated robot.yaml behind.
-    target = pathlib.Path(path)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(updated)
-    os.replace(tmp, target)
-    print(f"written — {len(reparsed.joints)} joints. Review with `git diff`.")
+    # Refuse to save anything the config layer would not load: this file
+    # supplies the soft limits that stop the arm.
+    try:
+        config.apply_calibration(cfg, document)
+    except Exception as exc:  # noqa: BLE001 - any validation failure is fatal
+        raise SystemExit(f"refusing to save: {exc}")
+
+    saved = save_calibration(document)
+    print(f"saved to {saved}")
     return True
 
 
@@ -467,12 +412,6 @@ def main() -> None:
         "--rate", type=float, default=20.0, help="encoder sample rate, Hz"
     )
     parser.add_argument("--yes", action="store_true", help="skip confirmations")
-    parser.add_argument(
-        "--no-record",
-        action="store_true",
-        help=f"do not write the measurements to {poses.mote_home()}/"
-        "arm_calibration.yaml",
-    )
     args = parser.parse_args()
 
     cfg = (
@@ -557,26 +496,20 @@ def _run(bus, cfg, selected, args) -> None:
             )
 
     recorded = datetime.now(timezone.utc).strftime("measured %Y-%m-%d")
-    block = joints_block(list(cfg.joints), calibrated, failures, recorded)
 
     skipped = {n: r for n, r in failures.items() if n in chosen}
     if skipped:
-        print("\nnot calibrated, keeping their existing values:")
+        print("\nnot calibrated, keeping the packaged defaults:")
         for name, reason in sorted(skipped.items()):
             print(f"  {name:<16} {reason}")
 
-    # The diff is the report: it shows every limit that changed, in the file
-    # they will live in, so listing them again beforehand is noise.
-    written = _apply_to_robot_yaml(block, args)
-
-    if not args.no_record:
-        save_record(calibrated, recorded, offsets=offsets)
+    written = _save(cfg, calibrated, offsets, recorded, args)
 
     if not written and not args.skip_homing:
         print(
-            "\nWARNING: the zeros moved but robot.yaml was not updated. Do not run"
-            "\n`pixi run arm` until the block above is in place — every angle it"
-            "\nreports would be measured against the old zero."
+            "\nWARNING: the servo zeros moved but were not saved, so the arm's"
+            "\nconfig no longer matches its hardware. Do not run `pixi run arm`"
+            "\nuntil this is re-run or the offsets are restored."
         )
     _next_steps(cfg, calibrated, written)
 
@@ -585,7 +518,7 @@ def _next_steps(cfg, calibrated, written) -> None:
     """What the operator has to do now, and nothing else."""
     steps = []
     if written:
-        steps.append("git diff mote_description/config/robot.yaml   # review")
+        steps.append("pixi run arm-check          # rad reads ~0 at mid-travel")
     stale = _invalidated_poses(cfg, calibrated)
     steps += [f"pixi run arm-pose save {name}" for name in stale]
     if not steps:

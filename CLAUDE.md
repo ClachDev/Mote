@@ -247,17 +247,20 @@ section. Contains:
   short for the margin; `--skip-homing` additionally hits the wrap and
   unreachable-zero cases, since it leaves the zero where it is. Names the
   taught poses a changed zero invalidates and prints the `arm-pose save` line for
-  each; **it writes robot.yaml itself** (diff + confirm), replacing only the region
-  between the `# BEGIN arm.joints` / `# END arm.joints` markers — a textual
-  splice, because a YAML round-trip would discard every comment in that file.
-  It re-parses through `ArmConfig` and refuses to write anything that would not
-  load, and resolves the *source* path (symlink-install) rather than editing
-  `install/`. This exists because the alternative leaves a window where the
-  servos are re-zeroed and robot.yaml still describes the old zeros.
-  Declining, a missing marker, or an `install/` path all fall back to printing
-  the block. **Poses must be re-taught after the write, never before.** Note
-  this is `mote_description/config/robot.yaml`, NOT `$MOTE_HOME/robot.yaml`
-  (fleet identity) — a confusion this tool's own output caused once. Measurements + the offsets
+  each; **it saves to `$MOTE_HOME/arm.yaml`, NOT the repo** (shows before/after,
+  confirms). Zeros and limits are measurements of one physical arm, so they are
+  per-robot state like `camera_calibration.yaml` and the site bundles — and
+  `mote_description/config/robot.yaml` is shared by the fleet and read-only once
+  installed from a channel. The package keeps the design (ids, names, direction,
+  gains) plus defaults for an uncalibrated arm; `config.apply_calibration`
+  overlays this robot's measured `zero`/`min`/`max` at load time, ignores a
+  joint the package no longer has, and rejects inverted limits. Deleting the
+  file reverts to the defaults. The file stores each measurement beside its
+  value, including `homing_offset` — the only record of what went into servo
+  EEPROM. **Poses must be re-taught after the save, never before.** Three
+  different files are called some form of robot config: `$MOTE_HOME/arm.yaml`
+  (this arm's calibration), `$MOTE_HOME/robot.yaml` (fleet identity), and
+  `mote_description/config/robot.yaml` (shared hardware description). Measurements + the offsets
   (their only record outside EEPROM) go to `~/.mote/arm_calibration.yaml`.
   A continuously-rotating joint is detectable **only** by being rotated past a
   whole turn (the refusal above); rotated less it is indistinguishable from a

@@ -117,9 +117,8 @@ this arm `shoulder_pan` and `wrist_roll` both did.
 
 ### Then, in this order
 
-It then shows a diff of `mote_description/config/robot.yaml` and asks before
-writing the new limits in — only between the `# BEGIN arm.joints` / `# END
-arm.joints` markers, leaving the rest of the file untouched. Say yes.
+It then shows each joint's limits before and after and asks before saving them
+to `~/.mote/arm.yaml` — this robot's own calibration, not the repo. Say yes.
 
 It also lists every taught pose the changed zeros invalidate. **Re-teach those
 last**, after the file is written, or they record against a zero that is about
@@ -129,17 +128,16 @@ to change:
 pixi run arm-check          # rad column reads ~0.000 at the centred pose
 pixi run arm                # in another terminal
 pixi run arm-pose save home
-git diff mote_description/config/robot.yaml   # review before committing
 ```
 
-Declining the write prompt prints the block instead, so nothing is lost.
+Nothing in the repo changes — the calibration is per-robot state under
+`~/.mote/`. Note `~/.mote/arm.yaml` (this, the arm calibration) is not
+`~/.mote/robot.yaml` (fleet identity), and neither is
+`mote_description/config/robot.yaml` (the shared hardware description).
 
-Note this is `mote_description/config/robot.yaml` — the shared hardware
-description in the repo — not `~/.mote/robot.yaml`, which holds this robot's
-fleet identity and is unrelated to the arm.
-
-What was measured is kept in `~/.mote/arm_calibration.yaml`, including the
-homing offsets — the only record of them outside servo EEPROM.
+`~/.mote/arm.yaml` keeps the measurement next to each value — swept range,
+samples, margin, and the homing offset, which is the only record of what was
+written to the servo.
 
 ### When a joint does not calibrate
 

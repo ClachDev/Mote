@@ -37,7 +37,7 @@ it is unit-tested without an arm on the bench.
 
 from __future__ import annotations
 
-import textwrap
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,11 +57,6 @@ CENTRE_COUNTS = COUNTS_PER_REV // 2
 # A hand-moved joint cannot travel half a revolution between consecutive
 # samples, so a jump that large is the encoder wrapping past 0/4095.
 WRAP_THRESHOLD = COUNTS_PER_REV // 2
-
-# Delimit the region of robot.yaml this tool owns. Everything outside is the
-# operator's, and is preserved byte for byte.
-BEGIN_MARKER = "# BEGIN arm.joints"
-END_MARKER = "# END arm.joints"
 
 
 class CalibrationError(ValueError):
@@ -445,113 +440,83 @@ def pose_impact(
     return impact
 
 
-def _joint_line(
-    name: str, joint_id: int, lo: float, hi: float, zero: int, invert: bool
-) -> str:
-    return (
-        f"    - {{name: {name + ',':<16} id: {joint_id}, "
-        f"min: {lo:>7.3f}, max: {hi:>7.3f}, "
-        f"zero: {zero:>4}, invert: {str(invert).lower()}}}"
-    )
-
-
-def joints_block(
+def calibration_document(
     joints: list[JointSpec],
     calibrated: dict[str, JointCalibration],
-    failures: dict[str, str] | None = None,
-    recorded: str | None = None,
-) -> str:
-    """Render a ready-to-paste ``arm.joints`` block, in servo-command order.
+    recorded: str,
+    offsets: dict[str, int] | None = None,
+) -> dict:
+    """The per-robot calibration file's contents.
 
-    Wrapped in the BEGIN/END markers ``splice_joints_block`` replaces between,
-    so the same text works whether it is written by the tool or pasted by hand.
+    Measurements *and* the values derived from them in one document: the zero
+    and limits the arm runs on, plus the sweep they came from and the homing
+    offset written to the servo — which exists nowhere else, so if a servo is
+    swapped this is the only record of what the old one carried.
 
-    Joints that were not calibrated (skipped, or a sweep that could not be used)
-    keep their existing values and say why, so the block never silently reverts
-    a joint to a guess.
+    Only calibrated joints appear. A joint that was skipped or refused is simply
+    absent, and keeps the packaged default, rather than being written out with
+    stale numbers that would look measured.
     """
-    failures = failures or {}
-    lines: list[str] = [f"  {BEGIN_MARKER} — `pixi run arm-calibrate` rewrites this"]
-    done = list(calibrated.values())
-    if done:
-        margins = "/".join(f"{m:.3f}" for m in sorted({c.margin for c in done}))
-        sources = ", ".join(sorted({c.zero_source for c in done}))
-        lines += textwrap.wrap(
-            f"Swept to the stops on {len(done)} joint(s)"
-            + (f", {recorded}" if recorded else "")
-            + f"; band pulled {margins} rad inward from them. zero = {sources} "
-            "(not the rest pose — that is a taught pose in arm_poses.yaml).",
-            width=78,
-            initial_indent="  # ",
-            subsequent_indent="  # ",
-            break_on_hyphens=False,
-        )
-    lines.append("  joints:")
-    for joint in joints:
-        cal = calibrated.get(joint.name)
-        if cal is not None:
-            lines.append(
-                _joint_line(
-                    cal.name,
-                    cal.id,
-                    cal.min_rad,
-                    cal.max_rad,
-                    cal.zero_counts,
-                    cal.invert,
-                )
-                # The travel, not the raw min/max: for a sweep that crossed the
-                # wrap the raw range spans almost the whole frame and says
-                # nothing. The counts are kept in arm_calibration.yaml.
-                + f"  # {cal.sweep.span_rad:.2f} rad swept"
-            )
+    offsets = offsets or {}
+    out: dict[str, dict] = {}
+    for spec in joints:
+        cal = calibrated.get(spec.name)
+        if cal is None:
             continue
-        note = failures.get(joint.name, "not calibrated")
-        lines.append(f"    # unchanged, {note}:")
-        lines.append(
-            _joint_line(
-                joint.name,
-                joint.id,
-                joint.min_rad,
-                joint.max_rad,
-                joint.zero_counts,
-                joint.invert,
-            )
-        )
-    lines.append(f"  {END_MARKER}")
-    return "\n".join(lines)
+        entry = {
+            "id": cal.id,
+            "zero": cal.zero_counts,
+            "min": round(cal.min_rad, 4),
+            "max": round(cal.max_rad, 4),
+            "swept_rad": round(cal.sweep.span_rad, 4),
+            "swept_counts": [cal.sweep.min_counts, cal.sweep.max_counts],
+            "samples": cal.sweep.samples,
+            "margin": cal.margin,
+            "zero_source": cal.zero_source,
+        }
+        if spec.name in offsets:
+            entry["homing_offset"] = offsets[spec.name]
+        out[spec.name] = entry
+    return {"recorded": recorded, "joints": out}
 
 
-def splice_joints_block(text: str, block: str) -> str:
-    """Replace the marked region of a robot.yaml with ``block``.
-
-    A textual splice rather than a YAML round-trip: dumping the parsed document
-    back out would discard every comment in the file, and this one carries the
-    reasoning behind the values. The markers make the managed region explicit,
-    so nothing has to be inferred from indentation and an operator can see
-    exactly what the tool will overwrite.
-    """
-    lines = text.splitlines(keepends=True)
-    begin = end = None
-    for i, line in enumerate(lines):
-        if begin is None and BEGIN_MARKER in line:
-            begin = i
-        elif begin is not None and END_MARKER in line:
-            end = i
-            break
-    if begin is None or end is None:
-        raise CalibrationError(
-            f"could not find the {BEGIN_MARKER} / {END_MARKER} markers in the "
-            "robot.yaml being written. Refusing to guess which lines to replace "
-            "— paste the block by hand, or restore the markers.",
-            reason="robot.yaml has no managed-region markers",
-        )
+def calibration_header(recorded: str) -> str:
+    """The comment written above the calibration, for whoever opens the file."""
     return (
-        "".join(lines[:begin]) + block.rstrip("\n") + "\n" + "".join(lines[end + 1 :])
+        "# This robot's measured arm calibration — written by "
+        "`pixi run arm-calibrate`.\n"
+        "#\n"
+        "# Per-robot state, deliberately not in the repo: these are measurements "
+        "of one\n"
+        "# physical arm. mote_arm.config overlays `zero`/`min`/`max` onto the "
+        "packaged\n"
+        "# defaults in mote_description/config/robot.yaml; everything else "
+        "(ids, gains,\n"
+        "# direction) stays with the package. Delete this file to fall back to "
+        "those\n"
+        "# defaults.\n"
+        "#\n"
+        "# `zero` is the encoder count reading 0 rad — the middle of each joint's\n"
+        "# travel, NOT the arm's rest pose (that is a taught pose in "
+        "arm_poses.yaml).\n"
+        "# `homing_offset` is what was written to the servo's EEPROM; it lives\n"
+        f"# nowhere else. {recorded}.\n"
     )
 
 
-def record_path() -> Path:
-    return mote_home() / "arm_calibration.yaml"
+def save_calibration(document: dict, path: Path | str | None = None) -> Path:
+    """Write the calibration atomically, so an interrupt cannot truncate it."""
+    from mote_arm.config import calibration_path
+
+    p = Path(path) if path is not None else calibration_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    text = calibration_header(str(document.get("recorded", ""))) + yaml.safe_dump(
+        document, sort_keys=True
+    )
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, p)
+    return p
 
 
 def offsets_backup_path() -> Path:
@@ -599,42 +564,3 @@ def load_offsets_backup(path: Path | str | None = None) -> dict[str, int]:
         str(name): int(entry["offset"])
         for name, entry in (data.get("offsets") or {}).items()
     }
-
-
-def save_record(
-    calibrated: dict[str, JointCalibration],
-    recorded: str,
-    path: Path | str | None = None,
-    offsets: dict[str, int] | None = None,
-) -> Path:
-    """Write what was measured, so the limits in robot.yaml have a provenance.
-
-    Per-robot state (``MOTE_HOME``), like poses: the numbers describe one
-    physical arm's stops on one day, not the repo's shared configuration.
-    """
-    p = Path(path) if path is not None else record_path()
-    offsets = offsets or {}
-    joints = {}
-    for cal in calibrated.values():
-        entry = {
-            "id": cal.id,
-            "min_counts": cal.sweep.min_counts,
-            "max_counts": cal.sweep.max_counts,
-            "samples": cal.sweep.samples,
-            "span_rad": round(cal.sweep.span_rad, 4),
-            "zero": cal.zero_counts,
-            "zero_source": cal.zero_source,
-            "margin": cal.margin,
-            "min": round(cal.min_rad, 4),
-            "max": round(cal.max_rad, 4),
-        }
-        # The offset lives in servo EEPROM, where nothing else records it; if
-        # a servo is swapped this is the only note of what the old one carried.
-        if cal.name in offsets:
-            entry["homing_offset"] = offsets[cal.name]
-        joints[cal.name] = entry
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(
-        yaml.safe_dump({"recorded": recorded, "joints": joints}, sort_keys=True)
-    )
-    return p
