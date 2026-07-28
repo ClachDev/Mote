@@ -1,0 +1,14 @@
+20260706_133149: 12188 icp poses, 121822 wheel transforms
+[INFO] [1785278275.141477636] [icp_odom_gate]: gating odom->base_footprint at 0.251 m/s and 2.279 rad/s (x1.15 of the drive envelope)
+  0/12188  gated=1
+[WARN] [1785278278.183978664] [icp_odom_gate]: rejected icp increment 1: 1.197 m/s, 0.098 rad/s over 0.101 s (limits 0.251, 2.279) -- substituted wheel odometry [-0.0000, -0.0000, 0.0164]
+[WARN] [1785278278.224775535] [icp_odom_gate]: rejected icp increment 2: 0.283 m/s, 0.573 rad/s over 0.100 s (limits 0.251, 2.279) -- substituted wheel odometry [0.0001, 0.0000, 0.0544]
+[WARN] [1785278278.899524663] [icp_odom_gate]: rejected icp increment 3: 0.306 m/s, 0.376 rad/s over 0.098 s (limits 0.251, 2.279) -- substituted wheel odometry [0.0014, -0.0000, -0.0540]
+  2000/12188  gated=2001
+  4000/12188  gated=4001
+  6000/12188  gated=6001
+  8000/12188  gated=8001
+  10000/12188  gated=10001
+  12000/12188  gated=12001
+gate published 12188 of 12188 poses
+wrote /home/michael/.claude/jobs/cbff1358/tmp/20260706_133149-gated

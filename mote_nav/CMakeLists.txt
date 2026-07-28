@@ -80,7 +80,37 @@ rclcpp_components_register_node(odom_tf_relay_component
   EXECUTABLE odom_tf_relay
 )
 
-install(TARGETS mote_nav odom_tf_relay_component
+# The odom->base owner: kinematic_icp's increments, minus the ones the drive
+# could not have produced. A library of its own for the same reason as the
+# relay -- loading the DWB critic must not drag tf2_ros into the controller
+# server, and the two share only the envelope header.
+add_library(icp_odom_gate_component SHARED
+  src/icp_odom_gate.cpp
+)
+
+target_compile_features(icp_odom_gate_component PUBLIC cxx_std_17)
+
+target_include_directories(icp_odom_gate_component PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(icp_odom_gate_component
+  rclcpp
+  rclcpp_components
+  geometry_msgs
+  nav_msgs
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
+)
+
+rclcpp_components_register_node(icp_odom_gate_component
+  PLUGIN "mote_nav::IcpOdomGate"
+  EXECUTABLE icp_odom_gate
+)
+
+install(TARGETS mote_nav odom_tf_relay_component icp_odom_gate_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -106,6 +136,9 @@ if(BUILD_TESTING)
   if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(test_odom_tf_relay PRIVATE -ffp-contract=off)
   endif()
+
+  ament_add_gtest(test_icp_odom_gate test/test_icp_odom_gate.cpp)
+  target_link_libraries(test_icp_odom_gate icp_odom_gate_component)
 endif()
 
 ament_package()

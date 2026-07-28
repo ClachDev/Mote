@@ -1,0 +1,47 @@
+max_wheel_speed = 0.218 m/s (robot.yaml), tolerance x1.15
+
+=== 20260706_192836 (98s, 985 intervals) ===
+    limit 0.251 m/s, recovery window +-20 scans (~2.0s)
+      t(s)  icp_v  whl_v    fwd     lat  yaw/s |   jump  before   after  retained
+      16.6  0.273  0.216 +0.0275 +0.0002  +26.5 | +0.006  +0.012  -0.005    +0.001
+      18.4  0.355  0.206 +0.0355 -0.0001   -1.3 | +0.015  -0.013  +0.006    +0.021
+      19.1  0.304  0.175 +0.0305 +0.0000   +4.9 | +0.013  -0.002  +0.008    +0.021
+      19.8  0.276  0.208 +0.0277 -0.0003  -21.5 | +0.007  +0.014  +0.023    +0.030
+      21.5  0.433  0.202 +0.0435 -0.0012  -35.5 | +0.023  +0.009  -0.005    +0.018
+      51.4  0.384  0.219 -0.0384 +0.0000   -0.8 | +0.017  +0.003  +0.017    +0.033
+      52.7  0.387  0.218 -0.0390 +0.0007  -31.7 | +0.017  +0.020  +0.002    +0.019
+
+    single-interval gap, excursions excluded: |p50| 0.0002  |p99| 0.0121  |max| 0.0192 m
+    excursion jumps:                          |p50| 0.0149  |max| 0.0232 m   sum +0.097 m over 7 frames
+    gap rate around them: before +0.0031 m/s   after +0.0033 m/s   (a spike would show a large negative 'after')
+    -> the 7 jumps add +0.097 m to a 0.4 m displaced, 11.2 m driven session
+
+    implied max-wheel speed (|v| + S/2|w|), limit 0.218 m/s:
+      wheels           p50 0.200  p99 0.222  max 0.224 m/s   (18.98% over)
+      icp, excursions excluded  p99 0.251  max 0.314 m/s (x1.44 of limit)
+      icp, excursions           min 0.313 m/s (x1.44 of limit)
+    yaw rate  at excursions |p50| 21.5 deg/s   session |p50| 4.8  |p99| 82.6 deg/s
+    wheel speed at excursions |p50| 0.208 m/s   session |p50| 0.161  |p99| 0.220 m/s
+
+=== 20260706_133149 (1218s, 12187 intervals) ===
+    limit 0.251 m/s, recovery window +-20 scans (~2.0s)
+      t(s)  icp_v  whl_v    fwd     lat  yaw/s |   jump  before   after  retained
+      58.3  1.197  0.000 -0.1206 -0.0019   +5.6 | +0.121  +0.006  +0.067    +0.188
+      59.1  0.283  0.001 +0.0284 +0.0016  +32.8 | +0.028  +0.126  +0.040    +0.068
+      72.0  0.306  0.014 -0.0300 +0.0011  -21.6 | +0.029  +0.001  +0.014    +0.043
+
+    single-interval gap, excursions excluded: |p50| 0.0000  |p99| 0.0001  |max| 0.0200 m
+    excursion jumps:                          |p50| 0.0287  |max| 0.1206 m   sum +0.178 m over 3 frames
+    gap rate around them: before +0.0223 m/s   after +0.0202 m/s   (a spike would show a large negative 'after')
+    -> the 3 jumps add +0.178 m to a 0.4 m displaced, 0.5 m driven session
+
+    implied max-wheel speed (|v| + S/2|w|), limit 0.218 m/s:
+      wheels           p50 0.000  p99 0.055  max 0.220 m/s   (0.04% over)
+      icp, excursions excluded  p99 0.043  max 0.259 m/s (x1.19 of limit)
+      icp, excursions           min 0.346 m/s (x1.59 of limit)
+    yaw rate  at excursions |p50| 21.6 deg/s   session |p50| 0.0  |p99| 10.0 deg/s
+    wheel speed at excursions |p50| 0.001 m/s   session |p50| 0.000  |p99| 0.001 m/s
+
+=== 20260706_193037 (180s, 1804 intervals) ===
+    limit 0.251 m/s, recovery window +-20 scans (~2.0s)
+    no excursions

@@ -1,25 +1,12 @@
 #ifndef MOTE_NAV__WHEEL_SPEED_LIMIT_CRITIC_HPP_
 #define MOTE_NAV__WHEEL_SPEED_LIMIT_CRITIC_HPP_
 
-#include <cmath>
-
 #include "dwb_core/trajectory_critic.hpp"
 #include "dwb_msgs/msg/trajectory2_d.hpp"
+#include "mote_nav/wheel_speed.hpp"
 
 namespace mote_nav
 {
-
-/**
- * @brief Surface speed of the faster (outer) wheel for a differential drive
- *        commanded at linear velocity v and angular velocity w.
- *
- * The wheel speeds are v +/- (S/2)*w, so the outer wheel runs at
- * |v| + (S/2)*|w| where S is the wheel separation.
- */
-inline double maxWheelSpeed(double v, double w, double wheel_separation)
-{
-  return std::abs(v) + 0.5 * wheel_separation * std::abs(w);
-}
 
 /**
  * @class WheelSpeedLimitCritic
