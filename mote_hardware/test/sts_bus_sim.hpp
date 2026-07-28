@@ -158,6 +158,18 @@ public:
     registers_[id][STS_MODE] = static_cast<unsigned char>(mode);
   }
 
+  // Ignore mode writes for this servo, as one whose EEPROM write does not take
+  // does: it answers, but can never be confirmed in position mode.
+  void set_mode_write_ignored(int id, bool ignored)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ignored) {
+      mode_locked_.insert(id);
+    } else {
+      mode_locked_.erase(id);
+    }
+  }
+
   // Stop answering for this servo, as an unpowered or unplugged one does.
   void set_absent(int id, bool absent)
   {
@@ -222,6 +234,10 @@ private:
   // 42-43, wherever it starts.
   void apply_write(int id, int addr, const std::vector<unsigned char> & data)
   {
+    if (addr == STS_MODE && mode_locked_.count(id)) {
+      log("mode id=" + std::to_string(id) + " REFUSED");
+      return;
+    }
     auto & regs = registers_[id];
     for (std::size_t i = 0; i < data.size(); ++i) {
       const std::size_t target = static_cast<std::size_t>(addr) + i;
@@ -344,6 +360,7 @@ private:
   std::mutex mutex_;
   std::map<int, Registers> registers_;
   std::set<int> absent_;
+  std::set<int> mode_locked_;
   std::vector<std::string> events_;
 };
 

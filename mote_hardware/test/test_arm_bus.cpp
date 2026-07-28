@@ -452,6 +452,63 @@ TEST_F(ArmBus, AnAbsentArmServoIsExcludedFromControl)
   EXPECT_NE(count_matching(bus->events(), "goal id=3"), 0);
 }
 
+TEST_F(ArmBus, AnArmThatIsNotFittedCostsNoBusTime)
+{
+  // The arm is an optional extra — some Mote builds have none. A read to a
+  // servo that is not there does not fail fast, it costs a full serial timeout,
+  // so a round-robin that kept trying would pay that on every control cycle of
+  // the loop that also drives the wheels.
+  bus->set_absent(PAN_ID, true);
+  bus->set_absent(ELBOW_ID, true);
+  activate();
+  bus->clear_events();
+
+  for (int i = 0; i < 10; ++i) {
+    hw.read(TIME, PERIOD);
+  }
+
+  EXPECT_EQ(count_matching(bus->events(), "read id=1"), 0);
+  EXPECT_EQ(count_matching(bus->events(), "read id=3"), 0);
+  // The wheels are read exactly as they would be with no arm declared at all.
+  EXPECT_NE(count_matching(bus->events(), "read id=7"), 0);
+}
+
+TEST_F(ArmBus, AJointExcludedFromControlIsStillRead)
+{
+  // "Excluded from control (state reads only)" is what activation warns; a
+  // servo that answers but cannot be confirmed in position mode must keep
+  // reaching /joint_states, so skipping absent servos must not skip this one.
+  bus->set_mode(PAN_ID, 1);            // wheel mode...
+  bus->set_mode_write_ignored(PAN_ID, true);  // ...and the fix will not take
+  activate();
+  bus->clear_events();
+
+  for (int i = 0; i < 6; ++i) {
+    hw.read(TIME, PERIOD);
+  }
+
+  EXPECT_NE(count_matching(bus->events(), "read id=1 addr=56"), 0);
+}
+
+TEST_F(ArmBus, AJointExcludedFromControlIsNeverCommanded)
+{
+  bus->set_mode(PAN_ID, 1);
+  bus->set_mode_write_ignored(PAN_ID, true);
+  activate();
+  claim_arm();
+  bus->clear_events();
+
+  command("shoulder_pan").set_value(0.2);
+  command("elbow_flex").set_value(-1.0);
+  hw.write(TIME, PERIOD);
+
+  // In wheel mode a position goal is obeyed as a speed, so this servo must get
+  // no goal at all — while its healthy neighbour still moves.
+  EXPECT_FALSE(bus->torque_enabled(PAN_ID));
+  EXPECT_EQ(count_matching(bus->events(), "goal id=1"), 0);
+  EXPECT_NE(count_matching(bus->events(), "goal id=3"), 0);
+}
+
 TEST_F(ArmBus, RefusesToActivateWhenAnotherProcessHoldsTheBus)
 {
   // The guard that makes "one owner" true rather than merely intended.

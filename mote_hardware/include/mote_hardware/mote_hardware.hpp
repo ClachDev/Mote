@@ -86,6 +86,7 @@ private:
   bool engage_arm_joint(std::size_t index);
   void disengage_arm();
   void read_arm_joint(std::size_t index);
+  void read_next_arm_joint();
 
   SMS_STS servo_driver_;
 
@@ -120,9 +121,15 @@ private:
   // Last count actually written per joint, so an unchanged goal costs no bus
   // traffic. -1 means "nothing written yet this session".
   std::vector<int> arm_written_counts_;
-  // Joints confirmed present and in position mode at activation; only these are
-  // ever commanded. A servo whose mode could not be verified might be in wheel
-  // mode, where a position goal spins it continuously.
+  // Joints whose servo answered at activation. Not the same as controllable:
+  // one that answered but could not be confirmed in position mode is read (its
+  // state still reaches /joint_states) but never commanded. One that never
+  // answered is not read either — a read to a servo that is not there costs a
+  // full serial timeout, and some Mote builds have no arm fitted at all.
+  std::vector<bool> arm_present_;
+  // Joints confirmed present *and* in position mode at activation; only these
+  // are ever commanded. A servo whose mode could not be verified might be in
+  // wheel mode, where a position goal spins it continuously.
   std::vector<bool> arm_controllable_;
   std::vector<bool> arm_engaged_;
 

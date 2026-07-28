@@ -168,6 +168,7 @@ hardware_interface::CallbackReturn MoteHardware::on_init(
   arm_positions_.assign(arm_joints_.size(), 0.0);
   arm_position_commands_.assign(arm_joints_.size(), 0.0);
   arm_written_counts_.assign(arm_joints_.size(), -1);
+  arm_present_.assign(arm_joints_.size(), false);
   arm_controllable_.assign(arm_joints_.size(), false);
   arm_engaged_.assign(arm_joints_.size(), false);
 
@@ -320,6 +321,7 @@ hardware_interface::CallbackReturn MoteHardware::on_activate(
 
     arm_engaged_[i] = false;
     arm_written_counts_[i] = -1;
+    arm_present_[i] = false;
     arm_controllable_[i] = false;
 
     if (servo_driver_.Ping(uid) == -1) {
@@ -328,6 +330,7 @@ hardware_interface::CallbackReturn MoteHardware::on_activate(
         joint.name.c_str(), joint.id);
       continue;
     }
+    arm_present_[i] = true;
 
     // Torque off before anything else, so a servo that was left holding from a
     // previous session is released rather than driven to a stale goal.
@@ -404,6 +407,26 @@ void MoteHardware::read_arm_joint(std::size_t index)
   arm_positions_[index] = arm_joints_[index].counts_to_rad(counts);
 }
 
+void MoteHardware::read_next_arm_joint()
+{
+  // One arm joint per cycle, round-robin: six joints refresh at ~8 Hz for one
+  // extra bus transaction, instead of six transactions for 50 Hz nobody needs.
+  //
+  // Joints whose servo never answered are skipped rather than retried, because
+  // a read to a servo that is not there does not fail fast — it costs a full
+  // serial timeout, inside the loop that also drives the wheels. On a Mote
+  // built without an arm that would be paid on every single cycle, so the
+  // round-robin walks past the whole arm and does nothing.
+  for (std::size_t tried = 0; tried < arm_joints_.size(); ++tried) {
+    const std::size_t index = arm_read_cursor_;
+    arm_read_cursor_ = (arm_read_cursor_ + 1) % arm_joints_.size();
+    if (arm_present_[index]) {
+      read_arm_joint(index);
+      return;
+    }
+  }
+}
+
 bool MoteHardware::engage_arm_joint(std::size_t index)
 {
   const auto & joint = arm_joints_[index];
@@ -455,12 +478,7 @@ hardware_interface::return_type MoteHardware::read(
     wheel_velocities_[i] = WHEEL_SIGN[i] * (raw_speed / velocity_scale_);
   }
 
-  // One arm joint per cycle, round-robin: six joints refresh at ~8 Hz for one
-  // extra bus transaction, instead of six transactions for 50 Hz nobody needs.
-  if (!arm_joints_.empty()) {
-    read_arm_joint(arm_read_cursor_);
-    arm_read_cursor_ = (arm_read_cursor_ + 1) % arm_joints_.size();
-  }
+  read_next_arm_joint();
 
   return hardware_interface::return_type::OK;
 }
