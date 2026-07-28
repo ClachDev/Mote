@@ -202,3 +202,67 @@ def test_offset_write_leaves_the_eeprom_lock_re_engaged():
     b = _offset_bus()
     b.write_homing_offset(1, 500)
     assert b._packet.bytes[bus_mod._LOCK] == 1
+
+
+class StalePacket:
+    """Returns the previous register's reply once, the way the real bus did.
+
+    After an EEPROM write, a read of PRESENT_POSITION came back with the value
+    of the register read just before it — 3902, which is -1854 in the offset
+    encoding. A single read cannot tell that apart from a real position.
+    """
+
+    def __init__(self, stale, real):
+        self.stale = stale
+        self.real = real
+        self.reads = 0
+
+    def read2ByteTxRx(self, _port, _servo_id, _addr):
+        self.reads += 1
+        return (self.stale if self.reads == 1 else self.real), COMM_OK, 0
+
+
+def _stale_bus(stale, real):
+    b = FeetechBus("/dev/null", 1_000_000)
+    b._packet = StalePacket(stale, real)
+    b._comm_success = COMM_OK
+    return b
+
+
+def test_settled_read_rejects_a_stale_reply_and_retries():
+    b = _stale_bus(stale=3902, real=2923)
+    assert b.read_position_settled(1) == 2923
+
+
+def test_settled_read_tolerates_a_limp_arm_drifting_a_count():
+    b = _stale_bus(stale=2001, real=2000)  # 1 count apart: same position
+    assert b.read_position_settled(1) == 2000
+
+
+def test_settled_read_gives_up_rather_than_guessing():
+    class Never:
+        def __init__(self):
+            self.n = 0
+
+        def read2ByteTxRx(self, _p, _s, _a):
+            self.n += 1
+            return (self.n * 500) % 4096, COMM_OK, 0
+
+    b = FeetechBus("/dev/null", 1_000_000)
+    b._packet = Never()
+    b._comm_success = COMM_OK
+    assert b.read_position_settled(1, attempts=3) is None
+
+
+def test_reads_clear_a_stale_input_buffer_first():
+    class Port:
+        def __init__(self):
+            self.cleared = 0
+
+        def clearPort(self):
+            self.cleared += 1
+
+    b = _stale_bus(1, 1)
+    b._port = Port()
+    b.read_position(1)
+    assert b._port.cleared == 1

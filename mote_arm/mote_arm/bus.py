@@ -42,6 +42,10 @@ _PRESENT_TEMPERATURE = 63
 _PROTOCOL_END = 0
 _MODE_POSITION = 0
 
+# One encoder turn, in counts. Duplicated from config.COUNTS_PER_REV rather than
+# imported, to keep this module's dependencies to the SDK alone.
+COUNTS_PER_TURN = 4096
+
 # The offset register is sign-magnitude, not two's complement: bit 11 is the
 # sign and bits 0-10 the magnitude, so it spans +-2047.
 OFFSET_SIGN_BIT = 0x800
@@ -190,11 +194,43 @@ class FeetechBus:
         reader = (
             self._packet.read1ByteTxRx if width == 1 else self._packet.read2ByteTxRx
         )
+        # Drop anything still sitting in the input buffer first. A reply that
+        # arrived late — after an EEPROM write, say — would otherwise be
+        # consumed as the answer to *this* request, and a register read that
+        # silently returns the previous register's value is worse than a failure.
+        if self._port is not None and hasattr(self._port, "clearPort"):
+            try:
+                self._port.clearPort()
+            except OSError:
+                pass
         try:
             value, comm, err = reader(self._port, servo_id, address)
         except (IndexError, TypeError, struct.error):
             return None
         return value if self._ok(comm, err) else None
+
+    def read_position_settled(
+        self, servo_id: int, tolerance: int = 3, attempts: int = 5
+    ) -> int | None:
+        """A position confirmed by two agreeing reads, for use after a write.
+
+        The single read this replaces was observed returning the *offset*
+        register's value right after that register had been written — 3902,
+        which is exactly -1854 in the servo's sign-magnitude encoding. Agreement
+        within ``tolerance`` counts rejects a stale reply while still allowing
+        the count or two of drift a limp arm shows between two reads.
+        """
+        for _ in range(attempts):
+            first = self._read(2, servo_id, _PRESENT_POSITION)
+            time.sleep(0.05)
+            second = self._read(2, servo_id, _PRESENT_POSITION)
+            if first is not None and second is not None:
+                if min(abs(first - second), COUNTS_PER_TURN - abs(first - second)) <= (
+                    tolerance
+                ):
+                    return second
+            time.sleep(0.1)
+        return None
 
     def ping(self, servo_id: int) -> bool:
         try:

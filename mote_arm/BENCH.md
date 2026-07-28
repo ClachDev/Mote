@@ -106,6 +106,14 @@ and would catch a wrong sign encoding.
 `pixi run arm-offsets restore`, which puts them back from the snapshot taken
 before the first write. Do that before re-running.
 
+If a stop reports a position that looks nothing like the expected one, check
+whether the number it read equals the offset just written in sign-magnitude
+form (`abs(offset) | 0x800` for a negative one). That means the read picked up
+the previous register's reply rather than the position — the same
+read-races-the-EEPROM-write hazard documented for `arm-gains`. Reads now clear
+the input buffer first and the post-write check requires two agreeing reads, so
+this should not recur; if it does, the settle delay needs raising further.
+
 This is the step that stops a joint's travel straddling the encoder wrap. On
 this arm `shoulder_pan` and `wrist_roll` both did.
 

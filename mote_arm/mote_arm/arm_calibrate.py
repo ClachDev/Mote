@@ -255,10 +255,16 @@ def _reading_moved_as_expected(bus, joint, was, existing, wanted) -> str | None:
     """
     if was is None:
         return None
-    time.sleep(0.1)
-    now = bus.read_position(joint.id)
+    # Let the EEPROM write settle before believing anything read off this bus,
+    # then require two agreeing reads: a single one here returned the offset
+    # register's own value, which looked exactly like a servo misbehaving.
+    time.sleep(0.25)
+    now = bus.read_position_settled(joint.id)
     if now is None:
-        return f"{joint.name}: could not read its position back after writing"
+        return (
+            f"{joint.name}: could not get two agreeing position reads after "
+            "writing, so the write could not be confirmed either way"
+        )
     expected = (was - (wanted - existing)) % 4096
     error = min(abs(now - expected), 4096 - abs(now - expected))
     if error <= 25:

@@ -267,7 +267,13 @@ section. Contains:
   serial read, leaving a part-calibrated arm with no way back. **Servos can
   arrive with non-zero offsets** (this arm: 2027, -1723, 1772, -1706, -40,
   1317), so the existing value is always read and folded in.
-- **`FeetechBus._read` guards every SDK read.** `scservo_sdk`'s
+- **Reads on this bus are hazardous twice over, and `FeetechBus._read` is the
+  single choke point for both.** It clears the input buffer before every read,
+  because a late reply is otherwise consumed as the answer to the *next*
+  request: observed on hardware as a PRESENT_POSITION read returning 3902, which
+  is exactly the -1854 just written to the offset register in sign-magnitude.
+  Anything read right after an EEPROM write needs `read_position_settled` /
+  `read_gains`-style two-agreeing-reads, not a single read. And: `scservo_sdk`'s
   `read2ByteTxRx` indexes the reply buffer before checking its length, so a
   dropped packet raises `IndexError` rather than reporting failure — which
   crashed the above. A read that does not come back is `None`, never an
