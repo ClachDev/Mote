@@ -66,8 +66,16 @@ tf:
     timeout: 5.0
     severity: info
 
-# Fold the host status published by system_monitor on /diagnostics (CPU, temp,
-# under-voltage) into the robot-level summary so a brown-out shows as DEGRADED.
-# Matched by exact status name ("system"): /diagnostics is shared, and
-# controller_manager's own statuses must not be mistaken for the host's.
+# Fold first-party statuses published on the shared /diagnostics into the
+# robot-level summary. Matched by exact status name, because /diagnostics is
+# shared and controller_manager's own statuses must not be mistaken for ours.
+# A named status nobody is publishing is simply absent — asserting another
+# monitor's liveness is not this monitor's job.
+#   system  system_monitor: CPU, temperature, Pi under-voltage. A brown-out
+#           shows as DEGRADED.
+#   slip    slip_monitor: the wheel-vs-lidar odometry residual — wheel slip, a
+#           stuck robot, or a scan-match excursion. See slip.yaml.
 subscribe_diagnostics: true
+diagnostic_statuses:
+  - system
+  - slip
