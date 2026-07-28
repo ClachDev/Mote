@@ -29,7 +29,6 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "odom_tf_relay = mote_bringup.odom_tf_relay:main",
             "twist_relay = mote_bringup.twist_relay:main",
             "system_monitor = mote_bringup.system_monitor:main",
             "health_monitor = mote_bringup.health_monitor:main",
