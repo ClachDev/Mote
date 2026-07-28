@@ -75,12 +75,10 @@ joints in any order; all six are recorded at once in a live table:
 
 Press **Enter** once every joint has been to both stops.
 
-**Expected:** a span per joint matching what you felt (the big joints measured
-3.4–4.1 rad; the gripper ~2.3). A `spans 0/4095` note is fine and expected on
-any joint whose travel crosses the encoder boundary — phase 2 is about to fix
-exactly that, and the raw min/max are blanked for those joints because the
-encoder numbers (17, 4093) describe the encoder rather than the travel. Watch
-the span column, which is correct either way. Anything that cannot be calibrated says why and keeps its
+**Expected:** a swept range per joint matching what you felt — the big joints
+measured 3.4–4.1 rad, the gripper ~2.3. The range is the number to watch: it
+grows only when you reach further than before, so it stops growing once you have
+both stops. Anything that cannot be calibrated says why and keeps its
 existing values; see the failure table below.
 
 ### Phase 2 — centre the zeros (writes servo EEPROM)
@@ -134,8 +132,11 @@ pixi run arm-pose save home
 git diff mote_description/config/robot.yaml   # review before committing
 ```
 
-`--print-only` prints the block instead of writing, if you would rather paste it
-yourself.
+Declining the write prompt prints the block instead, so nothing is lost.
+
+Note this is `mote_description/config/robot.yaml` — the shared hardware
+description in the repo — not `~/.mote/robot.yaml`, which holds this robot's
+fleet identity and is unrelated to the arm.
 
 What was measured is kept in `~/.mote/arm_calibration.yaml`, including the
 homing offsets — the only record of them outside servo EEPROM.

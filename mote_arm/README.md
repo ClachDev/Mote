@@ -229,10 +229,15 @@ re-parses the result through `ArmConfig` first and refuses to write anything
 that would not load, and writes via a temporary file so an interrupted write
 cannot leave a half-updated config.
 
-`--print-only` keeps the old print-and-paste behaviour. Declining the prompt
-prints the block too. If the markers are missing, or `robot.yaml` resolves
-inside `install/` (a non-symlink build, where the edit would be lost on the next
-`pixi run build`), it says so and prints instead of writing.
+Declining the prompt prints the block instead, as does a missing-marker file or
+a `robot.yaml` that resolves inside `install/` (a non-symlink build, where the
+edit would be lost on the next `pixi run build`) — so a calibration is never
+simply lost.
+
+**Which `robot.yaml`?** `mote_description/config/robot.yaml`, the shared
+hardware description in the repo. Not `~/.mote/robot.yaml`, which is this
+robot's fleet identity (`robot_id`, name, site) and has nothing to do with the
+arm. The tool prints the full path above the diff.
 
 **Re-teach poses last.** Doing it before the file is updated records them
 against a zero that is about to change.

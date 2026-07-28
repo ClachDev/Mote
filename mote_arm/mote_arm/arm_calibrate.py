@@ -19,6 +19,11 @@ crossed the encoder wrap during the sweep, because the recorder unwraps.
     pixi run arm-calibrate -- --skip-homing        # ranges only, writes nothing
     pixi run arm-calibrate -- --joints wrist_roll  # redo one joint
 
+It writes the measured limits into ``mote_description/config/robot.yaml`` — the
+shared hardware description in the repo — after showing a diff and asking. That
+is NOT ``$MOTE_HOME/robot.yaml``, which holds this robot's fleet identity and is
+unrelated to the arm.
+
 This replaces ``arm-pose limits`` as the way soft limits are set. That command
 widens *outward* from poses a human has already vetted, which only ever
 describes where the arm has been — it never learns where the stops are, and a
@@ -155,12 +160,9 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
     position, and eyeballing it is less accurate than the measurement already
     taken — so the arm can be left wherever it ended up.
     """
-    print("\n=== Phase 2 of 2: centre the zeros ===")
-    print(
-        "Each joint's 0 rad is being moved to the middle of the range you just\n"
-        "swept. Leave the arm where it is; this only changes what the encoders\n"
-        "report, not where the arm is."
-    )
+    print("\n=== 2 of 2: centre the zeros ===")
+    print("Setting each joint's 0 rad to the middle of its swept range. Leave the")
+    print("arm where it is — this changes what the encoders report, not the arm.")
 
     existing: dict[str, int] = {}
     for joint in joints:
@@ -172,14 +174,6 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
                 "angle the arm reports."
             )
         existing[joint.name] = current
-
-    spanning = [j.name for j in joints if recorders[j.name].wraps]
-    if spanning:
-        print(
-            f"\n{len(spanning)} joint(s) span the 0/4095 boundary "
-            f"({', '.join(spanning)}).\nThat is what this phase fixes: after "
-            "centring, their travel sits wholly inside\nthe encoder's range."
-        )
 
     wanted: dict[str, int] = {}
     print(f"\n{'joint':<16}{'mid-travel':>11}{'offset':>8}{'->':>4}{'new':>7}")
@@ -196,12 +190,8 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
         print("\nevery servo is already centred — nothing to write.")
         return wanted
 
-    print(
-        f"\nThis writes the position-correction register of {len(stale)} servo(s) "
-        "— EEPROM,\na persistent hardware change. Afterwards the zero counts in "
-        "robot.yaml are\nstale until you paste the block this prints at the end."
-    )
-    if not _confirm("write homing offsets? [y/N] ", args.yes):
+    print(f"\nWrites servo EEPROM on {len(stale)} joint(s) — a persistent change.")
+    if not _confirm("write? [y/N] ", args.yes):
         raise SystemExit("aborted; nothing written")
 
     # Snapshot before the first write. These values exist nowhere but the
@@ -212,8 +202,7 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
         {j.name: j.id for j in joints},
         datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
     )
-    print(f"previous offsets backed up to {backup}")
-    print("  (`pixi run arm-offsets restore` puts them back)")
+    print(f"backed up to {backup} (`pixi run arm-offsets restore` undoes this)")
 
     written: list[str] = []
     for joint in joints:
@@ -231,12 +220,8 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
         if moved is not None:
             _abort_partial(written, backup, moved)
         written.append(joint.name)
-        print(f"  {joint.name:<16} written, verified, and reading confirmed")
+        print(f"  {joint.name:<16} written and confirmed")
 
-    print(
-        f"\noffsets verified: {len(written)} reading(s) moved by exactly what "
-        "was written."
-    )
     return wanted
 
 
@@ -283,16 +268,15 @@ def _reading_moved_as_expected(bus, joint, was, existing, wanted) -> str | None:
 
 def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
     """Record every joint's range at once while the operator moves them."""
-    print("\n=== Phase 1 of 2: record the ranges ===")
+    print("\n=== 1 of 2: sweep the joints ===")
     print(
-        "Move each joint gently to both of its mechanical stops, then leave the\n"
-        "arm somewhere safe. The stop is where it resists — do not force it.\n"
-        "Take the joints in any order; all of them are being recorded.\n"
+        "Move each joint gently to both stops — the stop is where it resists, do\n"
+        "not force it. Any order; all are recorded at once.\n"
         "\nPress Enter when every joint has been to both stops."
     )
 
     recorders = {j.name: SweepRecorder(j.name) for j in joints}
-    table = _LiveTable("", f"  {'joint':<16}{'min':>6}{'now':>6}{'max':>6}{'span':>10}")
+    table = _LiveTable("", f"  {'joint':<16}{'now':>6}{'swept':>13}")
     done = _wait_for_enter()
     period = 1.0 / rate_hz
     misses = 0
@@ -315,58 +299,38 @@ def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
 
 
 def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
-    """One live row. Nothing here counts how many times the operator moved.
+    """One row, the same shape for every joint.
 
-    An earlier version showed the raw crossing count ("WRAP x4"), which grows
-    every time a joint is waved back and forth over the boundary and reads like
-    four faults rather than one joint that straddles zero. The row now states
-    the fact, not the tally, so it stops changing once it is true — and the raw
-    min/max are blanked for such a joint, because 17 and 4093 describe the
-    encoder, not the travel. The span is computed on the unwrapped stream, so it
-    stays correct either way and is the column to watch while sweeping.
+    Only the swept range is shown, not the raw encoder min/max. Those are
+    meaningless for a joint whose travel crosses the encoder's zero — its raw
+    range reads 17 to 4093 — and showing a blank for that joint alone made it
+    look special when it is not: it gets centred like the others and ends up
+    with an ordinary band. The range comes off the unwrapped stream, so it is
+    the true travel for every joint, and it is the number that tells you
+    whether you have reached both stops yet.
     """
     if rec.samples == 0:
-        return f"  {name:<16}{'-':>6}{'-':>6}{'-':>6}{'no readings':>10}"
-    span = rec.unwrapped_span
-    shown = f"{now:>6}" if now is not None else f"{'':>6}"
-    if rec.wraps:
-        lo = hi = f"{'-':>6}"
-        flag = "  spans 0/4095"
-    else:
-        lo, hi = f"{rec.min_counts:>6}", f"{rec.max_counts:>6}"
-        flag = ""
-    return f"  {name:<16}{lo}{shown}{hi}{span * RAD_PER_COUNT:>8.2f} rad{flag}"
+        return f"  {name:<16}{'-':>6}   no readings"
+    return f"  {name:<16}{now if now is not None else '':>6}{rec.unwrapped_span * RAD_PER_COUNT:>9.2f} rad"
 
 
-def _warn_about_poses(cfg, calibrated) -> None:
-    """Name the taught poses a changed zero invalidates, before emitting it."""
-    shifts = {
-        name: zero_shift(
-            cfg.joint(name).zero_counts, cal.zero_counts, cfg.joint(name).invert
-        )
+def _invalidated_poses(cfg, calibrated) -> list[str]:
+    """Taught poses that a changed zero has silently redefined.
+
+    A pose is stored as radians about the zero, so moving the zero changes which
+    physical position each stored number names. Pure query: the caller decides
+    how loudly to say it.
+    """
+    moved = {
+        name: shift
         for name, cal in calibrated.items()
-    }
-    moved = {n: s for n, s in shifts.items() if s != 0.0}
-    if not moved:
-        print("\nzero is unchanged on every joint — taught poses still hold.")
-        return
-
-    taught = poses.load_poses()
-    impact = pose_impact(taught, moved)
-    if not impact:
-        print(
-            f"\nzero moved on {len(moved)} joint(s); no taught poses are affected "
-            f"({len(taught)} pose(s) in {poses.poses_path()})."
+        if (
+            shift := zero_shift(
+                cfg.joint(name).zero_counts, cal.zero_counts, cfg.joint(name).invert
+            )
         )
-        return
-    print(
-        f"\nRE-TEACH THESE POSES. A pose is stored as radians from the zero, and "
-        f"the\nzero moved on {len(moved)} joint(s), so these now name different "
-        "physical\npositions. Paste the block below and `pixi run build` FIRST, "
-        "then re-teach:"
-    )
-    for pose in sorted(impact):
-        print(f"  pixi run arm-pose save {pose}")
+    }
+    return sorted(pose_impact(poses.load_poses(), moved))
 
 
 def _robot_yaml_source(args) -> str | None:
@@ -387,22 +351,21 @@ def _robot_yaml_source(args) -> str | None:
 def _apply_to_robot_yaml(block: str, args) -> bool:
     """Write the block into robot.yaml, showing the diff and asking first.
 
-    Returns whether robot.yaml now matches the calibration. It is worth doing
-    at all because the alternative leaves a window in which the servos have
-    been re-zeroed and robot.yaml still describes the old zeros — a window this
-    tool created and should therefore close.
-    """
-    if args.print_only:
-        print("\n--print-only: paste this into robot.yaml's arm: section.\n")
-        print(block)
-        return False
+    Returns whether robot.yaml now matches the calibration. Printing a block for
+    the operator to retype was the earlier behaviour and was wrong: phase 2 moves
+    the servos' zeros, so until the file is updated it actively misdescribes the
+    hardware. The block is still printed on any path that cannot write, so a
+    calibration is never simply lost.
 
+    This edits ``mote_description/config/robot.yaml`` — the shared hardware
+    description in the repo. It is NOT ``$MOTE_HOME/robot.yaml``, which holds
+    this robot's fleet identity and has nothing to do with the arm.
+    """
     path = _robot_yaml_source(args)
     if path is None:
         print(
-            "\nrobot.yaml resolves inside install/, so this build is not "
-            "symlink-installed\nand an edit there would be lost on the next "
-            "build. Paste this by hand:\n"
+            "\nrobot.yaml resolves inside install/ (not a symlink-install), so an "
+            "edit\nthere would be lost on the next build. Paste this instead:\n"
         )
         print(block)
         return False
@@ -439,11 +402,11 @@ def _apply_to_robot_yaml(block: str, args) -> bool:
         print(f"\n{path} already matches this calibration — nothing to write.")
         return True
 
-    print(f"\nchanges to {path}:\n")
+    print(f"\n{path}\n")
     for line in diff:
         print(f"  {line}")
 
-    if not _confirm("\nwrite these to robot.yaml? [y/N] ", args.yes):
+    if not _confirm("\nwrite? [y/N] ", args.yes):
         print("not written. The block above can still be pasted by hand:\n")
         print(block)
         return False
@@ -454,7 +417,7 @@ def _apply_to_robot_yaml(block: str, args) -> bool:
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(updated)
     os.replace(tmp, target)
-    print(f"\nwritten to {path} ({len(reparsed.joints)} joints)")
+    print(f"written — {len(reparsed.joints)} joints. Review with `git diff`.")
     return True
 
 
@@ -505,11 +468,6 @@ def main() -> None:
     )
     parser.add_argument("--yes", action="store_true", help="skip confirmations")
     parser.add_argument(
-        "--print-only",
-        action="store_true",
-        help="print the arm.joints block instead of writing it into robot.yaml",
-    )
-    parser.add_argument(
         "--no-record",
         action="store_true",
         help=f"do not write the measurements to {poses.mote_home()}/"
@@ -534,9 +492,6 @@ def main() -> None:
 
 
 def _run(bus, cfg, selected, args) -> None:
-    print(f"arm bus: {cfg.port} @ {cfg.baud_rate}")
-    print(f"calibrating: {[j.name for j in selected]}")
-
     missing = [j.name for j in selected if not bus.ping(j.id)]
     if missing:
         raise SystemExit(
@@ -544,19 +499,16 @@ def _run(bus, cfg, selected, args) -> None:
             "calibrating (see `pixi run arm-check`)."
         )
 
-    print(
-        "\nThe arm will be made LIMP so you can move it by hand. Support it or "
-        "rest it\nin a stable pose first — an unsupported arm falls when torque "
-        "is released."
-    )
-    if not _confirm("release torque on all joints? [y/N] ", args.yes):
+    print("\nThe arm will go LIMP so you can move it by hand — support it first,")
+    print("an unsupported arm falls when torque is released.")
+    if not _confirm("release torque? [y/N] ", args.yes):
         raise SystemExit("aborted; nothing changed")
     for joint in cfg.joints:
         try:
             bus.set_torque(joint.id, False)
         except BusError as exc:
             print(f"  {joint.name}: {exc}")
-    print("torque off — the arm is back-drivable.")
+    print("torque off.")
 
     recorders, misses = _phase_ranges(bus, selected, args.rate)
     if misses:
@@ -604,38 +556,48 @@ def _run(bus, cfg, selected, args) -> None:
                 joint, recorders[joint.name].result(), args.margin
             )
 
-    print("\ncalibrated:")
-    for name, cal in calibrated.items():
-        print(
-            f"  {name:<16} {cal.min_rad:+.3f} to {cal.max_rad:+.3f} rad "
-            f"about zero {cal.zero_counts} ({cal.sweep.span_rad:.2f} rad swept)"
-        )
-
-    _warn_about_poses(cfg, calibrated)
-
     recorded = datetime.now(timezone.utc).strftime("measured %Y-%m-%d")
     block = joints_block(list(cfg.joints), calibrated, failures, recorded)
 
-    real = {n: r for n, r in failures.items() if n in chosen}
-    if real:
-        print("\nNOT calibrated, kept their existing values:")
-        for name, reason in sorted(real.items()):
+    skipped = {n: r for n, r in failures.items() if n in chosen}
+    if skipped:
+        print("\nnot calibrated, keeping their existing values:")
+        for name, reason in sorted(skipped.items()):
             print(f"  {name:<16} {reason}")
-    if not args.no_record:
-        path = save_record(calibrated, recorded, offsets=offsets)
-        print(f"\nmeasurements recorded in {path}")
 
+    # The diff is the report: it shows every limit that changed, in the file
+    # they will live in, so listing them again beforehand is noise.
     written = _apply_to_robot_yaml(block, args)
+
+    if not args.no_record:
+        save_record(calibrated, recorded, offsets=offsets)
+
     if not written and not args.skip_homing:
-        # Only a hazard while robot.yaml still describes the old zeros. Writing
-        # it closes that window, which is the main reason this tool writes at
-        # all rather than leaving the operator to transcribe six lines.
         print(
-            "\nThe servos' homing offsets have changed but robot.yaml has NOT "
-            "been\nupdated, so it is now stale. Do not run `pixi run arm` until "
-            "the block\nabove is in place: the driver would read every angle "
-            "against the old zero."
+            "\nWARNING: the zeros moved but robot.yaml was not updated. Do not run"
+            "\n`pixi run arm` until the block above is in place — every angle it"
+            "\nreports would be measured against the old zero."
         )
+    _next_steps(cfg, calibrated, written)
+
+
+def _next_steps(cfg, calibrated, written) -> None:
+    """What the operator has to do now, and nothing else."""
+    steps = []
+    if written:
+        steps.append("git diff mote_description/config/robot.yaml   # review")
+    stale = _invalidated_poses(cfg, calibrated)
+    steps += [f"pixi run arm-pose save {name}" for name in stale]
+    if not steps:
+        return
+    if stale:
+        print(
+            f"\n{len(stale)} taught pose(s) are now wrong — a pose is stored as "
+            "radians\nfrom the zero, and the zeros moved. Re-teach them:"
+        )
+    print()
+    for step in steps:
+        print(f"  {step}")
 
 
 if __name__ == "__main__":

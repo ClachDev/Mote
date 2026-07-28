@@ -471,23 +471,16 @@ def joints_block(
     a joint to a guess.
     """
     failures = failures or {}
-    lines: list[str] = [
-        f"  {BEGIN_MARKER} — rewritten by `pixi run arm-calibrate`; edits inside",
-        "  # this region are replaced wholesale, so keep anything you want above it.",
-    ]
+    lines: list[str] = [f"  {BEGIN_MARKER} — `pixi run arm-calibrate` rewrites this"]
     done = list(calibrated.values())
     if done:
         margins = "/".join(f"{m:.3f}" for m in sorted({c.margin for c in done}))
         sources = ", ".join(sorted({c.zero_source for c in done}))
         lines += textwrap.wrap(
-            f"Soft limits measured by sweeping each joint to its mechanical stops "
-            f"({len(done)} joint(s)"
+            f"Swept to the stops on {len(done)} joint(s)"
             + (f", {recorded}" if recorded else "")
-            + f"). The band is the swept range pulled INWARD by {margins} rad, so a "
-            "soft limit always stops short of the stop it was measured from. "
-            f"zero: {sources}. NOTE zero is the middle of each joint's travel, "
-            "not the arm's rest pose — the rest pose is a taught pose named "
-            "'home' in arm_poses.yaml.",
+            + f"; band pulled {margins} rad inward from them. zero = {sources} "
+            "(not the rest pose — that is a taught pose in arm_poses.yaml).",
             width=78,
             initial_indent="  # ",
             subsequent_indent="  # ",

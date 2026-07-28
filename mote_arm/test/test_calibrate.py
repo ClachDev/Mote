@@ -457,7 +457,7 @@ def test_emitted_block_says_where_zero_came_from():
     block = calibrate.joints_block(list(cfg.joints), {"elbow_flex": centred}, None, "x")
     # Single words, because the header is wrapped and a phrase may straddle lines.
     assert "centred" in block
-    assert "INWARD" in block
+    assert "inward" in block  # the direction the band is pulled
 
     derived = calibrate.calibrate_joint(cfg.joint("elbow_flex"), sweep)
     assert "mid-point" in calibrate.joints_block(
@@ -474,7 +474,7 @@ def test_emitted_block_warns_that_zero_is_not_the_rest_pose():
     assert "zero:" in block
     assert "home:" not in block
     flat = " ".join(line.lstrip(" #") for line in block.splitlines())
-    assert "not the arm's rest pose" in flat
+    assert "not the rest pose" in flat
 
 
 def test_zero_is_inside_every_emitted_band():
@@ -572,36 +572,32 @@ def _row(samples, now=None):
     )
 
 
-def test_range_row_does_not_count_how_often_the_operator_waved_the_joint():
-    """The bench complaint: 'WRAP x4' grew on every pass over the boundary.
+def test_range_row_is_the_same_shape_for_every_joint():
+    """The bench complaint: one joint showed dashes where the others had numbers.
 
-    Two out-and-back passes cross the boundary four times but describe exactly
-    the same travel, so the row must read identically.
+    A joint whose travel crosses the encoder zero gets centred like any other
+    and ends up with an ordinary band, so its row must not look special.
     """
+    crosses_zero = _row([(3900 + i * 10) % COUNTS_PER_REV for i in range(50)], now=10)
+    ordinary = _row(_ramp(1000, 1490), now=1200)
+    assert "-" not in crosses_zero
+    assert crosses_zero.count(" rad") == ordinary.count(" rad") == 1
+    # Same travel, so the same reported range.
+    assert crosses_zero.split()[-2] == ordinary.split()[-2]
+
+
+def test_range_row_does_not_count_how_often_the_operator_waved_the_joint():
+    """Two passes over the boundary describe the same travel as one."""
     lap = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
     back = list(reversed(lap))
-    once = _row(lap + back)
-    twice = _row(lap + back + lap + back)
-    assert once == twice
-    assert "x4" not in twice and "x2" not in twice
-    assert "spans 0/4095" in twice
+    assert _row(lap + back, now=3900) == _row(lap + back + lap + back, now=3900)
 
 
-def test_range_row_blanks_the_raw_limits_for_a_spanning_joint():
-    """17 and 4093 describe the encoder, not the joint — so do not show them."""
-    lap = [(3900 + i * 10) % COUNTS_PER_REV for i in range(50)]
-    row = _row(lap)
-    columns, _, _flag = row.partition("spans")
-    assert "3900" not in columns and "4090" not in columns
-    assert columns.count("-") == 2  # both raw-limit cells blanked
-    # The span is still truthful and is the column to watch.
-    assert "0.75 rad" in columns
-
-
-def test_range_row_shows_real_limits_for_an_ordinary_joint():
-    row = _row(_ramp(1000, 3000))
-    assert "1000" in row and "3000" in row
-    assert "spans" not in row
+def test_range_row_reports_the_true_travel_across_the_boundary():
+    """Raw min/max would claim ~4090 counts; the real travel is 490."""
+    row = _row([(3900 + i * 10) % COUNTS_PER_REV for i in range(50)], now=10)
+    assert "0.75 rad" in row
+    assert "4093" not in row and "3900" not in row
 
 
 def test_range_row_reports_a_joint_that_never_answered():

@@ -254,17 +254,20 @@ section. Contains:
   load, and resolves the *source* path (symlink-install) rather than editing
   `install/`. This exists because the alternative leaves a window where the
   servos are re-zeroed and robot.yaml still describes the old zeros.
-  `--print-only` keeps print-and-paste. **Poses must be re-taught after the
-  write, never before.** Measurements + the offsets
+  Declining, a missing marker, or an `install/` path all fall back to printing
+  the block. **Poses must be re-taught after the write, never before.** Note
+  this is `mote_description/config/robot.yaml`, NOT `$MOTE_HOME/robot.yaml`
+  (fleet identity) — a confusion this tool's own output caused once. Measurements + the offsets
   (their only record outside EEPROM) go to `~/.mote/arm_calibration.yaml`.
   A continuously-rotating joint is detectable **only** by being rotated past a
   whole turn (the refusal above); rotated less it is indistinguishable from a
   stopped joint, so do not add a threshold below one — it would miss most cases
   and fire on long-but-stopped joints. LeRobot instead hard-codes SO-101's
   `wrist_roll` as full-turn and skips its range; this arm's measures 5.88 rad
-  (94%), so whether it truly has stops is unsettled. The live table states `spans 0/4095` rather
-  than counting crossings: a count grows every time the operator waves the joint
-  and reads like N faults. `--skip-homing` re-measures ranges without writing
+  (94%), so whether it truly has stops is unsettled. The live table shows only the swept range per joint,
+  identically for all of them: raw encoder min/max are meaningless for a joint
+  whose travel crosses zero (they read 17..4093), and blanking them for that one
+  joint made it look special when it centres like any other. `--skip-homing` re-measures ranges without writing
   anything. The maths is
   ROS-free and unit-tested (`test_calibrate.py`).
 - `arm_offsets` (`pixi run arm-offsets show|backup|restore|set`) — the offset
