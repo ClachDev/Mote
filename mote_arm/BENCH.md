@@ -33,9 +33,9 @@ recalibration. What is still open:
 - **Steps 5–6 for the other five joints** — only `elbow_flex` was jogged and
   clamp-tested, and that was against the old envelope.
 - Nothing power-related: the earlier "5 V torque limit" was a misdiagnosis. It
-  was proportional droop from `Kp=16`; `Kp=32` is now applied (see README) and
-  the arm completes the full home<->reachy move. A small `Ki` would close the
-  remaining 1-3.5 deg, but wants a deliberate windup test first.
+  was proportional droop from `Kp=16`; `Kp=64` is now applied (chosen from a
+  sweep, see README) and the arm completes the full home<->reachy move with
+  0.012-0.028 rad residual. `Ki` was tested and left at 0.
 
 ## Step 0 — wiring (settled)
 
@@ -268,6 +268,39 @@ barely differ between two poses come out with a near-zero band. Use it only to
 deliberately **narrow** a joint inside its calibrated stops, and never paste it
 over calibrated limits expecting to widen them: re-run Step 3 for that.
 
+## Step 5c — measure the position-loop gains
+
+Gains live in servo EEPROM, so they are hardware config, not software config:
+`robot.yaml`'s `arm.gains` records them and `arm-gains` reconciles the two.
+Choose them from a measurement, not from a datasheet default.
+
+Stop the driver first (`arm-gains` opens the bus itself) and clear the joint's
+path — this step moves the arm. Park the arm in a pose it holds unsupported:
+each trial drops torque briefly to write the gains, so a raised pose would sag.
+
+1. `pixi run arm-gains show` — what the servos actually hold right now.
+2. `pixi run arm-gains sweep --joint elbow_flex --kp 16,32,64,128` — steps the
+   joint -0.2 rad under each gain and prints error, load, settling, ripple and
+   reversals per trial. **Expected:** error falls as `kp` rises while `kp*err`
+   stays roughly constant and load stays far below 1000 (proportional droop);
+   the verdict line says so. Watch and listen at the top of the range — ripple
+   over a few counts, rising `rev`, or an audible buzz is the joint hunting, and
+   that gain is too high whatever its error says.
+3. Optional, for the residual droop:
+   `pixi run arm-gains sweep --joint elbow_flex --kp <chosen> --ki 0,1,2`.
+   Do it with the joint **unloaded** first: integral action stores the effort it
+   needed to hold a load, so removing that load can produce a lunge.
+4. Put the winner in `robot.yaml`'s `arm.gains`, rebuild, then
+   `pixi run arm-gains apply` to write it to all six servos.
+
+The sweep restores the gains it started with and leaves the joint limp, so a run
+on its own changes nothing — step 4 is what makes a choice stick. Each run writes
+its full trace to `~/.mote/arm_gain_sweeps/<stamp>.json`.
+
+`elbow_flex` is the joint to use: it is the only one whose committed soft limits
+leave room for a 0.2 rad step, and it carries the forearm's weight, so there is
+a real load to droop under.
+
 ## Step 6 — demonstrate the soft-limit clamp (done for `elbow_flex`)
 
 With a joint selected, jog `+` repeatedly toward its upper limit. **Expected:**
@@ -301,16 +334,24 @@ Already verified on the robot (2026-07-25):
       (superseded by the calibration pass below — provisional until it runs)
 - [x] servo gains applied and verified (`pixi run arm-gains`), full
       home<->reachy move completed both ways
+- [x] gains chosen from a sweep, not a default: Kp=64 applied to all six,
+      residual on the full move now 0.012-0.028 rad (2026-07-28)
+
+- [x] **Step 3: one full `pixi run arm-calibrate` pass on the real arm**
+      (2026-07-28), saved to `~/.mote/arm.yaml`; taught poses migrated
+      automatically rather than re-taught
+- [x] every servo's homing offset written and confirmed, and no joint reports an
+      encoder wrap afterwards (two did before centring existed)
+- [x] `Ki` tested and rejected for now (step 5c's `--ki` sweep: ki=8 closes the
+      error to 0.001 rad but quadruples settling time)
 
 Still open:
 
-- [ ] **Step 3: one full `pixi run arm-calibrate` pass on the real arm**, its
-      block pasted into `robot.yaml`, and any taught poses it named re-taught
-- [ ] phase 1 wrote and verified a homing offset on every servo, and no joint
-      reports an encoder wrap in phase 2 (two did before phase 1 existed)
-- [ ] the poses `arm-calibrate` named were re-taught AFTER the rebuild
-- [ ] `shoulder_pan` can be commanded to 0 rad afterwards (today its band
-      excludes its own zero)
+- [ ] `shoulder_pan` can be commanded to 0 rad (its packaged band still excludes
+      its own zero; the calibrated band on the arm does not)
+- [ ] the offset applies to commanded goals, not only to feedback — the first
+      `arm-jog` move settles it
 - [ ] the other five joints jogged and direction-checked (`invert`)
-- [ ] optional: small `Ki` to remove the residual 1-3.5 deg droop (test windup
-      on an unloaded joint first)
+- [ ] re-check the gain with a payload on the gripper — the sweep only measures
+      an unloaded static hold, which is why Kp=64 was taken over a better-scoring
+      128

@@ -1,0 +1,23 @@
+door<=1.4 m  wall-run>=1.5 m  min-area>=1.5 m^2
+world             truth  mapped  cand  recovered  split  merged  other
+mote_world            1       1     1          1      0       0      0
+office_world         10      10    11         10      0       0      1
+hospital_world       53      33    50         30      3       0     20
+    split   [11.075, -10.675, 15.8, -6.075]  observed 90%  best cover 43%
+    split   [11.075, -18.925, 15.8, -13.325]  observed 84%  best cover 42%
+    split   [-28.925, -5.925, -23.325, -1.325]  observed 84%  best cover 0%
+total split+merged: 3
+
+door<=1.4 m  wall-run>=1.5 m  min-area>=1.5 m^2  map turned 17 deg
+world             truth  mapped  cand  recovered  split  merged  other
+mote_world            1       1     1          1      0       0      0
+office_world         10      10    11         10      0       0      1
+hospital_world       53      33    50         31      2       0     19
+total split+merged: 2
+
+door<=1.4 m  wall-run>=1.5 m  min-area>=1.5 m^2  map turned -31 deg
+world             truth  mapped  cand  recovered  split  merged  other
+mote_world            1       1     1          1      0       0      0
+office_world         10      10    11         10      0       0      1
+hospital_world       53      33    52         31      2       0     21
+total split+merged: 2

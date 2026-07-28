@@ -1,9 +1,9 @@
 # Chaos validation
 
-`chaos_restart.sh` kills the critical nodes on a running robot and checks that
-each one comes back within a bounded time. Recovery comes from `respawn=True` on
-those nodes in `mote_launch.py` / `nav2_launch.py`; this proves it end to end
-against real hardware.
+`chaos_restart.sh` kills the critical processes on a running robot and checks
+that each one comes back within a bounded time. Recovery comes from
+`respawn=True` on the drivers in `mote_launch.py` and on the Nav2 container in
+`nav2_launch.py`; this proves it end to end against real hardware.
 
 ```bash
 pixi run chaos          # on the robot, with the stack up
@@ -11,8 +11,18 @@ pixi run chaos          # on the robot, with the stack up
 
 Bring the stack up first (`pixi run robot` / `pixi run mapping`, or the systemd
 units if you have enabled them). The script SIGKILLs `ros2_control_node`,
-`sllidar_node` and `controller_server` in turn and waits up to 30 s for each to
-reappear. Logs go to `/tmp/mote_chaos_log.txt` — override with `CHAOS_LOG`.
+`sllidar_node` and `component_container_isolated` in turn and waits up to 30 s
+for each to reappear. Logs go to `/tmp/mote_chaos_log.txt` — override with
+`CHAOS_LOG`.
+
+The third target is the whole of Nav2: it is composed into one container
+process, so there is no `controller_server` process to kill any more and no
+per-server recovery to test — the container is the unit. Its process comes back
+on respawn within a couple of seconds, but recovery is not *complete* until the
+launch file has reloaded the components into it and the lifecycle managers have
+re-activated them, which this script does not wait for. Confirm that separately
+with `ros2 node list` (the servers reappear) or `ros2 lifecycle get
+/controller_server`.
 
 It is not part of CI: it needs the live hardware stack, so run it by hand on the
 robot when the recovery paths change.
@@ -36,7 +46,8 @@ robot when the recovery paths change.
 
 ## Three layers of recovery
 
-1. **Node crash** → the launch system relaunches that node (`respawn=True`).
+1. **Node crash** → the launch system relaunches that process (`respawn=True`);
+   for Nav2 the process is the container, so the whole stack goes together.
 2. **Launch/process crash** → systemd restarts the whole service, re-running the
    self-check gate on the way back up.
 3. **Health-monitor hang** → `mote-health.service` (`Type=notify` +
