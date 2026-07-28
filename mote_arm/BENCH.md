@@ -129,6 +129,39 @@ The committed limits came from two poses, `home` and `reachy`. Joints that
 barely differ between them have a tight band by construction — teach a pose that
 exercises them to widen it.
 
+## Step 5c — measure the position-loop gains
+
+Gains live in servo EEPROM, so they are hardware config, not software config:
+`robot.yaml`'s `arm.gains` records them and `arm-gains` reconciles the two.
+Choose them from a measurement, not from a datasheet default.
+
+Stop the driver first (`arm-gains` opens the bus itself) and clear the joint's
+path — this step moves the arm. Park the arm in a pose it holds unsupported:
+each trial drops torque briefly to write the gains, so a raised pose would sag.
+
+1. `pixi run arm-gains show` — what the servos actually hold right now.
+2. `pixi run arm-gains sweep --joint elbow_flex --kp 16,32,64,128` — steps the
+   joint -0.2 rad under each gain and prints error, load, settling, ripple and
+   reversals per trial. **Expected:** error falls as `kp` rises while `kp*err`
+   stays roughly constant and load stays far below 1000 (proportional droop);
+   the verdict line says so. Watch and listen at the top of the range — ripple
+   over a few counts, rising `rev`, or an audible buzz is the joint hunting, and
+   that gain is too high whatever its error says.
+3. Optional, for the residual droop:
+   `pixi run arm-gains sweep --joint elbow_flex --kp <chosen> --ki 0,1,2`.
+   Do it with the joint **unloaded** first: integral action stores the effort it
+   needed to hold a load, so removing that load can produce a lunge.
+4. Put the winner in `robot.yaml`'s `arm.gains`, rebuild, then
+   `pixi run arm-gains apply` to write it to all six servos.
+
+The sweep restores the gains it started with and leaves the joint limp, so a run
+on its own changes nothing — step 4 is what makes a choice stick. Each run writes
+its full trace to `~/.mote/arm_gain_sweeps/<stamp>.json`.
+
+`elbow_flex` is the joint to use: it is the only one whose committed soft limits
+leave room for a 0.2 rad step, and it carries the forearm's weight, so there is
+a real load to droop under.
+
 ## Step 6 — demonstrate the soft-limit clamp (done for `elbow_flex`)
 
 With a joint selected, jog `+` repeatedly toward its upper limit. **Expected:**
@@ -161,10 +194,15 @@ Already verified on the robot (2026-07-25):
 - [x] `min`/`max` in `robot.yaml` derived from taught poses, not guessed
 - [x] servo gains applied and verified (`pixi run arm-gains`), full
       home<->reachy move completed both ways
+- [x] gains chosen from a sweep, not a default: Kp=64 applied to all six,
+      residual on the full move now 0.012-0.028 rad (2026-07-28)
 
 Still open:
 
 - [ ] the other five joints jogged and direction-checked (`invert`)
 - [ ] `home:` taught at a true mechanical zero (optional — re-teach poses after)
-- [ ] optional: small `Ki` to remove the residual 1-3.5 deg droop (test windup
-      on an unloaded joint first)
+- [x] `Ki` tested and rejected for now (step 5c's `--ki` sweep: ki=8 closes the
+      error to 0.001 rad but quadruples settling time)
+- [ ] re-check the gain with a payload on the gripper — the sweep only measures
+      an unloaded static hold, which is why Kp=64 was taken over a better-scoring
+      128

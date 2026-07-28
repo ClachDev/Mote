@@ -50,6 +50,11 @@ class BusError(RuntimeError):
     pass
 
 
+def _decode_load(raw: int) -> int:
+    """Signed load from PRESENT_LOAD: bit 10 is the sign, low 10 bits the size."""
+    return -(raw & 0x3FF) if raw & 0x400 else (raw & 0x3FF)
+
+
 def port_holders(path: str) -> list[tuple[int, str]]:
     """Return (pid, cmdline) for every *other* process holding ``path`` open.
 
@@ -182,15 +187,31 @@ class FeetechBus:
             self._ok(comm, err) and self._ok(comm2, err2) and self._ok(comm3, err3)
         ):
             return None
-        # Load bit 10 is the sign; low 10 bits are the magnitude.
-        load = -(raw_load & 0x3FF) if raw_load & 0x400 else (raw_load & 0x3FF)
         return ServoHealth(
             id=servo_id,
             position=pos,
             voltage=volt / 10.0,
             temperature=temp,
-            load=load,
+            load=_decode_load(raw_load),
         )
+
+    def read_position_load(self, servo_id: int) -> tuple[int, int] | None:
+        """Return (raw counts, signed load), or None on comms failure.
+
+        The two registers a step response is scored on, and only those: a
+        sampling loop that also read voltage and temperature would double its
+        traffic on the bus the drive wheels share, for values that do not change
+        within a step.
+        """
+        pos = self.read_position(servo_id)
+        if pos is None:
+            return None
+        raw_load, comm, err = self._packet.read2ByteTxRx(
+            self._port, servo_id, _PRESENT_LOAD
+        )
+        if not self._ok(comm, err):
+            return None
+        return pos, _decode_load(raw_load)
 
     def set_torque(self, servo_id: int, enable: bool) -> None:
         comm, err = self._packet.write1ByteTxRx(

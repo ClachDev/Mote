@@ -212,6 +212,18 @@ Run against the real arm on 2026-07-25:
 | Pose replay | full `home` <-> `reachy` move (3.19 rad / 183 deg) completed both ways, streamed at 0.5 rad/s, lag steady 0.07-0.10 rad, settling within 0.026-0.041 rad |
 | Servo gains | `arm-gains apply` wrote and verified Kp=32 on all six servos; temps unchanged at 27-30 C after the full move |
 
+Gain tuning, on the same arm on 2026-07-28:
+
+| Check | Result |
+|-------|--------|
+| Kp sweep (16/32/64/128) | droop confirmed across an 8x gain range; error 0.068 -> 0.008 rad at load 144-188 of 1000, no ripple or reversals at any gain |
+| Repeatability | a second sweep reproduced every trial to 1-2 encoder counts |
+| Larger step (1.0 rad) | same law, error 0.038 -> 0.004 rad; zero overshoot (the servo's speed profile decelerates into the goal) |
+| Double speed (1000 steps/s) | still no overshoot, ripple or reversals, up to Kp=128 |
+| Ki sweep (0/1/2/4/8 at Kp=64) | ki=8 reached 99.7% (error 0.001 rad) but settling went 0.46 s -> 2.12 s; left at 0 |
+| Kp=64 applied | written and read-back verified on all six servos |
+| Pose replay at Kp=64 | full `home` <-> `reachy` both ways, lag 0.05-0.08 rad, settling within 0.012-0.028 rad (was 0.026-0.041 at Kp=32); servo 22-24 C throughout |
+
 `arm-pose go` streams setpoints continuously (see above) and stops when the arm stops keeping up, rather than holding against a load it
 cannot overcome. At the shipped `Kp = 16` that guard correctly halted the
 `reachy` replay after ~0.13 rad; with `Kp = 32` applied the same move runs to
@@ -221,24 +233,42 @@ completion.
 
 The arm shipped with `Kp = 16` on every servo, which left a permanent
 steady-state error under load: the servo settles where `Kp x error` balances the
-holding torque, and `Ki = 0` never integrates that droop away. Measured on
-`elbow_flex`, commanded -0.200 rad from rest:
+holding torque, and `Ki = 0` never integrates that droop away. `arm-gains sweep`
+(below) measured it on `elbow_flex`, stepped -0.200 rad from rest:
 
-| Kp | reached | steady error | load (of 1000) | Kp x error |
-|----|---------|--------------|----------------|------------|
-| 16 (as shipped) | -0.129 rad | 0.071 rad | 196 | 1.14 |
-| 32 (applied) | -0.167 rad | 0.033 rad | 176 | 1.05 |
+| Kp | steady error | reached | load (of 1000) | Kp x error | settle | ripple |
+|----|--------------|---------|----------------|------------|--------|--------|
+| 16 (as shipped) | 0.068 rad | 66.0% | 188 | 1.09 | 0.58 s | 0 |
+| 32 | 0.031 rad | 84.4% | 168 | 1.00 | 0.50 s | 0 |
+| **64 (applied)** | **0.014 rad** | **92.8%** | **144** | **0.92** | **0.46 s** | **0** |
+| 128 | 0.008 rad | 95.9% | 144 | 1.06 | 0.46 s | 0 |
 
-That is droop, **not** torque saturation: error halves as Kp doubles while load
-stays near 180-196, nowhere near the 1000 that saturation would pin it to, and
-`Kp x error` stays constant. The servo was using about a fifth of the effort
-available to it, so the 5.1-5.2 V supply was never the binding constraint.
+That is droop, **not** torque saturation: error falls 8.2x for an 8x gain rise
+while load stays at 144-188, nowhere near the 1000 that saturation would pin it
+to, and `Kp x error` holds within 1.18x. The servo was using about a fifth of
+the effort available to it, so the 5.1-5.2 V supply was never the binding
+constraint. A repeat run agreed to 1-2 encoder counts, and the same law holds on
+a 1.0 rad step (0.038 -> 0.004 rad over the same gains) and at double speed.
 
-`Kp = 32` (matching the drive wheels and the STS3215 factory default) is now
-applied to all six servos and recorded in `robot.yaml`'s `arm.gains`. With it,
-the arm completes the full 3.19 rad (183 deg) `home` <-> `reachy` move in both
-directions without stalling, holding a residual error of 0.02-0.06 rad
-(1-3.5 deg) — the remaining proportional droop.
+**`Kp = 64` is applied** to all six servos and recorded in `robot.yaml`. It is
+not the best-scoring gain — 128 measured better on every column, with no ripple,
+no reversals and no overshoot at either step size or speed. It is chosen anyway,
+because what the sweep tests is a *static hold on an unloaded arm*: a stiffer
+loop reacts harder to a payload, a collision or hand-guiding, and none of those
+are measured. 64 takes half the remaining error and keeps a measured 2x margin
+below the highest gain that behaved. Revisit it with a payload on the gripper,
+not from this table.
+
+`Ki` stays 0. Swept at `Kp = 64`, integral action does close the gap —
+`ki = 8` reached 99.7% of the step, error 0.001 rad — but settling stretched
+from 0.46 s to 2.12 s as the integrator wound in, and `arm-pose` streams a fresh
+setpoint every 50 ms, so nothing ever waits for that. It also stores the effort
+used to hold a load, which is the lunge risk on unloading that made this a
+deliberate test rather than a default.
+
+With `Kp = 64` the full 3.19 rad (183 deg) `home` <-> `reachy` move completes in
+both directions, lag steady at 0.05-0.08 rad, settling within **0.012-0.028 rad**
+(0.7-1.6 deg) — against 0.026-0.041 rad at `Kp = 32`.
 
 Gains live in servo EEPROM, so they are invisible config that a servo swap would
 silently revert. `robot.yaml` is the source of truth and `pixi run arm-gains`
@@ -254,7 +284,51 @@ EEPROM read-back races the relock: a single read taken too soon returns a
 garbled value (observed: 250) and makes a successful write look failed. The bus
 layer reads twice and trusts the value only when both agree.
 
+### Measuring a gain instead of guessing it: `arm-gains sweep`
+
+A gain is only defensible against a measurement, so the third subcommand takes
+one and produces the evidence:
+
+```
+pixi run arm-gains sweep --joint elbow_flex --kp 16,32,64,128
+pixi run arm-gains sweep --joint elbow_flex --kp 32 --ki 0,1,2   # the Ki question
+```
+
+It drives that one joint through the **same** step (`--step`, default -0.2 rad
+from wherever the joint is resting) under each candidate gain set, sampling
+position and load at 50 Hz, and scores each trial (`step_response.py`):
+
+| Column | What it decides |
+|--------|-----------------|
+| `error` | how far short the joint settles — the droop itself |
+| `kp*err` | constant across gains = proportional droop; not constant = something else |
+| `load` | effort while holding, of 1000; near 1000 means torque saturation, not droop |
+| `settle` | time to enter and stay in the settle band (2% of travel, min 2 counts) |
+| `ripple`/`rev` | peak-to-peak motion and direction changes *while holding* — the counter-check on raising gain, since a hunting servo buzzes rather than holds |
+
+It closes with a one-line verdict reading the sweep as droop or as saturation,
+and writes every sample to `~/.mote/arm_gain_sweeps/<stamp>.json` so a run can be
+re-read or plotted later rather than believed from a terminal.
+
+Each trial writes its gains with torque **off** and then re-enables against the
+joint's present position. Gains are EEPROM registers, and a servo that latched
+them at torque-enable would run every trial at the same gain and report a droop
+that mysteriously ignores `kp` — the sweep exists to stop us assuming that away.
+The consequence is that the joint goes briefly limp between trials, so the arm
+must be resting in a pose it holds unsupported (the same condition `arm_driver`
+starts in).
+
+The sweep moves the arm and writes EEPROM, so it is a bench tool with the
+guards to match: it torques **only** the swept joint and leaves the rest limp,
+refuses a step that would clamp against the soft limits (trials that command
+different travel are not comparable), stops if the servo reaches `--max-temp`
+(55 C default), and — via a `finally`, so a crash or Ctrl-C counts too — returns
+the joint to where it started, writes the original gains back, and drops torque.
+`test_gain_sweep.py` pins those properties against a simulated droopy servo, so
+they are checked without hardware.
+
 Closing the residual 1-3.5 deg would mean a small `Ki`, which is left alone for
 now: integral windup on an arm risks a lunge when a load is removed, so it wants
-a deliberate test on an unloaded joint first. Supply voltage is worth revisiting
-only after that, since the arm still has not demanded full torque.
+a deliberate test on an unloaded joint first — that is what the `--ki` sweep
+above is for. Supply voltage is worth revisiting only after that, since the arm
+still has not demanded full torque.
