@@ -26,6 +26,12 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET  /v1/maps                            basemaps this server can serve
     GET  /v1/maps/<site>/<floor>/map.json    resolution + origin (the Q5 transform)
     GET  /v1/maps/<site>/<floor>/map.png     the basemap image
+    GET  /v1/maps/<site>/<floor>/zones.json  the floor's taught zones
+    GET  /v1/sites                           the registry: floors + canonical rev
+    GET  /v1/sites/<site>/floors/<floor>     revisions, validated, with provenance
+    POST     .../revisions/<rev>             upload a candidate revision (robot)
+    GET      .../revisions/<rev>/bundle.tar.gz   pull one (robot)
+    POST     .../revisions/<rev>/promote     make it canonical (operator)
     GET  /                                   the operator UI (static files)
 
     pixi run fleet-server -- --db ~/fleet/registry.db --broker-host fleet-box
@@ -37,6 +43,16 @@ audit row, and only then publishes (fleet.md Q5/Q7). The topic tree does not
 change — only who may publish to it. The browser therefore never holds a broker
 credential that can publish, and the UI's MQTT client cannot publish at all
 (``ui/mqtt.mjs`` implements no PUBLISH packet).
+
+**The registry is the source of truth for maps (M4).** A robot uploads a saved
+revision as a *candidate*, which changes nothing; an operator promotes one, which
+flips the floor's ``map`` symlink and publishes the retained
+``registry/site/<site>/floor/<floor>/current`` every agent pulls from. Two robots
+mapping one floor therefore end with two candidates and no merge — a map frame's
+origin is an accident of where SLAM started, so merging frames would break every
+taught zone (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
+validate with the *same* ROS-free module the robot writes with
+(``mote_bringup.bundle``).
 
 **Security posture for M3:** the read routes are still unauthenticated, exactly
 as M1 left them, and the broker is still anonymous. What M3 adds is a credential
@@ -54,12 +70,16 @@ import os
 import re
 import socket
 import sys
+import traceback
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bundle_store import BundleStore, MAX_UPLOAD, StoreError  # noqa: E402
+from mote_bringup import bundle  # noqa: E402  (put on the path by bundle_store)
 from mote_fleet import protocol  # noqa: E402
 from registry import (  # noqa: E402
     ID_PREFIX,
@@ -98,15 +118,11 @@ UI_DIR = Path(__file__).resolve().parent / "ui"
 # test without a package.json declaring the tree a module.
 mimetypes.add_type("text/javascript", ".mjs")
 
-#: The scalar keys of a ``map_saver`` ``map.yaml``, and how to read each.
-MAP_KEYS = {
-    "image": str,
-    "mode": str,
-    "resolution": float,
-    "negate": int,
-    "occupied_thresh": float,
-    "free_thresh": float,
-}
+#: Route shape for the registry's per-revision paths.
+REVISION_RE = re.compile(
+    r"^(?P<site>[^/]+)/floors/(?P<floor>[^/]+)/revisions/(?P<revision>[^/]+)"
+    r"(?P<leaf>/promote|/bundle\.tar\.gz)?$"
+)
 
 
 class BrokerLink:
@@ -139,9 +155,15 @@ class BrokerLink:
         client.loop_start()
         return client
 
-    def publish(self, topic: str, payload: bytes) -> tuple[bool, str]:
+    def publish(
+        self, topic: str, payload: bytes, retain: bool = False
+    ) -> tuple[bool, str]:
         """``(published, detail)``. A broker that is down is reported, never
-        swallowed: an operator told "dispatched" must know the command left."""
+        swallowed: an operator told "dispatched" must know the command left.
+
+        ``retain`` is false for a command (a retained one re-fires on every
+        reconnect) and true for the registry's ``current`` announcement, whose
+        whole job is to be waiting for a robot that was switched off."""
         with self._lock:
             if self._client is None:
                 try:
@@ -150,7 +172,7 @@ class BrokerLink:
                     return False, f"broker {self.host}:{self.port} unreachable: {exc}"
             client = self._client
         try:
-            info = client.publish(topic, payload, qos=protocol.QOS, retain=False)
+            info = client.publish(topic, payload, qos=protocol.QOS, retain=retain)
             info.wait_for_publish(timeout=10)
         except (OSError, ValueError, RuntimeError) as exc:
             with self._lock:
@@ -265,13 +287,24 @@ class FleetHandler(BaseHTTPRequestHandler):
             )
         elif path.startswith("/v1/maps/"):
             self._map(path[len("/v1/maps/") :])
+        elif path == "/v1/sites":
+            self._store(lambda store: {"sites": store.sites()})
+        elif path.startswith("/v1/sites/"):
+            self._registry_get(path[len("/v1/sites/") :])
         elif path.startswith("/v1/"):
             self._error(404, f"no route {path}")
         else:
             self._static(path)
 
     def do_POST(self):
-        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        raw_path, _, query = self.path.partition("?")
+        path = raw_path.rstrip("/") or "/"
+        params = urllib.parse.parse_qs(query)
+        # The upload route carries a packed bundle, so it reads its own body:
+        # everything else here is JSON and small.
+        if path.startswith("/v1/sites/") and not path.endswith("/promote"):
+            self._upload(path[len("/v1/sites/") :], params)
+            return
         try:
             body = self._body()
         except ValueError as exc:
@@ -281,6 +314,8 @@ class FleetHandler(BaseHTTPRequestHandler):
             self._enroll(body)
         elif path.startswith("/v1/robots/") and path.endswith("/dispatch"):
             self._dispatch(path[len("/v1/robots/") : -len("/dispatch")], body)
+        elif path.startswith("/v1/sites/") and path.endswith("/promote"):
+            self._promote(path[len("/v1/sites/") :], body)
         else:
             self._error(404, f"no route {path}")
 
@@ -457,19 +492,22 @@ class FleetHandler(BaseHTTPRequestHandler):
 
     def _map(self, rest: str):
         parts = rest.split("/")
-        if len(parts) != 3 or parts[2] not in ("map.json", "map.png"):
-            self._error(404, "expected /v1/maps/<site>/<floor>/map.json|map.png")
+        leaves = ("map.json", "map.png", "zones.json")
+        if len(parts) != 3 or parts[2] not in leaves:
+            self._error(404, f"expected /v1/maps/<site>/<floor>/{'|'.join(leaves)}")
             return
         site, floor, leaf = parts
-        if not (NAME_RE.match(site) and NAME_RE.match(floor)):
-            self._error(400, "invalid site or floor name")
+        if not self._names(site, floor):
+            return
+        if leaf == "zones.json":
+            self._store(lambda store: store.read_zones(site, floor))
             return
         try:
-            meta = self.server.read_map(site, floor)
-        except FileNotFoundError:
-            self._error(404, f"no map for {site}/{floor}")
+            meta = self.server.store.read_map(site, floor)
+        except StoreError as exc:
+            self._error(exc.code, str(exc))
             return
-        except ValueError as exc:
+        except bundle.BundleError as exc:
             self._error(500, str(exc))
             return
         if leaf == "map.json":
@@ -487,6 +525,219 @@ class FleetHandler(BaseHTTPRequestHandler):
             mimetypes.guess_type(image.name)[0] or "application/octet-stream",
             image.read_bytes(),
             Cache_Control="no-cache",
+        )
+
+    # -- the map registry -------------------------------------------------
+
+    def _names(self, *names) -> bool:
+        """Site/floor/revision names are directory names in a site bundle; a
+        name outside NAME_RE cannot be a path component, which is the whole
+        path-traversal story."""
+        if all(NAME_RE.match(name or "") for name in names):
+            return True
+        self._error(400, "invalid site, floor or revision name")
+        return False
+
+    def _store(self, call):
+        """Run a registry read and answer it, turning refusals into statuses."""
+        try:
+            payload = call(self.server.store)
+        except StoreError as exc:
+            self._error(exc.code, str(exc))
+            return
+        except bundle.BundleError as exc:
+            self._error(500, str(exc))
+            return
+        self._send(200, {"schema": protocol.SCHEMA, **payload})
+
+    def _registry_get(self, rest: str):
+        parts = rest.split("/")
+        if len(parts) == 3 and parts[1] == "floors":
+            site, _, floor = parts
+            if self._names(site, floor):
+                self._store(lambda store: store.detail(site, floor))
+            return
+        match = REVISION_RE.match(rest)
+        if not match or match.group("leaf") != "/bundle.tar.gz":
+            self._error(404, f"no route /v1/sites/{rest}")
+            return
+        site, floor = match.group("site"), match.group("floor")
+        revision = match.group("revision")
+        if not self._names(site, floor, revision):
+            return
+        try:
+            blob = self.server.store.pack(site, floor, revision)
+        except StoreError as exc:
+            self._error(exc.code, str(exc))
+            return
+        except bundle.BundleError as exc:
+            self._error(500, str(exc))
+            return
+        self._send_bytes(
+            200,
+            "application/gzip",
+            blob,
+            Cache_Control="no-cache",
+            # The digest the retained announcement carries, so a puller can
+            # check the bytes it got without a second request.
+            X_Bundle_Sha256=bundle.digest(blob),
+        )
+
+    def _upload(self, rest: str, params: dict):
+        """Take one candidate revision from a robot.
+
+        Deliberately **not** operator-authenticated, and deliberately inert: a
+        candidate changes nothing about any floor until it is promoted, and the
+        route that does change something is the operator's. What is required is
+        that the uploader name an enrolled robot, so the artifact has a subject
+        in the audit log. M7 replaces that with a per-robot credential.
+        """
+        match = REVISION_RE.match(rest)
+        if not match or match.group("leaf"):
+            self._error(
+                404, "expected POST /v1/sites/<site>/floors/<floor>/revisions/<rev>"
+            )
+            return
+        site, floor = match.group("site"), match.group("floor")
+        revision = match.group("revision")
+        if not self._names(site, floor, revision):
+            return
+        robot_id = (params.get("robot_id") or [""])[0]
+        if not protocol.valid_id(robot_id):
+            self._error(400, "a robot_id query parameter is required")
+            return
+        if self.server.registry.robot(robot_id) is None:
+            self._error(404, f"no robot {robot_id} in this fleet")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            self._error(400, "the bundle body is empty")
+            return
+        if length > MAX_UPLOAD:
+            self._error(413, f"bundle is larger than {MAX_UPLOAD} bytes")
+            return
+        blob = self.rfile.read(length)
+
+        registry = self.server.registry
+        entry = registry.record(
+            actor=robot_id,
+            action="map.upload",
+            robot_id=robot_id,
+            command=f"{site}/{floor}/{revision}",
+            result="receiving",
+            remote=self.address_string(),
+        )
+        try:
+            stored, report = self.server.store.accept(
+                site, floor, revision, blob, robot_id=robot_id
+            )
+        except StoreError as exc:
+            registry.finish(entry["id"], "rejected", str(exc))
+            self._send(
+                exc.code, {"schema": protocol.SCHEMA, "error": str(exc), **exc.detail}
+            )
+            return
+        except Exception as exc:
+            # An audit row opened as 'receiving' has to be closed on every
+            # path, or an upload that crashes the handler leaves a row that
+            # says the transfer is still in progress for ever.
+            registry.finish(entry["id"], "failed", f"{type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._error(500, "the bundle could not be stored")
+            return
+        registry.finish(entry["id"], "stored", "; ".join(report.warnings))
+        print(
+            f"map upload {site}/{floor}/{stored} from {robot_id} "
+            f"({len(blob)} bytes, candidate)",
+            file=sys.stderr,
+        )
+        self._send(
+            201,
+            {
+                "schema": protocol.SCHEMA,
+                "site": site,
+                "floor": floor,
+                "revision": stored,
+                "canonical": self.server.store.canonical(site, floor),
+                "promoted": False,
+                "warnings": report.warnings,
+                "url": self.server.store.bundle_url(site, floor, stored),
+            },
+        )
+
+    def _promote(self, rest: str, body: dict):
+        """Make a candidate canonical: authorize, flip, announce, record.
+
+        The flip is the fact and the announcement is best effort — a broker
+        that is down must not leave a floor half-promoted, so the response says
+        plainly whether the fleet was told, and the server re-announces every
+        floor at startup so a missed announcement heals itself.
+        """
+        match = REVISION_RE.match(rest)
+        if not match or match.group("leaf") != "/promote":
+            self._error(404, "expected POST .../revisions/<rev>/promote")
+            return
+        site, floor = match.group("site"), match.group("floor")
+        revision = match.group("revision")
+        registry = self.server.registry
+        target = f"{site}/{floor}/{revision}"
+        try:
+            operator = self._operator()
+        except Unauthorized as exc:
+            registry.record(
+                actor="anonymous",
+                action="map.promote",
+                command=target,
+                result="unauthorized",
+                detail=str(exc),
+                remote=self.address_string(),
+            )
+            self._error(401, str(exc))
+            return
+        if not self._names(site, floor, revision):
+            return
+        actor = operator["name"]
+        entry = registry.record(
+            actor=actor,
+            action="map.promote",
+            command=target,
+            result="promoting",
+            remote=self.address_string(),
+        )
+        try:
+            promoted = self.server.store.promote(site, floor, revision, by=actor)
+        except StoreError as exc:
+            registry.finish(entry["id"], "rejected", str(exc))
+            self._send(
+                exc.code, {"schema": protocol.SCHEMA, "error": str(exc), **exc.detail}
+            )
+            return
+        except Exception as exc:
+            # An audit row opened as 'promoting' has to be closed on every
+            # path, or a promote that crashes the handler leaves a row that
+            # says the promotion is still in progress for ever.
+            registry.finish(entry["id"], "failed", f"{type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._error(500, "the revision could not be promoted")
+            return
+        announced, detail = self.server.announce(promoted)
+        registry.finish(
+            entry["id"], "promoted" if announced else "announce-failed", detail
+        )
+        print(
+            f"promoted {target} by {actor} ({'announced' if announced else detail})",
+            file=sys.stderr,
+        )
+        self._send(
+            200,
+            {
+                "schema": protocol.SCHEMA,
+                **promoted,
+                "announced": announced,
+                "detail": detail,
+                "topic": protocol.registry_topic(site, floor),
+                "audit_id": entry["id"],
+            },
         )
 
     # -- the UI -----------------------------------------------------------
@@ -533,6 +784,7 @@ class FleetServer(ThreadingHTTPServer):
         self.id_prefix = id_prefix
         self.publisher = publisher
         self.maps_dir = Path(maps_dir).expanduser() if maps_dir else None
+        self.store = BundleStore(self.maps_dir)
         self.ui_dir = Path(ui_dir).resolve() if ui_dir else None
         self.broker_ws_host = broker_ws_host
         self.broker_ws_port = broker_ws_port
@@ -565,6 +817,7 @@ class FleetServer(ThreadingHTTPServer):
             },
             "foxglove_url": self.foxglove_url,
             "maps": bool(self.maps_dir and self.maps_dir.is_dir()),
+            "registry": self.store.enabled,
         }
 
     # -- basemaps ---------------------------------------------------------
@@ -572,88 +825,144 @@ class FleetServer(ThreadingHTTPServer):
     def list_maps(self) -> list[dict]:
         """The site/floor pairs this server can draw a robot on.
 
-        What it walks is a **site bundle** exactly as ``sites.py`` writes one,
-        published symlink and all — which is why M4 can replace the source of
-        these bytes with the canonical registry without this route, or the UI,
-        changing shape.
+        Same route and same shape as M3, now answered from the registry rather
+        than from whatever an operator last rsynced onto the box: each entry
+        carries the canonical revision it is showing, which is the one thing a
+        viewer could not work out for itself.
         """
-        if not self.maps_dir or not self.maps_dir.is_dir():
-            return []
-        found = []
-        for site_dir in sorted(self.maps_dir.iterdir()):
-            floors = site_dir / "floors"
-            if not floors.is_dir():
-                continue
-            for floor_dir in sorted(floors.iterdir()):
-                if (floor_dir / "map" / "map.yaml").is_file():
-                    found.append({"site": site_dir.name, "floor": floor_dir.name})
-        return found
+        return [
+            {
+                "site": floor["site"],
+                "floor": floor["floor"],
+                "revision": floor["canonical"],
+                "candidates": len(floor["candidates"]),
+            }
+            for floor in self.store.sites()
+            if floor["canonical"]
+        ]
 
-    def read_map(self, site: str, floor: str) -> dict:
-        """A floor's ``map.yaml`` as JSON, for the Q5 world→pixel transform.
+    # -- announcing the canonical revision --------------------------------
 
-        A hand-rolled reader for the flat scalar file ``map_saver`` writes,
-        rather than a YAML dependency on a server whose whole dependency list is
-        "python". M4 extracts the shared, ROS-free bundle validator the design
-        asks for (fleet.md Q4) and this becomes a call into it.
+    def announce(self, promoted: dict) -> tuple[bool, str]:
+        """Publish a floor's canonical revision, retained.
+
+        Retained is the mechanism, not a detail: an agent that was offline
+        through the whole mapping session is handed this the moment it
+        reconnects, so map distribution has no polling and no missed-update
+        case (fleet.md Q4).
         """
-        if not self.maps_dir:
-            raise FileNotFoundError(site)
-        path = self.maps_dir / site / "floors" / floor / "map" / "map.yaml"
-        if not path.is_file():
-            raise FileNotFoundError(str(path))
-        meta = {"site": site, "floor": floor}
-        for raw in path.read_text().splitlines():
-            line = raw.split("#", 1)[0].strip()
-            key, sep, value = line.partition(":")
-            if not sep:
+        payload = protocol.current(
+            promoted["site"],
+            promoted["floor"],
+            promoted["revision"],
+            url=promoted["url"],
+            sha256=promoted.get("sha256", ""),
+            bytes_=promoted.get("bytes", 0),
+            promoted_by=promoted.get("promoted_by", ""),
+        )
+        return self.publisher.publish(
+            protocol.registry_topic(promoted["site"], promoted["floor"]),
+            protocol.encode(payload),
+            retain=True,
+        )
+
+    def announce_all(self) -> tuple[int, bool]:
+        """Re-announce every floor's canonical revision from what is on disk.
+
+        Returns ``(announced, complete)`` — ``complete`` is False when a publish
+        failed, which means the broker is unreachable rather than that a
+        particular floor is bad, so the caller should retry the whole sweep.
+
+        Run at startup: the symlink is the truth about what is canonical, so a
+        promotion that could not reach the broker at the time — or a broker
+        whose retained state was lost with its volume — is repaired by the next
+        restart rather than leaving robots pinned to an old map forever.
+        """
+        announced = 0
+        for floor in self.store.sites():
+            if not floor["canonical"]:
                 continue
-            key, value = key.strip(), value.strip()
             try:
-                if key == "origin":
-                    meta["origin"] = [float(n) for n in value.strip("[]").split(",")]
-                elif key in MAP_KEYS:
-                    meta[key] = MAP_KEYS[key](value)
-            except ValueError as exc:
-                raise ValueError(f"{path}: bad {key}: {exc}") from exc
-        missing = [k for k in ("resolution", "origin", "image") if k not in meta]
-        if missing:
-            raise ValueError(f"{path} is missing {', '.join(missing)}")
+                blob = self.store.pack(
+                    floor["site"], floor["floor"], floor["canonical"]
+                )
+            except (StoreError, bundle.BundleError, OSError) as exc:
+                print(
+                    f"cannot announce {floor['site']}/{floor['floor']}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            try:
+                ok, detail = self.announce(
+                    {
+                        "site": floor["site"],
+                        "floor": floor["floor"],
+                        "revision": floor["canonical"],
+                        "url": self.store.bundle_url(
+                            floor["site"], floor["floor"], floor["canonical"]
+                        ),
+                        "sha256": bundle.digest(blob),
+                        "bytes": len(blob),
+                        "promoted_by": "",
+                    }
+                )
+            except Exception as exc:
+                # This runs on a daemon thread at startup, where an exception
+                # is a silent death and every floor stays stale. A publisher
+                # that raises means the same thing as one that returns False.
+                ok, detail = False, f"{type(exc).__name__}: {exc}"
+            if ok:
+                announced += 1
+            else:
+                print(
+                    f"cannot announce {floor['site']}/{floor['floor']}: {detail}",
+                    file=sys.stderr,
+                )
+                return announced, False
+        return announced, True
 
-        image = (path.parent / meta["image"]).resolve()
-        if not image.is_file():
-            raise ValueError(f"{path} names an image that is not there: {image}")
-        meta["_image_path"] = str(image)
-        meta["image_url"] = f"/v1/maps/{site}/{floor}/map.png"
-        size = png_size(image)
-        if size is None:
-            raise ValueError(f"{image} is not a PNG this server can measure")
-        meta["width"], meta["height"] = size
-        return meta
+    def announce_all_until_delivered(
+        self, attempts: int = 8, first_delay: float = 1.0
+    ) -> int:
+        """:meth:`announce_all`, retried while the broker is unreachable.
 
-
-def png_size(path) -> tuple[int, int] | None:
-    """Pixel dimensions from a PNG header — the other half of the transform.
-
-    Reading 24 bytes beats making the browser wait for the image to decode
-    before it can place a robot, and beats a Pillow dependency for a number that
-    lives at a fixed header offset.
-    """
-    try:
-        with open(path, "rb") as handle:
-            header = handle.read(24)
-    except OSError:
-        return None
-    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
-        return None
-    return int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")
+        The normal compose start races: this server and mosquitto come up
+        together, so the first publish usually fails. One attempt would leave
+        the retained topics stale until somebody restarted the server, which is
+        the opposite of the self-repair this exists to provide. Backs off to
+        roughly two minutes total and then gives up loudly — by then the broker
+        is not merely slow.
+        """
+        delay = first_delay
+        for attempt in range(1, attempts + 1):
+            announced, complete = self.announce_all()
+            if complete:
+                if announced:
+                    print(f"re-announced {announced} floor(s)", file=sys.stderr)
+                return announced
+            if attempt < attempts:
+                print(
+                    f"announce incomplete (attempt {attempt}/{attempts}), "
+                    f"retrying in {delay:.0f}s",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 30.0)
+        print(
+            "gave up re-announcing canonical maps — robots may pull a stale "
+            "revision until this server restarts",
+            file=sys.stderr,
+        )
+        return 0
 
 
 def default_maps_dir() -> str:
-    """Site bundles on the fleet box: ``$MOTE_FLEET_HOME/sites``.
+    """The registry's bytes: ``$MOTE_FLEET_HOME/sites``.
 
-    The same layout ``sites.py`` writes on a robot, so seeding it is an rsync of
-    a floor directory until M4 makes the registry the source of truth.
+    The same layout ``sites.py`` writes on a robot — which is what lets a
+    revision be distributed by copying a directory and flipping a link, and
+    what lets a floor an operator rsynced onto the box before M4 keep working
+    unchanged.
     """
     return str(fleet_home() / "sites")
 
@@ -733,7 +1042,7 @@ def main(argv=None):
     parser.add_argument(
         "--maps-dir",
         default=default_maps_dir(),
-        help="site bundles to serve basemaps from (default: $MOTE_FLEET_HOME/sites)",
+        help="the map registry's site bundles (default: $MOTE_FLEET_HOME/sites)",
     )
     parser.add_argument(
         "--foxglove-url",
@@ -771,6 +1080,10 @@ def main(argv=None):
         f"maps={len(server.list_maps())}",
         file=sys.stderr,
     )
+    # Reconcile the retained registry topics with what is actually published on
+    # disk. In its own thread because the broker may be starting alongside us
+    # and the API must not wait for it.
+    threading.Thread(target=server.announce_all_until_delivered, daemon=True).start()
     if not server.registry.operators():
         print(
             "no operator tokens exist yet — dispatch will refuse every request. "

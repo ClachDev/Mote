@@ -24,6 +24,7 @@ KIND_FILES = {
     protocol.POSE: "pose.schema.json",
     protocol.COMMAND: "command.schema.json",
     protocol.STATUS: "status.schema.json",
+    protocol.CURRENT: "current.schema.json",
 }
 
 
@@ -42,11 +43,22 @@ def sample(kind: str) -> dict:
             floor="ground",
             version="v0",
             uptime_s=12.34,
+            map={"site": "home", "floor": "ground", "revision": "20260727T101500"},
         )
     if kind == protocol.POSE:
         return protocol.pose("mote-01", 1.0, 2.0, 0.5, site="home", floor="ground")
     if kind == protocol.COMMAND:
         return protocol.command("goto kitchen", issued_by="tester")
+    if kind == protocol.CURRENT:
+        return protocol.current(
+            "home",
+            "ground",
+            "20260727T101500",
+            url="/v1/sites/home/floors/ground/revisions/20260727T101500/bundle.tar.gz",
+            sha256="sha256:" + "ab" * 32,
+            bytes_=4096,
+            promoted_by="michael",
+        )
     return protocol.status("mote-01", "abc", "goto kitchen", protocol.ACCEPTED)
 
 
@@ -71,6 +83,25 @@ def test_parse_topic_rejects_a_foreign_tree():
     assert protocol.parse_topic("mote/v2/mote-01/health") is None
     assert protocol.parse_topic("other/v1/mote-01/health") is None
     assert protocol.parse_topic("mote/v1/mote-01") is None
+
+
+# ---- the map registry's subtree -----------------------------------------
+
+
+def test_the_registry_topic_round_trips():
+    topic = protocol.registry_topic("home", "ground")
+    assert topic == "mote/v1/registry/site/home/floor/ground/current"
+    assert protocol.parse_registry_topic(topic) == ("home", "ground")
+    assert protocol.any_floor() == "mote/v1/registry/site/+/floor/+/current"
+
+
+def test_the_registry_subtree_is_not_a_robot():
+    """A consumer that read ``registry`` as a robot id would invent a fleet
+    member out of a map announcement — and a robot allocated that id would
+    publish its health into the registry's subtree."""
+    assert protocol.parse_topic(protocol.registry_topic("home", "ground")) is None
+    assert not protocol.valid_id("registry")
+    assert protocol.parse_registry_topic("mote/v1/mote-01/health") is None
 
 
 def test_robot_id_shape_matches_identity():
@@ -143,6 +174,13 @@ def test_pose_carries_the_frame_it_is_meaningful_in():
     # is wherever SLAM happened to start.
     assert (payload["site"], payload["floor"]) == ("home", "ground")
     assert payload["frame_id"] == "map"
+
+
+def test_the_map_a_robot_is_running_is_reported_not_assumed():
+    """The registry says what a floor *should* be on; only the robot can say
+    what it is actually running, and the gap is the point of the field."""
+    assert sample(protocol.HEALTH)["map"]["revision"] == "20260727T101500"
+    assert protocol.health("mote-01", protocol.OK, "", [])["map"] is None
 
 
 def test_battery_is_present_and_null():

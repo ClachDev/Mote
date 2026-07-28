@@ -3,14 +3,15 @@
 The operator runbook for the fleet layer: a network where the LAN/internet
 distinction has disappeared (**M0**), a stable name for each robot (**M0**), a
 server that hands out those names and carries tasks and telemetry to and from
-every robot (**M1**), a browser you watch and drive the fleet from (**M3**), and
-a deep console for one robot at a time (**M2**). The architecture and the
-milestones after these are in
+every robot (**M1**), a browser you watch and drive the fleet from (**M3**), a
+deep console for one robot at a time (**M2**), and one place that owns every
+site's maps (**M4**). The architecture and the milestones after these are in
 [`docs/design/fleet.md`](../design/fleet.md); the measurements are in
 [`m0-verification.md`](m0-verification.md),
 [`m1-verification.md`](m1-verification.md),
-[`m2-verification.md`](m2-verification.md) and
-[`m3-verification.md`](m3-verification.md); the two wires are specified in
+[`m2-verification.md`](m2-verification.md),
+[`m3-verification.md`](m3-verification.md) and
+[`m4-verification.md`](m4-verification.md); the two wires are specified in
 [`control-plane.md`](control-plane.md) (MQTT) and [`fleet-api.md`](fleet-api.md)
 (HTTP).
 
@@ -25,13 +26,14 @@ milestones after these are in
 | `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, audit, watch |
 | `pixi run enroll` | ask the server for this robot's identity |
 | `pixi run agent` | the robot's bridge to the fleet |
+| `pixi run publish-map` | offer this robot's saved map to the registry |
 | `pixi run foxglove` | the robot's remote view + teleop (Foxglove WebSocket) |
 
 **First time through**, in order: §1a (create the tailnet — browser, once, for
 the whole fleet) → §1b (join your workstation and the fleet box) → §6 (stand up
 the fleet server) → §7 (enroll a robot and start its agent) → §9 (open the
 dashboard) → §10 (connect Foxglove and drive one) → §5 (every robot after this
-one, unattended from a card).
+one, unattended from a card). §11 is what to do after a mapping session.
 
 §2 (typing an id by hand) is the M0 path, kept because it is what a robot with
 no fleet server does; §7 supersedes it and adopts an already-set id rather than
@@ -627,16 +629,19 @@ from another floor is a different map frame, and drawing it here would place a
 robot somewhere it is not.
 
 The server reads basemaps from `--maps-dir` (default `$MOTE_FLEET_HOME/sites`),
-which is the **site bundle layout `sites.py` already writes**. Until M4 makes
-the fleet server the canonical registry, seed it from a robot:
+which is the **site bundle layout `sites.py` already writes** — and which, from
+M4, robots publish into rather than an operator rsyncing (§11). A robot with no
+basemap on the server still appears in the roster with its health and its task;
+the map pane says so rather than drawing an empty grid.
 
-```bash
-rsync -aL --delete michael@mote-01:~/.mote/sites/home ~/.mote-fleet/sites/
-```
+**Taught zones are drawn on the basemap**: a circle for a `radius` footprint, an
+outline for a `polygon`, a cross for a bare waypoint, each labelled — so the
+`goto <zone>` targets you can type are the ones you can see. They come from the
+canonical revision, in that revision's map frame.
 
-(`-L` because the published revision is reached through a symlink.) A robot with
-no basemap on the server still appears in the roster with its health and its
-task; the map pane says so rather than drawing an empty grid.
+Beside the map's floor label is the **canonical revision** it is showing, and,
+when a robot has published one, a picker to promote a candidate onto the floor
+(§11). Both need the operator token; without one the pane is read-only.
 
 **What it does not do**, deliberately: no marker clustering, no basemap tiling,
 no 3D, no camera, no teleop. The first two are what `fleet.md` Q5 describes for
@@ -736,3 +741,110 @@ Bandwidth is demand-driven: the bridge only serialises topics a panel has
 actually subscribed to, so hidden panels and unopened topics cost nothing, and
 the camera streams compressed only while you are looking at it. Over a relayed
 tailnet path the camera is still the first thing that will saturate.
+
+---
+
+## 11. Maps: publishing what a robot mapped, promoting what the fleet uses
+
+The fleet server is the **canonical registry** of sites, floors and map
+revisions (M4, [`fleet.md`](../design/fleet.md) Q4). The whole flow is two
+commands and one rule.
+
+> **Uploading is not publishing.** A revision a robot uploads is a *candidate*:
+> validated, stored, recorded, and changing nothing. Promoting one is an
+> operator's decision, and it is what tells every robot on that floor to pull it.
+
+### After a mapping session
+
+```bash
+# [robot] map the floor as always, then save it locally
+pixi run mapping                  # drive it; ...or `pixi run sim-mapping`
+pixi run save-map                 # -> ~/.mote/sites/home/floors/ground/maps/<rev>/
+
+# [robot] offer it to the fleet
+pixi run publish-map
+#   published home/ground/20260728T090412 to http://fleet-box:8080 (186349 bytes)
+#   it is a candidate; home/ground is still on 20260727T101500.
+#   an operator promotes it with: fleetctl promote home ground 20260728T090412
+```
+
+`save-map` and `publish-map` are separate on purpose: saving is a local,
+offline act that must work on a robot that has never seen a fleet server, and
+chaining them would make the first fail when the second cannot happen. Publish
+whenever the robot is back on the tailnet.
+
+`save-map` now also runs the fleet's own validation locally, so a map that would
+be refused by the server is refused on the robot while the mapping session is
+still up and you can just map again.
+
+### Promoting one
+
+```bash
+# [operator] what has each floor got?
+pixi run -e fleet fleetctl -- sites
+# SITE             FLOOR      CANONICAL          CANDIDATES
+# home             ground     20260727T101500    20260728T090412
+
+# [operator] look before you leap: validation, provenance, zones
+pixi run -e fleet fleetctl -- sites home ground
+# home/ground  canonical: 20260727T101500
+#   * 20260727T101500     ok        mote-01    2026-07-27T10:21:44Z  2 zones
+#     20260728T090412     ok        mote-01    2026-07-28T09:04:31Z  2 zones
+
+# [operator] make it the floor's map
+pixi run -e fleet fleetctl -- promote home ground 20260728T090412
+#   home/ground -> 20260728T090412  (sha256:6f1c…)
+#   announced on mote/v1/registry/site/home/floor/ground/current (retained); agents will pull it
+```
+
+The dashboard does the same thing with a picker beside the map (§9).
+
+### What the robots then do
+
+Each agent subscribes to `mote/v1/registry/site/+/floor/+/current`. Because that
+topic is **retained**, a robot that was switched off through the whole mapping
+session is told the moment it reconnects — there is no polling and no
+missed-update case. An agent acts on the floor it is on plus floors it already
+holds, ignores the rest of the fleet's, downloads the revision, checks its
+digest, stages it in a temporary directory, renames it into `maps/<rev>/` and
+flips its local `map` symlink. A half-transferred revision is never visible.
+
+**Zones travel with the map.** A revision from a different mapping session is a
+different map frame, so the zones taught in the old one are wrong the moment the
+new map is published — the bundle's `zones.yaml` therefore replaces the floor's,
+and the one it replaces is kept beside it as `zones.<old-rev>.yaml`.
+
+**The running navigation stack keeps the map it loaded.** Nav2's `map_server`
+reads the map at startup, so the flip takes effect on the next `pixi run robot`
+(or `systemctl restart mote-bringup`). The agent logs `restart nav to load it`,
+and each robot's health carries the revision it is *actually* running — which is
+how the dashboard shows a robot that has not picked the new map up yet.
+
+### Two robots mapped the same floor
+
+Nothing is merged, and nothing is lost. Both are candidates, an operator
+promotes one, and the other is retained. This is not a limitation to fix: a map
+frame's origin is an accident of where SLAM started, so silently merging two
+frames would break every taught zone coordinate. If both robots proposed the
+same revision id (they are per-second timestamps), the second is stored as
+`<rev>-2` and `fleetctl sites <site> <floor>` shows which robot uploaded which.
+
+### Rolling back
+
+`fleetctl promote` an older revision. It is the same flip, so rollback costs
+what promotion costs. The registry keeps the canonical revision plus the five
+newest candidates per floor; the canonical one is never pruned, however old.
+
+### Seeding from a robot without publishing
+
+Still possible, and still just files — the registry's on-disk layout *is* the
+site bundle layout:
+
+```bash
+rsync -aL --delete michael@mote-01:~/.mote/sites/home ~/.mote-fleet/sites/
+```
+
+(`-L` because the published revision is reached through a symlink.) A floor
+seeded this way serves basemaps normally, but cannot be promoted onto until its
+`map/` is a symlink into `maps/<rev>/` — the API answers `409` rather than
+overwriting a directory it did not create.

@@ -1,7 +1,7 @@
 # Build and publish the fleet-server container image to GHCR.
 #
 # The fleet box pulls this; it never builds it. Unlike the inference image this
-# one is stdlib-only python — tens of megabytes, seconds to build — so it is
+# one is a plain python base plus three pure wheels — 152 MB, seconds to build — so it is
 # cheap enough to build on every push that touches it, and cheap enough for a
 # box with no registry access to build from a checkout instead
 # (`fleet-deploy.sh up --build`).
@@ -15,10 +15,28 @@ on:
       - mote_fleet/server/fleet_server.py
       - mote_fleet/server/registry.py
       - mote_fleet/server/fleetctl.py
+      - mote_fleet/server/bundle_store.py
+      - mote_fleet/server/ui/**
       - mote_fleet/mote_fleet/protocol.py
+      - mote_bringup/mote_bringup/bundle.py
       - .dockerignore
       - .github/workflows/fleet-image.yml
+    # Every path COPYed by the Dockerfile is listed above. A fix to the
+    # validator or the dashboard that does not rebuild the image ships
+    # nothing, and the fleet box keeps serving the old one.
     tags: ["v*"]
+  pull_request:
+    paths:
+      - mote_fleet/deploy/Dockerfile
+      - mote_fleet/server/fleet_server.py
+      - mote_fleet/server/registry.py
+      - mote_fleet/server/fleetctl.py
+      - mote_fleet/server/bundle_store.py
+      - mote_fleet/server/ui/**
+      - mote_fleet/mote_fleet/protocol.py
+      - mote_bringup/mote_bringup/bundle.py
+      - .dockerignore
+      - .github/workflows/fleet-image.yml
   workflow_dispatch:
 
 env:
@@ -39,6 +57,7 @@ jobs:
       - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -66,7 +85,7 @@ jobs:
           # The fleet box may well be a Pi, so build for it too. The image is
           # pure python, so the second platform costs almost nothing.
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: MOTE_VERSION=${{ steps.version.outputs.value }}

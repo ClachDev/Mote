@@ -33,6 +33,7 @@ setup(
         "console_scripts": [
             "agent = mote_fleet.agent:main",
             "enroll = mote_fleet.enroll:main",
+            "publish-map = mote_fleet.publish:main",
         ],
     },
 )

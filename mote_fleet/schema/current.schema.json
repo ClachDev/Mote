@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mote.clach.dev/schema/v1/current.schema.json",
+  "title": "Canonical Map Revision",
+  "description": "The map revision a floor is canonically on, published retained by the registry at mote/v1/registry/site/<site>/floor/<floor>/current so an agent that reconnects learns it immediately.",
+  "type": "object",
+  "required": ["schema", "site", "floor", "revision", "url", "stamp"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "const": 1,
+      "description": "The payload format version."
+    },
+    "site": {
+      "type": "string",
+      "description": "Site the floor belongs to."
+    },
+    "floor": {
+      "type": "string",
+      "description": "Floor whose canonical revision this is. One floor is one SLAM session, i.e. one map frame."
+    },
+    "revision": {
+      "type": "string",
+      "description": "Immutable revision id, the timestamped directory name a robot stages into maps/<rev>/."
+    },
+    "url": {
+      "type": "string",
+      "description": "Path on the fleet server to fetch the packed revision from, relative so it stays correct however the box is reached."
+    },
+    "sha256": {
+      "type": "string",
+      "description": "sha256:<hex> of the packed bundle, checked by the puller before anything is staged."
+    },
+    "bytes": {
+      "type": "integer",
+      "description": "Size of the packed bundle, so a robot can decide before downloading."
+    },
+    "promoted_by": {
+      "type": "string",
+      "description": "Operator who promoted this revision to canonical."
+    },
+    "stamp": {
+      "type": "string",
+      "description": "RFC 3339 UTC timestamp with millisecond precision."
+    }
+  }
+}

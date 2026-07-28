@@ -14,6 +14,25 @@
 // an accident of where SLAM started, so metres from one floor mean nothing on
 // another. The second hop is pan/zoom and belongs to the viewer alone.
 
+// A zone as pixels on the basemap: a polygon's vertices, or a circle. Pure, so
+// the placement of a taught place is testable the same way a robot's is.
+export function zoneOutline(map, zone) {
+  if (zone.polygon && zone.polygon.length >= 3) {
+    return {
+      kind: 'polygon',
+      points: zone.polygon.map(([x, y]) => worldToPixel(map, x, y)),
+    };
+  }
+  if (typeof zone.radius === 'number' && zone.x !== undefined) {
+    return {
+      kind: 'circle',
+      centre: worldToPixel(map, zone.x, zone.y),
+      radius: zone.radius / map.resolution,
+    };
+  }
+  return null;
+}
+
 // The Q5 transform. Image y runs top-down while the map frame's runs up.
 export function worldToPixel(map, x, y) {
   return {
@@ -42,6 +61,12 @@ export function fitView(map, width, height, margin = 16) {
   };
 }
 
+// Taught places are context, not the subject: drawn under the robots, in one
+// muted colour, so a `goto <zone>` target can be read off the map without
+// competing with where anything actually is.
+const ZONE_STROKE = 'rgba(88, 166, 255, 0.75)';
+const ZONE_FILL = 'rgba(88, 166, 255, 0.10)';
+
 const STATE_COLOURS = {
   ok: '#3fb950',
   degraded: '#d29922',
@@ -59,6 +84,7 @@ export class MapView {
     this.map = null;
     this.image = null;
     this.robots = [];
+    this.zones = [];
     this.view = { scale: 1, tx: 0, ty: 0 };
     this.followId = null;
     this.selectedId = null;
@@ -79,11 +105,20 @@ export class MapView {
   clearMap() {
     this.map = null;
     this.image = null;
+    this.zones = [];
     this.draw();
   }
 
   setRobots(robots) {
     this.robots = robots;
+    this.draw();
+  }
+
+  // Zones belong to the floor, not to a robot: they are coordinates in this
+  // basemap's frame, which is why they arrive with the map and are cleared
+  // with it.
+  setZones(zones) {
+    this.zones = zones || [];
     this.draw();
   }
 
@@ -122,11 +157,7 @@ export class MapView {
   }
 
   _toScreen(worldX, worldY) {
-    const pixel = worldToPixel(this.map, worldX, worldY);
-    return {
-      x: pixel.x * this.view.scale + this.view.tx,
-      y: pixel.y * this.view.scale + this.view.ty,
-    };
+    return this._screenOf(worldToPixel(this.map, worldX, worldY));
   }
 
   _bind() {
@@ -217,11 +248,70 @@ export class MapView {
       );
     }
 
+    for (const zone of this.zones) this._drawZone(ctx, zone);
     for (const robot of this.robots) {
       if (robot.x === null || robot.x === undefined) continue;
       this._drawRobot(ctx, robot);
     }
     this._drawScaleBar(ctx, height);
+  }
+
+  _drawZone(ctx, zone) {
+    const outline = zoneOutline(this.map, zone);
+    const label =
+      zone.x === undefined || zone.y === undefined
+        ? outline && outline.kind === 'polygon'
+          ? outline.points[0]
+          : null
+        : worldToPixel(this.map, zone.x, zone.y);
+
+    ctx.save();
+    ctx.strokeStyle = ZONE_STROKE;
+    ctx.fillStyle = ZONE_FILL;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    if (outline && outline.kind === 'polygon') {
+      ctx.beginPath();
+      outline.points.forEach((point, index) => {
+        const screen = this._screenOf(point);
+        if (index === 0) ctx.moveTo(screen.x, screen.y);
+        else ctx.lineTo(screen.x, screen.y);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (outline && outline.kind === 'circle') {
+      const centre = this._screenOf(outline.centre);
+      ctx.beginPath();
+      ctx.arc(centre.x, centre.y, outline.radius * this.view.scale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (label) {
+      // A waypoint with no footprint is still a place you can send a robot to.
+      const point = this._screenOf(label);
+      ctx.beginPath();
+      ctx.setLineDash([]);
+      ctx.moveTo(point.x - 4, point.y);
+      ctx.lineTo(point.x + 4, point.y);
+      ctx.moveTo(point.x, point.y - 4);
+      ctx.lineTo(point.x, point.y + 4);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    if (!label) return;
+    const point = this._screenOf(label);
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = ZONE_STROKE;
+    ctx.fillText(zone.name, point.x, point.y + 14);
+  }
+
+  _screenOf(pixel) {
+    return {
+      x: pixel.x * this.view.scale + this.view.tx,
+      y: pixel.y * this.view.scale + this.view.ty,
+    };
   }
 
   _drawRobot(ctx, robot) {

@@ -128,9 +128,7 @@ def sample(names, exe_prefix, prev_ticks):
         rss += proc_rss_bytes(pid)
     # Only pids seen in both samples contribute CPU; a server that respawned
     # mid-interval would otherwise read as a huge negative delta.
-    used = sum(
-        ticks[pid] - prev_ticks[pid] for pid in ticks if pid in prev_ticks
-    )
+    used = sum(ticks[pid] - prev_ticks[pid] for pid in ticks if pid in prev_ticks)
     return {"procs": len(pids), "rss_mb": rss / 1e6, "cpu_ticks": used}, ticks
 
 
@@ -147,9 +145,7 @@ def run(args):
 
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(
-            ["t_s", "procs", "cpu_pct", "rss_mb", "ctxt_per_s", "intr_per_s"]
-        )
+        w.writerow(["t_s", "procs", "cpu_pct", "rss_mb", "ctxt_per_s", "intr_per_s"])
         start = prev_t
         while time.monotonic() < deadline:
             time.sleep(args.interval)
@@ -175,9 +171,7 @@ def run(args):
 def summarize(csv_path, min_procs):
     """Loaded-window figures, the idle baseline, and the rise between them."""
     with open(csv_path) as f:
-        rows = [
-            {k: float(v) for k, v in r.items()} for r in csv.DictReader(f)
-        ]
+        rows = [{k: float(v) for k, v in r.items()} for r in csv.DictReader(f)]
     active = [r for r in rows if r["procs"] >= min_procs]
     idle = [r for r in rows if r["procs"] == 0]
     if not active:
@@ -219,9 +213,7 @@ def summarize(csv_path, min_procs):
     }
     if idle:
         result["rise_over_idle"] = {
-            key: round(
-                result["loaded"][key]["mean"] - result["idle"][key]["mean"], 1
-            )
+            key: round(result["loaded"][key]["mean"] - result["idle"][key]["mean"], 1)
             for key in ("cpu_pct", "rss_mb", "ctxt_per_s", "intr_per_s")
         }
     Path(csv_path).with_name("overhead.json").write_text(json.dumps(result, indent=2))

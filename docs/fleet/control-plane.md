@@ -35,7 +35,7 @@ Removing a field, renaming one, or changing its type is a `v2` change.
 
 ## Topic tree
 
-All topics are `mote/v1/<robot_id>/<leaf>`. `robot_id` is a lowercase DNS label
+Robot topics are `mote/v1/<robot_id>/<leaf>`. `robot_id` is a lowercase DNS label
 (`[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?`) because it is simultaneously a MagicDNS
 hostname, a topic level and a directory name.
 
@@ -60,6 +60,27 @@ publisher that sets the retain flag on a command is a bug in the publisher.
 QoS 1 (at-least-once) throughout: the broker may redeliver, and every consumer
 here is idempotent — the state topics are snapshots, and a command is keyed by
 its correlation `id` so a redelivery is recognised rather than re-run.
+
+### The map registry's subtree (M4)
+
+One subtree is about the fleet rather than about a robot:
+
+| Topic | Direction | Retained | QoS | Payload |
+|---|---|---|---|---|
+| `mote/v1/registry/site/<site>/floor/<floor>/current` | server → robots | **yes** | 1 | [current](#current) |
+
+**`registry` is a reserved first level.** No robot may be allocated that id: a
+robot called `registry` would publish its health into the map registry's
+subtree, and a consumer reading the first level as a robot id would invent a
+fleet member out of a map announcement. `protocol.valid_id` refuses it and
+`protocol.parse_topic` answers `None` for the subtree.
+
+**Retained is the mechanism, not a detail.** A robot that was switched off
+through an entire mapping session is handed its floor's canonical revision the
+moment it reconnects — so map distribution has no polling and no
+missed-update case. The subscription is `mote/v1/registry/site/+/floor/+/current`,
+and an agent acts only on the floor it is on plus floors it already holds
+(`mapsync.wants`): the registry is fleet-wide, one robot is not.
 
 ---
 
@@ -109,6 +130,7 @@ sees.
 | `version` | string, *nullable* | |
 | `uptime_s` | number, *nullable* | host uptime, from `/proc/uptime` |
 | `battery` | object, *nullable* | **reserved; always null** |
+| `map` | object, *nullable* | `{site, floor, revision}` — the map revision this robot is *running* |
 
 `state: unknown` is a real answer, not a gap: the health monitor is a separate
 service, and an agent whose diagnostics are missing or stale says so rather than
@@ -118,11 +140,17 @@ claiming a robot is fine.
 telemetry (`fleet.md`). A field a dashboard renders as "unknown" from day one is
 better than one bolted on later.
 
+`map` is *reported*, not assumed. The registry says what a floor should be on;
+only the robot can say what it is actually running, and the difference between
+the two is the only way to see a robot that has not picked up a new map.
+`revision` is `null` for a floor with no saved map. Added in M4 as an optional
+field, which bumps no version — consumers ignore what they do not recognise.
+
 ```json
 {"schema":1,"robot_id":"mote-01","stamp":"2026-07-26T16:15:24.001Z","state":"ok",
  "summary":"OK","subsystems":[{"name":"lidar","state":"ok","message":"ok"}],
  "task":null,"site":"home","floor":"ground","version":"ece90cc","uptime_s":48213.0,
- "battery":null}
+ "battery":null,"map":{"site":"home","floor":"ground","revision":"20260727T101500"}}
 ```
 
 ### pose
@@ -180,6 +208,40 @@ fleet layer deliberately adds no second grammar.
 | `source` | enum | `fleet` (this agent dispatched it) \| `local` (someone on the robot did) |
 | `stamp` | string | |
 | `terminal` | bool | true for `rejected`/`succeeded`/`failed` |
+
+### current
+
+The canonical map revision for one floor, published retained by the registry
+when an operator promotes a candidate — and re-published for every floor when
+the fleet server starts, so a promotion made while the broker was down, or a
+broker that lost its retained state with its volume, repairs itself.
+
+| Field | Type | Notes |
+|---|---|---|
+| `schema` | int | `1` |
+| `site` | string | |
+| `floor` | string | one floor is one SLAM session, i.e. one map frame |
+| `revision` | string | the immutable revision id; also its directory name at both ends |
+| `url` | string | path on the fleet server to fetch the packed revision from |
+| `sha256` | string | `sha256:<hex>` of the packed bundle |
+| `bytes` | int | packed size, so a robot can decide before downloading |
+| `promoted_by` | string | the operator; empty for a startup re-announcement |
+| `stamp` | string | |
+
+`url` is **relative** so the same retained message stays correct however the
+fleet box is reached — MagicDNS name, tailnet address or localhost.
+
+`sha256` is checked by the puller before anything is staged. It is not a
+security boundary (the tailnet is that until M7); it is there because a
+transfer that silently truncated would otherwise become a map, and a wrong map
+is worse than no map.
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":"20260727T101500",
+ "url":"/v1/sites/home/floors/ground/revisions/20260727T101500/bundle.tar.gz",
+ "sha256":"sha256:6f1c…","bytes":186349,"promoted_by":"michael",
+ "stamp":"2026-07-27T10:22:04.118Z"}
+```
 
 ---
 
@@ -239,6 +301,10 @@ supersedes M0's operator-set id: the server owns the id space.
 | `GET /v1/robots` | the roster |
 | `GET /v1/robots/<robot_id>` | one row |
 | `POST /v1/enroll` | allocate (or return) a robot id |
+
+The map registry's routes — upload a candidate, pull a revision, promote one —
+are the same server and are specified in [`fleet-api.md`](fleet-api.md), with
+the retained `current` topic above as their only MQTT half.
 
 ### `POST /v1/enroll`
 

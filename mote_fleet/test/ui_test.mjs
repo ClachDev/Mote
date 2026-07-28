@@ -22,7 +22,7 @@ import {
   parsePackets,
   parseTopic,
 } from '../server/ui/mqtt.mjs';
-import { fitView, pixelToWorld, worldToPixel } from '../server/ui/map.mjs';
+import { fitView, pixelToWorld, worldToPixel, zoneOutline } from '../server/ui/map.mjs';
 
 // -- the MQTT codec ------------------------------------------------------
 
@@ -153,4 +153,34 @@ test('fit centres the whole basemap in the canvas', () => {
   assert.equal(view.scale, 400 / map.height); // height is the binding dimension
   assert.equal(view.ty, 0);
   assert.equal(view.tx, (1000 - map.width * view.scale) / 2);
+});
+
+// -- taught places on the basemap ---------------------------------------
+
+test('a polygon zone becomes basemap pixels through the same transform', () => {
+  const map = { resolution: 0.05, origin: [-10, -5, 0], width: 400, height: 200 };
+  const outline = zoneOutline(map, {
+    name: 'ward',
+    polygon: [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+    ],
+  });
+  assert.equal(outline.kind, 'polygon');
+  assert.deepEqual(outline.points[0], worldToPixel(map, 0, 0));
+  assert.equal(outline.points.length, 3);
+});
+
+test('a radius zone becomes a circle in pixels, not in metres', () => {
+  const map = { resolution: 0.05, origin: [0, 0, 0], width: 100, height: 100 };
+  const outline = zoneOutline(map, { name: 'kitchen', x: 1, y: 1, radius: 1.5 });
+  assert.equal(outline.kind, 'circle');
+  assert.equal(outline.radius, 30); // 1.5 m at 0.05 m/px
+  assert.deepEqual(outline.centre, worldToPixel(map, 1, 1));
+});
+
+test('a bare waypoint has no outline to draw', () => {
+  const map = { resolution: 0.05, origin: [0, 0, 0], width: 100, height: 100 };
+  assert.equal(zoneOutline(map, { name: 'pickup', x: 1, y: 1 }), null);
 });

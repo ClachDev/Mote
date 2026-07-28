@@ -37,6 +37,12 @@ synced, or served by a web API without translation.
 Site bundles are per-robot state, so they live under ``MOTE_HOME`` (``~/.mote``
 by default) with the rest of it — see :mod:`mote_bringup.mote_home`.
 
+A revision's *contents* — what files it must hold, whether the map inside is
+usable, and how it packs for a wire — are :mod:`mote_bringup.bundle`, which is
+stdlib-only so the fleet server can validate an uploaded revision with the same
+code that wrote it (fleet.md Q4). This module keeps the layout; that one keeps
+the content.
+
 Console script ``site`` (pixi tasks: site, save-map):
     site create <name> [--floor ground]   new site (+ becomes active if none)
     site add-floor <name>                 add a floor to the active site
@@ -57,6 +63,7 @@ from pathlib import Path
 
 import yaml
 
+from mote_bringup import bundle
 from mote_bringup.mote_home import mote_dir
 
 SCHEMA = 1
@@ -411,6 +418,17 @@ def save_map(clean: bool = True):
         meta["bag"] = str(bag.relative_to(mote_dir()))
     meta["clean"] = clean_stats
     (rev_dir / "meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False))
+
+    # The same check the fleet server will run on this revision if it is ever
+    # published (mote_bringup.bundle), so a map that would be refused there is
+    # refused here, on the robot, while the mapping session is still up.
+    report = bundle.validate(rev_dir)
+    if not report.ok:
+        shutil.rmtree(rev_dir)
+        sys.exit(f"unusable map revision, discarded: {report.summary()}")
+    for warning in report.warnings:
+        print(f"note: {warning}", file=sys.stderr)
+
     _publish_revision(fdir, rev_dir.name)
     _prune_revisions(fdir)
     if clean_stats.get("skipped"):
@@ -426,6 +444,73 @@ def save_map(clean: bool = True):
         f"saved map + posegraph revision {rev_dir.name}  ({_active_str()}); "
         f"serving {served} map{stats}"
     )
+
+
+def install_revision(site: str, floor: str, revision: str, blob: bytes) -> str:
+    """Install a packed revision from the fleet registry and publish it locally.
+
+    The distribution half of the design (fleet.md Q4): stage the whole revision
+    in a temporary directory, check it, rename it into ``maps/<rev>/``, then
+    flip the ``map`` symlink — so a half-transferred revision is never visible
+    and nothing has to be undone if the transfer dies. Returns what it did:
+    ``current`` (nothing to do), ``flipped`` (already had it) or ``installed``.
+
+    **Zones travel with the map.** A revision from a different mapping session
+    is a different map frame, so the zones taught in the old one are wrong the
+    instant the new map is published. The bundle's ``zones.yaml`` therefore
+    replaces the floor's, and the one it replaces is kept beside it as
+    ``zones.<old-rev>.yaml`` — losing a map is recoverable, losing every taught
+    place silently is not.
+    """
+    fdir = floor_dir(site, floor)
+    if not fdir.is_dir():
+        _seed_floor(site, floor)
+        if not (site_dir(site) / "site.yaml").exists():
+            (site_dir(site) / "site.yaml").write_text(
+                yaml.safe_dump(
+                    {"schema": SCHEMA, "name": site, "default_floor": floor},
+                    sort_keys=False,
+                )
+            )
+    rev_dir = fdir / "maps" / revision
+    if rev_dir.is_dir():
+        if current_revision(fdir) == revision:
+            return "current"
+        _publish_revision(fdir, revision)
+        _adopt_zones(fdir, rev_dir, revision)
+        return "flipped"
+
+    (fdir / "maps").mkdir(parents=True, exist_ok=True)
+    staging = fdir / "maps" / f".staging-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        bundle.unpack(blob, staging)
+        report = bundle.validate(staging, require_posegraph=False)
+        if not report.ok:
+            raise bundle.BundleError(
+                f"the fleet served an unusable revision {revision}: {report.summary()}"
+            )
+        os.replace(staging, rev_dir)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    previous = current_revision(fdir)
+    _publish_revision(fdir, revision)
+    _adopt_zones(fdir, rev_dir, previous)
+    _prune_revisions(fdir)
+    return "installed"
+
+
+def _adopt_zones(fdir: Path, rev_dir: Path, previous: str | None):
+    source = rev_dir / "zones.yaml"
+    if not source.is_file():
+        return
+    target = fdir / "zones.yaml"
+    if target.is_file():
+        if target.read_bytes() == source.read_bytes():
+            return
+        target.rename(fdir / f"zones.{previous or 'previous'}.yaml")
+    shutil.copyfile(source, target)
 
 
 def use_map(rev: str):
