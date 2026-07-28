@@ -48,12 +48,24 @@ arm:
   #
   # The arm shipped with kp=16, which leaves a permanent steady-state error
   # under load: the servo settles where kp*error balances the holding torque and
-  # ki=0 never integrates it away. Measured on elbow_flex commanding -0.200 rad,
-  # kp=16 stopped at -0.129 (error 0.071) and kp=32 at -0.167 (error 0.033), at
-  # a near-constant ~19% load — droop, not torque saturation. 32 matches the
-  # drive wheels and the STS3215 factory default. See mote_arm/README.md.
+  # ki=0 never integrates it away. `pixi run arm-gains sweep` measured it on
+  # elbow_flex, -0.200 rad from rest (repeated; both runs agreed to 1-2 counts):
+  #
+  #   kp    16     32     64    128
+  #   err  0.068  0.031  0.014  0.008 rad
+  #   load  188    168    144    144  of 1000
+  #
+  # Error falls 8.2x for an 8x gain rise at a load nowhere near the 1000 that
+  # torque saturation would pin it to: droop, and the 5.1-5.2 V supply is not
+  # what limits it. 64 is chosen over the best-scoring 128 deliberately — it
+  # takes half the remaining error and still leaves a measured 2x margin below
+  # the highest gain tested, which matters because every regime that punishes a
+  # stiff loop (a payload, a collision, hand-guiding) is untested, and this arm
+  # exists to touch things. ki stays 0: ki=8 closed the error to 0.001 rad but
+  # stretched settling from 0.46 s to 2.12 s, which a 20 Hz streamed setpoint
+  # never waits for. See mote_arm/README.md.
   gains:
-    kp: 32
+    kp: 64
     kd: 32
     ki: 0
   # min/max are soft limits in radians about each joint's zero; home is the raw

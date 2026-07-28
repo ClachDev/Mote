@@ -224,19 +224,32 @@ section. Contains:
   `SystemInterface` so one process owns the bus.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
-- `arm_gains` (`pixi run arm-gains show|apply`) — the servos' position-loop
+- `arm_gains` (`pixi run arm-gains show|apply|sweep`) — the servos' position-loop
   gains live in EEPROM, i.e. invisible config a servo swap would silently
   revert, so `robot.yaml`'s `arm.gains` is the source of truth and this tool
   reconciles hardware with it. The arm shipped `Kp=16`, which left permanent
   droop under load (the servo settles where `Kp x error` balances the holding
-  torque; `Ki=0` never integrates it away). Measured on elbow at -0.200 rad:
-  Kp=16 -> error 0.071 at load 196/1000; Kp=32 -> error 0.033 at load 176 —
-  error halves as Kp doubles at ~constant load, so it was droop, NOT torque
-  saturation, and the 5 V supply was never the binding constraint. **Kp=32
-  (wheel/STS3215 default) is applied**; the arm now completes the full 3.19 rad
-  home<->reachy move both ways with 0.02-0.06 rad residual. Gotcha: an EEPROM
+  torque; `Ki=0` never integrates it away). Swept on elbow at -0.200 rad:
+  Kp=16/32/64/128 -> error 0.068/0.031/0.014/0.008 rad at load 188/168/144/144
+  of 1000, no ripple or reversals anywhere — error falls 8.2x for an 8x gain
+  rise at a load nowhere near saturation, so it is droop, NOT torque
+  saturation, and the 5 V supply was never the binding constraint (repeated to
+  1-2 counts; same law on a 1.0 rad step and at double speed). **Kp=64 is
+  applied**, not the better-scoring 128: the sweep only measures an unloaded
+  static hold, and a stiffer loop reacts harder to the payloads and collisions
+  a fetch arm exists for — revisit with a payload, not from the table. **Ki
+  stays 0**: ki=8 closes the error to 0.001 rad but stretches settling 0.46s ->
+  2.12s, which `arm-pose`'s 20 Hz streamed setpoints never wait for. The arm
+  completes the full 3.19 rad home<->reachy move both ways with 0.012-0.028 rad
+  residual (0.026-0.041 at Kp=32). Gotcha: an EEPROM
   read-back races the relock — wait ~150 ms and read twice, or a single read can
-  return a garbled 250 and make a successful write look failed.
+  return a garbled 250 and make a successful write look failed. `sweep` is how a
+  gain is chosen rather than guessed: it steps one joint (`elbow_flex` — the only
+  one with room in its soft limits) under each candidate gain, scores the
+  response (`step_response.py`: error, kp*error, load, settling, ripple and
+  reversals — the last two are the buzz check that bounds how high Kp may go),
+  writes the trace to `~/.mote/arm_gain_sweeps/`, and restores the gains and
+  limpness it started with, so a sweep on its own changes nothing.
 - **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
   an unresolved mechanical clash, tracked separately, not addressed here.
   `mote_arm` is not part of the mission bringup; run it explicitly.
