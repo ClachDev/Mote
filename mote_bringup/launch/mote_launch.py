@@ -13,9 +13,10 @@ from launch_ros.parameter_descriptions import ParameterValue
 from mote_bringup import mote_home, param_overrides
 from mote_bringup.launch_utils import (
     INACTIVE_CONTROLLERS,
-    arm_on_wheel_bus,
+    arm_config_file,
     controller_spawn_handler,
     joint_params_file,
+    resolved_arm,
 )
 
 
@@ -28,8 +29,13 @@ def generate_launch_description():
     with open(os.path.join(description_share, "config", "robot.yaml")) as f:
         cfg = yaml.safe_load(f)
 
+    # The arm's zero and limits are per-robot measurements living outside the
+    # package, so they are resolved here and handed to xacro — see resolved_arm.
+    arm = resolved_arm(cfg)
+
     urdf_file = os.path.join(description_share, "urdf", "mote.urdf.xacro")
-    robot_description_content = Command(f"xacro {urdf_file}")
+    xacro_args = "" if arm is None else f" arm_config:={arm_config_file(arm)}"
+    robot_description_content = Command(f"xacro {urdf_file}{xacro_args}")
     robot_description = {
         "robot_description": ParameterValue(robot_description_content, value_type=str)
     }
@@ -37,8 +43,7 @@ def generate_launch_description():
     controller_config = param_overrides.override_path(
         "controllers", os.path.join(bringup_share, "config", "controllers.yaml")
     )
-    has_arm = arm_on_wheel_bus(cfg)
-    controller_joint_params = joint_params_file(cfg)
+    controller_joint_params = joint_params_file(cfg, arm)
 
     # respawn=True gives per-node recovery: if a driver process crashes, the
     # launch system relaunches it within respawn_delay. This is the inner layer;
@@ -174,7 +179,7 @@ def generate_launch_description():
             controller_manager,
             controller_spawn_handler(
                 controller_manager,
-                inactive=INACTIVE_CONTROLLERS if has_arm else (),
+                inactive=INACTIVE_CONTROLLERS if arm is not None else (),
             ),
             rplidar,
             laser_filter,

@@ -1,9 +1,11 @@
 """The arm's place in the control stack, as the launch layer sets it up.
 
-Two things have to stay true or the arm is unsafe rather than merely broken:
-it is spawned *inactive* (activation is what enables servo torque), and the
-joint list handed to `arm_controller` comes from robot.yaml rather than being
-written out a second time in `controllers.yaml`.
+Three things have to stay true or the arm is unsafe rather than merely broken:
+it is spawned *inactive* (activation is what enables servo torque); the joint
+list handed to `arm_controller` comes from robot.yaml rather than being written
+out a second time in `controllers.yaml`; and the zero/limits that reach the
+URDF — and so the clamp MoteHardware enforces — are this robot's *calibrated*
+ones, not the packaged placeholders.
 """
 
 import os
@@ -12,11 +14,14 @@ import yaml
 import pytest
 from ament_index_python.packages import get_package_share_directory
 
+from mote_arm import calibrate, config as arm_config
 from mote_bringup.launch_utils import (
     CONTROLLERS,
     INACTIVE_CONTROLLERS,
+    arm_config_file,
     arm_on_wheel_bus,
     joint_params_file,
+    resolved_arm,
     spawn_controllers,
 )
 
@@ -75,7 +80,7 @@ def test_arm_on_a_separate_bus_is_not_part_of_this_component(cfg):
 
 
 def test_joint_params_carry_the_arm_joints_from_robot_yaml(cfg):
-    with open(joint_params_file(cfg)) as f:
+    with open(joint_params_file(cfg, resolved_arm(cfg))) as f:
         params = yaml.safe_load(f)
 
     joints = params["arm_controller"]["ros__parameters"]["joints"]
@@ -87,9 +92,50 @@ def test_joint_params_carry_the_arm_joints_from_robot_yaml(cfg):
 
 def test_no_arm_controller_params_when_the_arm_is_elsewhere(cfg):
     cfg["arm"]["port"] = "/dev/some_other_bus"
-    with open(joint_params_file(cfg)) as f:
+    assert resolved_arm(cfg) is None
+    with open(joint_params_file(cfg, None)) as f:
         params = yaml.safe_load(f)
     assert "arm_controller" not in params
+
+
+def test_the_urdf_gets_the_calibrated_zero_and_limits(tmp_path, monkeypatch):
+    """The whole point of resolving the arm at launch.
+
+    Calibration lives in $MOTE_HOME/arm.yaml because zero/min/max are
+    measurements of one physical arm. If the launch handed xacro the packaged
+    defaults instead, MoteHardware would clamp against limits this robot does
+    not have — and, because calibration moves the zero, every commanded angle
+    would name a different physical position.
+    """
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
+    # Written by the real writer, so a change to the calibration file's shape
+    # fails here rather than silently ceasing to reach the URDF.
+    calibrate.save_calibration(
+        {
+            "recorded": "a test",
+            "joints": {"elbow_flex": {"zero": 2048, "min": -1.5, "max": 1.5}},
+        }
+    )
+
+    with open(arm_config_file(arm_config.load())) as f:
+        emitted = yaml.safe_load(f)
+
+    elbow = next(j for j in emitted["joints"] if j["name"] == "elbow_flex")
+    assert elbow["zero"] == 2048
+    assert (elbow["min"], elbow["max"]) == (-1.5, 1.5)
+    # Untouched joints keep the packaged defaults, and ids are never overridden.
+    assert elbow["id"] == 3
+
+
+def test_emitted_arm_config_is_the_shape_the_xacro_reads(cfg):
+    with open(arm_config_file(resolved_arm(cfg))) as f:
+        emitted = yaml.safe_load(f)
+
+    # mote.urdf.xacro indexes exactly these keys; a rename here is a silent
+    # URDF-generation failure otherwise.
+    assert {"port", "moving_speed", "moving_acc", "joints"} <= set(emitted)
+    for joint in emitted["joints"]:
+        assert {"name", "id", "min", "max", "zero", "invert"} == set(joint)
 
 
 def test_controllers_yaml_does_not_duplicate_the_joint_list():

@@ -99,8 +99,34 @@ documented:
   quietly corrupting each other's traffic.
 
 The bench tools still open the bus directly, so they still need the control
-stack stopped (`pixi run kill`). `jog` and `arm-pose` do not — they command the
-controller.
+stack stopped (`pixi run kill`): `arm-check`, `arm-gains`, `arm-calibrate` and
+`arm-offsets`. `jog` and `arm-pose` do not — they command the controller.
+
+### Where the calibration enters
+
+`zero`/`min`/`max` are measurements of one physical arm, so they live in
+`$MOTE_HOME/arm.yaml` and robot.yaml carries only conservative placeholders
+(see "`zero` and `home` are different things" below, and `arm-calibrate`).
+The hardware enforces the soft limits, and the hardware reads them from the
+URDF — so the URDF has to carry the *calibrated* numbers:
+
+```
+robot.yaml arm:  (defaults: ids, names, direction, gains)
+        +
+$MOTE_HOME/arm.yaml  (this arm's measured zero/min/max)
+        |
+        v  mote_arm.config.load() — the one implementation of the overlay
+  launch_utils.resolved_arm()
+        |
+        v  written out, passed as xacro's `arm_config:=`
+  <ros2_control> joint <param>s  ->  MoteHardware's clamp
+```
+
+xacro cannot resolve `$MOTE_HOME` or apply the overlay, so the launch does it
+and hands over the answer. A bare `xacro mote.urdf.xacro` (for checking
+generation) falls back to the packaged placeholders — never drive a calibrated
+arm from that URDF, because calibration *moves the zero*, so the same radian
+value names a different physical position.
 
 ## Where the arm lives in the control stack
 
@@ -142,7 +168,7 @@ conversions are verified without hardware.
 | `config.py` | Parses the `arm:` section; encoder<->radian conversion + soft-limit clamping. |
 | `bus.py` | `FeetechBus` — thin `scservo_sdk` wrapper (ping, read position/health, torque, position goal, homing offset). Lazy SDK import. |
 | `control.py` | The one place that knows how to talk to `arm_controller`: single-point trajectories, and activation as the torque switch. |
-| `arm_launch.py` | Bench bring-up — the same controller_manager, URDF and `controllers.yaml` as a mission, without the lidar/camera/Nav2. `pixi run arm`. |
+| `arm_launch.py` (in `mote_bringup`) | Bench bring-up — the same controller_manager, URDF and `controllers.yaml` as a mission, without the lidar/camera/Nav2. `pixi run arm`. |
 | `jog` (CLI) | Interactive per-joint jog. A *client of the controller* — publishes clamped trajectories, never opens the bus. `pixi run arm-jog`. |
 | `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only, but opens the bus: run with the control stack stopped. `pixi run arm-check`. |
 | `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. Owns the bus: control stack stopped. `pixi run arm-calibrate`. |
@@ -341,8 +367,10 @@ setpoint it was given: sustained lag beyond `--max-lag` (0.15 rad) for
 Measured lag on the full swing is a steady 0.07-0.10 rad.
 
 `arm-pose go` and `jog` command `arm_controller`, so they run happily alongside
-a mission. `arm-check` and `arm-gains` open the bus directly and so still need
-the control stack stopped.
+a mission. `arm-check`, `arm-gains`, `arm-calibrate` and `arm-offsets` open the
+bus directly and so still need the control stack stopped — `MoteHardware`'s own
+guard will refuse to start against them, and theirs will refuse to start against
+it.
 
 Lag is measured against `/joint_states`, which the hardware refreshes one arm
 joint per control cycle to stay inside the bus budget it shares with the wheels,

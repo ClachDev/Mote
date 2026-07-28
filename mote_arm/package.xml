@@ -9,9 +9,6 @@
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>mote_description</exec_depend>
-  <!-- arm_launch.py brings up the same controller_manager a mission does,
-       reusing mote_bringup's launch helpers and controllers.yaml. -->
-  <exec_depend>mote_bringup</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <!-- The jog CLI drives the arm through ros2_control: single-point
        trajectories to arm_controller, and switch_controller as the torque

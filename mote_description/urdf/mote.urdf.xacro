@@ -328,15 +328,35 @@
     the arm out of this component — it would then need a hardware component of
     its own, which is a deliberate design change rather than a config tweak.
   -->
+  <!--
+    Which arm to describe. `zero`, `min` and `max` are measurements of one
+    physical arm, so a calibrated robot keeps them in $MOTE_HOME/arm.yaml, not
+    here (see robot.yaml's arm section and `pixi run arm-calibrate`). The launch
+    files resolve packaged defaults against that file and pass the result as
+    `arm_config`, which is what puts the *calibrated* limits into <ros2_control>
+    — and so into the clamp MoteHardware enforces on every client.
+
+    Left empty (a bare `xacro mote.urdf.xacro`, for checking generation) it
+    falls back to robot.yaml's own arm section: the conservative placeholders
+    documented there. Never drive a calibrated arm from that URDF — its zeros
+    name different physical positions.
+  -->
+  <xacro:arg name="arm_config" default=""/>
+  <xacro:property name="arm_config_file" value="$(arg arm_config)"/>
+  <xacro:property name="arm_cfg"
+                  value="${xacro.load_yaml(arm_config_file) if arm_config_file else cfg['arm']}"/>
+
   <xacro:property name="arm_on_wheel_bus"
-                  value="${arm and cfg['arm']['port'] == cfg['servos']['port']}"/>
+                  value="${arm and arm_cfg['port'] == cfg['servos']['port']}"/>
 
   <xacro:macro name="arm_control_joint" params="spec">
     <joint name="${spec['name']}">
       <param name="id">${spec['id']}</param>
       <param name="min">${spec['min']}</param>
       <param name="max">${spec['max']}</param>
-      <param name="home">${spec['home']}</param>
+      <!-- The encoder count reading 0 rad. Deliberately not "home": home is a
+           taught rest pose in arm_poses.yaml, a different place entirely. -->
+      <param name="zero">${spec['zero']}</param>
       <param name="invert">${'true' if 'invert' in spec and spec['invert'] else 'false'}</param>
       <command_interface name="position"/>
       <state_interface   name="position"/>
@@ -362,8 +382,8 @@
       <param name="velocity_scale">${cfg['servos']['velocity_scale']}</param>
       <param name="acceleration">${cfg['servos']['acceleration']}</param>
       <xacro:if value="${arm_on_wheel_bus}">
-      <param name="arm_moving_speed">${cfg['arm']['moving_speed']}</param>
-      <param name="arm_moving_acc">${cfg['arm']['moving_acc']}</param>
+      <param name="arm_moving_speed">${arm_cfg['moving_speed']}</param>
+      <param name="arm_moving_acc">${arm_cfg['moving_acc']}</param>
       </xacro:if>
     </hardware>
     </xacro:unless>
@@ -397,7 +417,7 @@
       joints, and the sim does not model the arm.
     -->
     <xacro:if value="${arm_on_wheel_bus}">
-    <xacro:arm_control_joints specs="${cfg['arm']['joints']}"/>
+    <xacro:arm_control_joints specs="${arm_cfg['joints']}"/>
     </xacro:if>
   </ros2_control>
 

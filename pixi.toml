@@ -101,7 +101,7 @@ chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
 # the lidar/camera/Nav2. During a mission the arm is already there (it lives in
 # mote_hardware, which owns the shared servo bus) — this is for bench work only.
 # Jog it interactively with `pixi run arm-jog`, in either case.
-arm = "ros2 launch mote_arm arm_launch.py"
+arm = "ros2 launch mote_bringup arm_launch.py"
 arm-jog = "ros2 run mote_arm jog"
 # Teach/replay named arm poses (save is read-only; go asks before moving).
 arm-pose = "ros2 run mote_arm arm_pose"

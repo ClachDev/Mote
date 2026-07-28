@@ -38,9 +38,9 @@ constexpr int PAN_ID = 1;
 constexpr int ELBOW_ID = 3;
 
 // Matches the shipped robot.yaml shape: a tight band on one joint, a wide one
-// on the other, both with a home well away from the encoder mid-point.
-constexpr int PAN_HOME = 3013;
-constexpr int ELBOW_HOME = 2931;
+// on the other, both with a zero well away from the encoder mid-point.
+constexpr int PAN_ZERO = 3013;
+constexpr int ELBOW_ZERO = 2931;
 constexpr double PAN_MIN = 0.010;
 constexpr double PAN_MAX = 0.229;
 constexpr double ELBOW_MIN = -3.291;
@@ -55,7 +55,7 @@ std::string urdf_for(const std::string & port, bool with_arm = true)
       <param name="id">1</param>
       <param name="min">0.010</param>
       <param name="max">0.229</param>
-      <param name="home">3013</param>
+      <param name="zero">3013</param>
       <param name="invert">false</param>
       <command_interface name="position"/>
       <state_interface name="position"/>
@@ -64,7 +64,7 @@ std::string urdf_for(const std::string & port, bool with_arm = true)
       <param name="id">3</param>
       <param name="min">-3.291</param>
       <param name="max">0.103</param>
-      <param name="home">2931</param>
+      <param name="zero">2931</param>
       <param name="invert">false</param>
       <command_interface name="position"/>
       <state_interface name="position"/>
@@ -265,14 +265,14 @@ TEST_F(ArmBus, ActivatesWithTheArmLimp)
 
 TEST_F(ArmBus, SeedsTheArmStateFromTheServosAtActivation)
 {
-  bus->set_present_position(PAN_ID, PAN_HOME + 100);
-  bus->set_present_position(ELBOW_ID, ELBOW_HOME - 200);
+  bus->set_present_position(PAN_ID, PAN_ZERO + 100);
+  bus->set_present_position(ELBOW_ID, ELBOW_ZERO - 200);
   activate();
 
-  const ArmJoint pan{"shoulder_pan", PAN_ID, PAN_MIN, PAN_MAX, PAN_HOME, 1};
-  const ArmJoint elbow{"elbow_flex", ELBOW_ID, ELBOW_MIN, ELBOW_MAX, ELBOW_HOME, 1};
-  EXPECT_NEAR(state_of("shoulder_pan"), pan.counts_to_rad(PAN_HOME + 100), 1e-9);
-  EXPECT_NEAR(state_of("elbow_flex"), elbow.counts_to_rad(ELBOW_HOME - 200), 1e-9);
+  const ArmJoint pan{"shoulder_pan", PAN_ID, PAN_MIN, PAN_MAX, PAN_ZERO, 1};
+  const ArmJoint elbow{"elbow_flex", ELBOW_ID, ELBOW_MIN, ELBOW_MAX, ELBOW_ZERO, 1};
+  EXPECT_NEAR(state_of("shoulder_pan"), pan.counts_to_rad(PAN_ZERO + 100), 1e-9);
+  EXPECT_NEAR(state_of("elbow_flex"), elbow.counts_to_rad(ELBOW_ZERO - 200), 1e-9);
 }
 
 TEST_F(ArmBus, PutsArmServosIntoPositionModeWhenTheyAreInWheelMode)
@@ -319,7 +319,7 @@ TEST_F(ArmBus, WritesNoArmGoalsWhileNoControllerHoldsTheArm)
 
 TEST_F(ArmBus, TakingHoldSeedsTheGoalBeforeEnablingTorque)
 {
-  bus->set_present_position(PAN_ID, PAN_HOME + 40);
+  bus->set_present_position(PAN_ID, PAN_ZERO + 40);
   activate();
   bus->clear_events();
 
@@ -366,8 +366,8 @@ TEST_F(ArmBus, ClampsCommandsToTheSoftLimits)
   command("elbow_flex").set_value(-10.0);
   hw.write(TIME, PERIOD);
 
-  const ArmJoint pan{"shoulder_pan", PAN_ID, PAN_MIN, PAN_MAX, PAN_HOME, 1};
-  const ArmJoint elbow{"elbow_flex", ELBOW_ID, ELBOW_MIN, ELBOW_MAX, ELBOW_HOME, 1};
+  const ArmJoint pan{"shoulder_pan", PAN_ID, PAN_MIN, PAN_MAX, PAN_ZERO, 1};
+  const ArmJoint elbow{"elbow_flex", ELBOW_ID, ELBOW_MIN, ELBOW_MAX, ELBOW_ZERO, 1};
   EXPECT_EQ(bus->present_position(PAN_ID), pan.rad_to_counts(PAN_MAX));
   EXPECT_EQ(bus->present_position(ELBOW_ID), elbow.rad_to_counts(ELBOW_MIN));
 }

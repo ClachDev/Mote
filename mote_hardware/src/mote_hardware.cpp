@@ -130,7 +130,7 @@ hardware_interface::CallbackReturn MoteHardware::on_init(
       spec.id = std::stoi(joint_param(joint, "id"));
       spec.min_rad = std::stod(joint_param(joint, "min"));
       spec.max_rad = std::stod(joint_param(joint, "max"));
-      spec.home_counts = std::stoi(joint_param(joint, "home"));
+      spec.zero_counts = std::stoi(joint_param(joint, "zero"));
       spec.sign = joint_param(joint, "invert") == "true" ? -1 : 1;
 
       if (spec.min_rad > spec.max_rad) {

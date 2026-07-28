@@ -14,7 +14,7 @@ namespace mote_hardware
 namespace
 {
 
-// elbow_flex as shipped in robot.yaml: a wide band, home well off mid-scale.
+// elbow_flex as shipped in robot.yaml: a wide band, zero well off mid-scale.
 ArmJoint elbow()
 {
   return ArmJoint{"elbow_flex", 3, -3.291, 0.103, 2931, 1};
@@ -44,11 +44,11 @@ TEST(ArmJointClamp, SaturatesAtBothLimits)
   EXPECT_DOUBLE_EQ(joint.clamp_rad(joint.max_rad), joint.max_rad);
 }
 
-TEST(ArmJointConversion, HomeIsZeroRadians)
+TEST(ArmJointConversion, ZeroCountIsZeroRadians)
 {
   const auto joint = elbow();
-  EXPECT_DOUBLE_EQ(joint.counts_to_rad(joint.home_counts), 0.0);
-  EXPECT_EQ(joint.rad_to_counts(0.0), joint.home_counts);
+  EXPECT_DOUBLE_EQ(joint.counts_to_rad(joint.zero_counts), 0.0);
+  EXPECT_EQ(joint.rad_to_counts(0.0), joint.zero_counts);
 }
 
 TEST(ArmJointConversion, RoundTripsThroughRadians)
@@ -64,15 +64,15 @@ TEST(ArmJointConversion, OneRevolutionIsFullScale)
   const auto joint = elbow();
   // 4096 counts = 2*pi, so a quarter turn is 1024 counts.
   EXPECT_NEAR(
-    joint.counts_to_rad(joint.home_counts + 1024), M_PI / 2.0, 1e-9);
+    joint.counts_to_rad(joint.zero_counts + 1024), M_PI / 2.0, 1e-9);
 }
 
 TEST(ArmJointConversion, InvertFlipsDirection)
 {
   const auto joint = inverted();
-  EXPECT_LT(joint.counts_to_rad(joint.home_counts + 100), 0.0);
-  EXPECT_GT(joint.counts_to_rad(joint.home_counts - 100), 0.0);
-  EXPECT_LT(joint.rad_to_counts(0.5), joint.home_counts);
+  EXPECT_LT(joint.counts_to_rad(joint.zero_counts + 100), 0.0);
+  EXPECT_GT(joint.counts_to_rad(joint.zero_counts - 100), 0.0);
+  EXPECT_LT(joint.rad_to_counts(0.5), joint.zero_counts);
 }
 
 TEST(ArmJointConversion, SaturatesAtTheEncoderEdge)

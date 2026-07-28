@@ -125,7 +125,7 @@ A `ros2_control` `SystemInterface` plugin (`MoteHardware`) that drives two Feete
 - Position is tracked cumulatively across the 12-bit encoder rollover using a half-range threshold
 - The left wheel is mounted inverted, so its sign is negated in both `read()` and `write()`
 - The serial port is opened in `on_activate` (not `on_init`), which also puts servos into wheel (continuous rotation) mode — an EEPROM write, skipped if already set
-- It is also **the single owner of the shared servo bus**: the SO-101 arm's six servos sit on the same port as the wheels, so `MoteHardware` exports position command/state interfaces for them too (`arm_joint.hpp` holds the clamp and the encoder<->radian maths, mirroring `mote_arm/config.py`). Arm state is read one joint per cycle round-robin and arm goals go out as one sync-write only when a goal changed, so the arm costs ~1 extra bus transaction per cycle and nothing at all when idle — the wheels are on this bus and the loop runs at 50 Hz. `port_guard.cpp` refuses activation when another process already holds the port
+- It is also **the single owner of the shared servo bus**: the SO-101 arm's six servos sit on the same port as the wheels, so `MoteHardware` exports position command/state interfaces for them too (`arm_joint.hpp` holds the clamp and the encoder<->radian maths, mirroring `mote_arm/config.py` (`zero_counts`, deliberately not "home" — see the arm section)). Arm state is read one joint per cycle round-robin and arm goals go out as one sync-write only when a goal changed, so the arm costs ~1 extra bus transaction per cycle and nothing at all when idle — the wheels are on this bus and the loop runs at 50 Hz. `port_guard.cpp` refuses activation when another process already holds the port
 - Tools built from `mote_hardware/tools/` (`servo_debug`, `velocity_cal`, `swap_ids`, `setup_ids`) run as `pixi run -- ros2 run mote_hardware <tool>`; see `mote_hardware/tools/README.md`
 
 ### `mote_description` (CMake)
@@ -206,9 +206,20 @@ section. Contains:
   of its own: `MoteHardware` exports position command interfaces for the six arm
   joints alongside the wheels' velocity ones, from one `open()` of the shared
   bus (below). `control.py` is the one place that knows how to command it.
-- `arm_launch.py` (`pixi run arm`) — bench bring-up: the same controller_manager,
-  URDF and `controllers.yaml` a mission uses, without lidar/camera/Nav2. During
-  a mission the arm needs nothing extra; it is already there.
+- `arm_launch.py` lives in **`mote_bringup`** (`pixi run arm`) — bench bring-up:
+  the same controller_manager, URDF and `controllers.yaml` a mission uses,
+  without lidar/camera/Nav2. During a mission the arm needs nothing extra; it is
+  already there. The dependency runs `mote_bringup` -> `mote_arm` and never back:
+  the base launch imports `mote_arm.config` to resolve this robot's calibration
+  into the URDF (below), so `mote_arm` must not import `mote_bringup`.
+- **The calibration has to reach the URDF.** `zero`/`min`/`max` are measurements
+  of one arm and live in `$MOTE_HOME/arm.yaml`; robot.yaml holds placeholders.
+  Since `MoteHardware` enforces the clamp and reads its limits from the URDF,
+  `launch_utils.resolved_arm` overlays the two via `mote_arm.config.load` (the
+  one implementation) and passes the result to xacro as `arm_config:=`. A bare
+  `xacro mote.urdf.xacro` falls back to the placeholders — fine for checking
+  generation, wrong for driving a calibrated arm, because calibration moves the
+  zero and every commanded angle then names a different position.
 - `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client of
   `arm_controller`* (publishes clamped single-point trajectories, limps on
   exit). It never opens the bus, so there is no contention to guard against.

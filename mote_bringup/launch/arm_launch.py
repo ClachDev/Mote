@@ -8,8 +8,8 @@ nothing extra; this launch exists for bench work, where the lidar, camera and
 Nav2 are noise.
 
 It starts the same controller_manager against the same URDF and the same
-`controllers.yaml` the mission uses, so what you jog on the bench is what runs
-on the robot. No diff_drive_controller is loaded, so nothing here can drive the
+`controllers.yaml` the mission uses — including this robot's own arm
+calibration — so what you jog on the bench is what runs on the robot. No diff_drive_controller is loaded, so nothing here can drive the
 wheels, and the arm controller is loaded *inactive* — the arm is limp until
 `pixi run arm-jog` (or `switch_controllers --activate arm_controller`) asks it
 to hold.
@@ -27,9 +27,10 @@ from launch_ros.parameter_descriptions import ParameterValue
 from mote_bringup import param_overrides
 from mote_bringup.launch_utils import (
     INACTIVE_CONTROLLERS,
-    arm_on_wheel_bus,
+    arm_config_file,
     controller_spawn_handler,
     joint_params_file,
+    resolved_arm,
 )
 
 
@@ -40,7 +41,8 @@ def generate_launch_description():
     with open(os.path.join(description_share, "config", "robot.yaml")) as f:
         cfg = yaml.safe_load(f)
 
-    if not arm_on_wheel_bus(cfg):
+    arm = resolved_arm(cfg)
+    if arm is None:
         raise RuntimeError(
             "robot.yaml puts the arm on a different port from the drive wheels, "
             "so it is not part of the MoteHardware ros2_control component and "
@@ -50,7 +52,8 @@ def generate_launch_description():
     urdf_file = os.path.join(description_share, "urdf", "mote.urdf.xacro")
     robot_description = {
         "robot_description": ParameterValue(
-            Command(f"xacro {urdf_file}"), value_type=str
+            Command(f"xacro {urdf_file} arm_config:={arm_config_file(arm)}"),
+            value_type=str,
         )
     }
     controller_config = param_overrides.override_path(
@@ -69,7 +72,7 @@ def generate_launch_description():
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, controller_config, joint_params_file(cfg)],
+        parameters=[robot_description, controller_config, joint_params_file(cfg, arm)],
         **respawn,
     )
 
