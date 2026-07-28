@@ -62,6 +62,12 @@ kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera
 sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
 save-map = "ros2 run mote_bringup site save-map"
 clean-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.cli"
+# Propose a zone per room of a saved map, so a floor starts with its rooms named
+# rather than every one taught by driving to it. Defaults to the active floor's
+# map; --write merges the proposal into that floor's zones.yaml.
+segment-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.rooms_cli"
+# Score that segmentation against the sim ladder's ground-truth room rectangles.
+segment-eval = "PYTHONPATH=mote_bringup python mote_simulation/test/room_segmentation_eval.py"
 save-zone = "ros2 run mote_tasks save_zone"
 site = "ros2 run mote_bringup site"
 
