@@ -214,13 +214,16 @@ died mid-run on a dropped serial read — hence both the snapshot and the guard 
 `FeetechBus._read`, which turns a short reply into `None` instead of an
 `IndexError`.)
 
-It also names, *before* emitting anything, the taught poses that a changed zero
-invalidates, and prints the `arm-pose save` line to re-teach each. What was
-measured — including the homing offsets, which otherwise exist only in EEPROM —
-is recorded in `~/.mote/arm_calibration.yaml`.
+Taught poses do not have to be re-taught: they are re-expressed about the new
+zeros by exactly the shift the calibration computed, so each still points where
+it always did, and the previous file is kept as `.bak`. Only a pose that lands
+outside the new soft limits is named — that one was taught somewhere the arm
+cannot reach, which is a decision rather than an arithmetic problem.
 
-**It saves the result to `~/.mote/arm.yaml`** — per-robot state, not the repo.
-It shows what each joint's limits and zero change from and to, and asks first.
+**It saves the result to `~/.mote/arm.yaml`** — per-robot state, not the repo —
+and says so in one line. The numbers are not reprinted: the swept ranges were on
+screen a moment ago, the limits are those pulled inward by `--margin`, and the
+file itself keeps each value next to the measurement it came from.
 
 That location is the point. Zeros and limits are measurements of *one physical
 arm*: two robots with identical hardware have different ones, and the packaged

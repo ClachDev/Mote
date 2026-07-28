@@ -217,8 +217,10 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
         if moved is not None:
             _abort_partial(written, backup, moved)
         written.append(joint.name)
-        print(f"  {joint.name:<16} written and confirmed")
 
+    # One line, not one per joint: every name here succeeded, and a joint that
+    # did not has already stopped the run by name with the detail that matters.
+    print(f"{len(written)} joint(s) centred and confirmed.")
     return wanted
 
 
@@ -296,7 +298,7 @@ def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
 
     recorders = {j.name: SweepRecorder(j.name) for j in joints}
     table = _LiveTable(
-        "", f"  {'joint':<16}{'now':>6}{'end':>7}{'end':>7}{'swept':>13}"
+        "", f"  {'joint':<16}{'now':>6}{'low':>7}{'high':>7}{'swept':>13}"
     )
     done = _wait_for_enter()
     period = 1.0 / rate_hz
@@ -322,13 +324,14 @@ def _phase_ranges(bus, joints, rate_hz: float) -> tuple[dict, int]:
 def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
     """One row, the same shape for every joint.
 
-    The two ends of travel are shown as well as the total, because the total
-    alone cannot tell you *which* end still needs reaching — you can see one end
-    parked on a stop while the other has not got there yet. They come off the
-    unwrapped stream, so they are real encoder positions even for a joint whose
-    travel crosses zero, where the raw min and max would read 17 and 4093 and
-    describe the encoder rather than the joint. Such a joint shows its first end
-    larger than its second, which is what crossing zero looks like.
+    ``low`` and ``high`` are the two ends of *travel*, shown as well as the
+    total because the total alone cannot tell you *which* end still needs
+    reaching — you can see one end parked on a stop while the other has not got
+    there yet. They come off the unwrapped stream, so they are real encoder
+    positions even for a joint whose travel crosses zero, where the raw min and
+    max would read 17 and 4093 and describe the encoder rather than the joint.
+    Such a joint reads ``low`` numerically larger than ``high``, which is what
+    running up through zero and out the other side looks like.
     """
     if rec.samples == 0:
         return f"  {name:<16}{'-':>6}{'-':>7}{'-':>7}   no readings"
@@ -340,24 +343,16 @@ def _range_row(name: str, rec: SweepRecorder, now: int | None) -> str:
     )
 
 
-def _save(cfg, calibrated, offsets, recorded, args) -> bool:
-    """Write this robot's calibration, showing what changes and asking first."""
+def _save(cfg, calibrated, offsets, recorded) -> bool:
+    """Write this robot's calibration.
+
+    The numbers themselves are not reprinted: the swept ranges were on screen a
+    moment ago, the limits are those pulled inward by ``--margin``, and the file
+    is the record — it keeps each value next to the measurement it came from.
+    """
     document = calibration_document(
         list(cfg.joints), calibrated, recorded, offsets=offsets
     )
-    path = config.calibration_path()
-
-    print(f"\n{path}")
-    for spec in cfg.joints:
-        entry = document["joints"].get(spec.name)
-        if entry is None:
-            print(f"  {spec.name:<16} unchanged")
-            continue
-        print(
-            f"  {spec.name:<16} {spec.min_rad:+.3f}..{spec.max_rad:+.3f} @ "
-            f"{spec.zero_counts:<5} ->  {entry['min']:+.3f}..{entry['max']:+.3f} "
-            f"@ {entry['zero']}"
-        )
 
     # Refuse to save anything the config layer would not load: this file
     # supplies the soft limits that stop the arm.
@@ -367,7 +362,7 @@ def _save(cfg, calibrated, offsets, recorded, args) -> bool:
         raise SystemExit(f"refusing to save: {exc}")
 
     saved = save_calibration(document)
-    print(f"saved to {saved}")
+    print(f"\nsaved to {saved}")
     return True
 
 
@@ -499,7 +494,7 @@ def _run(bus, cfg, selected, args) -> None:
         for name, reason in sorted(skipped.items()):
             print(f"  {name:<16} {reason}")
 
-    written = _save(cfg, calibrated, offsets, recorded, args)
+    written = _save(cfg, calibrated, offsets, recorded)
 
     if not written and not args.skip_homing:
         print(

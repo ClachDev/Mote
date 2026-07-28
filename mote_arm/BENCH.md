@@ -68,10 +68,13 @@ resists, do not force it, and do not use it to "find" extra range. Take the
 joints in any order; all six are recorded at once in a live table:
 
 ```
-  joint              min   now   max      span
-  shoulder_pan       698  2103  3378    4.11 rad
+  joint              now    low   high        swept
+  shoulder_pan      2019    682   3403     4.17 rad
   ...
 ```
+
+`low` and `high` are the two ends of *travel*. A joint whose travel crosses the
+encoder wrap reads `low` numerically larger than `high`.
 
 Press **Enter** once every joint has been to both stops.
 
@@ -90,15 +93,18 @@ asks before touching EEPROM:
 
 ```
 joint            mid-travel  offset  ->    new
-shoulder_pan           3522    1009  ->  -1613
+shoulder_pan           2042    -997  ->  -1003
 ...
-write homing offsets? [y/N]
+Writes servo EEPROM on 6 joint(s) — a persistent change.
+write? [y/N]
 ```
 
-**Expected:** `previous offsets backed up to ~/.mote/arm_offsets_backup.yaml`,
-then every servo `written, verified, and reading confirmed`. That last phrase is
-the real check — it confirms the servo *acts* on the register the way we assume,
-and would catch a wrong sign encoding.
+**Expected:** `backed up to ~/.mote/arm_offsets_backup.yaml`, then one line —
+`6 joint(s) centred and confirmed`. *Confirmed* is the real check: each servo is
+written, read back, and checked to have actually moved its reported position by
+the offset delta, which is what proves the servo *acts* on the register the way
+we assume and would catch a wrong sign encoding. Success is a count rather than
+a list because a servo that fails stops the run by name, below.
 
 **If it stops partway** it names the servos already changed and points at
 `pixi run arm-offsets restore`, which puts them back from the snapshot taken
@@ -117,8 +123,10 @@ this arm `shoulder_pan` and `wrist_roll` both did.
 
 ### Then, in this order
 
-It then shows each joint's limits before and after and saves them to
-`~/.mote/arm.yaml` — this robot's own calibration, not the repo.
+It then saves the limits to `~/.mote/arm.yaml` — this robot's own calibration,
+not the repo — and says so in one line. The numbers are not reprinted: the swept
+ranges were on screen a moment ago, the limits are those pulled inward by
+`--margin`, and the file keeps each value next to the measurement it came from.
 
 Taught poses are re-expressed about the new zeros automatically and keep
 pointing where they did; the old file is kept as `.bak`. Any pose that lands
