@@ -105,6 +105,7 @@ conversions are verified without hardware.
 | `jog` (CLI) | Interactive per-joint jog. A *client* of the driver — publishes clamped `arm/goal`, calls `arm/set_torque`. `pixi run arm-jog`. |
 | `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only; run with the driver stopped. `pixi run arm-check`. |
 | `calibrate.py` / `arm_calibrate` | Two-phase range calibration: write the homing offsets, sweep every joint at once, emit `robot.yaml` limits. `pixi run arm-calibrate`. |
+| `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
 
 ## `zero` and `home` are different things
@@ -180,6 +181,17 @@ Four things it refuses to guess at, rather than emit plausible-looking numbers:
   the defect in the pre-calibration `shoulder_pan` limits, whose
   `[0.010, 0.229]` does not contain 0). Neither can arise from the centred path,
   where the zero *is* the middle of what was swept.
+
+**If it stops partway, the arm is recoverable.** The offset register lives only
+in the servo, so overwriting it destroys the previous value. Before the first
+write, the existing offsets are snapshotted to `~/.mote/arm_offsets_backup.yaml`;
+each servo is then written, verified by read-back, *and* checked to have moved
+its reading by exactly the delta written, before moving to the next. Any failure
+stops immediately, names the servos already changed, and points at
+`pixi run arm-offsets restore`. (An earlier version wrote without a backup and
+died mid-run on a dropped serial read — hence both the snapshot and the guard in
+`FeetechBus._read`, which turns a short reply into `None` instead of an
+`IndexError`.)
 
 It also names, *before* emitting anything, the taught poses that a changed zero
 invalidates, and prints the `arm-pose save` line to re-teach each. What was

@@ -99,6 +99,9 @@ arm-pose = "ros2 run mote_arm arm_pose"
 # emit robot.yaml limits from what was measured. Opens the bus directly, so run
 # it with the arm driver stopped. This is where soft limits come from.
 arm-calibrate = "ros2 run mote_arm arm_calibrate"
+# Read/back up/restore the servos' position-correction offsets (EEPROM). The
+# recovery path if a calibration run is interrupted part-way.
+arm-offsets = "ros2 run mote_arm arm_offsets"
 # Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
 arm-gains = "ros2 run mote_arm arm_gains"
 # Robot-side inference diagnostics (torch-free — run in the default/robot env):

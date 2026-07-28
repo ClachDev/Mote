@@ -95,10 +95,14 @@ shoulder_pan           3522    1009  ->  -1613
 write homing offsets? [y/N]
 ```
 
-**Expected:** every servo `written and verified`, then `offsets verified: every
-reading moved by exactly what was written`. That last line is the real check —
-it confirms the servo *acts* on the register the way we assume, and would catch
-a wrong sign encoding.
+**Expected:** `previous offsets backed up to ~/.mote/arm_offsets_backup.yaml`,
+then every servo `written, verified, and reading confirmed`. That last phrase is
+the real check — it confirms the servo *acts* on the register the way we assume,
+and would catch a wrong sign encoding.
+
+**If it stops partway** it names the servos already changed and points at
+`pixi run arm-offsets restore`, which puts them back from the snapshot taken
+before the first write. Do that before re-running.
 
 This is the step that stops a joint's travel straddling the encoder wrap. On
 this arm `shoulder_pan` and `wrist_roll` both did.
@@ -137,7 +141,25 @@ homing offsets — the only record of them outside servo EEPROM.
 
 
 A joint that fails keeps its previous values, with the reason as a comment above
-its line, so pasting the block never silently reverts a joint to a guess.
+its line, so pasting the block never silently reverts a joint to a guess. A joint
+whose sweep is unusable also does not get its zero moved — the usable set is
+decided before any EEPROM is touched.
+
+### The offsets themselves
+
+```
+pixi run arm-offsets show      # read-only: raw register, decoded value, position
+pixi run arm-offsets backup    # snapshot before doing anything risky
+pixi run arm-offsets restore   # put the snapshot back
+pixi run arm-offsets set --joint shoulder_pan --value=2027
+```
+
+`show` prints the raw register next to the decoded value deliberately: the
+decode assumes bit 11 is a sign bit, and if those two look unrelated for a
+servo, that assumption is the thing to doubt. Note these servos may arrive with
+non-zero offsets already set — this arm did (2027, -1723, 1772, -1706, -40,
+1317), stable across runs, which is why the existing value is always read and
+folded in rather than assumed to be zero.
 
 `--skip-homing` records ranges against the zeros already in `robot.yaml` and
 writes nothing to the servos — for re-measuring after a calibrated arm has been

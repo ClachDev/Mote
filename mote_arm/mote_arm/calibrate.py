@@ -512,6 +512,53 @@ def record_path() -> Path:
     return mote_home() / "arm_calibration.yaml"
 
 
+def offsets_backup_path() -> Path:
+    return mote_home() / "arm_offsets_backup.yaml"
+
+
+def save_offsets_backup(
+    offsets: dict[str, int],
+    ids: dict[str, int],
+    when: str,
+    path: Path | str | None = None,
+) -> Path:
+    """Record the offsets currently in EEPROM, *before* any are overwritten.
+
+    The offset register is the one piece of arm state with no other copy: it
+    lives only in the servo, and once overwritten the previous value is gone. A
+    calibration run that dies partway would otherwise leave an arm nobody can
+    put back. Written before the first write, so it always describes the state
+    to return to.
+    """
+    p = Path(path) if path is not None else offsets_backup_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "saved": when,
+                "offsets": {
+                    name: {"id": ids[name], "offset": value}
+                    for name, value in sorted(offsets.items())
+                },
+            },
+            sort_keys=True,
+        )
+    )
+    return p
+
+
+def load_offsets_backup(path: Path | str | None = None) -> dict[str, int]:
+    """Return {joint: offset} from the backup, or empty if there is none."""
+    p = Path(path) if path is not None else offsets_backup_path()
+    if not p.exists():
+        return {}
+    data = yaml.safe_load(p.read_text()) or {}
+    return {
+        str(name): int(entry["offset"])
+        for name, entry in (data.get("offsets") or {}).items()
+    }
+
+
 def save_record(
     calibrated: dict[str, JointCalibration],
     recorded: str,

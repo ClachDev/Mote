@@ -526,3 +526,39 @@ def test_full_sweep_spans_a_sensible_arc():
     """A 2000-count sweep is ~pi radians — the conversion is not scaled wrong."""
     sweep = _record("j", _ramp(1000, 3048)).result()
     assert sweep.span_rad == pytest.approx(math.pi, abs=0.1)
+
+
+def test_offsets_backup_round_trips(tmp_path):
+    path = calibrate.save_offsets_backup(
+        {"shoulder_pan": 2027, "gripper": 1317},
+        {"shoulder_pan": 1, "gripper": 6},
+        "2026-07-28 10:00:00Z",
+        tmp_path / "arm_offsets_backup.yaml",
+    )
+    assert calibrate.load_offsets_backup(path) == {
+        "shoulder_pan": 2027,
+        "gripper": 1317,
+    }
+    data = yaml.safe_load(path.read_text())
+    assert data["saved"] == "2026-07-28 10:00:00Z"
+    assert data["offsets"]["shoulder_pan"]["id"] == 1
+
+
+def test_offsets_backup_absent_is_empty_not_an_error(tmp_path):
+    assert calibrate.load_offsets_backup(tmp_path / "nope.yaml") == {}
+
+
+def test_offsets_backup_path_follows_mote_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
+    assert calibrate.offsets_backup_path() == tmp_path / "arm_offsets_backup.yaml"
+
+
+def test_offsets_backup_preserves_negative_values(tmp_path):
+    """The real arm's offsets are signed; a backup that lost the sign is useless."""
+    path = calibrate.save_offsets_backup(
+        {"shoulder_lift": -1723, "wrist_flex": -1706},
+        {"shoulder_lift": 2, "wrist_flex": 4},
+        "now",
+        tmp_path / "b.yaml",
+    )
+    assert calibrate.load_offsets_backup(path)["shoulder_lift"] == -1723

@@ -59,6 +59,7 @@ from mote_arm.calibrate import (
     joints_block,
     limits_from_sweep,
     pose_impact,
+    save_offsets_backup,
     save_record,
     zero_shift,
 )
@@ -155,7 +156,6 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
         "report, not where the arm is."
     )
 
-    before = _read_all(bus, joints)
     existing: dict[str, int] = {}
     for joint in joints:
         current = bus.read_homing_offset(joint.id)
@@ -190,51 +190,74 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
     if not _confirm("write homing offsets? [y/N] ", args.yes):
         raise SystemExit("aborted; nothing written")
 
-    failed = []
+    # Snapshot before the first write. These values exist nowhere but the
+    # servos, so without this a run that dies partway leaves an arm that cannot
+    # be put back — which is exactly what happened once.
+    backup = save_offsets_backup(
+        existing,
+        {j.name: j.id for j in joints},
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
+    )
+    print(f"previous offsets backed up to {backup}")
+    print("  (`pixi run arm-offsets restore` puts them back)")
+
+    written: list[str] = []
     for joint in joints:
         if joint.name not in stale:
             continue
+        # Read again here rather than reusing the pre-prompt reading: the arm is
+        # limp and may have sagged while the operator answered.
+        was = bus.read_position(joint.id)
         ok = bus.write_homing_offset(joint.id, wanted[joint.name])
-        print(f"  {joint.name:<16} {'written and verified' if ok else 'FAILED'}")
         if not ok:
-            failed.append(joint.name)
-    if failed:
-        raise SystemExit(f"could not verify the homing offset on: {failed}")
+            _abort_partial(written, backup, f"{joint.name}: write not verified")
+        moved = _reading_moved_as_expected(
+            bus, joint, was, existing[joint.name], wanted[joint.name]
+        )
+        if moved is not None:
+            _abort_partial(written, backup, moved)
+        written.append(joint.name)
+        print(f"  {joint.name:<16} written, verified, and reading confirmed")
 
-    _verify_offsets_moved_readings(bus, joints, before, existing, wanted)
+    print(
+        f"\noffsets verified: {len(written)} reading(s) moved by exactly what "
+        "was written."
+    )
     return wanted
 
 
-def _verify_offsets_moved_readings(bus, joints, before, existing, wanted) -> None:
-    """Check the readings shifted by exactly what the offsets should shift them.
+def _abort_partial(written: list[str], backup, why: str) -> None:
+    """Stop the moment a write cannot be trusted, saying what state we are in."""
+    raise SystemExit(
+        f"\nSTOPPED: {why}\n"
+        f"{len(written)} servo(s) were changed before this: {written or 'none'}.\n"
+        f"The arm is part-way through a calibration. Put it back with:\n"
+        f"    pixi run arm-offsets restore     # from {backup}\n"
+        "then investigate before re-running."
+    )
 
-    The read-back in ``write_homing_offset`` proves the register holds the value
-    we asked for. This proves the servo *acts* on it the way the datasheet says,
-    which also catches a wrong sign encoding: an inverted sign would move the
-    reading by twice the offset, in the wrong direction.
+
+def _reading_moved_as_expected(bus, joint, was, existing, wanted) -> str | None:
+    """None if the joint's reading shifted by the offset delta; else why not.
+
+    Checked per joint, immediately after its write, so a servo that does not
+    behave as assumed stops the run rather than being discovered at the end
+    with five more already changed.
     """
-    time.sleep(0.2)
-    after = _read_all(bus, joints)
-    wrong = []
-    for joint in joints:
-        was, now = before[joint.name], after[joint.name]
-        if was is None or now is None:
-            continue
-        shift = wanted[joint.name] - existing[joint.name]
-        expected = (was - shift) % 4096
-        # A few counts of slack: the arm can settle while limp between reads.
-        if min(abs(now - expected), 4096 - abs(now - expected)) > 25:
-            wrong.append((joint.name, was, expected, now))
-    if not wrong:
-        print("\noffsets verified: every reading moved by exactly what was written.")
-        return
-    print("\nWARNING: these joints did not move by the offset that was written:")
-    for name, was, expected, now in wrong:
-        print(f"  {name:<16} was {was}, expected {expected}, reads {now}")
-    print(
-        "  Either the arm moved while limp, or this servo firmware applies the\n"
-        "  correction register differently than assumed. Check a jog move before\n"
-        "  trusting the limits."
+    if was is None:
+        return None
+    time.sleep(0.1)
+    now = bus.read_position(joint.id)
+    if now is None:
+        return f"{joint.name}: could not read its position back after writing"
+    expected = (was - (wanted - existing)) % 4096
+    error = min(abs(now - expected), 4096 - abs(now - expected))
+    if error <= 25:
+        return None
+    return (
+        f"{joint.name}: reading was {was}, expected {expected} after the offset "
+        f"write, but reads {now}. Either the arm moved while limp, or this servo "
+        "does not apply the correction register as assumed."
     )
 
 

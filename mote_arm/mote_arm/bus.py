@@ -14,6 +14,7 @@ is only needed at runtime on the robot.
 from __future__ import annotations
 
 import os
+import struct
 import time
 from dataclasses import dataclass
 
@@ -177,33 +178,43 @@ class FeetechBus:
     def _ok(self, comm: int, err: int) -> bool:
         return comm == self._comm_success and err == 0
 
+    def _read(self, width: int, servo_id: int, address: int) -> int | None:
+        """Read a 1- or 2-byte register, or None if the read did not come back.
+
+        Every SDK read goes through here because ``read2ByteTxRx`` indexes the
+        received buffer *before* checking it is long enough, so a short reply
+        raises IndexError rather than reporting a failure. On a busy shared bus
+        that turned a dropped packet into a crash — mid-EEPROM-write, on real
+        hardware. A read that does not come back is a None, never an exception.
+        """
+        reader = (
+            self._packet.read1ByteTxRx if width == 1 else self._packet.read2ByteTxRx
+        )
+        try:
+            value, comm, err = reader(self._port, servo_id, address)
+        except (IndexError, TypeError, struct.error):
+            return None
+        return value if self._ok(comm, err) else None
+
     def ping(self, servo_id: int) -> bool:
-        _model, comm, err = self._packet.ping(self._port, servo_id)
+        try:
+            _model, comm, err = self._packet.ping(self._port, servo_id)
+        except (IndexError, TypeError, struct.error):
+            return False
         return self._ok(comm, err)
 
     def read_position(self, servo_id: int) -> int | None:
         """Return raw encoder counts (0-4095), or None on comms failure."""
-        pos, comm, err = self._packet.read2ByteTxRx(
-            self._port, servo_id, _PRESENT_POSITION
-        )
-        return pos if self._ok(comm, err) else None
+        return self._read(2, servo_id, _PRESENT_POSITION)
 
     def read_health(self, servo_id: int) -> ServoHealth | None:
         pos = self.read_position(servo_id)
         if pos is None:
             return None
-        volt, comm, err = self._packet.read1ByteTxRx(
-            self._port, servo_id, _PRESENT_VOLTAGE
-        )
-        temp, comm2, err2 = self._packet.read1ByteTxRx(
-            self._port, servo_id, _PRESENT_TEMPERATURE
-        )
-        raw_load, comm3, err3 = self._packet.read2ByteTxRx(
-            self._port, servo_id, _PRESENT_LOAD
-        )
-        if not (
-            self._ok(comm, err) and self._ok(comm2, err2) and self._ok(comm3, err3)
-        ):
+        volt = self._read(1, servo_id, _PRESENT_VOLTAGE)
+        temp = self._read(1, servo_id, _PRESENT_TEMPERATURE)
+        raw_load = self._read(2, servo_id, _PRESENT_LOAD)
+        if volt is None or temp is None or raw_load is None:
             return None
         # Load bit 10 is the sign; low 10 bits are the magnitude.
         load = -(raw_load & 0x3FF) if raw_load & 0x400 else (raw_load & 0x3FF)
@@ -249,8 +260,8 @@ class FeetechBus:
 
     def _read_mode(self, servo_id: int, attempts: int = 3) -> int | None:
         for attempt in range(attempts):
-            mode, comm, err = self._packet.read1ByteTxRx(self._port, servo_id, _MODE)
-            if self._ok(comm, err):
+            mode = self._read(1, servo_id, _MODE)
+            if mode is not None:
                 return mode
             if attempt + 1 < attempts:
                 time.sleep(0.05)
@@ -274,8 +285,7 @@ class FeetechBus:
         return None
 
     def _read_gain_reg(self, servo_id: int, addr: int) -> int | None:
-        value, comm, err = self._packet.read1ByteTxRx(self._port, servo_id, addr)
-        return value if self._ok(comm, err) else None
+        return self._read(1, servo_id, addr)
 
     def write_gains(self, servo_id: int, kp: int, kd: int, ki: int) -> bool:
         """Write the position-loop gains to EEPROM and verify they took.
@@ -315,10 +325,21 @@ class FeetechBus:
         return None
 
     def _read_offset_once(self, servo_id: int) -> int | None:
-        raw, comm, err = self._packet.read2ByteTxRx(
-            self._port, servo_id, _HOMING_OFFSET
-        )
-        return raw if self._ok(comm, err) else None
+        return self._read(2, servo_id, _HOMING_OFFSET)
+
+    def read_homing_offset_raw(self, servo_id: int) -> int | None:
+        """The offset register's undecoded value, for diagnosing the decoding.
+
+        ``read_homing_offset`` applies the sign-magnitude interpretation. When
+        that interpretation is what is in doubt, this is the number to look at.
+        """
+        for _ in range(5):
+            first = self._read_offset_once(servo_id)
+            time.sleep(0.05)
+            if first is not None and first == self._read_offset_once(servo_id):
+                return first
+            time.sleep(0.1)
+        return None
 
     def write_homing_offset(self, servo_id: int, offset: int) -> bool:
         """Write the position-correction offset to EEPROM and verify it took.

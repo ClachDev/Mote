@@ -247,6 +247,20 @@ section. Contains:
   (their only record outside EEPROM) go to `~/.mote/arm_calibration.yaml`.
   `--skip-homing` re-measures ranges without writing anything. The maths is
   ROS-free and unit-tested (`test_calibrate.py`).
+- `arm_offsets` (`pixi run arm-offsets show|backup|restore|set`) — the offset
+  register is the **only arm state with no copy outside the servo**, so
+  overwriting it destroys the previous value. `arm-calibrate` snapshots the
+  existing offsets to `~/.mote/arm_offsets_backup.yaml` before its first write,
+  writes/verifies/confirms each servo one at a time, and on any failure stops
+  and points here. This exists because a run once died mid-write on a dropped
+  serial read, leaving a part-calibrated arm with no way back. **Servos can
+  arrive with non-zero offsets** (this arm: 2027, -1723, 1772, -1706, -40,
+  1317), so the existing value is always read and folded in.
+- **`FeetechBus._read` guards every SDK read.** `scservo_sdk`'s
+  `read2ByteTxRx` indexes the reply buffer before checking its length, so a
+  dropped packet raises `IndexError` rather than reporting failure — which
+  crashed the above. A read that does not come back is `None`, never an
+  exception.
 - `poses.py` + `arm_pose` (`pixi run arm-pose`) — teach/replay named poses
   (`~/.mote/arm_poses.yaml`, `MOTE_HOME`-overridable), the arm's analogue of
   `save-zone`. `go` refuses moves over `--max-travel`. Changing `home`
