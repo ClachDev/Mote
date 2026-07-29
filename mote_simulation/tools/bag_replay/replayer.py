@@ -179,6 +179,21 @@ def main():
     ap.add_argument(
         "--max-scans", type=int, default=0, help="0 = whole bag (debug cap)"
     )
+    ap.add_argument(
+        "--skip-secs",
+        type=float,
+        default=0.0,
+        help="withhold scans before this bag-relative time (TF still replays, "
+        "so the odometry prior is warm when insertion starts) — surgical "
+        "trim of a bad opening, e.g. a collision during the seeding spin",
+    )
+    ap.add_argument(
+        "--stop-secs",
+        type=float,
+        default=0.0,
+        help="stop feeding at this bag-relative time (0 = whole bag) — "
+        "surgical trim of a drifty ending",
+    )
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -220,8 +235,9 @@ def main():
         elif topic == "/tf":
             node.handle_tf(msg)
         elif topic == "/scan_filtered":
-            node.scan_pub.publish(msg)
-            n_scans += 1
+            if sim_t >= args.skip_secs:
+                node.scan_pub.publish(msg)
+                n_scans += 1
         rclpy.spin_once(node, timeout_sec=0.0)
 
         if sim_t - last_sample >= args.sample_dt:
@@ -229,6 +245,9 @@ def main():
             last_sample = sim_t
 
         if args.max_scans and n_scans >= args.max_scans:
+            stop = True
+            break
+        if args.stop_secs and sim_t >= args.stop_secs:
             stop = True
             break
 
