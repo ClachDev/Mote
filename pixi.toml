@@ -90,6 +90,7 @@ nav = "ros2 launch mote_bringup nav2_launch.py"
 robot = "ros2 launch mote_bringup robot_launch.py"
 slam = "ros2 launch mote_bringup slam_launch.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
+explore = "ros2 run mote_bringup explore"
 perception = "ros2 launch mote_perception perception_launch.py"
 # Remote observability + teleop (docs/fleet/README.md §10). Included in the base
 # by default, so this is for running it on its own — or under systemd, where

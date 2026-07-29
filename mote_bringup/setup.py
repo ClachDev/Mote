@@ -38,6 +38,7 @@ setup(
             "identity = mote_bringup.identity:main",
             "provision = mote_bringup.provision:main",
             "dds_participants = mote_bringup.dds_participants:main",
+            "explore = mote_bringup.explore:main",
         ],
     },
 )

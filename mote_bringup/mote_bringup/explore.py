@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Headless autonomous exploration for building a sim map.
+"""Autonomous exploration for building a map — real robot or sim.
 
-Drives the robot to cover an unmapped world so slam_toolbox sees every wall,
+Drives the robot to cover an unmapped space so slam_toolbox sees every wall,
 then exits. Two behaviours working together off the live ``/map``:
 
 * follow — reactive left-wall following (the left-hand-rule maze walker) off
@@ -15,18 +15,33 @@ then exits. Two behaviours working together off the live ``/map``:
   reactive steering cannot — then following resumes there. Unreachable
   frontiers are blacklisted so exploration keeps moving.
 
-Ends when no reachable frontier remains (covered) or the budget elapses. Gates
-on sim time (/clock), not wall time. The lidar frame is yawed from base_link,
-so scan bearings are rotated into the base frame (via TF) before sectoring.
+A stuck detector watches for commanded forward motion that produces no
+map-frame displacement — the signature of the obstacles a 2D lidar cannot see
+(rug edges, cables, low clutter): the wheels are told to drive, scan says the
+way is clear, and the pose does not move. On firing it backs off, turns away
+from the followed wall, and blacklists the spot for relocation targets.
 
-Run inside the mapping sim (sim_launch.py mode:=mapping is already up):
-    python explore.py [--budget SECONDS]
+Ends when no reachable frontier remains (covered) or the budget elapses. All
+mission gates run on the node clock: wall time on the robot, /clock under
+``--sim-time``. The lidar frame is yawed from base_link, so scan bearings are
+rotated into the base frame (via TF) before sectoring.
+
+Run on the robot, inside a mapping mission (`pixi run mapping` is already up —
+run both on the Pi so a wifi drop cannot end the session):
+    pixi run explore
+Run in the sim (sim_launch.py mode:=mapping is already up):
+    ros2 run mote_bringup explore --sim-time [--budget SECONDS]
+
+The default geometry thresholds suit corridor-scale spaces; domestic layouts
+(~0.75 m doorways, ~1 m hallways) want them tightened — see --cruise,
+--obstacle, --desired-left, --follow-band.
 """
 
 import argparse
 import math
 import sys
 import time
+from collections import deque
 
 import numpy as np
 import rclpy
@@ -40,16 +55,12 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import LaserScan
 
-CRUISE = 0.28  # forward speed (m/s); under the controller's 0.3 linear cap
-DESIRED_LEFT = 0.8  # target distance to the left wall (m)
-OBSTACLE = 0.55  # front clearance below which we stop and turn (m)
 KP = 1.5  # wall-follow proportional gain
 WZ_CAP = 0.6  # max wall-follow yaw rate (rad/s)
 TURN = 0.8  # in-place turn rate when blocked (rad/s)
-FOLLOW_BAND = 1.3  # left distance under which we track the wall (else go straight)
-PLATEAU = 20.0  # sim s of flat map before handing off to a Nav2 relocation
+PLATEAU = 20.0  # s of flat map before handing off to a Nav2 relocation
 MAX_FOLLOW = 70.0  # force a relocation after this long following (break loop cycling)
-NAV_TIMEOUT = 60.0  # sim s to reach a relocation frontier before giving up
+NAV_TIMEOUT = 60.0  # s to reach a relocation frontier before giving up
 BL_RADIUS = 2.5  # blacklist this radius (m) around an unreachable frontier
 REACHED = 1.0  # frontiers within this of the robot are ignored (m)
 COARSE = 4.0  # coarse-cell size (m) for the visited grid — steers relocation to
@@ -58,6 +69,10 @@ COARSE = 4.0  # coarse-cell size (m) for the visited grid — steers relocation 
 BACKOFF = 0.8  # aim the Nav2 goal this far back from the frontier, into known
 # free space, so the planner can actually reach it (a frontier cell sits on the
 # unknown boundary, inside costmap inflation, and goals there never quite arrive)
+STUCK_WINDOW = 6.0  # s of commanded-forward, no-displacement before escaping
+STUCK_TRAVEL = 0.10  # map-frame displacement (m) under which "no displacement"
+ESCAPE_REVERSE = 1.5  # s of backing off when stuck
+ESCAPE_TURN = 1.5  # s of turning away from the followed wall after backing off
 
 
 def norm(a):
@@ -68,14 +83,51 @@ def yaw_of(q):
     return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
+class StuckDetector:
+    """Commanded forward motion with no actual displacement, over a window.
+
+    Fed ``(t, x, y)`` pose samples while forward motion is commanded; any
+    non-forward command resets the window (turning in place at a wall is not
+    the stuck mode this detects). Fires when the window is full and the net
+    displacement across it stays under ``min_travel`` — pure logic, no ROS, so
+    the threshold behaviour is unit-testable.
+    """
+
+    def __init__(self, window=STUCK_WINDOW, min_travel=STUCK_TRAVEL):
+        self.window = window
+        self.min_travel = min_travel
+        self.samples = deque()
+
+    def reset(self):
+        self.samples.clear()
+
+    def update(self, t, x, y, forward):
+        if not forward:
+            self.reset()
+            return False
+        self.samples.append((t, x, y))
+        while self.samples and t - self.samples[0][0] > self.window:
+            self.samples.popleft()
+        t0, x0, y0 = self.samples[0]
+        if t - t0 < 0.9 * self.window:
+            return False
+        return math.hypot(x - x0, y - y0) < self.min_travel
+
+
 class Explorer(Node):
-    def __init__(self):
-        super().__init__("sim_explorer")
-        self.set_parameters([rclpy.parameter.Parameter("use_sim_time", value=True)])
+    def __init__(self, args):
+        super().__init__("explorer")
+        if args.sim_time:
+            self.set_parameters([rclpy.parameter.Parameter("use_sim_time", value=True)])
+        self.cruise = args.cruise
+        self.obstacle = args.obstacle
+        self.desired_left = args.desired_left
+        self.follow_band = args.follow_band
         self.scan = None
         self.odom = None
         self.grid = None
         self.yaw_off = None
+        self.cmd_vx = 0.0
         # /scan_filtered, not /scan: the filter chain nulls the blind-spot
         # sectors where the lidar sees the robot's own body (~0.12 m). Raw /scan
         # would read those self-hits as a permanent wall 13 cm to each side.
@@ -105,7 +157,7 @@ class Explorer(Node):
     def on_map(self, msg):
         self.grid = msg
 
-    def sim_now(self):
+    def now_s(self):
         return self.get_clock().now().nanoseconds / 1e9
 
     def resolve_yaw_offset(self):
@@ -159,22 +211,34 @@ class Explorer(Node):
         m.twist.linear.x = vx
         m.twist.angular.z = wz
         self.cmd_pub.publish(m)
+        self.cmd_vx = vx
 
     def spin_seed(self, seconds):
-        start = self.sim_now()
-        while self.sim_now() - start < seconds:
+        start = self.now_s()
+        while self.now_s() - start < seconds:
             self.publish(0.0, 0.6)
             rclpy.spin_once(self, timeout_sec=0.05)
 
     def wall_follow_step(self, front, left):
-        vx_scale = 0.4 if front < 2 * OBSTACLE else 1.0
-        if front < OBSTACLE:
+        vx_scale = 0.4 if front < 2 * self.obstacle else 1.0
+        if front < self.obstacle:
             self.publish(0.0, -TURN)  # blocked: turn right, keep wall on the left
-        elif left < FOLLOW_BAND:
-            wz = max(-WZ_CAP, min(WZ_CAP, KP * (left - DESIRED_LEFT)))
-            self.publish(CRUISE * vx_scale, wz)
+        elif left < self.follow_band:
+            wz = max(-WZ_CAP, min(WZ_CAP, KP * (left - self.desired_left)))
+            self.publish(self.cruise * vx_scale, wz)
         else:
-            self.publish(CRUISE * vx_scale, 0.0)  # open: go straight to find a wall
+            self.publish(self.cruise * vx_scale, 0.0)  # open: find a wall
+        return self.cmd_vx > 0.0
+
+    def escape(self):
+        """Back off and turn away from the followed wall (right, since the wall
+        is kept on the left) — the recovery for lidar-invisible obstacles."""
+        for vx, wz, dur in ((-0.15, 0.0, ESCAPE_REVERSE), (0.0, -TURN, ESCAPE_TURN)):
+            start = self.now_s()
+            while self.now_s() - start < dur:
+                self.publish(vx, wz)
+                rclpy.spin_once(self, timeout_sec=0.05)
+        self.publish(0.0, 0.0)
 
     def frontiers(self):
         """(N,2) world-frame frontier points: free cells 4-adjacent to unknown."""
@@ -226,14 +290,14 @@ class Explorer(Node):
         goal.pose.pose.position.y = float(y)
         goal.pose.pose.orientation.w = 1.0
         send = self.nav.send_goal_async(goal)
-        t0 = self.sim_now()
-        while not send.done() and self.sim_now() - t0 < 10:
+        t0 = self.now_s()
+        while not send.done() and self.now_s() - t0 < 10:
             rclpy.spin_once(self, timeout_sec=0.1)
         if not send.done() or send.result() is None or not send.result().accepted:
             return "rejected"
         handle = send.result()
         result_fut = handle.get_result_async()
-        while self.sim_now() - t0 < NAV_TIMEOUT:
+        while self.now_s() - t0 < NAV_TIMEOUT:
             rclpy.spin_once(self, timeout_sec=0.1)
             if result_fut.done():
                 ok = result_fut.result().status == GoalStatus.STATUS_SUCCEEDED
@@ -249,17 +313,41 @@ def known_cells(grid):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--budget", type=float, default=900.0, help="sim-time seconds")
+    ap.add_argument("--budget", type=float, default=900.0, help="mission seconds")
     ap.add_argument(
         "--min-time",
         type=float,
         default=90.0,
-        help="explore at least this long (sim s)",
+        help="explore at least this long (s)",
+    )
+    ap.add_argument(
+        "--sim-time",
+        action="store_true",
+        help="gate on /clock (running inside the sim)",
+    )
+    ap.add_argument("--cruise", type=float, default=0.28, help="forward speed (m/s)")
+    ap.add_argument(
+        "--obstacle",
+        type=float,
+        default=0.55,
+        help="front clearance below which we stop and turn (m)",
+    )
+    ap.add_argument(
+        "--desired-left",
+        type=float,
+        default=0.8,
+        help="target distance to the left wall (m)",
+    )
+    ap.add_argument(
+        "--follow-band",
+        type=float,
+        default=1.3,
+        help="left distance under which we track the wall (m)",
     )
     args = ap.parse_args()
 
     rclpy.init()
-    node = Explorer()
+    node = Explorer(args)
 
     deadline = time.monotonic() + 40
     while (node.scan is None or node.odom is None) and time.monotonic() < deadline:
@@ -272,19 +360,33 @@ def main():
     print("seeding map with an in-place spin...", flush=True)
     node.spin_seed(7.0)
 
-    start = node.sim_now()
+    start = node.now_s()
     best_known = 0
     best_at = start
     check_at = start
     last_relocate = start
     blacklist = []
     visited = set()
+    stuck = StuckDetector()
 
-    while node.sim_now() - start < args.budget:
+    while node.now_s() - start < args.budget:
         rclpy.spin_once(node, timeout_sec=0.05)
-        t = node.sim_now()
+        t = node.now_s()
         front, left, _ = node.sectors()
-        node.wall_follow_step(front, left)
+        forward = node.wall_follow_step(front, left)
+
+        here = node.robot_xy()
+        if here is not None and stuck.update(t, here[0], here[1], forward):
+            print(
+                f"[{t - start:6.1f}s] stuck at ({here[0]:+.1f},{here[1]:+.1f}) "
+                "(forward commanded, no map-frame motion) — escaping",
+                flush=True,
+            )
+            node.escape()
+            blacklist.append(here)
+            stuck.reset()
+            best_at = node.now_s()
+            continue
 
         if t - check_at <= 5.0:
             continue
@@ -294,7 +396,6 @@ def main():
             best_known = k
             best_at = t
         fronts = node.frontiers()
-        here = node.robot_xy()
         if here is not None:
             visited.add((int(here[0] // COARSE), int(here[1] // COARSE)))
         print(
@@ -330,15 +431,16 @@ def main():
             flush=True,
         )
         res = node.navigate_to(gx, gy)
-        print(f"[{node.sim_now() - start:6.1f}s]   relocate {res}", flush=True)
+        print(f"[{node.now_s() - start:6.1f}s]   relocate {res}", flush=True)
         if res != "ok":
             blacklist.append(target)
-        best_at = node.sim_now()  # fresh windows wherever we ended up
-        last_relocate = node.sim_now()
-        check_at = node.sim_now()
+        stuck.reset()
+        best_at = node.now_s()  # fresh windows wherever we ended up
+        last_relocate = node.now_s()
+        check_at = node.now_s()
 
     node.publish(0.0, 0.0)
-    print(f"exploration done after {node.sim_now() - start:.1f}s sim time", flush=True)
+    print(f"exploration done after {node.now_s() - start:.1f}s", flush=True)
     node.destroy_node()
     rclpy.shutdown()
     return 0

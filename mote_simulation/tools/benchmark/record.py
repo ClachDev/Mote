@@ -9,8 +9,9 @@ and Nav2 recovery activity, then writes ``series.json`` (raw samples, for offlin
 re-scoring) and ``metrics.json`` (via the ROS-free :mod:`metrics` module).
 
 Run one trial per process so each gets a clean rclpy context and DDS discovery,
-mirroring how ``explore.py`` drives the mapping sim. Everything is gated on sim
-time (``/clock``), not wall time, so results are invariant to real-time factor.
+mirroring how ``mote_bringup``'s explore tool drives the mapping sim. Everything
+is gated on sim time (``/clock``), not wall time, so results are invariant to
+real-time factor.
 """
 
 from __future__ import annotations

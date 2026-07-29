@@ -21,6 +21,30 @@ sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
 sudo systemctl disable mote-bringup mote-health        # back to manual
 ```
 
+## Mapping a space autonomously
+
+`pixi run explore` drives autonomous coverage against a live mapping mission:
+left-wall following for dense boundary tracing, a Nav2 frontier relocation when
+the map stops growing, and a stuck-escape (back off, turn away, blacklist the
+spot) for obstacles the 2D lidar cannot see — rug edges, cables, low clutter.
+It exits when no reachable frontier remains, then the map is saved like any
+other session. The sim builds its world sites with the same tool (`pixi run
+sim-map-world`, which passes `--sim-time`).
+
+**Run everything on the Pi**, in tmux, so losing wifi only loses your view of
+the mission — never the mission:
+
+```bash
+ssh <robot> tmux new -s map
+pixi run mapping      # window 1
+pixi run explore      # window 2 — watch progress via Foxglove
+pixi run save-map     # when it reports covered
+```
+
+The default thresholds suit corridor-scale spaces. Domestic layouts (~0.75 m
+doorways) want the geometry tightened, e.g.
+`pixi run explore -- --cruise 0.2 --obstacle 0.4 --desired-left 0.6 --follow-band 1.0`.
+
 ## systemd services
 
 Installed by `pixi run setup` (→ `systemd/install.sh`), which fills in the
