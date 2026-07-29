@@ -388,7 +388,10 @@ def main():
             node.escape()
             blacklist.append(here)
             stuck.reset()
-            best_at = node.now_s()
+            # best_at deliberately not reset: a run of stuck-escapes means the
+            # map is not growing, and that is exactly what the plateau trigger
+            # exists to notice — resetting it here would let repeated bumps
+            # suppress the Nav2 relocation that breaks the cycle.
             continue
 
         if t - check_at <= 5.0:
