@@ -81,6 +81,15 @@
       "leftButton": { "field": "angular-z", "value": 0.6 },
       "rightButton": { "field": "angular-z", "value": -0.6 }
     },
+    "Publish!navlock": {
+      "topicName": "/pause_navigation",
+      "datatype": "std_msgs/msg/Bool",
+      "buttonText": "Send",
+      "buttonTooltip": "true holds Nav2 off the wheels; false hands it back",
+      "buttonColor": "#ffab40",
+      "advancedView": true,
+      "value": "{\n  \"data\": true\n}"
+    },
     "DiagnosticSummary!health": {
       "topicToRender": "/diagnostics_agg",
       "minLevel": 0,
@@ -102,8 +111,13 @@
       "second": {
         "direction": "column",
         "first": "Teleop!drive",
-        "second": "DiagnosticSummary!health",
-        "splitPercentage": 60
+        "second": {
+          "direction": "column",
+          "first": "Publish!navlock",
+          "second": "DiagnosticSummary!health",
+          "splitPercentage": 40
+        },
+        "splitPercentage": 45
       },
       "splitPercentage": 45
     },

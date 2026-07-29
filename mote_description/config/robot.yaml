@@ -31,11 +31,15 @@ servos:
 #
 # WIRING: the arm SHARES the drive-wheel bus (verified on the robot: IDs 1-6
 # for the arm, 7/9 for the wheels, all on /dev/mote_servos). Consequences:
-#   * arm IDs must never collide with the wheel IDs — mote_arm.config rejects
-#     that at load time;
-#   * only one process may open this port, so the arm driver cannot run at the
-#     same time as the robot base (mote_launch and friends). mote_arm.bus
-#     refuses to open a port another process already holds.
+#   * arm IDs must never collide with the wheel IDs — rejected at load time by
+#     mote_arm.config and again by MoteHardware::on_init;
+#   * only one process may open this port, and that process is the
+#     controller_manager: MoteHardware drives the arm's position interfaces
+#     alongside the wheels' velocity ones, so the arm can move during a mission.
+#     The joint entries below are read by mote.urdf.xacro into <ros2_control>
+#     joint <param>s, which is how each servo's limits reach the hardware;
+#   * the bench tools that still open the bus directly (arm-check, arm-gains)
+#     need the control stack stopped first.
 arm:
   port: /dev/mote_servos
   baud_rate: 1000000

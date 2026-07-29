@@ -45,8 +45,11 @@ LEVEL_NAME = {
     DiagnosticStatus.STALE: "STALE",
 }
 
-# system_monitor's host status, matched by exact name on the shared /diagnostics.
-HOST_STATUS_NAME = "system"
+# Statuses lifted from the shared /diagnostics into the roll-up, matched by exact
+# name: system_monitor's host status, and slip_monitor's odometry-residual
+# verdict. Both are first-party monitors publishing one named status. Overridable
+# via health.yaml's `diagnostic_statuses`.
+DIAGNOSTIC_STATUS_NAMES = ("system", "slip")
 
 # How much a missing/stale subsystem degrades the robot summary. "info" reports
 # the subsystem without degrading — for edges that are legitimately absent in a
@@ -163,7 +166,10 @@ class HealthMonitor(Node):
             self.tf_buffer = tf2_ros.Buffer()
             self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        self.host_status = None
+        self.wanted_statuses = tuple(
+            cfg.get("diagnostic_statuses", DIAGNOSTIC_STATUS_NAMES)
+        )
+        self.forwarded = {}
         if cfg.get("subscribe_diagnostics", True):
             self.create_subscription(
                 DiagnosticArray, "diagnostics", self._on_diagnostics, 10
@@ -184,15 +190,14 @@ class HealthMonitor(Node):
         self._sd.ready(status="health monitor up")
 
     def _on_diagnostics(self, msg):
-        # Only system_monitor's host status feeds the roll-up, matched by exact
-        # name: /diagnostics is a shared topic — controller_manager publishes its
-        # own loop-jitter status there — and folding a third party's level in
-        # would attribute it to the host. Other publishers stay visible on
+        # Only the named first-party statuses feed the roll-up, matched exactly:
+        # /diagnostics is a shared topic — controller_manager publishes its own
+        # loop-jitter status there — and folding a third party's level in would
+        # attribute it to one of ours. Other publishers stay visible on
         # /diagnostics itself.
         for status in msg.status:
-            if status.name == HOST_STATUS_NAME:
-                self.host_status = status
-                break
+            if status.name in self.wanted_statuses:
+                self.forwarded[status.name] = status
 
     def _tick(self):
         now_wall = time.monotonic()
@@ -219,11 +224,17 @@ class HealthMonitor(Node):
                 if level >= DiagnosticStatus.WARN:
                     faults.append(f"{tf_watch.name} {message}")
 
-        if self.host_status is not None:
-            statuses.append(self.host_status)
-            overall = max(overall, self.host_status.level)
-            if self.host_status.level >= DiagnosticStatus.WARN:
-                faults.append(f"host {_one_line(self.host_status.message)}")
+        for name in self.wanted_statuses:
+            status = self.forwarded.get(name)
+            if status is None:
+                # A monitor that is not running is simply absent, exactly as
+                # before: its own liveness is not this monitor's to assert.
+                continue
+            statuses.append(status)
+            overall = max(overall, status.level)
+            if status.level >= DiagnosticStatus.WARN:
+                label = "host" if name == "system" else name
+                faults.append(f"{label} {_one_line(status.message)}")
 
         selfcheck = self._read_selfcheck()
         if selfcheck is not None:

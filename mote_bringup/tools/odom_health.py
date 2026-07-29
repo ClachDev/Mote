@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Score kinematic_icp against wheel odometry on a recorded mapping bag.
+"""Score kinematic_icp against wheel odometry over a whole recorded session.
 
 Mote carries two independent motion sources: wheel odometry, and kinematic_icp's
 scan-matched pose. kinematic_icp *takes* the wheel odom as its prior and corrects
 it, so the disagreement between them is a direct measure of how wrong the prior
 was — a slip signal, and a lidar-odometry health check, needing no extra sensor.
 
-Both signals are already in a mapping bag's ``/tf``, so nothing is replayed:
-
-    odom -> base_footprint        kinematic_icp's scan-matched pose (lidar rate)
-    base_footprint -> odom_wheel  the inverted wheel-odom leaf (odom_tf_relay)
-
-Inverting the second gives the wheel-odom pose of base. Both frames start
-coincident, so the trajectories are directly comparable.
+This is the *survey* view of a session: totals and distributions over every
+interval. For the verdicts the robot itself would have raised, use
+``slip_replay.py``, which drives the live detector over the same bag. Both read
+the bag through ``bag_odometry.read_samples`` and share ``rel_motion`` with the
+node, so neither tool can drift from what runs on the robot.
 
 Two things are reported:
 
@@ -25,10 +23,13 @@ Two things are reported:
   scan-match excursions. Isolated single-frame runs indicate momentary jumps
   rather than sustained misregistration.
 
-Caveat: wheel odom (~100 Hz) is resampled onto ICP stamps (~10 Hz), so during
-fast in-place turns a small stamp misalignment inflates the *yaw* residual (at
-90 deg/s, 10 ms of skew alone looks like ~9 deg/s). Treat the yaw residual as
-indicative until the two streams are properly time-synced.
+On the yaw residual: it is reported, but at this interval length it is dominated
+by scan-match jitter rather than by any real disagreement. A lag sweep over the
+recorded bags puts the two streams within +/-10 ms of each other, so stamp skew
+does not explain it; it simply averages down as the comparison window grows
+(p50 ~3.0 deg/s at 0.1 s, ~1.1 at 1.0 s, ~0.5 at 2.0 s). That is why the live
+detector thresholds translation only — see
+``docs/tuning/2026-07-28-slip-detection.md``.
 
     pixi run -- python mote_bringup/tools/odom_health.py ~/.mote/bags/mapping/<run>
 """
@@ -36,17 +37,19 @@ indicative until the two streams are properly time-synced.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
-import rosbag2_py
 import yaml
 from ament_index_python.packages import get_package_share_directory
-from rclpy.serialization import deserialize_message
-from tf2_msgs.msg import TFMessage
 
-ICP_EDGE = ("odom", "base_footprint")
-WHEEL_LEAF = ("base_footprint", "odom_wheel")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from bag_odometry import read_samples  # noqa: E402
+
+from mote_bringup.odom_residual import rel_motion  # noqa: E402
 
 
 def max_wheel_speed() -> float:
@@ -54,45 +57,6 @@ def max_wheel_speed() -> float:
         Path(get_package_share_directory("mote_description")) / "config" / "robot.yaml"
     ) as f:
         return float(yaml.safe_load(f)["max_wheel_speed"])
-
-
-def yaw_of(q):
-    return np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-
-
-def read_tf(bag: Path):
-    """Extract the ICP pose and the (inverted) wheel-odom pose from /tf."""
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(bag), storage_id="mcap"),
-        rosbag2_py.ConverterOptions("", ""),
-    )
-    reader.set_filter(rosbag2_py.StorageFilter(topics=["/tf"]))
-    icp, wheel = [], []
-    while reader.has_next():
-        _, data, _ = reader.read_next()
-        for tr in deserialize_message(data, TFMessage).transforms:
-            t = tr.header.stamp.sec + tr.header.stamp.nanosec * 1e-9
-            p, q = tr.transform.translation, tr.transform.rotation
-            pair = (tr.header.frame_id, tr.child_frame_id)
-            if pair == ICP_EDGE:
-                icp.append([t, p.x, p.y, yaw_of(q)])
-            elif pair == WHEEL_LEAF:
-                a = yaw_of(q)
-                c, s = np.cos(-a), np.sin(-a)
-                wheel.append([t, -(c * p.x - s * p.y), -(s * p.x + c * p.y), -a])
-    return np.array(icp), np.array(wheel)
-
-
-def rel_motion(x0, y0, a0, x1, y1, a1):
-    """Motion from pose0 to pose1, expressed in pose0's body frame."""
-    dx, dy = x1 - x0, y1 - y0
-    c, s = np.cos(-a0), np.sin(-a0)
-    return (
-        c * dx - s * dy,
-        s * dx + c * dy,
-        np.arctan2(np.sin(a1 - a0), np.cos(a1 - a0)),
-    )
 
 
 def runs_of(mask):
@@ -109,11 +73,27 @@ def runs_of(mask):
     return out
 
 
+def rel_motion_series(x, y, a):
+    """rel_motion applied pairwise down a trajectory.
+
+    The scalar rel_motion is the one the node runs; looping it here rather than
+    keeping a vectorised twin is what stops the two from drifting apart. A
+    session is a few tens of thousands of intervals, so the loop costs nothing.
+    """
+    steps = [
+        rel_motion(x[i], y[i], a[i], x[i + 1], y[i + 1], a[i + 1])
+        for i in range(len(x) - 1)
+    ]
+    dx, dy, da = zip(*steps) if steps else ((), (), ())
+    return np.array(dx), np.array(dy), np.array(da)
+
+
 def analyse(bag: Path, vmax: float, tol: float):
-    icp, wheel = read_tf(bag)
+    wheel_samples, icp_samples, _ = read_samples(bag)
+    icp, wheel = np.array(icp_samples), np.array(wheel_samples)
     if icp.shape[0] < 10 or wheel.shape[0] < 10:
         print(
-            f"{bag.name}: insufficient /tf data "
+            f"{bag.name}: insufficient odometry "
             f"(icp={icp.shape[0]}, wheel={wheel.shape[0]})"
         )
         return
@@ -128,8 +108,8 @@ def analyse(bag: Path, vmax: float, tol: float):
 
     dt = np.diff(t)
     ok = dt > 1e-3
-    idx, idy, ida = rel_motion(ix[:-1], iy[:-1], ia[:-1], ix[1:], iy[1:], ia[1:])
-    wdx, wdy, wda = rel_motion(wx[:-1], wy[:-1], wa[:-1], wx[1:], wy[1:], wa[1:])
+    idx, idy, ida = rel_motion_series(ix, iy, ia)
+    wdx, wdy, wda = rel_motion_series(wx, wy, wa)
 
     i_d, w_d = np.hypot(idx, idy)[ok], np.hypot(wdx, wdy)[ok]
     i_a, w_a, dtv = ida[ok], wda[ok], dt[ok]
@@ -163,7 +143,7 @@ def analyse(bag: Path, vmax: float, tol: float):
         print(
             f"      yaw          p50 {np.percentile(np.abs(res_a[moving]), 50):.2f}"
             f"  p99 {np.percentile(np.abs(res_a[moving]), 99):.2f}"
-            f"  max {np.max(np.abs(res_a[moving])):.2f} deg/s  (see time-sync caveat)"
+            f"  max {np.max(np.abs(res_a[moving])):.2f} deg/s  (jitter-dominated)"
         )
     print(
         f"  ICP speed above {limit:.3f} m/s (drive cannot produce it): "

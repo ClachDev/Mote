@@ -1,7 +1,8 @@
 """Teach and replay named arm poses.
 
-A client of ``arm_driver`` (reads ``/joint_states``, publishes ``arm/goal``), so
-it never opens the serial bus and cannot contend with the driver.
+A client of the ros2_control stack (reads ``/joint_states``, commands
+``arm_controller``), so it never opens the serial bus and cannot contend with
+the wheels — see ``mote_arm/control.py``.
 
     pixi run arm-pose save <name>   # capture the arm's current pose
     pixi run arm-pose list          # show taught poses (and current offset)
@@ -9,7 +10,9 @@ it never opens the serial bus and cannot contend with the driver.
     pixi run arm-pose delete <name>
 
 ``save`` is read-only — pose the limp arm by hand, then capture it. ``go`` is
-the only command that moves the arm: it reports the distance each joint will
+the only command that moves the arm, and it leaves the arm *holding* the pose it
+reached (deactivate ``arm_controller``, or run ``arm-jog`` and ``torque off``, to
+make it limp again): it reports the distance each joint will
 travel, requires confirmation unless ``--yes`` is given, and refuses moves whose
 largest single-joint travel exceeds ``--max-travel``. Goals are clamped to the
 robot.yaml soft limits here *and* in the driver.
@@ -17,6 +20,10 @@ robot.yaml soft limits here *and* in the driver.
 ``go`` streams setpoints at a fixed rate rather than commanding the destination
 in one jump, so the arm moves continuously at ``--speed`` instead of lurching,
 and it stops if the arm falls behind its setpoint by more than ``--max-lag``.
+The lag is measured against ``/joint_states``, which the hardware refreshes one
+arm joint per control cycle (~8 Hz per joint) to stay inside the bus budget it
+shares with the wheels, so lag is detected within a few setpoints rather than
+instantly.
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 from mote_arm import config, poses
+from mote_arm.control import ArmControl
 
 
 class PoseClient(Node):
@@ -41,7 +49,7 @@ class PoseClient(Node):
         self._measured: dict[str, float] = {}
         self._lock = threading.Lock()
         self.create_subscription(JointState, "joint_states", self._on_states, 10)
-        self._pub = self.create_publisher(JointState, "arm/goal", 10)
+        self.arm = ArmControl(self)
 
     def _on_states(self, msg: JointState) -> None:
         arm_names = set(self.cfg.names)
@@ -62,18 +70,16 @@ class PoseClient(Node):
             time.sleep(0.05)
         return False
 
-    def send(self, joints: dict[str, float]) -> None:
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = list(joints)
-        msg.position = [joints[n] for n in msg.name]
-        self._pub.publish(msg)
+    def send(self, joints: dict[str, float], seconds: float) -> bool:
+        """Command one streamed setpoint, taking hold of the arm if it is limp."""
+        return self.arm.send(joints, seconds)
 
 
 def _require_states(node: PoseClient) -> dict[str, float]:
     if not node.wait_for_states():
         raise SystemExit(
-            "no /joint_states for all arm joints — is `pixi run arm` running?"
+            "no /joint_states for all arm joints — is a stack that owns the "
+            "servo bus running (`pixi run arm`, or `pixi run robot`)?"
         )
     return node.current()
 
@@ -231,7 +237,7 @@ def _stream(node: PoseClient, start: dict, goals: dict, args) -> None:
     lagging = 0.0
     report_every = max(1, len(stream) // 8)
     for i, setpoint in enumerate(stream, 1):
-        node.send(setpoint)
+        node.send(setpoint, period)
         time.sleep(period)
         now = node.current()
         lag = max(
@@ -344,7 +350,7 @@ def main() -> None:
             rclpy.spin(node)
         except (KeyboardInterrupt, ExternalShutdownException):
             pass
-        except Exception:  # noqa: BLE001 - see arm_driver.main
+        except Exception:  # noqa: BLE001 - context torn down by SIGINT
             if rclpy.ok():
                 raise
 

@@ -1,0 +1,47 @@
+# Velocity arbitration on the drive path — consumed by twist_mux_launch.py.
+#
+# Every source of motion publishes here rather than to the controller, and the
+# mux forwards exactly one of them to /diff_drive_controller/cmd_vel. See
+# mote_bringup/README.md "Drive path" for why each number is what it is.
+#
+# twist_mux is event-driven: it publishes from an input callback, and only when
+# that input currently holds priority. It has no timer and never re-publishes,
+# so when every source stops the mux stops, and the controller's cmd_vel_timeout
+# halts the wheels. The deadman is unchanged by the mux being in the path.
+
+twist_mux:
+  ros__parameters:
+    topics:
+      # Nav2's controller_server and behavior_server (recoveries included).
+      navigation:
+        topic: /cmd_vel_nav
+        timeout: 0.5
+        priority: 10
+
+      # Everything a human drives with: the Foxglove Teleop panel via
+      # twist_relay, and `pixi run teleop`.
+      #
+      # The timeout is deliberately longer than the controller's
+      # cmd_vel_timeout (0.5 s, controllers.yaml). It is how long Nav2 stays
+      # suppressed after the operator's last command, so the wheels halt at
+      # 0.5 s and autonomy only resumes at 1.0 s: the robot always comes to a
+      # full stop before it starts driving itself again, rather than handing
+      # straight back mid-motion. test_twist_mux.py holds the two files
+      # together.
+      teleop:
+        topic: /cmd_vel_teleop_stamped
+        timeout: 1.0
+        priority: 100
+
+    locks:
+      # Holds autonomy off without stopping the operator driving: publish
+      # std_msgs/Bool true here and every source below priority 50 is masked,
+      # which is navigation and not teleop. Publish false to release.
+      #
+      # timeout 0.0 means the lock is state, not a heartbeat — it does not
+      # engage when its publisher goes away, and a restarted mux starts
+      # unlocked.
+      pause_navigation:
+        topic: /pause_navigation
+        timeout: 0.0
+        priority: 50

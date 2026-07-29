@@ -28,7 +28,7 @@ Panels:
     LinearSpeed: 0.30000001192092896
     Name: Teleop
     Stamped: true
-    Topic: /diff_drive_controller/cmd_vel
+    Topic: /cmd_vel_teleop_stamped
 Visualization Manager:
   Class: ""
   Displays:

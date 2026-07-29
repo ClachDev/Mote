@@ -17,6 +17,8 @@ test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_na
 # Pi Setup tasks
 setup-ids = "ros2 run mote_hardware setup_ids"
 # SO-101 follower arm bring-up (see mote_arm/README.md, mote_arm/BENCH.md).
+# Opens the servo bus directly, so the control stack must be stopped first
+# (`pixi run kill`); `arm-jog` and `arm-pose` go through the controller instead.
 arm-check = "ros2 run mote_arm arm_check"
 udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
 wifi-powersave = "bash mote_bringup/networkmanager/install.sh"
@@ -87,7 +89,9 @@ mapping = "ros2 launch mote_bringup mapping_launch.py"
 nav = "ros2 launch mote_bringup nav2_launch.py"
 robot = "ros2 launch mote_bringup robot_launch.py"
 slam = "ros2 launch mote_bringup slam_launch.py"
-teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/diff_drive_controller/cmd_vel"
+# Publishes the drive mux's teleop input, so it pre-empts an active Nav2 goal
+# rather than fighting it — and so it needs the base up, which owns the mux.
+teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/cmd_vel_teleop_stamped"
 perception = "ros2 launch mote_perception perception_launch.py"
 # Remote observability + teleop (docs/fleet/README.md §10). Included in the base
 # by default, so this is for running it on its own — or under systemd, where
@@ -97,10 +101,18 @@ record = "ros2 launch mote_bringup record_launch.py"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
 health = "ros2 run mote_bringup health_monitor"
 self-check = "ros2 run mote_bringup self_check"
+# Wheel-vs-lidar odometry residual: slip / stuck / scan-match excursions. Runs
+# with the base already; this is for watching it on its own.
+slip = "ros2 run mote_bringup slip_monitor"
+# Re-score recorded bags through the very estimator the node runs — how
+# config/slip.yaml's thresholds were set, and how a change to them is checked.
+slip-replay = "python mote_bringup/tools/slip_replay.py"
 chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
-# SO-101 arm driver (joint states + safe jog target control); run alongside a
-# mission like perception. Jog it interactively with `pixi run arm-jog`.
-arm = "ros2 launch mote_arm arm_launch.py"
+# SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
+# the lidar/camera/Nav2. During a mission the arm is already there (it lives in
+# mote_hardware, which owns the shared servo bus) — this is for bench work only.
+# Jog it interactively with `pixi run arm-jog`, in either case.
+arm = "ros2 launch mote_bringup arm_launch.py"
 arm-jog = "ros2 run mote_arm jog"
 # Teach/replay named arm poses (save is read-only; go asks before moving).
 arm-pose = "ros2 run mote_arm arm_pose"
@@ -221,6 +233,11 @@ ros-jazzy-rosbag2-transport = ">=0.26.0"
 ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
 ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
+# The drive path's velocity arbiter (mote_bringup/README.md "Drive path"): one
+# publisher on the controller's topic, so teleop pre-empts Nav2 instead of
+# competing with it. >=4.5 for `use_stamped`, which this robot's stamped-only
+# controller needs.
+ros-jazzy-twist-mux = ">=4.5.0,<5"
 # The robot's off-box observability path (docs/fleet/README.md §10): the operator's
 # Foxglove connects to this over the tailnet, so it runs on the robot alongside
 # the mission rather than on the workstation.
