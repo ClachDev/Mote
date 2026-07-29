@@ -178,38 +178,44 @@ def main():
     sensor_frame = layer["camera"].get("sensor_frame") or base_frame
     cloud_frame = "base_footprint"
 
-    handle = open(args.log, "w")
-    procs = [
-        static_tf(handle, "map", global_frame),
-        static_tf(handle, global_frame, base_frame),
-        static_tf(handle, base_frame, cloud_frame),
-        # roughly the real mount: 0.10 m up, forward, optical-frame axes
-        static_tf(
-            handle,
-            base_frame,
-            sensor_frame,
-            ["--x", "0.05", "--z", "0.10", "--roll", "-1.5708", "--yaw", "-1.5708"],
-        ),
-    ]
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
-        yaml.safe_dump(params, f)
-        params_file = f.name
-    procs.append(
-        spawn(
-            [
-                "ros2",
-                "run",
-                "nav2_costmap_2d",
-                "nav2_costmap_2d",
-                "--ros-args",
-                "--params-file",
-                params_file,
-            ],
-            handle,
-        )
-    )
-
+    # Everything below is torn down by the `finally`, so it all has to be
+    # started inside the `try`: these children are in their own session, so a
+    # half-finished setup would leave them running with nothing to reap them.
+    handle = None
+    params_file = None
+    procs = []
     try:
+        handle = open(args.log, "w")
+        procs.append(static_tf(handle, "map", global_frame))
+        procs.append(static_tf(handle, global_frame, base_frame))
+        procs.append(static_tf(handle, base_frame, cloud_frame))
+        # roughly the real mount: 0.10 m up, forward, optical-frame axes
+        procs.append(
+            static_tf(
+                handle,
+                base_frame,
+                sensor_frame,
+                ["--x", "0.05", "--z", "0.10", "--roll", "-1.5708", "--yaw", "-1.5708"],
+            )
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(params, f)
+            params_file = f.name
+        procs.append(
+            spawn(
+                [
+                    "ros2",
+                    "run",
+                    "nav2_costmap_2d",
+                    "nav2_costmap_2d",
+                    "--ros-args",
+                    "--params-file",
+                    params_file,
+                ],
+                handle,
+            )
+        )
+
         time.sleep(4)
         for transition in ("configure", "activate"):
             subprocess.run(
@@ -281,8 +287,10 @@ def main():
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
-        handle.close()
-        os.unlink(params_file)
+        if handle is not None:
+            handle.close()
+        if params_file is not None:
+            os.unlink(params_file)
 
 
 if __name__ == "__main__":
