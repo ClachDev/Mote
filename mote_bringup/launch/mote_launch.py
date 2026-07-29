@@ -146,6 +146,16 @@ def generate_launch_description():
         launch_arguments={"use_sim_time": use_sim_time}.items(),
     )
 
+    # The controller's single publisher. It belongs to the base rather than to a
+    # mission because the drive path must not depend on which mission is up —
+    # `pixi run teleop` against a bare base goes through it too.
+    twist_mux = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(bringup_share, "launch", "twist_mux_launch.py")
+        ),
+        launch_arguments={"use_sim_time": use_sim_time}.items(),
+    )
+
     # The same arrangement as the health monitor, for the same reason: every way
     # of starting the robot gives an operator a way to watch it. Under systemd
     # mote-bringup.service passes foxglove:=false and mote-foxglove.service runs
@@ -187,6 +197,7 @@ def generate_launch_description():
             system_monitor,
             health_monitor,
             localization,
+            twist_mux,
             foxglove,
         ]
     )

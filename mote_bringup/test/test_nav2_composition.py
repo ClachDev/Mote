@@ -29,6 +29,7 @@ from launch_ros.utilities import evaluate_parameters
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 NAV2_PARAMS = REPO / "mote_bringup" / "config" / "nav2_params.yaml"
+TWIST_MUX = REPO / "mote_bringup" / "config" / "twist_mux.yaml"
 
 sys.path.insert(0, str(REPO / "mote_bringup" / "launch"))
 import nav2_launch  # noqa: E402
@@ -183,3 +184,24 @@ def test_start_handler_registers_an_opaque_function_not_bare_loads(description):
     registered = _start_handler(description)
     assert all(isinstance(e, OpaqueFunction) for e in registered)
     assert not any(isinstance(e, LoadComposableNodes) for e in registered)
+
+
+@pytest.mark.parametrize("server", ["controller_server", "behavior_server"])
+def test_velocity_goes_to_the_drive_mux_not_the_controller(
+    description, context, server
+):
+    """Nav2 is one input to the mux, and a recovery is arbitrated like a plan.
+
+    The remap and the mux's table are separate files, and a mismatch is silent:
+    Nav2 publishes happily to a topic nobody forwards and the robot simply does
+    not move.
+    """
+    mux = yaml.safe_load(TWIST_MUX.read_text())["twist_mux"]["ros__parameters"]
+    node = _loaded(description, context)[server]
+    remaps = {
+        perform_substitutions(context, list(src)): perform_substitutions(
+            context, list(dst)
+        )
+        for src, dst in node.remappings
+    }
+    assert remaps["/cmd_vel"] == mux["topics"]["navigation"]["topic"]

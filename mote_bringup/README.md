@@ -21,6 +21,65 @@ sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
 sudo systemctl disable mote-bringup mote-health        # back to manual
 ```
 
+## Drive path — who gets the wheels
+
+`DiffDriveController` has exactly one publisher: `twist_mux`, started with the
+base by `twist_mux_launch.py`. Everything that wants to move the robot publishes
+an input instead, and the mux forwards the highest-priority source that has
+spoken recently:
+
+| Input | Published by | Priority | Timeout |
+|---|---|---|---|
+| `/cmd_vel_nav` | Nav2's `controller_server` and `behavior_server` | 10 | 0.5 s |
+| `/cmd_vel_teleop_stamped` | `twist_relay` (Foxglove panel), `pixi run teleop`, the RViz teleop panel | 100 | 1.0 s |
+
+Priorities and timeouts live in `config/twist_mux.yaml`; the output is
+`/diff_drive_controller/cmd_vel`, unchanged, so bags, the benchmark and the sim
+smoke test still watch the command the wheels actually got.
+
+Before this, teleop and Nav2 both wrote the controller's topic and it simply took
+whichever arrived last — so taking over by hand during a goal meant two writers
+at 20 Hz and a robot tracking neither, and the documented remedy was "cancel the
+task first", which is the wrong instruction for someone grabbing control of a run
+that is going wrong.
+
+**Teleop overrides Nav2; it does not cancel it.** The mux is a drive-path
+component, and cancelling a goal from it would wire velocity arbitration into the
+action layer — a nudge to straighten the robot in a doorway would destroy a fetch
+mission halfway through. So a takeover suppresses Nav2 for as long as the
+operator is driving, and the goal is still there afterwards.
+
+**Letting go stops the robot before Nav2 gets it back.** That is what the teleop
+input's 1.0 s timeout buys, against the controller's `cmd_vel_timeout` of 0.5 s
+(`controllers.yaml`): after the operator's last command the wheels halt at 0.5 s
+and Nav2 only regains the topic at 1.0 s, so there is always a stopped robot in
+between rather than a handback mid-motion. Invert the two numbers and that
+property is gone silently, so `test_twist_mux.py` holds the two files together
+and `test_twist_mux_arbitration.py` measures the gap against a real mux
+(1.00–1.05 s over five takeovers; pre-emption itself lands within one 20 Hz
+publish period, ~50 ms).
+
+**The deadman is unchanged.** `twist_mux` publishes from an input callback and
+only when that input holds priority — no timer, no stored last command — so when
+every source stops the mux stops and `cmd_vel_timeout` halts the wheels, exactly
+as when the sources wrote the controller directly. A mux that re-published would
+have turned "the operator's link dropped" into "the robot keeps going"; that it
+does not is asserted, not assumed.
+
+**To hold autonomy off entirely**, publish `std_msgs/Bool` on `/pause_navigation`
+— `true` masks every source below priority 50, which is navigation and not
+teleop, and `false` hands it back. The shipped Foxglove layout has a Publish
+panel for it. The lock is state rather than a heartbeat (timeout 0.0), so it does
+not engage when its publisher goes away and a restarted mux starts unlocked. Note
+what a long pause does to the *mission*: Nav2's `SimpleProgressChecker` gives the
+robot `movement_time_allowance` (10 s) to move `required_movement_radius`, so a
+goal held off the wheels while the robot sits still aborts itself, and the task
+reports failed. Driving under teleop keeps it alive, since the checker watches
+the robot's pose and not who commanded it.
+
+Cost is one process and **one DDS participant** (measured with
+`pixi run dds-check`), putting the full robot stack at ~26 of 33.
+
 ## systemd services
 
 Installed by `pixi run setup` (→ `systemd/install.sh`), which fills in the

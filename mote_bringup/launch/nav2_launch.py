@@ -132,7 +132,11 @@ def generate_launch_description():
     )
     critic_params_file.close()
 
-    cmd_vel_remap = ("/cmd_vel", "/diff_drive_controller/cmd_vel")
+    # Nav2 is one input to the drive mux, not the controller's publisher — see
+    # twist_mux_launch.py. behavior_server is remapped too so a recovery (spin,
+    # back up) is arbitrated the same way the controller is, and an operator can
+    # override one.
+    cmd_vel_remap = ("/cmd_vel", "/cmd_vel_nav")
 
     extra_parameters = {
         "map_server": [{"yaml_filename": LaunchConfiguration("map")}],
