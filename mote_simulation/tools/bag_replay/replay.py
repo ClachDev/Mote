@@ -206,6 +206,10 @@ def run_one(bag, params_file, name, mode, run_dir, args):
                 str(args.settle),
                 "--max-scans",
                 str(args.max_scans),
+                "--skip-secs",
+                str(args.skip_secs),
+                "--stop-secs",
+                str(args.stop_secs),
             ],
             env=env,
             timeout=args.replay_timeout,
@@ -250,6 +254,12 @@ def main():
     ap.add_argument("--rate", type=float, default=1.0, help="replay speed x realtime")
     ap.add_argument("--settle", type=float, default=8.0)
     ap.add_argument("--max-scans", type=int, default=0, help="0 = whole bag")
+    ap.add_argument(
+        "--skip-secs", type=float, default=0.0, help="withhold scans before this"
+    )
+    ap.add_argument(
+        "--stop-secs", type=float, default=0.0, help="stop feeding at this (0=end)"
+    )
     ap.add_argument("--out", default=str(REPO / "bag_replay_results"))
     ap.add_argument("--boot-timeout", type=float, default=120.0)
     ap.add_argument("--replay-timeout", type=float, default=3600.0)
