@@ -153,16 +153,42 @@ usable floor band, past which monocular depth compresses into false positives),
 
 ### Nav2 costmap layer
 
-`camera_obstacles` feeds a dedicated `VoxelLayer` (`camera_layer`) on the **local**
-costmap only (`mote_bringup/config/nav2_params.yaml`) — near-band and reactive, so
-it can stop the robot at a low obstacle without the phantom risk a slow, laggy
-source would add to the global plan. It is a separate layer from the lidar
-`obstacle_layer`: the lidar stays the primary marking/clearing source and the
-camera can never clear a lidar mark. The camera layer marks and clears from its
-own dense observations (a spurious mark is raytraced away on the next frame), and
-`sensor_frame: camera_optical_link` pins the clearing-ray origin to the real camera
-height (the cloud itself carries leveled `base_footprint` coordinates) so rays
-descend onto the floor rather than sweeping up through the low-obstacle band.
+`camera_obstacles` feeds a dedicated `camera_layer` on the **local** costmap only
+(`mote_bringup/config/nav2_params.yaml`) — near-band and reactive, so it can stop
+the robot at a low obstacle without the phantom risk a slow, laggy source would add
+to the global plan. It is a separate layer from the lidar `obstacle_layer`: the
+lidar stays the primary marking/clearing source and the camera can never clear a
+lidar mark (`combination_method: 1` takes the max of the two).
+
+**Marks expire on a clock, not by raytracing.** The layer is a
+`spatio_temporal_voxel_layer`, not Nav2's `VoxelLayer`, because this cloud carries
+*only above-floor* points — the node strips the floor to keep the stream off the
+Wi-Fi. A voxel layer clears only by raytracing towards a point in a later
+observation, so a person who walks through the band and leaves takes their points
+with them: nothing is ever observed in that direction again, no clearing ray
+crosses the marks they left, and the marks are permanent. `clearing: True` on the
+source was inert over open floor, and publishing floor points would only half-fix
+it (rays from the 0.10 m camera descend, so the 0.10–0.18 m band still gets no
+crossing). STVL instead expires a voxel `voxel_decay` seconds (5 s) after the last
+time it was marked, whatever the viewing geometry — an obstacle still in view is
+re-marked every frame and never expires, one that leaves goes on its own. The
+number is a memory-vs-staleness trade: below ~2 s the robot forgets a low obstacle
+while steering round it (the camera loses it below `range_min` 0.25 m, about a
+second before the wheels reach it); 5 s is ~1 m of travel at the 0.218 m/s wheel
+limit. Frustum clearing (`clearing: True` plus the FOV parameters) is deliberately
+left off: decay already answers staleness, and a mis-stated FOV would clear real
+obstacles the lidar plane cannot see. `sensor_frame: camera_optical_link` still
+names the real camera (the cloud itself carries leveled `base_footprint`
+coordinates), which is where that frustum would be anchored.
+
+Two STVL settings are load-bearing rather than cosmetic. `clear_after_reading:
+True` — the measurement buffer holds its newest cloud until something empties it
+and every costmap update re-marks whatever it reads, which restamps the voxels with
+the current time; without it a departed obstacle is refreshed at 5 Hz forever and
+the decay never fires, reproducing the exact bug the layer was swapped in to fix.
+And `filter: "passthrough"` — STVL applies `min_obstacle_height`/`max_obstacle_height`
+*as that filter's z limits*, so `filter: "none"` would silently drop the go-under
+gate below rather than just skipping downsampling.
 
 **Go-under clearance.** The obstacle band has an upper bound so the robot isn't
 blocked by things it fits beneath. The camera layer's `max_obstacle_height` is the
@@ -170,18 +196,16 @@ robot's height plus a margin: **0.18 m for the current ~0.13 m chassis (no arm)*
 A chair seat or tabletop above that is passable overhead and does not mark;
 because it is a 3D voxel layer, the *legs* (which reach the floor) still mark, so
 the robot avoids the legs and paths through the clear gap between them. **With the
-planned arm the robot is ~0.30 m** — raise the gate to ~0.35 m *and* the voxel-grid
-top (`z_voxels * z_resolution`); note the go-under benefit largely disappears at
-that height. The node mirrors the gate with a generous `z_obstacle_max` publish
-ceiling (0.5 m — Nav2 is the authoritative gate) so it doesn't stream points Nav2
-discards; the node's `z_ceiling` bounds only the full debug cloud.
+planned arm the robot is ~0.30 m** — raise the gate to ~0.35 m; unlike `VoxelLayer`
+there is no separate grid ceiling to raise alongside it. Note the go-under benefit
+largely disappears at that height. The node mirrors the gate with a generous
+`z_obstacle_max` publish ceiling (0.5 m — Nav2 is the authoritative gate) so it
+doesn't stream points Nav2 discards; the node's `z_ceiling` bounds only the full
+debug cloud.
 
-Decay caveat: a phantom mark over open floor with nothing above-floor behind it
-within `obstacle_max_range` receives no clearing ray until the 3 m rolling window
-scrolls past it as the robot moves. Near-band false positives measured ≈ 0 on
-clean floor (including bright/specular sun-glare floor, the case that defeated the
-classical spike), so this is rare; if it shows up on the robot, swap in
-`spatio_temporal_voxel_layer` (time-decay + frustum clearing).
+Near-band false positives measured ≈ 0 on clean floor (including bright/specular
+sun-glare floor, the case that defeated the classical spike), and a phantom that
+does appear now expires with everything else after `voxel_decay`.
 
 Live bring-up (the remaining gate — all validation so far is offline against
 recorded bags): run `pixi run perception` on the Pi **alongside** `pixi run
@@ -198,6 +222,10 @@ check, in order:
    level rotation when a frame's floor fit fails, and a stale rotation applied at a
    new pose can tilt the floor above the 0.02 m gate. Static-frame evals can't
    surface this; if it appears, tighten `plane_max_tilt_deg` or the fit gates.
+4. Stand in front of the stationary robot until you mark, then step out of shot
+   and leave it still. The marks must go within ~5 s (`voxel_decay`) *without the
+   robot moving*. If they persist, the buffer is being re-marked — check
+   `clear_after_reading` survived whatever edited the layer.
 
 ## L2 — Semantic understanding (off-board open-vocabulary detection)
 

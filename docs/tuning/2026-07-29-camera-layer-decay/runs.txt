@@ -1,0 +1,92 @@
+Raw console output of the three bench runs behind
+docs/tuning/2026-07-29-camera-layer-decay.md.
+
+A standalone Nav2 costmap carrying only the camera layer, robot held still at
+the origin, fed a 0.1 m patch of points at (0.6, 0.0, 0.10) m for 6 s and then
+left alone. "lethal cells" counts cells >= 99 within 0.1 m of the obstacle.
+Each run used a random ROS_DOMAIN_ID with ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST.
+
+
+== 1. the change: spatio_temporal_voxel_layer =================================
+
+ROS_DOMAIN_ID=80  (localhost discovery)
+[stvl] feeding an obstacle at (0.6, 0.0, 0.1) m for 6 s
+[stvl] while present: 4 lethal cells
+[stvl] obstacle removed (no more clouds); watching for 20 s
+[stvl]   t+  1.0s  lethal cells: 4
+[stvl]   t+  2.2s  lethal cells: 4
+[stvl]   t+  3.4s  lethal cells: 4
+[stvl]   t+  4.6s  lethal cells: 4
+[stvl] RESULT: cleared 5.4 s after the obstacle left (voxel_decay = 5.0 s)
+
+
+== 2. the control: nav2_costmap_2d::VoxelLayer, the previous config ===========
+
+ROS_DOMAIN_ID=66  (localhost discovery)
+[voxel] feeding an obstacle at (0.6, 0.0, 0.1) m for 6 s
+[voxel] while present: 4 lethal cells
+[voxel] obstacle removed (no more clouds); watching for 20 s
+[voxel]   t+  1.0s  lethal cells: 4
+[voxel]   t+  2.2s  lethal cells: 4
+[voxel]   t+  3.4s  lethal cells: 4
+[voxel]   t+  4.6s  lethal cells: 4
+[voxel]   t+  5.8s  lethal cells: 4
+[voxel]   t+  7.0s  lethal cells: 4
+[voxel]   t+  8.2s  lethal cells: 4
+[voxel]   t+  9.4s  lethal cells: 4
+[voxel]   t+ 10.6s  lethal cells: 4
+[voxel]   t+ 11.8s  lethal cells: 4
+[voxel]   t+ 13.0s  lethal cells: 4
+[voxel]   t+ 14.2s  lethal cells: 4
+[voxel]   t+ 15.4s  lethal cells: 4
+[voxel]   t+ 16.6s  lethal cells: 4
+[voxel]   t+ 17.8s  lethal cells: 4
+[voxel]   t+ 19.0s  lethal cells: 4
+[voxel]   t+ 20.2s  lethal cells: 4
+[voxel] RESULT: still marked after 20 s -- the mark is permanent
+
+
+== 3. STVL with clear_after_reading left at its default (False) ===============
+
+Identical to run 1 apart from that one setting. This is why the comment on it in
+nav2_params.yaml shouts: the buffer's newest cloud is re-marked on every costmap
+update, which restamps the voxels and restarts the decay, so the layer is as
+permanent as the one it replaced -- with no error anywhere.
+
+[noclear]   t+ 13.0s  lethal cells: 4
+[noclear]   t+ 14.2s  lethal cells: 4
+[noclear]   t+ 15.4s  lethal cells: 4
+[noclear]   t+ 16.6s  lethal cells: 4
+[noclear]   t+ 17.8s  lethal cells: 4
+[noclear]   t+ 19.0s  lethal cells: 4
+[noclear]   t+ 20.2s  lethal cells: 4
+[noclear] RESULT: still marked after 20 s -- the mark is permanent
+
+
+== 4. the committed tool, against the shipped nav2_params.yaml ================
+
+$ pixi run camera-decay-check
+
+spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer, voxel_decay = 5.0 s
+feeding an obstacle at (0.6, 0.0, 0.1) m for 6 s
+  while present: 4 lethal cells
+obstacle removed (no more clouds), robot stationary; watching 15 s
+  t+  1.0s  lethal cells: 4
+  t+  2.2s  lethal cells: 4
+  t+  3.4s  lethal cells: 4
+  t+  4.6s  lethal cells: 4
+OK: cleared 5.2 s after the obstacle left (voxel_decay 5.0 s, no robot motion)
+
+
+== 5. mutation check of mote_bringup/test/test_costmap_layers.py ==============
+
+Each line edits nav2_params.yaml to reintroduce one regression and confirms the
+test suite fails on it.
+
+PASS (caught):     plugin class typo'd
+PASS (caught):     plugin class not registered by any installed package
+PASS (caught):     decay_model set persistent
+PASS (caught):     voxel_decay zeroed
+PASS (caught):     clear_after_reading off
+PASS (caught):     filter set to none
+PASS (caught):     combination_method override

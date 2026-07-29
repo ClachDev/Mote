@@ -343,12 +343,15 @@ The robot must keep working when the inference machine is off, asleep, or
 unreachable. It does: the depth/detect nodes are torch-free and treat "no server"
 as "skip this frame", never as a fatal error. Navigation runs on lidar; the
 camera obstacle layer is an *additive* near-band voxel layer, so losing it
-degrades obstacle coverage but never stops nav.
+degrades obstacle coverage but never stops nav. It also fails clean: the layer is
+a `spatio_temporal_voxel_layer`, whose marks expire `voxel_decay` seconds (5 s)
+after they were last observed, so a stream that stops leaves the local costmap
+back on lidar alone rather than frozen with whatever the camera last saw.
 
 | Situation | What runs the model | `/camera_obstacles` | Navigation |
 |---|---|---|---|
 | **Inference machine up** | NVIDIA CUDA in the container — the fast path | published normally | full: lidar + camera near-band |
-| **Machine down / unreachable / not logged in** | nothing — node warns (throttled 2 s) and skips each frame; publisher stays alive | silent (no points) | **unaffected** — runs on lidar alone |
+| **Machine down / unreachable / not logged in** | nothing — node warns (throttled 2 s) and skips each frame; publisher stays alive | silent (no points) | **unaffected** — camera marks decay out within 5 s, nav runs on lidar alone |
 | **Model idle-released** | reloads on the next frame (a few seconds) | brief gap, then normal | unaffected |
 | **No GPU box at all** | dev fallback: `pixi run inference-rocm` (AMD iGPU) or `pixi run inference` (CPU) on a Linux machine | published (slower) | full, at reduced depth rate |
 
