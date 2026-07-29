@@ -10,6 +10,11 @@ streams:
       - /tf
       - /tf_static
       - /scan_filtered
+      # Both are tiny beside the scans, and both are what slip_replay.py needs to
+      # re-score a session offline: the command separates a stuck robot from a
+      # parked one, and the residual records what the robot itself concluded.
+      - /diff_drive_controller/cmd_vel
+      - /slip/residual
     split: 600
     max_gb: 4.0
 
@@ -18,7 +23,11 @@ streams:
       - /tf
       - /tf_static
       - /scan_filtered
+      # The drive mux's output plus both its inputs: the output alone cannot
+      # say which source was driving, and after a takeover that is the question.
       - /diff_drive_controller/cmd_vel
+      - /cmd_vel_nav
+      - /cmd_vel_teleop_stamped
       - /diff_drive_controller/odom
       - /goal_pose
       # RViz's Nav2 Goal tool sends the goal over the navigate_to_pose action,

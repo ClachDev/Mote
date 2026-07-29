@@ -712,7 +712,7 @@ agreement beyond those two facts. Three consequences worth knowing:
 
 ### Driving it
 
-The Teleop panel's arrows drive the robot. Three things are worth knowing before
+The Teleop panel's arrows drive the robot. Four things are worth knowing before
 you use it on hardware:
 
 - **It publishes `/cmd_vel_teleop`, not the controller's topic.** Foxglove can
@@ -723,8 +723,16 @@ you use it on hardware:
   stop arriving and the controller's `cmd_vel_timeout` (0.5 s) halts the wheels.
   There is no remote e-stop and no safety-rated teleop here — all safety
   behaviour is local, by design.
-- **It does not pre-empt Nav2.** Both write to the drive controller, so teleop
-  during an active goal means two writers fighting. Cancel the task first.
+- **It pre-empts an active Nav2 goal.** Both sources feed a `twist_mux` on the
+  robot and teleop outranks navigation, so the first arrow you press takes the
+  wheels; there is no need to cancel the task first. Release and Nav2 gets them
+  back a second later — after the robot has come to a stop, because the mux keeps
+  navigation suppressed for longer than the controller's deadman.
+- **A takeover overrides the goal, it does not cancel it**, so the robot resumes
+  what it was doing. To stop that, use the layout's **Publish** panel to send
+  `{"data": true}` on `/pause_navigation`; `false` releases it. Held off the
+  wheels while stationary, the goal fails Nav2's progress checker after ~10 s and
+  the task reports failed on the dashboard.
 
 ### If it will not connect
 

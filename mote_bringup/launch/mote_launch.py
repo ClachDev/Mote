@@ -126,6 +126,17 @@ def generate_launch_description():
         **respawn,
     )
 
+    # Reads the wheel-vs-lidar odometry disagreement and reports slip / stuck /
+    # scan-match excursions on /diagnostics, which health_monitor folds into the
+    # robot summary. It runs with the base rather than with a mission because
+    # both of its inputs are the base's: the controller's odometry and
+    # localization_launch.py's odom->base correction.
+    slip_monitor = Node(
+        package="mote_bringup",
+        executable="slip_monitor",
+        **respawn,
+    )
+
     # The health monitor runs with the base by default, so *any* way of starting
     # the robot — `pixi run launch`/`robot`/`mapping` on a desk as much as the
     # systemd path — publishes /health and /diagnostics_agg. mote-bringup.service
@@ -142,6 +153,16 @@ def generate_launch_description():
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(bringup_share, "launch", "localization_launch.py")
+        ),
+        launch_arguments={"use_sim_time": use_sim_time}.items(),
+    )
+
+    # The controller's single publisher. It belongs to the base rather than to a
+    # mission because the drive path must not depend on which mission is up —
+    # `pixi run teleop` against a bare base goes through it too.
+    twist_mux = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(bringup_share, "launch", "twist_mux_launch.py")
         ),
         launch_arguments={"use_sim_time": use_sim_time}.items(),
     )
@@ -185,8 +206,10 @@ def generate_launch_description():
             laser_filter,
             camera,
             system_monitor,
+            slip_monitor,
             health_monitor,
             localization,
+            twist_mux,
             foxglove,
         ]
     )

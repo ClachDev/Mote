@@ -31,6 +31,11 @@ It exits when no reachable frontier remains, then the map is saved like any
 other session. The sim builds its world sites with the same tool (`pixi run
 sim-map-world`, which passes `--sim-time`).
 
+It publishes the drive mux's *teleop* input (see the drive path below) — it
+stands in for a human driver, so its wall-follow out-ranks the Nav2 goals it
+hands off during relocation. A human on the Foxglove stick shares that input
+with it, last writer wins — stop the explorer before driving by hand.
+
 **Run everything on the Pi**, in tmux, so losing wifi only loses your view of
 the mission — never the mission:
 
@@ -44,6 +49,65 @@ pixi run save-map     # when it reports covered
 The default thresholds suit corridor-scale spaces. Domestic layouts (~0.75 m
 doorways) want the geometry tightened, e.g.
 `pixi run explore -- --cruise 0.2 --obstacle 0.4 --desired-left 0.6 --follow-band 1.0`.
+
+## Drive path — who gets the wheels
+
+`DiffDriveController` has exactly one publisher: `twist_mux`, started with the
+base by `twist_mux_launch.py`. Everything that wants to move the robot publishes
+an input instead, and the mux forwards the highest-priority source that has
+spoken recently:
+
+| Input | Published by | Priority | Timeout |
+|---|---|---|---|
+| `/cmd_vel_nav` | Nav2's `controller_server` and `behavior_server` | 10 | 0.5 s |
+| `/cmd_vel_teleop_stamped` | `twist_relay` (Foxglove panel), `pixi run teleop`, the RViz teleop panel | 100 | 1.0 s |
+
+Priorities and timeouts live in `config/twist_mux.yaml`; the output is
+`/diff_drive_controller/cmd_vel`, unchanged, so bags, the benchmark and the sim
+smoke test still watch the command the wheels actually got.
+
+Before this, teleop and Nav2 both wrote the controller's topic and it simply took
+whichever arrived last — so taking over by hand during a goal meant two writers
+at 20 Hz and a robot tracking neither, and the documented remedy was "cancel the
+task first", which is the wrong instruction for someone grabbing control of a run
+that is going wrong.
+
+**Teleop overrides Nav2; it does not cancel it.** The mux is a drive-path
+component, and cancelling a goal from it would wire velocity arbitration into the
+action layer — a nudge to straighten the robot in a doorway would destroy a fetch
+mission halfway through. So a takeover suppresses Nav2 for as long as the
+operator is driving, and the goal is still there afterwards.
+
+**Letting go stops the robot before Nav2 gets it back.** That is what the teleop
+input's 1.0 s timeout buys, against the controller's `cmd_vel_timeout` of 0.5 s
+(`controllers.yaml`): after the operator's last command the wheels halt at 0.5 s
+and Nav2 only regains the topic at 1.0 s, so there is always a stopped robot in
+between rather than a handback mid-motion. Invert the two numbers and that
+property is gone silently, so `test_twist_mux.py` holds the two files together
+and `test_twist_mux_arbitration.py` measures the gap against a real mux
+(1.00–1.05 s over five takeovers; pre-emption itself lands within one 20 Hz
+publish period, ~50 ms).
+
+**The deadman is unchanged.** `twist_mux` publishes from an input callback and
+only when that input holds priority — no timer, no stored last command — so when
+every source stops the mux stops and `cmd_vel_timeout` halts the wheels, exactly
+as when the sources wrote the controller directly. A mux that re-published would
+have turned "the operator's link dropped" into "the robot keeps going"; that it
+does not is asserted, not assumed.
+
+**To hold autonomy off entirely**, publish `std_msgs/Bool` on `/pause_navigation`
+— `true` masks every source below priority 50, which is navigation and not
+teleop, and `false` hands it back. The shipped Foxglove layout has a Publish
+panel for it. The lock is state rather than a heartbeat (timeout 0.0), so it does
+not engage when its publisher goes away and a restarted mux starts unlocked. Note
+what a long pause does to the *mission*: Nav2's `SimpleProgressChecker` gives the
+robot `movement_time_allowance` (10 s) to move `required_movement_radius`, so a
+goal held off the wheels while the robot sits still aborts itself, and the task
+reports failed. Driving under teleop keeps it alive, since the checker watches
+the robot's pose and not who commanded it.
+
+Cost is one process and **one DDS participant** (measured with
+`pixi run dds-check`), putting the full robot stack at ~26 of 33.
 
 ## systemd services
 
@@ -165,6 +229,48 @@ asserted at the instant you sample, so keying only off it misses the event.
 boots). With no cooler fitted the key is simply absent. Measured on `auldbot`:
 idle 48 °C / 0 RPM, 4-core load 61 °C / ~4900 RPM with no throttle bits set.
 
+## Slip monitor — `slip_monitor.py`
+
+Started by `mote_launch.py`, beside `system_monitor`. It reads the disagreement
+between the robot's two motion sources and publishes what it means as the `slip`
+status on `/diagnostics`, which the health monitor folds into the roll-up.
+
+kinematic_icp *takes* wheel odometry as its prior and corrects it against the
+scan, so the correction is already a measurement of how wrong the wheels were —
+a slip signal on existing hardware, with no IMU. Over a 1 s sliding window the
+node compares the travel each source reports, in the body frame, and reports:
+
+| state | meaning |
+|---|---|
+| `slip` | The wheels claim travel the lidar did not see. Wheels spinning on a slippery floor, or a robot wedged against something. |
+| `stuck` | Motion is commanded and *neither* source reports any. |
+| `icp_fault` | The lidar pose moved in a way the drive cannot produce. Slip makes the wheels over-read, never the lidar, so this is a scan-match excursion — or the robot being moved by hand. |
+
+All three are **DEGRADED**, never FAULT: each is a reason to stop and re-plan,
+not a reason to refuse to drive, and a monitor that can halt the robot on a
+threshold is a worse failure than the slip it is watching for.
+
+`slip/residual` (`geometry_msgs/TwistStamped`) carries the raw numbers so they
+can be recorded and plotted: `linear.x` is the speed residual (wheel minus
+lidar, m/s), `linear.y` the speed it is relative to, `angular.z` the yaw-rate
+residual.
+
+Three things are worth knowing:
+
+- **Only translation is thresholded.** The yaw residual is published but never
+  keyed off: measured on real bags it is dominated by scan-match jitter, reaching
+  a p99 as large as the yaw rate itself, so no threshold exists that a hard turn
+  would not trip. Translation on the same bags has a p99 of 0.006–0.021 m/s.
+- **A stalled lidar is not slip.** Without a guard, a stopped corrector freezes
+  the window while the wheels keep turning, which grows without bound and looks
+  exactly like slip. A source older than `max_lag` yields no verdict instead.
+- **Thresholds are measurements, not guesses.** They come from the residual
+  distribution over `~/.mote/bags/mapping`, live in `config/slip.yaml`
+  (overridable at `$MOTE_HOME/slip.yaml` — traction is a property of one robot on
+  one floor), and are re-checkable with `tools/slip_replay.py`, which drives the
+  very same estimator over a bag. The derivation, and the six real events it
+  found in those bags, are in `docs/tuning/2026-07-28-slip-detection.md`.
+
 ## Health monitor — `health_monitor.py`
 
 Runs as `mote-health.service` (or `pixi run health`). Watches subsystem liveness
@@ -172,9 +278,9 @@ and publishes, every second:
 
 - **`/diagnostics_agg`** (`diagnostic_msgs/DiagnosticArray`) — one
   `DiagnosticStatus` per subsystem (scan, filtered scan, joint states, camera,
-  odom TF, localisation TF), the host status folded in from `system_monitor`'s
-  `/diagnostics`, the last self-check verdict, and a rolled-up `mote` status. The
-  standard form the fleet layer can lift later.
+  odom TF, localisation TF), the `system` and `slip` statuses folded in from the
+  shared `/diagnostics`, the last self-check verdict, and a rolled-up `mote`
+  status. The standard form the fleet layer can lift later.
 - **`/health`** (`std_msgs/String`) — a single human-readable summary line:
   `OK` / `DEGRADED: camera stale` / `FAULT: scan stale (…)`. Easy to eyeball:
 
@@ -203,9 +309,11 @@ Two things worth knowing about these thresholds:
   bus blocks each `read()` ~200 ms per servo and collapses the loop to ~1.6 Hz,
   which the driver itself reports only as warnings.
 - `/diagnostics` is a **shared** topic: `controller_manager` publishes its own
-  loop-jitter status there. The host status is therefore matched by exact name
-  (`system`), or a third party's ERROR gets misattributed to the host and drives
-  a spurious robot-level FAULT.
+  loop-jitter status there. Statuses are therefore lifted by exact name, listed
+  in `health.yaml`'s `diagnostic_statuses` (`system`, `slip`), or a third party's
+  ERROR gets misattributed to one of ours and drives a spurious robot-level
+  FAULT. A named status nobody is publishing is simply absent — asserting
+  another monitor's liveness is not this monitor's job.
 
 The monitor is also the systemd watchdog feeder: it sends `READY=1` once up and
 pets the watchdog on every publish (`sd_notify.py`, a dependency-free

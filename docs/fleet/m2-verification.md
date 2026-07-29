@@ -167,13 +167,28 @@ Publisher count: 1
   while a panel is subscribed, but nothing here measured what a DERP-relayed
   connection does to it.
 
-## 6. Known limitation: teleop does not pre-empt Nav2
+## 6. Teleop pre-empting Nav2 — **closed, after M2**
 
-Both the relay and Nav2's controller publish `TwistStamped` to
-`/diff_drive_controller/cmd_vel`, so driving by hand during an active goal means
-two writers competing and the robot doing neither cleanly. Cancel the task first.
+M2 shipped with this as a known limitation: both the relay and Nav2's controller
+published `TwistStamped` to `/diff_drive_controller/cmd_vel`, so driving by hand
+during an active goal meant two writers competing, and the documented remedy was
+to cancel the task first. That was deliberate rather than overlooked —
+arbitrating properly is a change to *how the robot drives*, affecting every
+mission including fully autonomous ones, inside a milestone whose subject is *how
+the robot is watched* — so it was filed as follow-up work.
 
-This is deliberate rather than overlooked. Arbitrating properly means putting a
-`twist_mux` in the drive path with teleop at higher priority — a change to *how
-the robot drives*, affecting every mission, inside a milestone whose subject is
-*how the robot is watched*. It is filed as follow-up work instead.
+It has since been done, on its own: `twist_mux` now sits in the drive path with
+teleop above navigation, so the first arrow an operator presses takes the wheels.
+The design, the numbers and what they were measured against are in
+[`mote_bringup/README.md` "Drive path"](../../mote_bringup/README.md#drive-path--who-gets-the-wheels).
+Three consequences that matter to this ledger:
+
+- the relay's output is `/cmd_vel_teleop_stamped` now, not the controller's
+  topic. The panel's own topic is unchanged, so §1's measurements and the shipped
+  layout still hold;
+- §3's participant count goes up by one, to ~26 of 33;
+- the deadman claim in §5 is unchanged and still the thing to watch on hardware.
+  `twist_mux` publishes only from an input callback and stores no last command,
+  which `test_twist_mux_arbitration.py` asserts by watching the drive topic stay
+  silent after every source stops — but "`cmd_vel_timeout` halts real wheels"
+  remains reasoned from the controller's documentation, exactly as it was.

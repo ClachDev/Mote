@@ -141,8 +141,11 @@ class Explorer(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
         )
         self.create_subscription(OccupancyGrid, "/map", self.on_map, map_qos)
+        # Through the drive mux's teleop input, not straight at the controller:
+        # explore stands in for a human driver, and while it is driving it
+        # should out-rank whatever Nav2 is doing.
         self.cmd_pub = self.create_publisher(
-            TwistStamped, "/diff_drive_controller/cmd_vel", 10
+            TwistStamped, "/cmd_vel_teleop_stamped", 10
         )
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose")
         self.tf_buffer = tf2_ros.Buffer()

@@ -31,6 +31,7 @@ setup(
         "console_scripts": [
             "twist_relay = mote_bringup.twist_relay:main",
             "system_monitor = mote_bringup.system_monitor:main",
+            "slip_monitor = mote_bringup.slip_monitor:main",
             "health_monitor = mote_bringup.health_monitor:main",
             "self_check = mote_bringup.self_check:main",
             "bag_pruner = mote_bringup.bag_pruner:main",
