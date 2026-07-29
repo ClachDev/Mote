@@ -153,9 +153,17 @@ def score(series_path, map_npz):
 
 
 def fast_args(params_file, mode):
-    """Fast-mode gate thresholds: slam's own travel gates x 0.7, so borderline
+    """Fast-mode gate thresholds: slam's own travel gates x 0.3, so borderline
     scans are still fed and slam itself keeps the final say. Over-feeding is
-    free (slam discards); under-feeding would silently change the graph."""
+    free (slam discards); under-feeding would silently change the graph.
+
+    EXPERIMENTAL — fidelity NOT yet validated (task #295). The first cut used
+    a 0.7 margin and produced a *silently different graph* (63% cell agreement
+    vs the paced reference, different dimensions, zero queue-full drops): the
+    gate anchor chained on fed scans while slam chains on accepted ones, so
+    feed spacing quantized slam's node spacing. 0.3 shrinks that quantization
+    but has not been proven equivalent — do not trust --fast results for
+    decisions until a paced-reference comparison passes."""
     gd = gy = 0.3
     if mode == "slam":
         import yaml
@@ -164,7 +172,7 @@ def fast_args(params_file, mode):
         rp = p.get("slam_toolbox", {}).get("ros__parameters", {})
         gd = float(rp.get("minimum_travel_distance", 0.3))
         gy = float(rp.get("minimum_travel_heading", 0.3))
-    return ["--fast", "--gate-dist", str(0.7 * gd), "--gate-yaw", str(0.7 * gy)]
+    return ["--fast", "--gate-dist", str(0.3 * gd), "--gate-yaw", str(0.3 * gy)]
 
 
 def run_one(bag, params_file, name, mode, run_dir, args):
@@ -299,8 +307,11 @@ def main():
     ap.add_argument(
         "--fast",
         action="store_true",
-        help="compute-bound replay (pre-gated scans, no wall pacing); any "
-        "queue-full drop is reported loudly and marks the set DEGRADED",
+        help="EXPERIMENTAL, fidelity unvalidated (#295) — compute-bound "
+        "replay (pre-gated scans, no wall pacing). Known failure mode: gate "
+        "chaining quantizes slam's node spacing and silently changes the "
+        "graph; the queue-drop check does NOT catch it. Validate against a "
+        "paced reference before trusting any --fast result.",
     )
     ap.add_argument("--out", default=str(REPO / "bag_replay_results"))
     ap.add_argument("--boot-timeout", type=float, default=120.0)
