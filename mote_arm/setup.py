@@ -1,6 +1,3 @@
-import os
-from glob import glob
-
 from setuptools import find_packages, setup
 
 package_name = "mote_arm"
@@ -12,7 +9,6 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
     ],
     install_requires=["setuptools"],
     # the 'test' extra tells colcon to run these tests with pytest
@@ -24,7 +20,6 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "arm_driver = mote_arm.arm_driver:main",
             "jog = mote_arm.jog:main",
             "arm_check = mote_arm.arm_check:main",
             "arm_calibrate = mote_arm.arm_calibrate:main",

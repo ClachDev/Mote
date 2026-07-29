@@ -8,6 +8,11 @@
   <license>Apache-2.0</license>
 
   <exec_depend>python3-yaml</exec_depend>
+  <!-- The arm is part of the base now: MoteHardware drives it, and the base
+       launch needs mote_arm.config to resolve this robot's calibration into
+       the URDF. The dependency runs this way only — mote_arm must not import
+       mote_bringup. -->
+  <exec_depend>mote_arm</exec_depend>
   <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>

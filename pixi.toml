@@ -17,6 +17,8 @@ test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_na
 # Pi Setup tasks
 setup-ids = "ros2 run mote_hardware setup_ids"
 # SO-101 follower arm bring-up (see mote_arm/README.md, mote_arm/BENCH.md).
+# Opens the servo bus directly, so the control stack must be stopped first
+# (`pixi run kill`); `arm-jog` and `arm-pose` go through the controller instead.
 arm-check = "ros2 run mote_arm arm_check"
 udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
 wifi-powersave = "bash mote_bringup/networkmanager/install.sh"
@@ -98,9 +100,11 @@ tasks = "ros2 launch mote_tasks tasks_launch.py"
 health = "ros2 run mote_bringup health_monitor"
 self-check = "ros2 run mote_bringup self_check"
 chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
-# SO-101 arm driver (joint states + safe jog target control); run alongside a
-# mission like perception. Jog it interactively with `pixi run arm-jog`.
-arm = "ros2 launch mote_arm arm_launch.py"
+# SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
+# the lidar/camera/Nav2. During a mission the arm is already there (it lives in
+# mote_hardware, which owns the shared servo bus) — this is for bench work only.
+# Jog it interactively with `pixi run arm-jog`, in either case.
+arm = "ros2 launch mote_bringup arm_launch.py"
 arm-jog = "ros2 run mote_arm jog"
 # Teach/replay named arm poses (save is read-only; go asks before moving).
 arm-pose = "ros2 run mote_arm arm_pose"

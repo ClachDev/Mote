@@ -317,6 +317,60 @@
 
   <!-- ===================== ROS2 CONTROL ===================== -->
 
+  <!--
+    The arm servos are on the *same* Feetech bus as the drive wheels, and a
+    serial port has no kernel-level exclusion, so one process must own it.
+    That process is the controller_manager: MoteHardware exports velocity
+    interfaces for the wheels and position interfaces for the arm, and the arm
+    can therefore move during a mission with Nav2 live.
+
+    If the arm is ever moved onto its own bus, `arm.port != servos.port` drops
+    the arm out of this component — it would then need a hardware component of
+    its own, which is a deliberate design change rather than a config tweak.
+  -->
+  <!--
+    Which arm to describe. `zero`, `min` and `max` are measurements of one
+    physical arm, so a calibrated robot keeps them in $MOTE_HOME/arm.yaml, not
+    here (see robot.yaml's arm section and `pixi run arm-calibrate`). The launch
+    files resolve packaged defaults against that file and pass the result as
+    `arm_config`, which is what puts the *calibrated* limits into <ros2_control>
+    — and so into the clamp MoteHardware enforces on every client.
+
+    Left empty (a bare `xacro mote.urdf.xacro`, for checking generation) it
+    falls back to robot.yaml's own arm section: the conservative placeholders
+    documented there. Never drive a calibrated arm from that URDF — its zeros
+    name different physical positions.
+  -->
+  <xacro:arg name="arm_config" default=""/>
+  <xacro:property name="arm_config_file" value="$(arg arm_config)"/>
+  <xacro:property name="arm_cfg"
+                  value="${xacro.load_yaml(arm_config_file) if arm_config_file else cfg['arm']}"/>
+
+  <xacro:property name="arm_on_wheel_bus"
+                  value="${arm and arm_cfg['port'] == cfg['servos']['port']}"/>
+
+  <xacro:macro name="arm_control_joint" params="spec">
+    <joint name="${spec['name']}">
+      <param name="id">${spec['id']}</param>
+      <param name="min">${spec['min']}</param>
+      <param name="max">${spec['max']}</param>
+      <!-- The encoder count reading 0 rad. Deliberately not "home": home is a
+           taught rest pose in arm_poses.yaml, a different place entirely. -->
+      <param name="zero">${spec['zero']}</param>
+      <param name="invert">${'true' if 'invert' in spec and spec['invert'] else 'false'}</param>
+      <command_interface name="position"/>
+      <state_interface   name="position"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- xacro has no loop; recursion over the tail is the idiom. -->
+  <xacro:macro name="arm_control_joints" params="specs">
+    <xacro:if value="${len(specs) > 0}">
+      <xacro:arm_control_joint spec="${specs[0]}"/>
+      <xacro:arm_control_joints specs="${specs[1:]}"/>
+    </xacro:if>
+  </xacro:macro>
+
   <ros2_control name="mote_hardware" type="system">
     <xacro:unless value="${use_sim}">
     <hardware>
@@ -327,6 +381,10 @@
       <param name="right_wheel_id">${cfg['servos']['right_id']}</param>
       <param name="velocity_scale">${cfg['servos']['velocity_scale']}</param>
       <param name="acceleration">${cfg['servos']['acceleration']}</param>
+      <xacro:if value="${arm_on_wheel_bus}">
+      <param name="arm_moving_speed">${arm_cfg['moving_speed']}</param>
+      <param name="arm_moving_acc">${arm_cfg['moving_acc']}</param>
+      </xacro:if>
     </hardware>
     </xacro:unless>
     <xacro:if value="${use_sim}">
@@ -346,6 +404,21 @@
       <state_interface   name="velocity"/>
       <state_interface   name="position"/>
     </joint>
+
+    <!--
+      Arm joints. The bus ID, soft limits, zero offset and direction ride on
+      the joint itself rather than in the <hardware> block, so robot.yaml stays
+      the single source of truth and MoteHardware never has to reconstruct
+      which parameter belongs to which joint. The soft limits here are the
+      authoritative gate on motion: every client (a trajectory controller, the
+      jog CLI, the task layer) is clamped by the hardware, not by itself.
+
+      The sim runs with arm:=false — gz_ros2_control would need matching SDF
+      joints, and the sim does not model the arm.
+    -->
+    <xacro:if value="${arm_on_wheel_bus}">
+    <xacro:arm_control_joints specs="${arm_cfg['joints']}"/>
+    </xacro:if>
   </ros2_control>
 
   <xacro:if value="${use_sim}">

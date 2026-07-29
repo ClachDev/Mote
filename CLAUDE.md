@@ -21,9 +21,9 @@ pixi run segment-map    # Propose a zone per room of a saved map (--write merges
 pixi run site           # Site CLI: create / add-floor / use / use-map / list / info
 pixi run teleop         # Keyboard teleoperation
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
-pixi run arm            # SO-101 arm driver: joint states + safe jog control
-pixi run arm-jog        # Interactive per-joint jog CLI (needs `pixi run arm`)
-pixi run arm-check      # Standalone arm bus enumeration + health (read-only)
+pixi run arm            # SO-101 arm: bench control stack (ros2_control, no mission)
+pixi run arm-jog        # Interactive per-joint jog CLI (needs a stack owning the bus)
+pixi run arm-check      # Standalone arm bus enumeration + health (read-only, base stopped)
 pixi run arm-calibrate  # Range calibration: centre the joints, sweep, emit limits
 pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
 pixi run sync           # rsync project to Pi at SSH host 'mote'
@@ -179,6 +179,7 @@ A `ros2_control` `SystemInterface` plugin (`MoteHardware`) that drives two Feete
 - Position is tracked cumulatively across the 12-bit encoder rollover using a half-range threshold
 - The left wheel is mounted inverted, so its sign is negated in both `read()` and `write()`
 - The serial port is opened in `on_activate` (not `on_init`), which also puts servos into wheel (continuous rotation) mode — an EEPROM write, skipped if already set
+- It is also **the single owner of the shared servo bus**: the SO-101 arm's six servos sit on the same port as the wheels, so `MoteHardware` exports position command/state interfaces for them too (`arm_joint.hpp` holds the clamp and the encoder<->radian maths, mirroring `mote_arm/config.py` (`zero_counts`, deliberately not "home" — see the arm section)). Arm state is read one joint per cycle round-robin and arm goals go out as one sync-write only when a goal changed, so the arm costs ~1 extra bus transaction per cycle and nothing at all when idle — the wheels are on this bus and the loop runs at 50 Hz. `port_guard.cpp` refuses activation when another process already holds the port
 - Tools built from `mote_hardware/tools/` (`servo_debug`, `velocity_cal`, `swap_ids`, `setup_ids`) run as `pixi run -- ros2 run mote_hardware <tool>`; see `mote_hardware/tools/README.md`
 
 ### `mote_description` (CMake)
@@ -205,7 +206,7 @@ Launch files, config, udev rules, NetworkManager drop-ins, systemd services, and
 - `rviz_launch.py` — RViz2 (dev environment only)
 
 **Config files** (`mote_bringup/config/`):
-- `controllers.yaml` — controller_manager update rate, DiffDriveController settings (wheel geometry is injected from `robot.yaml` at launch time, not stored here — the launch file writes it to a temp params file keyed by node name, since a plain dict would never reach the controller node)
+- `controllers.yaml` — controller_manager update rate, DiffDriveController settings, and the arm's `JointTrajectoryController` (wheel geometry *and* the arm's joint list are injected from `robot.yaml` at launch time, not stored here — `launch_utils.joint_params_file` writes them to a temp params file keyed by node name, since a plain dict would never reach the controller node)
 - `laser_filters.yaml` — filters lidar blind spots
 - `nav2_params.yaml` — Nav2 parameters
 - `slam_toolbox_params.yaml` — SLAM toolbox parameters
@@ -262,12 +263,27 @@ section. Contains:
   (ROS-free, unit-tested in `test/`).
 - `bus.py` — `FeetechBus`, a thin `scservo_sdk` wrapper (lazy import so
   build/lint/test stay hardware-free); register map matches `mote_hardware`.
-- `arm_driver` (node, `pixi run arm`) — the **single bus owner**: publishes
-  `/joint_states` for the arm, accepts absolute goals on `arm/goal`
-  (soft-clamped), exposes `arm/set_torque` (`std_srvs/SetBool`). Starts **limp**
-  and goes limp on shutdown — nothing moves without an explicit command.
-- `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client* of the
-  driver (publishes clamped `arm/goal`, torque-off on exit). No bus contention.
+- **The arm is part of `mote_hardware`'s ros2_control component**, not a driver
+  of its own: `MoteHardware` exports position command interfaces for the six arm
+  joints alongside the wheels' velocity ones, from one `open()` of the shared
+  bus (below). `control.py` is the one place that knows how to command it.
+- `arm_launch.py` lives in **`mote_bringup`** (`pixi run arm`) — bench bring-up:
+  the same controller_manager, URDF and `controllers.yaml` a mission uses,
+  without lidar/camera/Nav2. During a mission the arm needs nothing extra; it is
+  already there. The dependency runs `mote_bringup` -> `mote_arm` and never back:
+  the base launch imports `mote_arm.config` to resolve this robot's calibration
+  into the URDF (below), so `mote_arm` must not import `mote_bringup`.
+- **The calibration has to reach the URDF.** `zero`/`min`/`max` are measurements
+  of one arm and live in `$MOTE_HOME/arm.yaml`; robot.yaml holds placeholders.
+  Since `MoteHardware` enforces the clamp and reads its limits from the URDF,
+  `launch_utils.resolved_arm` overlays the two via `mote_arm.config.load` (the
+  one implementation) and passes the result to xacro as `arm_config:=`. A bare
+  `xacro mote.urdf.xacro` falls back to the placeholders — fine for checking
+  generation, wrong for driving a calibrated arm, because calibration moves the
+  zero and every commanded angle then names a different position.
+- `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client of
+  `arm_controller`* (publishes clamped single-point trajectories, limps on
+  exit). It never opens the bus, so there is no contention to guard against.
 - `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
   + `--save-zero` calibration snapshot. Run with the driver stopped (same port).
 - **`zero` is not `home`.** `robot.yaml`'s `arm.joints[].zero` is the encoder
@@ -379,13 +395,20 @@ section. Contains:
   default (the sim passes `arm:=false`); joint names match `robot.yaml` and
   `/joint_states` so robot_state_publisher animates the arm in TF.
 - **The arm shares the drive-wheel bus** (verified: arm IDs 1-6, wheels 7/9, all
-  on `/dev/mote_servos`), so it needs no udev rule. Two guards enforce this
-  rather than merely documenting it: `config.py` rejects an arm ID colliding
-  with a wheel ID on a shared port, and `bus.py` refuses to open a port another
-  process already holds (naming the PID). Consequence: the arm driver cannot run
-  concurrently with the robot base — stop it first (`pixi run kill`). Lifting
-  that means folding arm control into `mote_hardware`'s ros2_control
-  `SystemInterface` so one process owns the bus.
+  on `/dev/mote_servos`), so it needs no udev rule. A serial port has no
+  kernel-level exclusion, so exactly one process may hold it — and that process
+  is the **controller_manager**. `MoteHardware` drives both halves: velocity
+  interfaces for the wheels, position interfaces for the arm. That is what lets
+  the arm move *during* a mission with Nav2 live, which is the whole point of
+  having it. `arm_controller` is a `JointTrajectoryController` spawned
+  **inactive** — claiming its command interfaces is what enables servo torque
+  (`perform_command_mode_switch`), so "limp until asked" is a property of the
+  control stack rather than a rule a driver has to remember. Two guards stay:
+  an arm ID colliding with a wheel ID is rejected in `config.py` *and* in
+  `MoteHardware`, and both `MoteHardware::on_activate` and `mote_arm.bus` refuse
+  a port another process already holds (naming the PID) — so the read-only bench
+  tools (`arm-check`, `arm-gains`), which still open the bus directly, need the
+  control stack stopped (`pixi run kill`). `jog` and `arm-pose` do not.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
 - `arm_gains` (`pixi run arm-gains show|apply|sweep`) — the servos' position-loop
@@ -416,7 +439,8 @@ section. Contains:
   limpness it started with, so a sweep on its own changes nothing.
 - **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
   an unresolved mechanical clash, tracked separately, not addressed here.
-  `mote_arm` is not part of the mission bringup; run it explicitly.
+  The arm *is* part of the mission bringup now (it is in `mote_hardware`), but it
+  stays limp until a controller claims it.
 
 ### Third-party submodules (`third_party/`)
 - `sllidar_ros2` — SLAMTEC RPLIDAR C1 ROS 2 driver
