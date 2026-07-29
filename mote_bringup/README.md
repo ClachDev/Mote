@@ -48,7 +48,12 @@ pixi run save-map     # when it reports covered
 
 The default thresholds suit corridor-scale spaces. Domestic layouts (~0.75 m
 doorways) want the geometry tightened, e.g.
-`pixi run explore -- --cruise 0.2 --obstacle 0.4 --desired-left 0.6 --follow-band 1.0`.
+`pixi run explore -- --cruise 0.2 --obstacle 0.4 --desired-left 0.6 --follow-band 1.0 --blacklist-radius 1.0`.
+
+If the scan stream goes stale (wedged graph, dead lidar) the explorer stops
+and waits rather than driving blind — and interactive runs should pin DDS the
+way the systemd units do (`CYCLONEDDS_URI` → `config/cyclonedds.xml`), or a
+wifi drop can freeze the on-robot graph mid-mission.
 
 ## Drive path — who gets the wheels
 

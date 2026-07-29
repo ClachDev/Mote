@@ -73,6 +73,11 @@ STUCK_WINDOW = 6.0  # s of commanded-forward, no-displacement before escaping
 STUCK_TRAVEL = 0.10  # map-frame displacement (m) under which "no displacement"
 ESCAPE_REVERSE = 1.5  # s of backing off when stuck
 ESCAPE_TURN = 1.5  # s of turning away from the followed wall after backing off
+SCAN_STALE = 2.0  # s without a scan before we stop and wait — driving on a
+# frozen scan is driving blind, and a frozen pose then reads as "stuck",
+# poisoning the frontier blacklist (observed when a wifi drop wedged the
+# on-robot DDS graph mid-run: phantom stucks starved the frontier picker and
+# the mission exited "covered" half done)
 
 
 def norm(a):
@@ -123,7 +128,9 @@ class Explorer(Node):
         self.obstacle = args.obstacle
         self.desired_left = args.desired_left
         self.follow_band = args.follow_band
+        self.bl_radius = args.blacklist_radius
         self.scan = None
+        self.scan_at = None
         self.odom = None
         self.grid = None
         self.yaw_off = None
@@ -153,6 +160,7 @@ class Explorer(Node):
 
     def on_scan(self, msg):
         self.scan = msg
+        self.scan_at = self.now_s()
 
     def on_odom(self, msg):
         self.odom = msg
@@ -273,7 +281,7 @@ class Explorer(Node):
         d = np.hypot(fronts[:, 0] - here[0], fronts[:, 1] - here[1])
         ok = d > REACHED
         for bx, by in blacklist:
-            ok &= np.hypot(fronts[:, 0] - bx, fronts[:, 1] - by) >= BL_RADIUS
+            ok &= np.hypot(fronts[:, 0] - bx, fronts[:, 1] - by) >= self.bl_radius
         idx = np.where(ok)[0]
         if len(idx) == 0:
             return None
@@ -347,6 +355,13 @@ def main():
         default=1.3,
         help="left distance under which we track the wall (m)",
     )
+    ap.add_argument(
+        "--blacklist-radius",
+        type=float,
+        default=2.5,
+        help="exclude relocation frontiers within this of a failed/stuck spot "
+        "(m); shrink for domestic scale or a few stuck spots starve the picker",
+    )
     args = ap.parse_args()
 
     rclpy.init()
@@ -372,9 +387,26 @@ def main():
     visited = set()
     stuck = StuckDetector()
 
+    stale_since = None
     while node.now_s() - start < args.budget:
         rclpy.spin_once(node, timeout_sec=0.05)
         t = node.now_s()
+        if node.scan_at is None or t - node.scan_at > SCAN_STALE:
+            if stale_since is None:
+                stale_since = t
+                print(
+                    f"[{t - start:6.1f}s] scan stale — stopping until data returns",
+                    flush=True,
+                )
+            node.publish(0.0, 0.0)
+            stuck.reset()
+            continue
+        if stale_since is not None:
+            print(
+                f"[{t - start:6.1f}s] scan resumed after {t - stale_since:.0f}s",
+                flush=True,
+            )
+            stale_since = None
         front, left, _ = node.sectors()
         forward = node.wall_follow_step(front, left)
 
