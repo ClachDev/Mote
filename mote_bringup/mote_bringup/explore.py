@@ -86,6 +86,11 @@ SETTLE = 3.0  # s of continuous fresh data required after a stale spell or a
 KIDNAP_JUMP = 0.5  # map-frame jump (m) between loop iterations that cannot be
 # real motion: a carried robot or a large SLAM correction. Either way the pose
 # history is fiction — stop and settle rather than act on it.
+PIN_WINDOW = 45.0  # s of pose history examined for the orbit check
+PIN_RADIUS = 1.5  # confinement radius (m): this long inside this circle while
+# following means the robot is orbiting an island (free-standing furniture) —
+# the map-stall check alone misses it, because each lap trickles a few new
+# cells through doorway sightlines and keeps resetting the plateau timer
 ORPHAN_HOLD = 120.0  # s to hold zero velocity and retry a cancel at exit when
 # Nav2 still holds a goal we could not confirm dead — the mux hands the wheels
 # to Nav2 one second after our zeros stop, so exiting with a live goal turns
@@ -430,6 +435,7 @@ def main():
     stale_since = None
     settle_until = start
     prev_here = None
+    recent = deque()
     while node.now_s() - start < args.budget:
         rclpy.spin_once(node, timeout_sec=0.05)
         t = node.now_s()
@@ -504,8 +510,18 @@ def main():
             best_known = k
             best_at = t
         fronts = node.frontiers()
+        pinned = False
         if here is not None:
             visited.add((int(here[0] // COARSE), int(here[1] // COARSE)))
+            recent.append((t, here[0], here[1]))
+            while recent and t - recent[0][0] > PIN_WINDOW:
+                recent.popleft()
+            if t - recent[0][0] > 0.8 * PIN_WINDOW:
+                cx = sum(p[1] for p in recent) / len(recent)
+                cy = sum(p[2] for p in recent) / len(recent)
+                pinned = all(
+                    math.hypot(px - cx, py - cy) < PIN_RADIUS for _, px, py in recent
+                )
         print(
             f"[{t - start:6.1f}s] known {k} frontiers {len(fronts)} "
             f"bl {len(blacklist)} seen {len(visited)} pose "
@@ -513,16 +529,18 @@ def main():
             flush=True,
         )
 
-        # Relocate when following has stalled (map flat) or has been cycling one
-        # loop too long — either way head for a new region via Nav2. A stalled
-        # map means following is going in circles (island orbit), so that case
-        # relocates far; the cycling-timer case is merely "spread out", nearest.
+        # Relocate when following has stalled (map flat), is pinned inside an
+        # orbit-sized circle, or has been cycling one loop too long — head for
+        # a new region via Nav2. Stalled or pinned means following is going in
+        # circles (island orbit), so those relocate far; the cycling-timer case
+        # is merely "spread out", nearest.
         stalled = t - best_at > PLATEAU
-        due = stalled or t - last_relocate > MAX_FOLLOW
+        due = stalled or pinned or t - last_relocate > MAX_FOLLOW
         if not due or here is None:
             continue
 
-        target = node.pick_target(fronts, here, blacklist, visited, far=stalled)
+        far = stalled or pinned
+        target = node.pick_target(fronts, here, blacklist, visited, far=far)
         if target is None:
             if t - start > args.min_time:
                 print(
@@ -537,8 +555,8 @@ def main():
         gx, gy = target[0] + BACKOFF * vx / n, target[1] + BACKOFF * vy / n
         dist = math.hypot(target[0] - here[0], target[1] - here[1])
         print(
-            f"[{t - start:6.1f}s] relocate -> Nav2 ({target[0]:+.1f},{target[1]:+.1f}) "
-            f"{dist:.1f} m away",
+            f"[{t - start:6.1f}s] relocate{'(far)' if far else ''} -> Nav2 "
+            f"({target[0]:+.1f},{target[1]:+.1f}) {dist:.1f} m away",
             flush=True,
         )
         res = node.navigate_to(gx, gy)
@@ -547,6 +565,7 @@ def main():
             blacklist.append(target)
         stuck.reset()
         prev_here = None
+        recent.clear()
         best_at = node.now_s()  # fresh windows wherever we ended up
         last_relocate = node.now_s()
         check_at = node.now_s()
