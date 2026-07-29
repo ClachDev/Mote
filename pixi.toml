@@ -108,6 +108,10 @@ slip = "ros2 run mote_bringup slip_monitor"
 # config/slip.yaml's thresholds were set, and how a change to them is checked.
 slip-replay = "python mote_bringup/tools/slip_replay.py"
 chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
+# Times a real camera_layer mark against a real costmap (~40 s, needs no
+# hardware). test_costmap_layers.py holds the settings this depends on; this is
+# what proves they still add up to a mark that expires.
+camera-decay-check = "python mote_bringup/tools/camera_layer_decay.py"
 # SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
 # the lidar/camera/Nav2. During a mission the arm is already there (it lives in
 # mote_hardware, which owns the shared servo bus) — this is for bench work only.
@@ -232,6 +236,10 @@ ros-jazzy-ros2bag = ">=0.26.0"
 ros-jazzy-rosbag2-transport = ">=0.26.0"
 ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
+# The local costmap's camera_layer plugin. Not part of the nav2 metapackage set
+# above -- it is a separate upstream repo, so it has to be asked for by name or
+# the costmap fails to load the plugin class and nav2 comes up without it.
+ros-jazzy-spatio-temporal-voxel-layer = ">=2.5.5,<3"
 ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
 # The drive path's velocity arbiter (mote_bringup/README.md "Drive path"): one
 # publisher on the controller's topic, so teleop pre-empts Nav2 instead of

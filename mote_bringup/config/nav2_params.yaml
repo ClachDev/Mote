@@ -129,34 +129,68 @@ local_costmap:
       # Monocular-depth obstacles (mote_perception/depth_obstacle_node): the low,
       # near things the single lidar plane misses (cables, thresholds, chair and
       # table legs, a clothes-horse cross-bar). A separate layer, kept off the global
-      # costmap: near-band, reactive, and never allowed to clear the lidar layer.
-      # It self-clears from its own dense observations (a stale mark is raytraced away
-      # next frame). Caveat: a phantom over open floor with nothing above-floor behind
-      # it in range gets no clearing ray until the rolling window scrolls past it as
-      # the robot moves; if that proves visible on the robot, swap in
-      # spatio_temporal_voxel_layer (time-decay + frustum clearing). The cloud carries
-      # leveled base_footprint coords, but sensor_frame pins the clearing-ray origin to
-      # the real camera height so the rays descend onto the floor rather than rising
-      # through the low-obstacle band.
+      # costmap: near-band, reactive, and never allowed to clear the lidar layer --
+      # combination_method 1 takes the max, so free space here cannot erase a lidar
+      # mark.
+      #
+      # It is a spatio_temporal_voxel_layer rather than nav2_costmap_2d::VoxelLayer
+      # because a voxel layer can only clear by raytracing towards a point in a later
+      # observation, and this cloud carries ONLY above-floor points -- the node strips
+      # the floor to keep the stream off the Wi-Fi. Someone who walks through the band
+      # and leaves takes their points with them, so nothing is ever observed in that
+      # direction again, no clearing ray crosses the marks they left, and the marks
+      # stay for good: `clearing` on the source was inert over open floor. STVL expires
+      # a voxel on a clock instead, voxel_decay seconds after the last time it was
+      # marked, whatever the viewing geometry. An obstacle that stays in view is
+      # re-marked every frame and so never expires; one that leaves, or one the robot
+      # turns away from, goes on its own.
       camera_layer:
-        plugin: "nav2_costmap_2d::VoxelLayer"
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
         enabled: True
-        footprint_clearing_enabled: True
-        max_obstacle_height: 0.2
-        origin_z: 0.0
-        z_resolution: 0.025
-        z_voxels: 8
-        unknown_threshold: 15
+        # How long a mark outlives its last observation, and the one trade-off in this
+        # layer: too short and the robot forgets a low obstacle while steering round it
+        # (the camera loses it below range_min 0.25 m, about a second before the wheels
+        # reach it); too long and a transient lingers, which is the whole complaint.
+        # 5 s is ~1 m of travel at the 0.22 m/s wheel limit.
+        voxel_decay: 5.0
+        decay_model: 0  # 0 = linear, 1 = exponential, -1 = persistent
+        # One cube edge for all three axes, where VoxelLayer had a separate z_resolution
+        # (this is that z_resolution). Finer than the costmap's 0.05 m cells; the grid is
+        # a sparse OpenVDB tree, so the cost is per observed point, not per volume.
+        voxel_size: 0.025
+        # Voxels stacked in one column before it marks the cell lethal.
         mark_threshold: 0
         combination_method: 1
+        update_footprint_enabled: True
+        # Never write NO_INFORMATION into the local costmap: this layer is additive over
+        # the lidar's and knows nothing about space it has not looked at.
+        track_unknown_space: False
         publish_voxel_map: False
         observation_sources: camera
         camera:
           topic: /camera_obstacles
-          sensor_frame: camera_optical_link
           data_type: "PointCloud2"
+          # The cloud carries leveled base_footprint coords; sensor_frame names the real
+          # camera, which is where the frustum would be anchored if clearing were on.
+          sensor_frame: camera_optical_link
           marking: True
-          clearing: True
+          # Frustum clearing stays off. Decay already answers the stale-mark case, and a
+          # mis-stated FOV would clear real obstacles that the lidar plane cannot see --
+          # the failure mode is worse than the one it fixes. To enable it: clearing True
+          # plus min_z/max_z, vertical_fov_angle, horizontal_fov_angle and a non-zero
+          # decay_acceleration, all describing the camera in sensor_frame.
+          clearing: False
+          # LOAD-BEARING. The buffer holds its newest cloud until something empties it,
+          # and every costmap update re-marks whatever it reads -- marking stamps each
+          # voxel with the current time, which restarts its decay. Without this the
+          # cloud of a departed obstacle is re-marked at 5 Hz forever, voxel_decay never
+          # fires, and the layer reproduces exactly the bug it was swapped in to fix.
+          clear_after_reading: True
+          # Keep only the newest cloud in the buffer.
+          observation_persistence: 0.0
+          # The two height bounds below are applied AS this filter's z limits, so
+          # `none` would silently drop the go-under gate rather than just the filtering.
+          filter: "passthrough"
           min_obstacle_height: 0.02
           # Go-under gate: anything whose lowest point clears this height is passable
           # overhead the robot drives under (a chair seat, a tabletop) and must not
@@ -164,14 +198,11 @@ local_costmap:
           # reach the floor) still mark, so the robot avoids the legs but paths
           # through the gap beneath. Set to the robot's height + a margin: 0.18 m for
           # the current ~0.13 m chassis (no arm). WITH THE ARM the robot is ~0.30 m --
-          # raise this to ~0.35 m AND raise the voxel-grid top (z_voxels * z_resolution,
-          # e.g. z_resolution 0.05 + z_voxels 8 = 0.40 m); the go-under benefit shrinks
-          # at that height (a 0.30 m robot no longer fits under most chair seats).
+          # raise this to ~0.35 m; unlike VoxelLayer there is no separate grid ceiling
+          # to raise with it. The go-under benefit shrinks at that height (a 0.30 m
+          # robot no longer fits under most chair seats).
           max_obstacle_height: 0.18
-          obstacle_max_range: 1.2
-          obstacle_min_range: 0.0
-          raytrace_max_range: 1.3
-          raytrace_min_range: 0.0
+          obstacle_range: 1.2
           expected_update_rate: 0.0
           inf_is_valid: False
       inflation_layer:
