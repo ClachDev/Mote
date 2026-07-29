@@ -210,6 +210,7 @@ def run_one(bag, params_file, name, mode, run_dir, args):
                 str(args.skip_secs),
                 "--stop-secs",
                 str(args.stop_secs),
+                *(["--frame", *(str(v) for v in args.frame)] if args.frame else []),
             ],
             env=env,
             timeout=args.replay_timeout,
@@ -259,6 +260,13 @@ def main():
     )
     ap.add_argument(
         "--stop-secs", type=float, default=0.0, help="stop feeding at this (0=end)"
+    )
+    ap.add_argument(
+        "--frame",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "YAW_DEG"),
+        help="SE2 applied to the odometry prior (birth-align the map frame)",
     )
     ap.add_argument("--out", default=str(REPO / "bag_replay_results"))
     ap.add_argument("--boot-timeout", type=float, default=120.0)

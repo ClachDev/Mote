@@ -74,13 +74,20 @@ def yaw_of(q):
 
 
 class Replayer(Node):
-    def __init__(self, mode, sample_dt):
+    def __init__(self, mode, sample_dt, frame=None):
         super().__init__("bag_replayer")
         self.set_parameters([rclpy.parameter.Parameter("use_sim_time", value=True)])
         self.mode = mode
         self.strip = STRIP[mode]
         self.out_parent, self.out_child = OUTPUT_EDGE[mode]
         self.sample_dt = sample_dt
+        # Optional SE2 pre-multiplied onto the replayed odom->base_footprint
+        # prior, so the session's map frame is *born* where you want it (e.g.
+        # registered to an earlier revision's frame) instead of wherever the
+        # bag's odometry happened to be pointing. Rotating artifacts after the
+        # fact would shear the map against its posegraph; rotating the prior
+        # keeps map, posegraph and trajectory consistent.
+        self.frame = frame  # (x, y, yaw_rad) or None
 
         self.clock_pub = self.create_publisher(Clock, "/clock", 10)
         self.tf_pub = self.create_publisher(TFMessage, "/tf", 100)
@@ -136,6 +143,24 @@ class Replayer(Node):
             for tr in msg.transforms
             if (tr.header.frame_id, tr.child_frame_id) not in self.strip
         ]
+        if self.frame is not None:
+            import math
+
+            fx, fy, fyaw = self.frame
+            c, s = math.cos(fyaw), math.sin(fyaw)
+            for tr in kept:
+                if (tr.header.frame_id, tr.child_frame_id) != (
+                    "odom",
+                    "base_footprint",
+                ):
+                    continue
+                t = tr.transform.translation
+                t.x, t.y = c * t.x - s * t.y + fx, s * t.x + c * t.y + fy
+                yaw = yaw_of(tr.transform.rotation) + fyaw
+                q = tr.transform.rotation
+                q.x = q.y = 0.0
+                q.z = math.sin(yaw / 2)
+                q.w = math.cos(yaw / 2)
         if kept:
             out = TFMessage()
             out.transforms = kept
@@ -194,13 +219,26 @@ def main():
         help="stop feeding at this bag-relative time (0 = whole bag) — "
         "surgical trim of a drifty ending",
     )
+    ap.add_argument(
+        "--frame",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "YAW_DEG"),
+        help="SE2 pre-multiplied onto the odometry prior so the map frame is "
+        "born aligned (e.g. registered to an earlier revision)",
+    )
     args = ap.parse_args()
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     rclpy.init()
-    node = Replayer(args.mode, args.sample_dt)
+    frame = None
+    if args.frame:
+        import math
+
+        frame = (args.frame[0], args.frame[1], math.radians(args.frame[2]))
+    node = Replayer(args.mode, args.sample_dt, frame=frame)
 
     # Give the node-under-test a moment to come up on the graph and discover us.
     for _ in range(20):
