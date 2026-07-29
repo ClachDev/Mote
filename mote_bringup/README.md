@@ -31,7 +31,7 @@ spoken recently:
 | Input | Published by | Priority | Timeout |
 |---|---|---|---|
 | `/cmd_vel_nav` | Nav2's `controller_server` and `behavior_server` | 10 | 0.5 s |
-| `/cmd_vel_teleop_stamped` | `twist_relay` (Foxglove panel) and `pixi run teleop` | 100 | 1.0 s |
+| `/cmd_vel_teleop_stamped` | `twist_relay` (Foxglove panel), `pixi run teleop`, the RViz teleop panel | 100 | 1.0 s |
 
 Priorities and timeouts live in `config/twist_mux.yaml`; the output is
 `/diff_drive_controller/cmd_vel`, unchanged, so bags, the benchmark and the sim
