@@ -1,17 +1,22 @@
 """health_monitor freshness/rate logic drives the OK/DEGRADED/FAULT roll-up."""
 
+import os
 import time
 
 import pytest
+import yaml
 from diagnostic_msgs.msg import DiagnosticStatus
 
 from mote_bringup.health_monitor import (
+    DIAGNOSTIC_STATUS_NAMES,
     _one_line,
     _severity_level,
     _TfWatch,
     _TopicWatch,
 )
 from mote_bringup.sd_notify import SdNotifier
+
+HEALTH_CONFIG = os.path.join(os.path.dirname(__file__), "..", "config", "health.yaml")
 
 
 def _watch(severity="critical", min_rate=5.0, timeout=2.0):
@@ -109,6 +114,24 @@ def test_boolean_critical_still_supported():
 def test_unknown_severity_rejected():
     with pytest.raises(ValueError):
         _severity_level({"name": "x", "severity": "catastrophic"})
+
+
+def test_forwarded_status_names_match_the_publishers():
+    """The roll-up matches by exact name, so a renamed status silently vanishes.
+
+    /diagnostics is shared, so health_monitor cannot take whatever it finds
+    there — it lifts named statuses. Nothing else ties those names to the nodes
+    that publish them, and a status that stops being folded in degrades nothing
+    while still looking healthy.
+    """
+    from mote_bringup.slip_monitor import STATUS_NAME as SLIP_STATUS
+
+    with open(HEALTH_CONFIG) as f:
+        configured = yaml.safe_load(f)["diagnostic_statuses"]
+    assert SLIP_STATUS in configured
+    # system_monitor's status name is a literal in that node.
+    assert "system" in configured
+    assert set(configured) == set(DIAGNOSTIC_STATUS_NAMES)
 
 
 def test_one_line_collapses_embedded_newlines():

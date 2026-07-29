@@ -200,6 +200,48 @@ asserted at the instant you sample, so keying only off it misses the event.
 boots). With no cooler fitted the key is simply absent. Measured on `auldbot`:
 idle 48 °C / 0 RPM, 4-core load 61 °C / ~4900 RPM with no throttle bits set.
 
+## Slip monitor — `slip_monitor.py`
+
+Started by `mote_launch.py`, beside `system_monitor`. It reads the disagreement
+between the robot's two motion sources and publishes what it means as the `slip`
+status on `/diagnostics`, which the health monitor folds into the roll-up.
+
+kinematic_icp *takes* wheel odometry as its prior and corrects it against the
+scan, so the correction is already a measurement of how wrong the wheels were —
+a slip signal on existing hardware, with no IMU. Over a 1 s sliding window the
+node compares the travel each source reports, in the body frame, and reports:
+
+| state | meaning |
+|---|---|
+| `slip` | The wheels claim travel the lidar did not see. Wheels spinning on a slippery floor, or a robot wedged against something. |
+| `stuck` | Motion is commanded and *neither* source reports any. |
+| `icp_fault` | The lidar pose moved in a way the drive cannot produce. Slip makes the wheels over-read, never the lidar, so this is a scan-match excursion — or the robot being moved by hand. |
+
+All three are **DEGRADED**, never FAULT: each is a reason to stop and re-plan,
+not a reason to refuse to drive, and a monitor that can halt the robot on a
+threshold is a worse failure than the slip it is watching for.
+
+`slip/residual` (`geometry_msgs/TwistStamped`) carries the raw numbers so they
+can be recorded and plotted: `linear.x` is the speed residual (wheel minus
+lidar, m/s), `linear.y` the speed it is relative to, `angular.z` the yaw-rate
+residual.
+
+Three things are worth knowing:
+
+- **Only translation is thresholded.** The yaw residual is published but never
+  keyed off: measured on real bags it is dominated by scan-match jitter, reaching
+  a p99 as large as the yaw rate itself, so no threshold exists that a hard turn
+  would not trip. Translation on the same bags has a p99 of 0.006–0.021 m/s.
+- **A stalled lidar is not slip.** Without a guard, a stopped corrector freezes
+  the window while the wheels keep turning, which grows without bound and looks
+  exactly like slip. A source older than `max_lag` yields no verdict instead.
+- **Thresholds are measurements, not guesses.** They come from the residual
+  distribution over `~/.mote/bags/mapping`, live in `config/slip.yaml`
+  (overridable at `$MOTE_HOME/slip.yaml` — traction is a property of one robot on
+  one floor), and are re-checkable with `tools/slip_replay.py`, which drives the
+  very same estimator over a bag. The derivation, and the six real events it
+  found in those bags, are in `docs/tuning/2026-07-28-slip-detection.md`.
+
 ## Health monitor — `health_monitor.py`
 
 Runs as `mote-health.service` (or `pixi run health`). Watches subsystem liveness
@@ -207,9 +249,9 @@ and publishes, every second:
 
 - **`/diagnostics_agg`** (`diagnostic_msgs/DiagnosticArray`) — one
   `DiagnosticStatus` per subsystem (scan, filtered scan, joint states, camera,
-  odom TF, localisation TF), the host status folded in from `system_monitor`'s
-  `/diagnostics`, the last self-check verdict, and a rolled-up `mote` status. The
-  standard form the fleet layer can lift later.
+  odom TF, localisation TF), the `system` and `slip` statuses folded in from the
+  shared `/diagnostics`, the last self-check verdict, and a rolled-up `mote`
+  status. The standard form the fleet layer can lift later.
 - **`/health`** (`std_msgs/String`) — a single human-readable summary line:
   `OK` / `DEGRADED: camera stale` / `FAULT: scan stale (…)`. Easy to eyeball:
 
@@ -238,9 +280,11 @@ Two things worth knowing about these thresholds:
   bus blocks each `read()` ~200 ms per servo and collapses the loop to ~1.6 Hz,
   which the driver itself reports only as warnings.
 - `/diagnostics` is a **shared** topic: `controller_manager` publishes its own
-  loop-jitter status there. The host status is therefore matched by exact name
-  (`system`), or a third party's ERROR gets misattributed to the host and drives
-  a spurious robot-level FAULT.
+  loop-jitter status there. Statuses are therefore lifted by exact name, listed
+  in `health.yaml`'s `diagnostic_statuses` (`system`, `slip`), or a third party's
+  ERROR gets misattributed to one of ours and drives a spurious robot-level
+  FAULT. A named status nobody is publishing is simply absent — asserting
+  another monitor's liveness is not this monitor's job.
 
 The monitor is also the systemd watchdog feeder: it sends `READY=1` once up and
 pets the watchdog on every publish (`sd_notify.py`, a dependency-free

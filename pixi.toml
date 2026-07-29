@@ -101,6 +101,12 @@ record = "ros2 launch mote_bringup record_launch.py"
 tasks = "ros2 launch mote_tasks tasks_launch.py"
 health = "ros2 run mote_bringup health_monitor"
 self-check = "ros2 run mote_bringup self_check"
+# Wheel-vs-lidar odometry residual: slip / stuck / scan-match excursions. Runs
+# with the base already; this is for watching it on its own.
+slip = "ros2 run mote_bringup slip_monitor"
+# Re-score recorded bags through the very estimator the node runs — how
+# config/slip.yaml's thresholds were set, and how a change to them is checked.
+slip-replay = "python mote_bringup/tools/slip_replay.py"
 chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
 # SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
 # the lidar/camera/Nav2. During a mission the arm is already there (it lives in

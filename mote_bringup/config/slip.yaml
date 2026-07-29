@@ -1,0 +1,56 @@
+# Wheel-vs-lidar odometry residual thresholds, read by the slip_monitor node.
+#
+# The robot's two motion sources are wheel odometry and kinematic_icp's
+# scan-matched pose. kinematic_icp takes the wheel odom as its prior, so their
+# disagreement measures how wrong the wheels were — a slip/stuck signal with no
+# extra sensor. Every value below was set from the residual distribution measured
+# over the real mapping bags; see docs/tuning/2026-07-28-slip-detection.md, and
+# re-check with `python mote_bringup/tools/slip_replay.py` after changing one.
+#
+# A per-robot $MOTE_HOME/slip.yaml overrides this packaged default (the same
+# pattern as health.yaml): traction is a property of one robot's wheels on one
+# site's floor, so a site with a slippery surface can widen its own margins
+# without the fleet inheriting them.
+
+# Sliding window over which each source's travel is compared, seconds. The
+# residual is a displacement difference divided by this, so scan-match jitter
+# averages down as it grows while a real slip does not. Measured |yaw| residual
+# p50 falls ~3.0 -> ~1.1 deg/s going from 0.1 s to 1.0 s.
+window: 1.0
+
+# How often a window is scored, Hz. Windows overlap, which is why the hold and
+# release times below are durations rather than counts of evaluations.
+rate: 5.0
+
+# Below this reported body speed (m/s) neither source resolves enough travel for
+# the comparison to mean anything, and no verdict is given.
+min_speed: 0.03
+
+# Slip — the wheels claim more travel than the lidar saw. Both conditions must
+# hold: an absolute floor in m/s, and a fraction of the motion reported. Quiet
+# driving measures p50 0.000 m/s and p99 0.007-0.011 m/s over the clean bags, so
+# 0.030 sits ~4x above the worst quiet p99, and 0.25 above the 0.13 relative p99.
+slip_speed: 0.030
+slip_fraction: 0.25
+
+# ICP fault — the lidar reports motion the wheels did not, which slip cannot
+# cause (slip makes the *wheels* over-read). Same two-condition form.
+icp_speed: 0.030
+icp_fraction: 0.25
+
+# A body speed above max_wheel_speed (robot.yaml) x this is one the drive cannot
+# produce at all, so it is a scan-match excursion regardless of the wheels.
+max_body_speed_tolerance: 1.15
+
+# Stuck — commanded, but neither source reports motion. Needs no calibration:
+# it is the difference between a command being issued and nothing happening.
+stuck_command_speed: 0.05
+stuck_command_yaw_rate: 0.20
+stuck_speed: 0.01
+stuck_yaw_rate: 0.05
+
+# A verdict must hold continuously for `hold` seconds before it is reported, and
+# be absent for `release` seconds before it is withdrawn. One bad window is not
+# an event; a flapping one is a single event rather than several.
+hold: 0.5
+release: 2.0
