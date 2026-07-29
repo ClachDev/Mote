@@ -73,11 +73,23 @@ STUCK_WINDOW = 6.0  # s of commanded-forward, no-displacement before escaping
 STUCK_TRAVEL = 0.10  # map-frame displacement (m) under which "no displacement"
 ESCAPE_REVERSE = 1.5  # s of backing off when stuck
 ESCAPE_TURN = 1.5  # s of turning away from the followed wall after backing off
-SCAN_STALE = 2.0  # s without a scan before we stop and wait — driving on a
+SCAN_STALE = 1.0  # s without a scan before we stop and wait — driving on a
 # frozen scan is driving blind, and a frozen pose then reads as "stuck",
 # poisoning the frontier blacklist (observed when a wifi drop wedged the
 # on-robot DDS graph mid-run: phantom stucks starved the frontier picker and
-# the mission exited "covered" half done)
+# the mission exited "covered" half done). 1 s is ~10 missed scans; the same
+# wedge also showed scans dribbling in at 1-2 s intervals, each one seconds
+# old — hence tight, plus the settling period below.
+SETTLE = 3.0  # s of continuous fresh data required after a stale spell or a
+# pose jump before driving resumes — resuming instantly fired a Nav2
+# relocation built from the frozen-then-corrupted map (run 2's wild phase)
+KIDNAP_JUMP = 0.5  # map-frame jump (m) between loop iterations that cannot be
+# real motion: a carried robot or a large SLAM correction. Either way the pose
+# history is fiction — stop and settle rather than act on it.
+ORPHAN_HOLD = 120.0  # s to hold zero velocity and retry a cancel at exit when
+# Nav2 still holds a goal we could not confirm dead — the mux hands the wheels
+# to Nav2 one second after our zeros stop, so exiting with a live goal turns
+# "mission over" into "Nav2 drives at a stale target unsupervised"
 
 
 def norm(a):
@@ -155,6 +167,7 @@ class Explorer(Node):
             TwistStamped, "/cmd_vel_teleop_stamped", 10
         )
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        self.orphan = None
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
@@ -313,9 +326,28 @@ class Explorer(Node):
             if result_fut.done():
                 ok = result_fut.result().status == GoalStatus.STATUS_SUCCEEDED
                 return "ok" if ok else "aborted"
-        handle.cancel_goal_async()
-        rclpy.spin_once(self, timeout_sec=0.5)
+        # The cancel must be confirmed dead, not fired and forgotten: over a
+        # wedged graph the cancel never arrives, and a goal that outlives this
+        # process gets the wheels one mux timeout after our commands stop.
+        if not self.cancel_confirmed(handle, result_fut):
+            self.orphan = (handle, result_fut)
+            print(
+                "WARNING: Nav2 goal cancel unconfirmed — holding it as an "
+                "orphan; exit will not release the wheels until it is dead",
+                flush=True,
+            )
         return "timeout"
+
+    def cancel_confirmed(self, handle, result_fut, wait_s=10.0):
+        """Cancel a Nav2 goal and wait for a terminal result. True == dead."""
+        handle.cancel_goal_async()
+        t0 = self.now_s()
+        while self.now_s() - t0 < wait_s:
+            self.publish(0.0, 0.0)
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if result_fut.done():
+                return True
+        return False
 
 
 def known_cells(grid):
@@ -388,6 +420,8 @@ def main():
     stuck = StuckDetector()
 
     stale_since = None
+    settle_until = start
+    prev_here = None
     while node.now_s() - start < args.budget:
         rclpy.spin_once(node, timeout_sec=0.05)
         t = node.now_s()
@@ -400,17 +434,45 @@ def main():
                 )
             node.publish(0.0, 0.0)
             stuck.reset()
+            prev_here = None
             continue
         if stale_since is not None:
             print(
-                f"[{t - start:6.1f}s] scan resumed after {t - stale_since:.0f}s",
+                f"[{t - start:6.1f}s] scan resumed after {t - stale_since:.0f}s "
+                f"— settling for {SETTLE:.0f}s",
                 flush=True,
             )
             stale_since = None
+            settle_until = t + SETTLE
+        if t < settle_until:
+            # Hold still and hold the mission clocks: acting the instant data
+            # returns means acting on whatever the outage did to the map — the
+            # observed failure was an immediate Nav2 relocation into fiction.
+            node.publish(0.0, 0.0)
+            stuck.reset()
+            best_at = last_relocate = check_at = t
+            continue
+
+        here = node.robot_xy()
+        if here is not None and prev_here is not None:
+            jump = math.hypot(here[0] - prev_here[0], here[1] - prev_here[1])
+            if jump > KIDNAP_JUMP:
+                print(
+                    f"[{t - start:6.1f}s] pose jumped {jump:.1f} m in one tick "
+                    "(carried, or a large SLAM correction) — settling",
+                    flush=True,
+                )
+                node.publish(0.0, 0.0)
+                stuck.reset()
+                settle_until = t + SETTLE
+                prev_here = here
+                continue
+        if here is not None:
+            prev_here = here
+
         front, left, _ = node.sectors()
         forward = node.wall_follow_step(front, left)
 
-        here = node.robot_xy()
         if here is not None and stuck.update(t, here[0], here[1], forward):
             print(
                 f"[{t - start:6.1f}s] stuck at ({here[0]:+.1f},{here[1]:+.1f}) "
@@ -473,12 +535,43 @@ def main():
         if res != "ok":
             blacklist.append(target)
         stuck.reset()
+        prev_here = None
         best_at = node.now_s()  # fresh windows wherever we ended up
         last_relocate = node.now_s()
         check_at = node.now_s()
 
     node.publish(0.0, 0.0)
     print(f"exploration done after {node.now_s() - start:.1f}s", flush=True)
+    # Exiting stops our zero-commands, and one mux timeout later Nav2 owns the
+    # wheels — so an unconfirmed-dead goal must be resolved before we go.
+    if node.orphan is not None:
+        deadline = node.now_s() + ORPHAN_HOLD
+        warned_at = 0.0
+        while node.now_s() < deadline:
+            handle, result_fut = node.orphan
+            if result_fut.done():
+                node.orphan = None
+                print("orphaned Nav2 goal confirmed dead", flush=True)
+                break
+            if node.now_s() - warned_at > 10.0:
+                warned_at = node.now_s()
+                print(
+                    "WARNING: Nav2 still holds a goal — holding zero velocity "
+                    "and retrying the cancel",
+                    flush=True,
+                )
+            handle.cancel_goal_async()
+            hold = node.now_s() + 1.0
+            while node.now_s() < hold:
+                node.publish(0.0, 0.0)
+                rclpy.spin_once(node, timeout_sec=0.1)
+        if node.orphan is not None:
+            print(
+                "WARNING: exiting with a possibly-live Nav2 goal — the mux "
+                "will hand it the wheels; stop the stack (`pixi run kill`) "
+                "before leaving the robot unattended",
+                flush=True,
+            )
     node.destroy_node()
     rclpy.shutdown()
     return 0
