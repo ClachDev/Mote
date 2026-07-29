@@ -51,9 +51,23 @@ doorways) want the geometry tightened, e.g.
 `pixi run explore -- --cruise 0.2 --obstacle 0.4 --desired-left 0.6 --follow-band 1.0 --blacklist-radius 1.0`.
 
 If the scan stream goes stale (wedged graph, dead lidar) the explorer stops
-and waits rather than driving blind — and interactive runs should pin DDS the
-way the systemd units do (`CYCLONEDDS_URI` → `config/cyclonedds.xml`), or a
-wifi drop can freeze the on-robot graph mid-mission.
+and waits rather than driving blind. **Interactive mission runs must put the
+graph on loopback**, or a wifi flap stalls scan delivery *between processes on
+the same board* (Cyclone prefers the wlan0 locators for same-host peers while
+the interface exists — the lo entry in `cyclonedds.xml` is only a no-network
+fallback, and `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` confines discovery,
+not transport). In the tmux session, before launching:
+
+```bash
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+export CYCLONEDDS_URI=file://$PWD/mote_bringup/config/cyclonedds-local.xml
+```
+
+Foxglove still works (it is a WebSocket server, not a DDS peer); RViz-over-LAN
+does not, which matches systemd-run robots. Any helper that must join the
+session (`save-map`, `ros2` CLI) needs the same two exports — and a stale
+`ros2` daemon from a different environment will show an empty graph until
+`pkill -9 -f '[_]ros2_daemon'`.
 
 ## Drive path — who gets the wheels
 

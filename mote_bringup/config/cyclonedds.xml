@@ -28,10 +28,13 @@
              participant — on-robot autonomy must not depend on the network. -->
         <NetworkInterface name="${MOTE_DDS_INTERFACE:-wlan0}" priority="default"
                           multicast="default" presence_required="false"/>
-        <!-- Loopback fallback: keeps the on-robot graph alive with no network,
-             and is the path every on-robot pair (bringup/SLAM/Nav2/perception/
-             tasks) uses anyway. Lower priority so the real interface is
-             preferred for remote peers. -->
+        <!-- Loopback fallback: keeps the on-robot graph alive when the robot
+             has no network AT STARTUP. It is NOT the same-host data path while
+             wlan0 exists — Cyclone advertises and prefers the higher-priority
+             interface's locators even between processes on this board, so a
+             wifi flap stalls same-host delivery under this profile (observed
+             2026-07-29). Mission sessions that must not care about wifi use
+             cyclonedds-local.xml (lo only) instead. -->
         <NetworkInterface name="lo" priority="-1" multicast="true"
                           presence_required="false"/>
       </Interfaces>
