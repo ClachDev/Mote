@@ -159,6 +159,32 @@ the large excursion happened without the gate and that the gated trials cluster
 tightly; what cannot be said, from this, is by how much the gate improves
 localisation.
 
+## 6. Interaction with slip detection (#77)
+
+`slip_monitor` landed independently and reaches the same threshold from the
+other direction: it *reports* an `icp_fault` when the lidar claims a body speed
+above `max_wheel_speed x 1.15` — the very frames this gate *removes*. Its own
+measurements are in `2026-07-28-slip-detection.md`, and one of its worked
+examples (bag 172607, 0.326 m/s) is an excursion of exactly this kind.
+
+The two are complementary, but only if they are wired apart. The monitor read
+`odom->base` through TF, which is now the gated edge, where a speed above the
+envelope cannot occur by construction — so its primary `icp_fault` branch would
+have become unreachable, and a scan match degrading behind a working gate would
+have been reported by nobody while the monitor went on publishing OK.
+
+So kinematic_icp still broadcasts, inverted, as the leaf `base -> odom_icp`
+(`invert_odom_tf` swaps the frame ids as well as the transform, which is what
+keeps `base_footprint` from acquiring a second parent), and `mote_launch.py`
+points the monitor's `odom_frame` at it. The monitor therefore still sees the
+raw track it was validated against — its thresholds were tuned on bags whose
+`odom->base` *is* raw ICP — while navigation runs on the gated edge. The
+division is: the gate protects the map frame, the monitor reports that the
+scan match needed protecting.
+
+`test_the_slip_monitor_watches_the_ungated_lidar_track` pins it, because nothing
+about getting this wrong is visible at runtime.
+
 ## Caveats
 
 * The threshold is calibrated against three bags from one robot on one floor.

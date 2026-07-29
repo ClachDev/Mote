@@ -17,8 +17,11 @@ in step, because none of them fails loudly:
   costs the scan match its prior and reports nothing;
 * the gate subscribing to a topic kinematic_icp does not publish leaves
   odom->base simply absent, which reads as a TF timing problem;
-* kinematic_icp broadcasting odom->base again would put two publishers on one
-  edge, and the ungated one would win roughly half the time.
+* kinematic_icp broadcasting odom->base *uninverted* would put two publishers on
+  one edge, and the ungated one would win roughly half the time;
+* and `slip_monitor` pointed at the gated edge would still start, still publish,
+  and simply never report the scan-match fault it exists to report -- the gate
+  having removed the very thing it looks for.
 """
 
 import pathlib
@@ -36,6 +39,9 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 
 sys.path.insert(0, str(REPO / "mote_bringup" / "launch"))
 import localization_launch  # noqa: E402
+import mote_launch  # noqa: E402
+
+from mote_bringup import launch_utils  # noqa: E402
 
 RELAY = "odom_tf_relay"
 ICP = "online_node"
@@ -113,7 +119,7 @@ def test_icp_reads_the_leaf_the_relay_writes(description, context):
     loaded = _loaded(description, context)
     written = _params(loaded[RELAY], context)["child_frame"]
     read = _params(loaded[ICP], context)["wheel_odom_frame"]
-    assert written == read == localization_launch.WHEEL_ODOM_FRAME
+    assert written == read == launch_utils.WHEEL_ODOM_FRAME
 
 
 def test_the_gate_owns_the_odom_edge_alone(description, context):
@@ -126,8 +132,13 @@ def test_the_gate_owns_the_odom_edge_alone(description, context):
     loaded = _loaded(description, context)
     icp = _params(loaded[ICP], context)
     gate = _params(loaded[GATE], context)
-    assert icp["publish_odom_tf"] is False
-    assert icp["lidar_odom_frame"] == localization_launch.ICP_ODOM_FRAME
+    # kinematic_icp still broadcasts, but inverted: `invert_odom_tf` swaps the
+    # frame ids too, so it writes base->odom_icp, a leaf. Without the inversion
+    # this would be a second claim on base_footprint's parent and the two
+    # publishers would fight over odom->base.
+    assert icp["publish_odom_tf"] is True
+    assert icp["invert_odom_tf"] is True
+    assert icp["lidar_odom_frame"] == launch_utils.ICP_ODOM_FRAME
     assert icp["lidar_odom_frame"] != gate["odom_frame"]
     assert gate["odom_frame"] == "odom"
     assert gate["base_frame"] == icp["base_frame"] == "base_footprint"
@@ -153,7 +164,7 @@ def test_the_gate_and_icp_read_the_same_wheel_leaf(description, context):
     assert (
         _params(loaded[GATE], context)["wheel_odom_frame"]
         == _params(loaded[ICP], context)["wheel_odom_frame"]
-        == localization_launch.WHEEL_ODOM_FRAME
+        == launch_utils.WHEEL_ODOM_FRAME
     )
 
 
@@ -171,6 +182,27 @@ def test_the_gate_bounds_itself_by_the_measured_hardware_envelope(description, c
     # Measured: legitimate intervals reach x1.13 of the envelope and the
     # mildest excursion sits at x1.25, so the tolerance must land between.
     assert 1.13 < gate["tolerance"] < 1.25
+
+
+def test_the_slip_monitor_watches_the_ungated_lidar_track(context):
+    """It must not be handed the edge the gate has already cleaned.
+
+    `slip_monitor`'s `icp_fault` verdict fires on a body speed above the drive
+    envelope, which is exactly what `icp_odom_gate` removes from odom->base. On
+    the gated edge the check cannot fire by construction, so a scan match
+    degrading behind a working gate would be reported by nobody -- and nothing
+    about that failure is visible at runtime, since the monitor still starts and
+    still publishes an OK verdict.
+    """
+    monitors = [
+        e
+        for e in mote_launch.generate_launch_description().entities
+        if isinstance(e, Node) and "slip_monitor" in str(e._Node__node_executable)
+    ]
+    assert len(monitors) == 1
+    params = evaluate_parameters(context, monitors[0]._Node__parameters)[0]
+    assert params["odom_frame"] == launch_utils.ICP_ODOM_FRAME
+    assert params["odom_frame"] != "odom"
 
 
 def test_nothing_is_launched_as_its_own_process_but_the_container(description):

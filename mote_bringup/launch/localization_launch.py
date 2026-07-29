@@ -40,17 +40,15 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LoadComposableNodes, Node, SetParameter
 from launch_ros.descriptions import ComposableNode
 
+from mote_bringup.launch_utils import ICP_ODOM_FRAME, WHEEL_ODOM_FRAME
+
 CONTAINER = "localization_container"
 
-# The leaf the relay writes and kinematic_icp reads. One name, because the two
-# halves only work if they agree on it, and a disagreement costs kinematic_icp
-# its motion prior without failing anything loudly.
-WHEEL_ODOM_FRAME = "odom_wheel"
-
-# The frame kinematic_icp accumulates in. It is deliberately not `odom`: the
-# ungated track is not the odometry frame anything else may use, and naming it
-# apart is what stops a consumer picking it up by accident.
-ICP_ODOM_FRAME = "odom_icp"
+# Both leaves are defined in the package rather than here, because mote_launch.py
+# points slip_monitor at ICP_ODOM_FRAME and a launch file cannot import another.
+# WHEEL_ODOM_FRAME is the relay's output and kinematic_icp's prior;
+# ICP_ODOM_FRAME is kinematic_icp's ungated track, broadcast *inverted* so it
+# hangs off the base as a leaf rather than giving base_footprint a second parent.
 
 ODOM_FRAME = "odom"
 BASE_FRAME = "base_footprint"
@@ -96,11 +94,14 @@ def generate_launch_description():
                 "lidar_odom_frame": ICP_ODOM_FRAME,
                 "wheel_odom_frame": WHEEL_ODOM_FRAME,
                 "base_frame": BASE_FRAME,
-                # The gate owns odom->base. kinematic_icp keeps reading its
-                # prior from the wheel leaf, so muting its broadcast costs it
-                # nothing: it never consumed its own output.
-                "publish_odom_tf": False,
-                "invert_odom_tf": False,
+                # The gate owns odom->base, so what kinematic_icp broadcasts is
+                # the *inverted* leaf instead: `invert_odom_tf` swaps the frame
+                # ids as well as the transform, giving base->odom_icp rather
+                # than a second claim on base's parent. It keeps reading its
+                # prior from the wheel leaf either way -- it never consumed its
+                # own output.
+                "publish_odom_tf": True,
+                "invert_odom_tf": True,
                 "tf_timeout": 0.05,
             }
         ],

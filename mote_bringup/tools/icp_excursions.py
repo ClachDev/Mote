@@ -29,16 +29,24 @@ wheel speed, which establishes what the robot was actually doing.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
 
-from odom_health import max_wheel_speed, read_tf, rel_motion
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from bag_odometry import read_samples  # noqa: E402
+from odom_health import max_wheel_speed, rel_motion_series  # noqa: E402
+
+from mote_bringup.odom_residual import rel_motion  # noqa: E402
 
 
 def resample(bag: Path):
     """ICP and wheel poses on the common ICP stamps."""
-    icp, wheel = read_tf(bag)
+    wheel_samples, icp_samples, _ = read_samples(bag)
+    icp, wheel = np.array(icp_samples), np.array(wheel_samples)
     lo, hi = max(icp[0, 0], wheel[0, 0]), min(icp[-1, 0], wheel[-1, 0])
     m = (icp[:, 0] >= lo) & (icp[:, 0] <= hi)
     t = icp[m, 0]
@@ -70,8 +78,8 @@ def analyse(bag: Path, vmax: float, tol: float, window: float):
     t, i, w = resample(bag)
     dt = np.diff(t)
     ok = dt > 1e-3
-    idx, idy, ida = rel_motion(*i[:-1].T, *i[1:].T)
-    wdx, wdy, _ = rel_motion(*w[:-1].T, *w[1:].T)
+    idx, idy, ida = rel_motion_series(*i.T)
+    wdx, wdy, wda = rel_motion_series(*w.T)
     iv = np.hypot(idx, idy) / dt
     wv = np.hypot(wdx, wdy) / dt
 
@@ -147,16 +155,14 @@ def analyse(bag: Path, vmax: float, tol: float, window: float):
     print(
         f"    -> the {len(rows)} jumps add {jmp.sum():+.3f} m to a "
         f"{np.hypot(*rel_motion(*i[0], *i[-1])[:2]):.1f} m displaced, "
-        f"{np.sum(np.hypot(*rel_motion(*w[:-1].T, *w[1:].T)[:2])):.1f} m driven session"
+        f"{np.sum(np.hypot(wdx, wdy)):.1f} m driven session"
     )
     # Where can a threshold sit? Express each interval as the surface speed the
     # faster wheel would need — the same quantity the Nav2 critic bounds — so
     # the gate and the critic describe one envelope rather than two.
     sep = 0.22
     icp_wheel = np.hypot(idx, idy)[ok] / dt[ok] + 0.5 * sep * np.abs(ida[ok] / dt[ok])
-    whl_wheel = np.hypot(wdx, wdy)[ok] / dt[ok] + 0.5 * sep * np.abs(
-        rel_motion(*w[:-1].T, *w[1:].T)[2][ok] / dt[ok]
-    )
+    whl_wheel = np.hypot(wdx, wdy)[ok] / dt[ok] + 0.5 * sep * np.abs(wda[ok] / dt[ok])
     legit = np.ones(iv.size, bool)
     legit[hits] = False
     legit = legit[ok]
