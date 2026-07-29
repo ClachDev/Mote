@@ -19,7 +19,11 @@ its odometry prior, exactly as on the robot.
 
 Outputs (in ``--out-dir``): ``series.json`` (raw re-scorable trajectory) and, in
 slam mode, ``map.npz`` (occupancy grid + resolution/origin for rendering and
-map-quality metrics). Run one replay per process for a clean rclpy context.
+map-quality metrics) plus the serialized posegraph (``map.posegraph`` +
+``map.data``) — so a replayed session is not just scoreable but *continuable*:
+the winning parameter set's output can be assembled into a site revision and
+extended on the robot in the same frame. Run one replay per process for a
+clean rclpy context.
 """
 
 from __future__ import annotations
@@ -255,11 +259,32 @@ def main():
             last_sample = sim_t
         time.sleep(0.01)
 
+    posegraph_ok = False
+    if args.mode == "slam":
+        from slam_toolbox.srv import SerializePoseGraph
+
+        cli = node.create_client(SerializePoseGraph, "/slam_toolbox/serialize_map")
+        if cli.wait_for_service(timeout_sec=5.0):
+            req = SerializePoseGraph.Request()
+            req.filename = str(out / "map")
+            fut = cli.call_async(req)
+            deadline = time.monotonic() + 30
+            while not fut.done() and time.monotonic() < deadline:
+                rclpy.spin_once(node, timeout_sec=0.2)
+            posegraph_ok = (
+                fut.done() and fut.result() is not None and fut.result().result == 0
+            )
+        print(
+            f"posegraph serialize: {'ok' if posegraph_ok else 'FAILED'}",
+            flush=True,
+        )
+
     result = {
         "mode": args.mode,
         "bag": str(args.bag),
         "truncated": bool(stop),
         "n_scans": n_scans,
+        "posegraph": posegraph_ok,
         "traj": node.traj,
     }
     if node.latest_map is not None:
