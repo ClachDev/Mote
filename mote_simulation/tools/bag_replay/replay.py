@@ -152,6 +152,21 @@ def score(series_path, map_npz):
     return out, traj
 
 
+def fast_args(params_file, mode):
+    """Fast-mode gate thresholds: slam's own travel gates x 0.7, so borderline
+    scans are still fed and slam itself keeps the final say. Over-feeding is
+    free (slam discards); under-feeding would silently change the graph."""
+    gd = gy = 0.3
+    if mode == "slam":
+        import yaml
+
+        p = yaml.safe_load(Path(params_file).read_text()) or {}
+        rp = p.get("slam_toolbox", {}).get("ros__parameters", {})
+        gd = float(rp.get("minimum_travel_distance", 0.3))
+        gy = float(rp.get("minimum_travel_heading", 0.3))
+    return ["--fast", "--gate-dist", str(0.7 * gd), "--gate-yaw", str(0.7 * gy)]
+
+
 def run_one(bag, params_file, name, mode, run_dir, args):
     """Launch the stack for one parameter set, replay the bag, score, render."""
     set_dir = run_dir / name
@@ -211,6 +226,7 @@ def run_one(bag, params_file, name, mode, run_dir, args):
                 "--stop-secs",
                 str(args.stop_secs),
                 *(["--frame", *(str(v) for v in args.frame)] if args.frame else []),
+                *(fast_args(params_file, mode) if args.fast else []),
             ],
             env=env,
             timeout=args.replay_timeout,
@@ -218,6 +234,18 @@ def run_one(bag, params_file, name, mode, run_dir, args):
         if rp.returncode != 0:
             log(f"[{name}] FAIL: replayer exited {rp.returncode}")
             return None
+        if args.fast:
+            drops = (
+                stack_log.read_text(errors="ignore").count("queue is full")
+                if stack_log.exists()
+                else 0
+            )
+            if drops:
+                log(
+                    f"[{name}] WARNING: {drops} queue-full drops under --fast — "
+                    "result may be DEGRADED; rerun this set without --fast"
+                )
+                (set_dir / "DEGRADED.txt").write_text(f"{drops} drops\n")
     except subprocess.TimeoutExpired:
         log(f"[{name}] FAIL: replay exceeded wall-clock timeout")
         return None
@@ -267,6 +295,12 @@ def main():
         type=float,
         metavar=("X", "Y", "YAW_DEG"),
         help="SE2 applied to the odometry prior (birth-align the map frame)",
+    )
+    ap.add_argument(
+        "--fast",
+        action="store_true",
+        help="compute-bound replay (pre-gated scans, no wall pacing); any "
+        "queue-full drop is reported loudly and marks the set DEGRADED",
     )
     ap.add_argument("--out", default=str(REPO / "bag_replay_results"))
     ap.add_argument("--boot-timeout", type=float, default=120.0)

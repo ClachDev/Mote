@@ -227,6 +227,23 @@ def main():
         help="SE2 pre-multiplied onto the odometry prior so the map frame is "
         "born aligned (e.g. registered to an earlier revision)",
     )
+    ap.add_argument(
+        "--fast",
+        action="store_true",
+        help="compute-bound replay: withhold scans well inside slam's travel "
+        "gates (see --gate-dist/--gate-yaw, pre-margined by the caller so "
+        "borderline scans are still fed and slam itself decides) and drop the "
+        "wall-clock pacing. The caller must check the stack log for "
+        "'queue is full' afterwards — any drop means rerun without --fast.",
+    )
+    ap.add_argument("--gate-dist", type=float, default=0.21)
+    ap.add_argument("--gate-yaw", type=float, default=0.21)
+    ap.add_argument(
+        "--feed-dwell",
+        type=float,
+        default=0.02,
+        help="fast mode: seconds to spin after each fed scan",
+    )
     args = ap.parse_args()
 
     out = Path(args.out_dir)
@@ -244,12 +261,16 @@ def main():
     for _ in range(20):
         rclpy.spin_once(node, timeout_sec=0.1)
 
+    import math
+
     wall0 = None
     t0_ns = None
     last_ns = None
     last_sample = -1e18  # sim-time of the last trajectory sample (gap-robust)
     n_scans = 0
     stop = False
+    cur_odom = None  # latest bag odom pose (x, y, yaw), for fast-mode gating
+    fast_last = None  # odom pose at the last fed scan
 
     for topic, msg, t_ns in read_bag(args.bag):
         if t0_ns is None:
@@ -258,24 +279,52 @@ def main():
         sim_t = (t_ns - t0_ns) / 1e9
         last_ns = t_ns
 
-        # Pace to the requested fraction of realtime, spinning so /map and TF
-        # callbacks fire while we wait.
-        target = wall0 + sim_t / args.rate
-        while True:
-            dt = target - time.monotonic()
-            if dt <= 0:
-                break
-            rclpy.spin_once(node, timeout_sec=min(dt, 0.02))
+        if not args.fast:
+            # Pace to the requested fraction of realtime, spinning so /map and
+            # TF callbacks fire while we wait.
+            target = wall0 + sim_t / args.rate
+            while True:
+                dt = target - time.monotonic()
+                if dt <= 0:
+                    break
+                rclpy.spin_once(node, timeout_sec=min(dt, 0.02))
 
         node.publish_clock(t_ns)
         if topic == "/tf_static":
             node.handle_tf_static(msg)
         elif topic == "/tf":
+            for tr in msg.transforms:
+                if (tr.header.frame_id, tr.child_frame_id) == (
+                    "odom",
+                    "base_footprint",
+                ):
+                    t = tr.transform.translation
+                    cur_odom = (t.x, t.y, yaw_of(tr.transform.rotation))
             node.handle_tf(msg)
         elif topic == "/scan_filtered":
             if sim_t >= args.skip_secs:
-                node.scan_pub.publish(msg)
-                n_scans += 1
+                feed = True
+                if args.fast and fast_last is not None and cur_odom is not None:
+                    dx = cur_odom[0] - fast_last[0]
+                    dy = cur_odom[1] - fast_last[1]
+                    dyaw = abs(
+                        math.atan2(
+                            math.sin(cur_odom[2] - fast_last[2]),
+                            math.cos(cur_odom[2] - fast_last[2]),
+                        )
+                    )
+                    feed = (
+                        dx * dx + dy * dy >= args.gate_dist**2 or dyaw >= args.gate_yaw
+                    )
+                if feed:
+                    node.scan_pub.publish(msg)
+                    n_scans += 1
+                    if cur_odom is not None:
+                        fast_last = cur_odom
+                    if args.fast:
+                        end = time.monotonic() + args.feed_dwell
+                        while time.monotonic() < end:
+                            rclpy.spin_once(node, timeout_sec=0.005)
         rclpy.spin_once(node, timeout_sec=0.0)
 
         if sim_t - last_sample >= args.sample_dt:
