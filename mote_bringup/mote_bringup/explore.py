@@ -283,12 +283,19 @@ class Explorer(Node):
         ox, oy = g.info.origin.position.x, g.info.origin.position.y
         return np.column_stack((ox + (xs + 0.5) * res, oy + (ys + 0.5) * res))
 
-    def pick_target(self, fronts, here, blacklist, visited):
+    def pick_target(self, fronts, here, blacklist, visited, far=False):
         """Frontier to relocate toward: the nearest one whose coarse region the
         robot has not visited yet (so exploration sweeps into new territory
         rather than cycling the current loop), falling back to the plain nearest
         if every frontier is in an already-visited region. Skips frontiers at the
-        robot and near blacklisted (unreachable) points."""
+        robot and near blacklisted (unreachable) points.
+
+        ``far`` flips the choice to the farthest candidate. Nearest is right
+        when following is productive and just needs a hop; it is exactly wrong
+        when the map has stalled because the robot is orbiting an island (the
+        left-hand rule's failure mode on free-standing furniture) — the nearest
+        frontier sits beside the island and re-inserts the robot into the same
+        orbit. Farthest hands Nav2 a goal that leaves the room."""
         if len(fronts) == 0:
             return None
         d = np.hypot(fronts[:, 0] - here[0], fronts[:, 1] - here[1])
@@ -301,7 +308,8 @@ class Explorer(Node):
         cells = np.floor(fronts[idx] / COARSE).astype(int)
         unvisited = np.array([(int(cx), int(cy)) not in visited for cx, cy in cells])
         pool = idx[unvisited] if unvisited.any() else idx
-        return fronts[pool[np.argmin(d[pool])]]
+        pick = np.argmax(d[pool]) if far else np.argmin(d[pool])
+        return fronts[pool[pick]]
 
     def navigate_to(self, x, y):
         """Drive to (x, y) via Nav2. Returns 'ok'/'aborted'/'rejected'/'timeout'."""
@@ -506,12 +514,15 @@ def main():
         )
 
         # Relocate when following has stalled (map flat) or has been cycling one
-        # loop too long — either way head for a new region via Nav2.
-        due = t - best_at > PLATEAU or t - last_relocate > MAX_FOLLOW
+        # loop too long — either way head for a new region via Nav2. A stalled
+        # map means following is going in circles (island orbit), so that case
+        # relocates far; the cycling-timer case is merely "spread out", nearest.
+        stalled = t - best_at > PLATEAU
+        due = stalled or t - last_relocate > MAX_FOLLOW
         if not due or here is None:
             continue
 
-        target = node.pick_target(fronts, here, blacklist, visited)
+        target = node.pick_target(fronts, here, blacklist, visited, far=stalled)
         if target is None:
             if t - start > args.min_time:
                 print(
