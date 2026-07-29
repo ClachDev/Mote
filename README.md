@@ -35,6 +35,10 @@ from allowing me to test algorithms, I also want Mote to be a comparison
 platform between classical ROS/Nav2 navigation and learned policies via
 [LeRobot](https://github.com/huggingface/lerobot).
 
+Getting a cheap robot to drive is only the start, though — most of this repo is
+about everything that comes after: versioned maps, taught zones, fetch missions,
+remote operation, and running more than one robot without SSH-ing into each.
+
 See [`design/`](design/) for hardware design decisions, requirements, and bill
 of materials.
 
@@ -59,17 +63,20 @@ the ability to test and iterate on that right now.
 ## Software
 
 Built with ROS2 Jazzy, managed via [pixi](https://pixi.sh). This gives us a nice
-way to package everything up without worrying about ecosystem concerns.
+way to package everything up without worrying about ecosystem concerns — no
+system ROS install needed, on the Pi or your workstation.
 
 | Package                                 | Purpose                                                   |
 | --------------------------------------- | --------------------------------------------------------- |
-| [`mote_bringup`](mote_bringup/)         | Launch files for bringing up the robot                    |
-| [`mote_description`](mote_description/) | URDF robot model and TF tree                              |
+| [`mote_bringup`](mote_bringup/)         | Launch files, site/map/zone management, health monitoring, self-check, provisioning |
+| [`mote_description`](mote_description/) | URDF robot model and `robot.yaml`, the single source of truth for hardware config |
 | [`mote_hardware`](mote_hardware/)       | ros2_control hardware interface for the Feetech servo bus |
-| [`mote_nav`](mote_nav/)                 | Nav2 plugins for navigation                               |
-| [`mote_perception`](mote_perception/)   | Camera-derived perception (health monitor, depth obstacles) |
-| [`mote_tasks`](mote_tasks/)             | Behaviour-tree task layer that drives Nav2 to run missions |
-| [`mote_simulation`](mote_simulation/)   | Gazebo sim, worlds, and smoke test (workstation only)     |
+| [`mote_nav`](mote_nav/)                 | Nav2 plugins (wheel-speed critic) and the odometry TF relay |
+| [`mote_perception`](mote_perception/)   | Camera depth obstacles for Nav2 + open-vocabulary object detection |
+| [`mote_tasks`](mote_tasks/)             | Behaviour-tree task layer: `fetch` and `goto` missions on top of Nav2 |
+| [`mote_arm`](mote_arm/)                 | SO-101 arm driver, jog, guided calibration, and taught poses |
+| [`mote_fleet`](mote_fleet/)             | Fleet control plane: robot agent, fleet server, operator dashboard, map registry |
+| [`mote_simulation`](mote_simulation/)   | Gazebo sim, a world ladder, and the smoke test (workstation only) |
 
 I'm trying to keep all dependencies from
 [Robostack](https://robostack.github.io/index.html) or `conda-forge`. Anything
@@ -143,107 +150,146 @@ pixi run setup-ids
 The IDs, baud rate and `velocity_scale` (the rad/s → raw servo-unit conversion)
 live in [`mote_description/config/robot.yaml`](mote_description/config/robot.yaml),
 which is the single source of truth for all robot configuration. Both the URDF
-and the launch file read from it.
+and the launch file read from it. The helper tools in
+[`mote_hardware/tools/`](mote_hardware/tools/) round this out (`servo_debug`,
+`velocity_cal`, `swap_ids`).
 
-The other helper tools in [`mote_hardware/tools/`](mote_hardware/tools/) round
-this out: `servo_debug` to inspect and drive individual servos, `velocity_cal`
-to measure `velocity_scale` on your hardware, and `swap_ids` to flip the
-left/right IDs if the wheels turn the wrong way. See
-[`mote_hardware/tools/README.md`](mote_hardware/tools/README.md).
-
-### 5. Launch
+### 5. Map, then drive
 
 ```bash
-pixi run launch # Launches the base (hardware, lidar, camera, odometry)
-pixi run rviz   # Runs rviz to view the map and navigate
-# and
-pixi run slam   # Runs the SLAM stack to create a map
-# or
-pixi run nav    # Runs the nav stack
-
-# Convenience combos (base + the relevant stack in one command):
-pixi run mapping # = launch + slam  (build/extend a map)
-pixi run robot   # = launch + nav   (drive a saved map at ~/.mote/map.yaml)
+pixi run mapping   # bringup + SLAM: drive around (teleop or nav goals) to build a map
+pixi run save-map  # save the map + posegraph into the active site
+pixi run robot     # bringup + Nav2: drive the saved map autonomously
+pixi run teleop    # keyboard teleoperation, any time
 ```
 
-### Fleet: remote operation (optional)
-
-A robot works standalone with nothing above, but it can also join a fleet
-overlay so it is reachable and identifiable from anywhere:
+Maps live in **site bundles** under `~/.mote/sites/<site>/floors/<floor>/` —
+one bundle per floor holding the map (as immutable revisions), the SLAM
+posegraph (so a map can be *extended* later instead of remapped), and named
+zones. `pixi run site` manages them. Zones are taught by driving somewhere and
+naming it:
 
 ```bash
-pixi run identity set --id mote-01 --name "Scout"   # this robot's fleet id
-pixi run tailnet --role robot --auth-key tskey-auth-...  # join the Tailscale mesh
+pixi run save-zone kitchen    # "the robot is standing in the kitchen"
+pixi run segment-map          # or: propose a zone per room, straight off the map
 ```
 
-The robot is then reachable off-LAN at `mote-01` by MagicDNS, with no port
-forwarding and nothing exposed to the internet. A *new* Pi can be provisioned
-into that state unattended from a rendered cloud-init file
-(`pixi run provision`).
+### 6. Missions
 
-See [`docs/fleet/README.md`](docs/fleet/README.md) for the runbook and
-[`docs/design/fleet.md`](docs/design/fleet.md) for where this is going.
+The task layer ([`mote_tasks`](mote_tasks/)) runs behaviour-tree missions on
+top of Nav2. Start it with `pixi run tasks` alongside the robot, then send
+commands (from the fleet dashboard, `fleetctl dispatch`, or the `task/command`
+topic):
 
-### Simulation (no hardware required)
+```text
+goto kitchen              # drive to any named zone
+fetch red_mug dropoff     # find "red mug" by open-vocabulary detection,
+                          # drive to it, and carry it to the dropoff zone
+```
+
+Object fetching uses the camera and an open-vocabulary detector — no training,
+just a label ([`mote_perception`](mote_perception/), below).
+
+## Fleet: run more than one (optional)
+
+![Fleet dashboard](docs/images/fleet-ui.webp)
+
+A robot works standalone with nothing below, but the interesting part starts
+when you stop SSH-ing into robots. Every machine joins a
+[Tailscale](https://tailscale.com/) overlay, so "same LAN" becomes "same
+tailnet" with nothing exposed to the internet, and a fleet server hands out
+identities and carries telemetry and tasks over MQTT:
+
+```bash
+# On a fleet box (any always-on machine; no ROS needed):
+pixi run fleet-broker              # MQTT broker (a container)
+pixi run fleet-server              # fleet API + operator dashboard
+
+# On each robot:
+pixi run tailnet --role robot --auth-key tskey-auth-...
+pixi run enroll                    # the server allocates an id (mote-01, ...)
+pixi run agent                     # the robot's bridge to the fleet
+```
+
+From there:
+
+- **The dashboard** (above) shows every robot live on its floor's map —
+  presence, health, pose, current task — and dispatches missions with an
+  audited operator token.
+- **The remote console**: every robot serves [Foxglove](https://foxglove.dev/)
+  at `ws://<robot-id>:8765` — camera, lidar, TF, and teleop from anywhere on
+  the tailnet (`pixi run foxglove`).
+- **The map registry**: `pixi run publish-map` offers a robot's saved map to
+  the server as a candidate; promoting a revision (one click, or
+  `fleetctl promote`) distributes it to every robot on that floor.
+- **Unattended provisioning**: `pixi run provision` renders a cloud-init file
+  that takes a blank SD card to an enrolled, navigating robot.
+
+The runbook is [`docs/fleet/README.md`](docs/fleet/README.md); the design and
+milestones are [`docs/design/fleet.md`](docs/design/fleet.md).
+
+## Simulation (no hardware required)
 
 A Gazebo (gz-sim) simulation of Mote runs entirely on a workstation — same
-controllers, same scan pipeline, so the SLAM and Nav2 stacks work against it
-unmodified. The sim dependencies live in a separate pixi environment so the
-robot install stays lean:
+controllers, same scan pipeline, and crucially the *same mission launch files*
+as the real robot, so nothing can drift between sim and hardware. The sim
+dependencies live in a separate pixi environment so the robot install stays
+lean:
 
 ```bash
-pixi run sim                                                     # headless gz + robot + controllers
-pixi run sim-test                                                # ~20 s headless smoke test (drive + odom + scan + map)
-pixi run teleop                                                  # drive it around
-# Ad-hoc commands need the sim environment named explicitly:
-pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
-pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
+pixi run sim            # headless gz + robot + controllers
+pixi run sim-mapping    # the real mapping mission, in sim
+pixi run sim-nav        # the real nav mission against the world's saved map
+pixi run sim-test       # ~20 s headless smoke test (drive + odom + scan + map)
+pixi run teleop         # drive it around
+pixi run -e sim -- gz sim -g   # optional: attach the Gazebo GUI
 ```
-
-`sim-test` is a fast end-to-end check: it brings up the sim and SLAM, drives the
-robot, and asserts odometry integrates the motion, the lidar publishes sane
-scans, and slam_toolbox produces a map. It needs a working render backend
-(a GPU or fast software GL), so it's a local pre-PR gate rather than a
-hosted-CI job — see the comment in
-[`run_sim_smoke.sh`](mote_simulation/test/sim_smoke/run_sim_smoke.sh).
 
 The worlds in `mote_simulation/worlds/` form an easy-to-hard ladder, selectable
-with `world:=` (e.g. `pixi run sim world:=hospital_world.sdf`):
+with `world:=` (e.g. `pixi run sim-nav world:=hospital_world.sdf`):
 
-- **`mote_world.sdf`** (easy) — a simple walled room with a few obstacles; the
-  default and the `sim-test` world.
-- **`office_world.sdf`** (medium) — a long hospital-ward corridor of identical
-  rooms that stresses localisation (aperture-problem drift, false loop closures).
-- **`hospital_world.sdf`** (hard) — a ~58×38 m hospital with a looping corridor
-  grid, ~50 rooms, and furniture clutter; it stacks those failure modes and adds
-  genuine navigable loops. Generated by
-  [`gen_hospital.py`](mote_simulation/worlds/gen_hospital.py) — edit the layout
-  there and regenerate rather than hand-editing the SDF.
+- **`mote_world.sdf`** (easy) — a simple walled room; the default and the
+  `sim-test` world.
+- **`office_world.sdf`** (medium) — a corridor of identical rooms that
+  stresses localisation.
+- **`hospital_world.sdf`** (hard) — a ~58×38 m hospital with a looping
+  corridor grid, ~50 rooms, and clutter.
 
-The simulated lidar uses RPLIDAR C1 datasheet values from
-[`robot.yaml`](mote_description/config/robot.yaml).
+Each world ships with a committed site bundle (its own SLAM-built map and
+zones), so `sim-nav` and `goto <zone>` work out of the box on all three.
+`sim-test` needs a working render backend (a GPU or fast software GL), so it's
+a local pre-PR gate rather than a hosted-CI job.
 
-### Deploying to the Pi
+## Perception
 
-The above section assumes you are developing entirely on the Pi which is
-definitely feasible at this stage. I do however want to support a more
-"professional" workflow and so we need a way to develop on laptops and run on
-the Pi. The exact mechanism that we will use is TBD.
+The single cheap webcam earns its keep twice
+([`mote_perception`](mote_perception/), run with `pixi run perception`):
 
-For now, I currently develop on a workstation and push to the Pi with rsync. The
-`sync` task targets an SSH host named `mote` — change the host in the
-[`pixi.toml`](pixi.toml) `[tasks]` `sync` entry to match your Pi, then:
+- **Depth obstacles** — monocular depth, rescaled against the lidar per frame,
+  feeds Nav2 a point cloud of the low obstacles the lidar plane can't see.
+- **Open-vocabulary detection** — "red mug" becomes a map pose for the fetch
+  mission, with no training.
 
-```bash
-pixi run sync             # one-shot push
-pixi run sync-watch       # keep pushing on every save (needs the dev env)
-```
+Both run torch-free on the Pi and call a GPU inference server elsewhere on the
+network (workstation, gaming PC, or cloud — `pixi run inference`, or a
+container image for a dedicated box). If the server is unreachable the robot
+warns and navigates on lidar alone. See
+[`docs/inference-server.md`](docs/inference-server.md).
 
-For pushing a finished build to one or more robots, the direction is to publish
-the first-party packages to the `prefix.dev/mote` channel (built with
+![Detections grounded to the floor](docs/images/perception_detection_vs_floor.webp)
+
+## Deploying to the Pi
+
+Day to day I develop on a workstation and push to the Pi with rsync: the
+`sync` task targets an SSH host named `mote` — change the host in
+[`pixi.toml`](pixi.toml) to match your Pi, then `pixi run sync` (or
+`sync-watch` to push on every save).
+
+For pushing finished builds to one or more robots, the direction is versioned
+packages on the `prefix.dev/mote` channel (built with
 [`pixi-build-ros`](https://pixi.prefix.dev/latest/build/ros/)) so a robot just
-needs `pixi install` — no source checkout or compile on the bot. That work is in
-progress.
+needs `pixi install` — no source checkout or compile on the bot. That work is
+in progress.
 
 ## SO-101 Follower Arm
 
@@ -251,8 +297,12 @@ progress.
 
 The chassis is compatible with the [SO-101 follower
 arm](https://github.com/TheRobotStudio/SO-ARM100) via the ORP mounting grid and
-a custom base. See the SO-ARM100 project for the arm's BOM and assembly
-instructions.
+a custom base (see the SO-ARM100 project for the arm's BOM and assembly). The
+arm shares the drive wheels' servo bus, so it needs no extra electronics — and
+it's driven, not just mounted: [`mote_arm`](mote_arm/) has the driver
+(`pixi run arm`), per-joint jogging (`arm-jog`), guided full-range calibration
+that measures each joint's real travel (`arm-calibrate`), and taught named
+poses (`arm-pose`), the arm's analogue of `save-zone`.
 
 My long term goal is to eventually have Mote able to explore a space and tidy
 things up off the floor [obligatory xkcd](https://xkcd.com/1425/).
