@@ -39,13 +39,16 @@ slam_toolbox:
     link_match_minimum_response_fine: 0.1
     link_scan_maximum_distance: 1.5
 
-    # Loop closure
+    # Loop closure — gates deliberately strict: the flat's rooms are
+    # self-similar enough that the stock thresholds accepted false closures,
+    # snapping the graph ~45 deg mid-run (2026-07-29, runs 3 and 5; bag
+    # replays reproduce the tear at stock values and map cleanly at these).
     do_loop_closing: true
-    loop_search_maximum_distance: 3.0
-    loop_match_minimum_chain_size: 10
+    loop_search_maximum_distance: 2.0
+    loop_match_minimum_chain_size: 15
     loop_match_maximum_variance_coarse: 3.0
-    loop_match_minimum_response_coarse: 0.35
-    loop_match_minimum_response_fine: 0.45
+    loop_match_minimum_response_coarse: 0.55
+    loop_match_minimum_response_fine: 0.65
 
     # Correlation
     correlation_search_space_dimension: 0.5
