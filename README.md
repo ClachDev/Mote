@@ -106,11 +106,7 @@ git clone --recurse-submodules https://github.com/ClachDev/Mote
 cd Mote
 ```
 
-If you forgot `--recurse-submodules`, fetch the submodules afterwards:
-
-```bash
-pixi run submodules
-```
+(Forgot `--recurse-submodules`? `pixi run submodules` fetches them afterwards.)
 
 ### 2. Build
 
@@ -118,13 +114,8 @@ pixi run submodules
 pixi run build
 ```
 
-If you run these on your developer machine, you can sync the code to the Pi using
-
-```bash
-pixi run sync          # one-off sync
-# or
-pixi run sync-watch    # sync changes automatically
-```
+If you run these on your developer machine, sync the code to the Pi with
+`pixi run sync` (see [Deploying to the Pi](#deploying-to-the-pi)).
 
 ### 3. Setup Pi
 
@@ -163,16 +154,11 @@ pixi run robot     # bringup + Nav2: drive the saved map autonomously
 pixi run teleop    # keyboard teleoperation, any time
 ```
 
-Maps live in **site bundles** under `~/.mote/sites/<site>/floors/<floor>/` —
-one bundle per floor holding the map (as immutable revisions), the SLAM
-posegraph (so a map can be *extended* later instead of remapped), and named
-zones. `pixi run site` manages them. Zones are taught by driving somewhere and
-naming it:
-
-```bash
-pixi run save-zone kitchen    # "the robot is standing in the kitchen"
-pixi run segment-map          # or: propose a zone per room, straight off the map
-```
+Maps live in **site bundles** under `~/.mote/sites/` — one per floor, holding
+map revisions, the SLAM posegraph (so a map can be *extended* later instead of
+remapped), and named zones. Teach a zone by driving there and naming it
+(`pixi run save-zone kitchen`), or let `segment-map` propose one per room
+straight off the map. [`mote_bringup`](mote_bringup/) has the details.
 
 ### 6. Missions
 
@@ -198,35 +184,20 @@ A robot works standalone with nothing below, but the interesting part starts
 when you stop SSH-ing into robots. Every machine joins a
 [Tailscale](https://tailscale.com/) overlay, so "same LAN" becomes "same
 tailnet" with nothing exposed to the internet, and a fleet server hands out
-identities and carries telemetry and tasks over MQTT:
+identities and carries telemetry and tasks over MQTT. A robot runs
+`pixi run enroll` once to be allocated an id (`mote-01`, ...), then
+`pixi run agent` to bridge it to the fleet.
 
-```bash
-# On a fleet box (any always-on machine; no ROS needed):
-pixi run fleet-broker              # MQTT broker (a container)
-pixi run fleet-server              # fleet API + operator dashboard
+From there the dashboard (above) shows every robot live on its floor's map —
+presence, health, pose, current task — and dispatches missions; a
+[Foxglove](https://foxglove.dev/) remote console gives camera, lidar, TF, and
+teleop from anywhere on the tailnet; and a map registry reviews robots' saved
+maps and distributes promoted revisions to every robot on the floor. A blank
+SD card can even be provisioned unattended into an enrolled, navigating robot.
 
-# On each robot:
-pixi run tailnet --role robot --auth-key tskey-auth-...
-pixi run enroll                    # the server allocates an id (mote-01, ...)
-pixi run agent                     # the robot's bridge to the fleet
-```
-
-From there:
-
-- **The dashboard** (above) shows every robot live on its floor's map —
-  presence, health, pose, current task — and dispatches missions with an
-  audited operator token.
-- **The remote console**: every robot serves [Foxglove](https://foxglove.dev/)
-  at `ws://<robot-id>:8765` — camera, lidar, TF, and teleop from anywhere on
-  the tailnet (`pixi run foxglove`).
-- **The map registry**: `pixi run publish-map` offers a robot's saved map to
-  the server as a candidate; promoting a revision (one click, or
-  `fleetctl promote`) distributes it to every robot on that floor.
-- **Unattended provisioning**: `pixi run provision` renders a cloud-init file
-  that takes a blank SD card to an enrolled, navigating robot.
-
-The runbook is [`docs/fleet/README.md`](docs/fleet/README.md); the design and
-milestones are [`docs/design/fleet.md`](docs/design/fleet.md).
+The runbook — broker and server setup, and every command — is
+[`docs/fleet/README.md`](docs/fleet/README.md); the design and milestones are
+[`docs/design/fleet.md`](docs/design/fleet.md).
 
 ## Simulation (no hardware required)
 
@@ -241,7 +212,6 @@ pixi run sim            # headless gz + robot + controllers
 pixi run sim-mapping    # the real mapping mission, in sim
 pixi run sim-nav        # the real nav mission against the world's saved map
 pixi run sim-test       # ~20 s headless smoke test (drive + odom + scan + map)
-pixi run teleop         # drive it around
 pixi run -e sim -- gz sim -g   # optional: attach the Gazebo GUI
 ```
 
@@ -263,7 +233,7 @@ a local pre-PR gate rather than a hosted-CI job.
 ## Perception
 
 The single cheap webcam earns its keep twice
-([`mote_perception`](mote_perception/), run with `pixi run perception`):
+([`mote_perception`](mote_perception/)):
 
 - **Depth obstacles** — monocular depth, rescaled against the lidar per frame,
   feeds Nav2 a point cloud of the low obstacles the lidar plane can't see.
@@ -271,10 +241,9 @@ The single cheap webcam earns its keep twice
   mission, with no training.
 
 Both run torch-free on the Pi and call a GPU inference server elsewhere on the
-network (workstation, gaming PC, or cloud — `pixi run inference`, or a
-container image for a dedicated box). If the server is unreachable the robot
-warns and navigates on lidar alone. See
-[`docs/inference-server.md`](docs/inference-server.md).
+network — workstation, gaming PC, or cloud
+([`docs/inference-server.md`](docs/inference-server.md)). If the server is
+unreachable the robot warns and navigates on lidar alone.
 
 ![Detections grounded to the floor](docs/images/perception_detection_vs_floor.webp)
 
@@ -299,10 +268,9 @@ The chassis is compatible with the [SO-101 follower
 arm](https://github.com/TheRobotStudio/SO-ARM100) via the ORP mounting grid and
 a custom base (see the SO-ARM100 project for the arm's BOM and assembly). The
 arm shares the drive wheels' servo bus, so it needs no extra electronics — and
-it's driven, not just mounted: [`mote_arm`](mote_arm/) has the driver
-(`pixi run arm`), per-joint jogging (`arm-jog`), guided full-range calibration
-that measures each joint's real travel (`arm-calibrate`), and taught named
-poses (`arm-pose`), the arm's analogue of `save-zone`.
+it's driven, not just mounted: [`mote_arm`](mote_arm/) covers the driver,
+per-joint jogging, guided calibration that measures each joint's real travel,
+and taught named poses, the arm's analogue of zones.
 
 My long term goal is to eventually have Mote able to explore a space and tidy
 things up off the floor [obligatory xkcd](https://xkcd.com/1425/).
