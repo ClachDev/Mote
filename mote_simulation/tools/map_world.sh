@@ -20,16 +20,20 @@ export MOTE_HOME="$ROOT/mote_simulation/sim_home"
 SIM_DIR="$ROOT/mote_simulation"
 LOG="$(mktemp -t mote_map_"$STEM".XXXXXX.log)"
 SIM_PID=""
+SIM_SID=""
 
 cleanup() {
     # Kill the launch's whole process group (gz, bridge, controllers, slam, nav).
     [ -n "$SIM_PID" ] && kill -- -"$SIM_PID" 2>/dev/null
     sleep 2
-    # Belt-and-suspenders for stragglers. Match the gz server and slam node by
-    # name — NOT "$WORLD", which also appears in this script's own argv and
-    # would make pkill -9 kill the orchestrator itself.
-    pkill -9 -f 'gz sim' 2>/dev/null
-    pkill -9 -f 'async_slam_toolbox_node' 2>/dev/null
+    # Belt-and-suspenders for stragglers, scoped to the session setsid gave the
+    # launch: it reaps them whatever they are called and can never touch another
+    # worktree's sim, which a bare 'gz sim' / 'async_slam_toolbox_node' match
+    # did. (Never match "$WORLD" — it is in this script's own argv, so pkill -9
+    # would kill the orchestrator itself.)
+    [ -n "$SIM_SID" ] && pkill -9 -s "$SIM_SID" 2>/dev/null
+    pkill -9 -f "gz sim.*$ROOT" 2>/dev/null
+    # Daemons are per-domain, so this stops ours and leaves other runs' alone.
     ros2 daemon stop >/dev/null 2>&1
     return 0
 }
@@ -61,6 +65,13 @@ else:
     print(f"WARNING: no zones file {src}", file=sys.stderr)
 PY
 
+# A graph of our own, so a concurrent benchmark or smoke test can never feed
+# this SLAM session foreign scans. An inherited domain/partition is respected.
+DOMAIN_ENV="$(python3 "$SIM_DIR/tools/sim_domain.py" --shell --prefix mote-map)" \
+    || fail "could not claim a ROS domain"
+eval "$DOMAIN_ENV"
+echo ">> ROS_DOMAIN_ID=$ROS_DOMAIN_ID (${MOTE_DOMAIN_HOW:-unknown}), GZ_PARTITION=$GZ_PARTITION"
+
 ros2 daemon stop >/dev/null 2>&1
 sleep 1
 
@@ -68,6 +79,10 @@ echo ">> launching mapping sim..."
 setsid ros2 launch mote_simulation sim_launch.py mode:=mapping world:="$WORLD" \
     > "$LOG" 2>&1 &
 SIM_PID=$!
+SIM_SID="$(ps -o sid= -p "$SIM_PID" 2>/dev/null | tr -d ' ')"
+# If setsid did not detach it, the launch shares OUR session and killing that
+# session would kill this script (and its caller) — drop the scope instead.
+[ "$SIM_SID" = "$(ps -o sid= -p $$ | tr -d ' ')" ] && SIM_SID=""
 for _ in $(seq 90); do
     grep -q "Configured and activated diff_drive_controller" "$LOG" && break
     grep -q "Failed to load system plugin" "$LOG" && fail "gz_ros2_control plugin failed" "$LOG"

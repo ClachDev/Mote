@@ -18,9 +18,10 @@ context); metric maths lives in ``metrics.py`` (ROS-free, reused offline).
 
 Each invocation claims a free ``ROS_DOMAIN_ID`` (and a matching ``GZ_PARTITION``)
 unless one is inherited, so two benchmarks running at once on one machine cannot
-see each other's graph — see ``pick_domain_id``. The sim pixi environment also
-pins DDS discovery to this host (``ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST``),
-so a run is invisible to the LAN.
+see each other's graph — see ``tools/sim_domain.py``, shared with the smoke test
+and ``map_world.sh``. The sim pixi environment also pins DDS discovery to this
+host (``ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST``), so a run is invisible to the
+LAN.
 
     pixi run bench                                   # default worlds, 2 trials
     pixi run bench -- --worlds mote_world.sdf --trials 3
@@ -32,7 +33,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
 import signal
 import subprocess
 import sys
@@ -41,7 +41,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import report  # noqa: E402
+import sim_domain  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
 BRINGUP = REPO / "mote_bringup"
@@ -49,62 +51,10 @@ SIM = REPO / "mote_simulation"
 WORLDS = SIM / "worlds"
 CONTROLLERS_READY = "Configured and activated diff_drive_controller"
 PLUGIN_FAIL = "Failed to load system plugin"
-# Domain 0 is the everything-else default; ROS 2 documents 0-101 as the range
-# whose DDS ports stay clear of the Linux ephemeral port range.
-DOMAIN_CANDIDATES = range(1, 102)
-# Every DDS port for domain N falls in [7400 + 250*N, +250): multicast discovery
-# at the base, per-participant unicast ports above it. Which of those are bound
-# depends on the discovery mode — under ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-# CycloneDDS binds only the unicast ports — so the whole block is what tells us
-# whether a domain is in use.
-DDS_PORT_BASE, DDS_PORT_STEP = 7400, 250
 
 
 def log(msg):
     print(f"[bench] {msg}", flush=True)
-
-
-def bound_udp_ports():
-    """Local UDP ports currently bound on this host, from /proc (no ss needed)."""
-    ports = set()
-    for path in ("/proc/net/udp", "/proc/net/udp6"):
-        try:
-            lines = Path(path).read_text().splitlines()[1:]
-        except OSError:
-            continue
-        for line in lines:
-            fields = line.split()
-            if len(fields) > 1 and ":" in fields[1]:
-                try:
-                    ports.add(int(fields[1].split(":")[1], 16))
-                except ValueError:
-                    pass
-    return ports
-
-
-def pick_domain_id():
-    """(domain_id, how) for this benchmark's ROS graph.
-
-    An inherited ROS_DOMAIN_ID wins — the parameter sweep already assigns one per
-    invocation, and a caller who set it meant it. Otherwise claim a domain whose
-    DDS port block is unused on this host, so two benchmarks started at the same
-    time (or a sim left running in another worktree) land on different graphs
-    instead of silently sharing goals, /clock and TF. The port probe is a
-    best-effort filter, not a lock: it cannot see a domain that is
-    claimed-but-not-yet-running, so the candidate order is randomised to make
-    that race unlikely.
-    """
-    inherited = os.environ.get("ROS_DOMAIN_ID", "").strip()
-    if inherited:
-        return int(inherited), "inherited"
-    busy = bound_udp_ports()
-    candidates = list(DOMAIN_CANDIDATES)
-    random.shuffle(candidates)
-    for domain in candidates:
-        base = DDS_PORT_BASE + DDS_PORT_STEP * domain
-        if not any(port in busy for port in range(base, base + DDS_PORT_STEP)):
-            return domain, "claimed"
-    return 0, "fallback (no free domain found)"
 
 
 def popen_group(cmd, log_path):
@@ -141,6 +91,24 @@ def wait_for_line(log_path, needle, sim_proc, timeout_s):
     return False, f"timed out waiting for '{needle}'"
 
 
+def session_ids(procs):
+    """Session id of each launch, while its pid is still valid. Everything a
+    launch spawned inherits it (start_new_session=True above), so it is an exact
+    teardown scope — and unlike a name or path match it cannot reach another
+    run. Our own session is excluded: if start_new_session had somehow not
+    taken, killing it would kill the benchmark and its caller."""
+    mine = os.getsid(0)
+    sids = []
+    for p in procs:
+        try:
+            sid = os.getsid(p.pid)
+        except (ProcessLookupError, OSError):
+            continue
+        if sid != mine:
+            sids.append(sid)
+    return sids
+
+
 def teardown(procs, files):
     # Graceful stop, then force-kill each launch's *whole* process group. Nav2
     # lifecycle nodes (controller_server, amcl, planner_server, ...) catch
@@ -148,13 +116,17 @@ def teardown(procs, files):
     # them, so across many sequential trials (a parameter sweep) they piled up
     # and starved later runs until Nav2 bringup timed out. SIGKILL on the group
     # reaps them regardless of node name, and stays scoped to our own launches.
+    sids = session_ids(procs)
     for p in procs:
         kill_group(p, signal.SIGTERM)
     time.sleep(3)
     for p in procs:
         kill_group(p, signal.SIGKILL)
-    # Backstop for a gz server that escaped its group, scoped to THIS repo's
-    # world path so a benchmark never kills another worktree's concurrent sim.
+    # Anything that escaped its process group is still in its launch's session.
+    for sid in sids:
+        subprocess.run(["pkill", "-9", "-s", str(sid)], stderr=subprocess.DEVNULL)
+    # Last backstop, for a gz server that escaped even that: scoped to THIS
+    # repo's world path so a benchmark never kills another worktree's sim.
     subprocess.run(["pkill", "-9", "-f", f"gz sim.*{REPO}"], stderr=subprocess.DEVNULL)
     subprocess.run(
         ["ros2", "daemon", "stop"], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL
@@ -325,14 +297,9 @@ def main():
     )
     args = ap.parse_args()
 
-    domain, how = pick_domain_id()
-    os.environ["ROS_DOMAIN_ID"] = str(domain)
-    # Gazebo transport has its own discovery, independent of DDS; partition it
-    # too or two concurrent benchmarks would still share one gz graph.
-    os.environ.setdefault("GZ_PARTITION", f"mote-bench-{domain}")
+    domain, how, partition = sim_domain.claim("mote-bench")
     log(
-        f"ROS_DOMAIN_ID={domain} ({how}), "
-        f"GZ_PARTITION={os.environ['GZ_PARTITION']}, "
+        f"ROS_DOMAIN_ID={domain} ({how}), GZ_PARTITION={partition}, "
         f"discovery range={os.environ.get('ROS_AUTOMATIC_DISCOVERY_RANGE', 'default')}"
     )
 
@@ -354,7 +321,7 @@ def main():
         "nav2_params": str(BRINGUP / "config" / "nav2_params.yaml"),
         "worlds": worlds,
         "ros_domain_id": domain,
-        "gz_partition": os.environ["GZ_PARTITION"],
+        "gz_partition": partition,
         "wheel_mu": args.wheel_mu,
     }
 
