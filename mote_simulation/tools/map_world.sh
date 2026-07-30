@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build a committed sim site by mapping a world with SLAM, the same way the
 # robot does: launch the mapping mission headless, drive autonomous frontier
-# coverage (explore.py), then save-map into the world's site under the
-# in-repo sim MOTE_HOME. One site per world, floor "ground".
+# coverage (mote_bringup's explore, the same tool the robot runs), then
+# save-map into the world's site under the in-repo sim MOTE_HOME. One site per
+# world, floor "ground".
 #
 # Must run in the sim pixi env:
 #   pixi run -e sim -- bash mote_simulation/tools/map_world.sh <world.sdf> [budget_s]
@@ -83,7 +84,7 @@ done
 ros2 node list 2>/dev/null | grep -q slam_toolbox || fail "slam_toolbox never came up" "$LOG"
 
 echo ">> exploring (budget ${BUDGET}s)..."
-python3 -u "$SIM_DIR/tools/explore.py" --budget "$BUDGET" || fail "explore.py failed"
+ros2 run mote_bringup explore --sim-time --budget "$BUDGET" || fail "explore failed"
 
 echo ">> saving map into site '$STEM'..."
 python3 - <<'PY' || fail "save-map failed"

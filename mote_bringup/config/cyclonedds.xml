@@ -1,47 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  CycloneDDS configuration for the robot, loaded through CYCLONEDDS_URI by the
-  systemd units in mote_bringup/systemd/. An interactive `pixi run` does not set
-  that variable, so a developer shell keeps stock DDS behaviour; to run a manual
-  session the way the services do, export it first:
-    export CYCLONEDDS_URI=file://$PWD/mote_bringup/config/cyclonedds.xml
+  CycloneDDS configuration for the robot: the ROS graph rides loopback only,
+  so wifi quality can never affect topic delivery between on-robot processes.
+  A wlan0-pinned profile with an lo fallback is not equivalent — while the
+  radio interface exists Cyclone advertises and prefers its locators even for
+  same-host peers, so a wifi flap stalls scan delivery on the board itself
+  (and ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST confines who is discovered,
+  not which interface carries the packets).
 
-  Interface assumption: the robot has ONE real network interface carrying the
-  ROS graph — wlan0 on the Pi. `install.sh` detects the default-route interface
-  at install time and writes it into each unit as MOTE_DDS_INTERFACE; the wlan0
-  fallback below only applies if that variable is unset. If the robot is moved
-  to ethernet (or the interface is renamed), re-run `pixi run install-systemd`.
+  Remote observability is foxglove_bridge — a WebSocket server, not a DDS
+  peer — so no off-board machine joins this graph. The one flow that needs a
+  LAN peer (camera calibration) runs with the profile explicitly unset; see
+  mote_perception/config/README.md.
 
-  Discovery is deliberately NOT confined to the robot (no
-  ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST here): an operator laptop on the
-  robot's network must still be able to discover and subscribe to the graph for
-  RViz / camera calibration. What is removed is the *unnecessary* multicast and
-  the discovery traffic on interfaces that carry no ROS graph.
+  Loaded through CYCLONEDDS_URI, set for every pixi environment by
+  [activation.env] in pixi.toml and repeated by the systemd units.
 -->
 <CycloneDDS xmlns="https://cdds.io/config">
   <Domain id="any">
     <General>
       <Interfaces>
-        <!-- The one real interface. presence_required="false" so that a robot
-             whose WiFi is down (or not yet up at boot) still starts its ROS
-             graph over loopback instead of every node failing to create a
-             participant — on-robot autonomy must not depend on the network. -->
-        <NetworkInterface name="${MOTE_DDS_INTERFACE:-wlan0}" priority="default"
-                          multicast="default" presence_required="false"/>
-        <!-- Loopback fallback: keeps the on-robot graph alive with no network,
-             and is the path every on-robot pair (bringup/SLAM/Nav2/perception/
-             tasks) uses anyway. Lower priority so the real interface is
-             preferred for remote peers. -->
-        <NetworkInterface name="lo" priority="-1" multicast="true"
-                          presence_required="false"/>
+        <NetworkInterface name="lo" multicast="true" presence_required="true"/>
       </Interfaces>
-      <!-- Multicast for participant discovery (SPDP) only: a remote operator
-           can still find the robot, but endpoint discovery and all user data
-           (scans, maps, images) go unicast to the peers that asked for them
-           instead of being flooded to the whole network. This is also the
-           recommended setting on WiFi, where multicast is sent at the lowest
-           basic rate and is not acknowledged. -->
-      <AllowMulticast>spdp</AllowMulticast>
+      <AllowMulticast>true</AllowMulticast>
     </General>
   </Domain>
 </CycloneDDS>

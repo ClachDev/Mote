@@ -23,13 +23,12 @@ RestartSec=2
 RestartSteps=5
 RestartMaxDelaySec=30
 
-# Pin DDS to the robot's one real interface and drop non-discovery multicast
-# (mote_bringup/config/cyclonedds.xml); @DDS_IFACE@ is filled in by install.sh.
+# Loopback-only DDS transport (mote_bringup/config/cyclonedds.xml): the graph
+# never touches a radio, so wifi cannot stall topic delivery on the board.
 Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
-Environment=MOTE_DDS_INTERFACE=@DDS_IFACE@
 # Keep the ROS graph on the robot: this bridge is what replaces joining it from
 # a workstation, so from M2 the deployed robot no longer advertises DDS to the
-# LAN (docs/fleet/README.md §4). Interactive `pixi run` is unaffected.
+# LAN (docs/fleet/README.md §4).
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
 [Install]

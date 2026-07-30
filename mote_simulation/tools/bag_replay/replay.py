@@ -152,6 +152,29 @@ def score(series_path, map_npz):
     return out, traj
 
 
+def fast_args(params_file, mode):
+    """Fast-mode gate thresholds: slam's own travel gates x 0.3, so borderline
+    scans are still fed and slam itself keeps the final say. Over-feeding is
+    free (slam discards); under-feeding would silently change the graph.
+
+    EXPERIMENTAL — fidelity NOT yet validated (task #295). The first cut used
+    a 0.7 margin and produced a *silently different graph* (63% cell agreement
+    vs the paced reference, different dimensions, zero queue-full drops): the
+    gate anchor chained on fed scans while slam chains on accepted ones, so
+    feed spacing quantized slam's node spacing. 0.3 shrinks that quantization
+    but has not been proven equivalent — do not trust --fast results for
+    decisions until a paced-reference comparison passes."""
+    gd = gy = 0.3
+    if mode == "slam":
+        import yaml
+
+        p = yaml.safe_load(Path(params_file).read_text()) or {}
+        rp = p.get("slam_toolbox", {}).get("ros__parameters", {})
+        gd = float(rp.get("minimum_travel_distance", 0.3))
+        gy = float(rp.get("minimum_travel_heading", 0.3))
+    return ["--fast", "--gate-dist", str(0.3 * gd), "--gate-yaw", str(0.3 * gy)]
+
+
 def run_one(bag, params_file, name, mode, run_dir, args):
     """Launch the stack for one parameter set, replay the bag, score, render."""
     set_dir = run_dir / name
@@ -206,6 +229,12 @@ def run_one(bag, params_file, name, mode, run_dir, args):
                 str(args.settle),
                 "--max-scans",
                 str(args.max_scans),
+                "--skip-secs",
+                str(args.skip_secs),
+                "--stop-secs",
+                str(args.stop_secs),
+                *(["--frame", *(str(v) for v in args.frame)] if args.frame else []),
+                *(fast_args(params_file, mode) if args.fast else []),
             ],
             env=env,
             timeout=args.replay_timeout,
@@ -213,6 +242,18 @@ def run_one(bag, params_file, name, mode, run_dir, args):
         if rp.returncode != 0:
             log(f"[{name}] FAIL: replayer exited {rp.returncode}")
             return None
+        if args.fast:
+            drops = (
+                stack_log.read_text(errors="ignore").count("queue is full")
+                if stack_log.exists()
+                else 0
+            )
+            if drops:
+                log(
+                    f"[{name}] WARNING: {drops} queue-full drops under --fast — "
+                    "result may be DEGRADED; rerun this set without --fast"
+                )
+                (set_dir / "DEGRADED.txt").write_text(f"{drops} drops\n")
     except subprocess.TimeoutExpired:
         log(f"[{name}] FAIL: replay exceeded wall-clock timeout")
         return None
@@ -250,6 +291,28 @@ def main():
     ap.add_argument("--rate", type=float, default=1.0, help="replay speed x realtime")
     ap.add_argument("--settle", type=float, default=8.0)
     ap.add_argument("--max-scans", type=int, default=0, help="0 = whole bag")
+    ap.add_argument(
+        "--skip-secs", type=float, default=0.0, help="withhold scans before this"
+    )
+    ap.add_argument(
+        "--stop-secs", type=float, default=0.0, help="stop feeding at this (0=end)"
+    )
+    ap.add_argument(
+        "--frame",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "YAW_DEG"),
+        help="SE2 applied to the odometry prior (birth-align the map frame)",
+    )
+    ap.add_argument(
+        "--fast",
+        action="store_true",
+        help="EXPERIMENTAL, fidelity unvalidated (#295) — compute-bound "
+        "replay (pre-gated scans, no wall pacing). Known failure mode: gate "
+        "chaining quantizes slam's node spacing and silently changes the "
+        "graph; the queue-drop check does NOT catch it. Validate against a "
+        "paced reference before trusting any --fast result.",
+    )
     ap.add_argument("--out", default=str(REPO / "bag_replay_results"))
     ap.add_argument("--boot-timeout", type=float, default=120.0)
     ap.add_argument("--replay-timeout", type=float, default=3600.0)

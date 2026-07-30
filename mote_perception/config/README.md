@@ -50,9 +50,21 @@ and the board is centred with a white border.
 camera over the ROS 2 network. Both machines must be on the same LAN and
 `ROS_DOMAIN_ID`.
 
+This is the one flow that joins the robot's graph over the LAN: DDS transport
+is loopback-only by default everywhere (`mote_bringup/config/cyclonedds.xml`,
+via `CYCLONEDDS_URI`), so both ends must drop that profile for the session.
+The `camera_calibration` task does it itself; anything started by hand on the
+Pi needs the `env -u CYCLONEDDS_URI` prefix shown below.
+
 1. Print and mount the target above.
-2. On the **Pi**, start the camera so it publishes `/image_raw` (`pixi run
-   launch`, or just the `v4l2_camera` node).
+2. On the **Pi**, start the camera so it publishes `/image_raw` on the LAN —
+   not under the loopback profile, so not `pixi run launch`; run the camera
+   node alone:
+
+   ```bash
+   pixi run -- env -u CYCLONEDDS_URI ros2 run v4l2_camera v4l2_camera_node \
+       --ros-args -p video_device:=/dev/mote_camera
+   ```
 3. On the **workstation** run the calibrator:
 
    ```bash

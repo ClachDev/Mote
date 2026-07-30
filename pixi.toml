@@ -92,6 +92,9 @@ slam = "ros2 launch mote_bringup slam_launch.py"
 # Publishes the drive mux's teleop input, so it pre-empts an active Nav2 goal
 # rather than fighting it — and so it needs the base up, which owns the mux.
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/cmd_vel_teleop_stamped"
+# Autonomous mapping coverage beside `pixi run mapping`; drives the same mux
+# input as teleop. See mote_bringup/README.md "Mapping a space autonomously".
+explore = "ros2 run mote_bringup explore"
 perception = "ros2 launch mote_perception perception_launch.py"
 # Remote observability + teleop (docs/fleet/README.md §10). Included in the base
 # by default, so this is for running it on its own — or under systemd, where
@@ -144,7 +147,9 @@ rviz = "ros2 launch mote_bringup rviz_launch.py"
 # discovery to LOCALHOST; a default-range RViz cannot see it). Use `rviz` for
 # the robot, `rviz-sim` for a sim running on this machine.
 rviz-sim = { cmd = "ros2 launch mote_bringup rviz_launch.py", env = { ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST" } }
-camera_calibration = "ros2 run camera_calibration cameracalibrator --size 6x9 --square 0.025 --ros-args -r image:=/image_raw -p camera:=/camera -p image_transport:=compressed"
+# env -u: calibration is the one flow that joins the robot's graph over the
+# LAN, so it drops the default loopback-only DDS profile (see [activation]).
+camera_calibration = "env -u CYCLONEDDS_URI ros2 run camera_calibration cameracalibrator --size 6x9 --square 0.025 --ros-args -r image:=/image_raw -p camera:=/camera -p image_transport:=compressed"
 
 # Continuously rsync to the Pi on save (watchexec honours .gitignore, so
 # build/install/log/.pixi are skipped). Edits to launch/config/Python go live
@@ -405,11 +410,13 @@ pre-commit = ">=4,<5"
 
 [activation]
 scripts = ["install/setup.sh"]
-# Discovery range is deliberately left at the ROS default here: the robot must
-# stay discoverable by an operator's RViz until Foxglove gives it an off-box path
-# (fleet M2). Sims/benchmarks pin themselves to LOCALHOST above; the robot's DDS
-# is scoped instead by config/cyclonedds.xml under systemd.
-env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp" }
+# DDS transport is loopback-only by default, in every environment
+# (config/cyclonedds.xml): the robot's graph must never depend on a radio, and
+# a workstation's sims/benchmarks are same-host graphs anyway. Foxglove is the
+# off-box window (a WebSocket server, not a DDS peer). The one flow that needs
+# a LAN DDS peer — camera calibration — unsets the profile explicitly; see
+# mote_perception/config/README.md.
+env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp", CYCLONEDDS_URI = "file://$PIXI_PROJECT_ROOT/mote_bringup/config/cyclonedds.xml" }
 
 [environments]
 # dev also carries the fleet feature: a workstation is where the whole control

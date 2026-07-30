@@ -254,18 +254,21 @@ Where it applies, and where it does not:
   boots unattended is pinned. It is on all of them rather than just the new one
   because a localhost-range participant discovers a same-host default-range one
   but not the reverse, so a mixed set is asymmetric rather than half-safe;
-- **an interactive `pixi run` is not**, exactly as with `cyclonedds.xml`. Bench
-  work that wants a LAN graph — RViz, camera calibration, `pixi run teleop` from
-  a workstation — is untouched;
+- **an interactive `pixi run` keeps stock discovery**, but it no longer matters
+  for LAN visibility: DDS *transport* is loopback-only in every pixi
+  environment ([`cyclonedds.xml`](../../mote_bringup/config/cyclonedds.xml),
+  loaded through `CYCLONEDDS_URI` by `[activation.env]` and repeated by the
+  units), because a radio-pinned profile let a wifi flap stall topic delivery
+  between processes on the robot's own board. LAN bench flows (workstation
+  RViz, `pixi run teleop` from a laptop) are gone with it; camera calibration,
+  the one flow that needs a LAN DDS peer, unsets the profile explicitly
+  (`mote_perception/config/README.md`);
 - **sims and benchmarks pin themselves** (`[feature.sim.activation.env]`), as
-  before;
-- the robot's interface and multicast narrowing
-  ([`cyclonedds.xml`](../../mote_bringup/config/cyclonedds.xml)) is unchanged and
-  still applies under systemd.
+  before.
 
-The consequence to know before enabling the units: **a workstation on the LAN can
-no longer see the ROS graph of a robot running under systemd.** That is the
-intended trade — watch it through Foxglove (§10), or run the mission by hand.
+The consequence to know: **a machine on the LAN cannot see the robot's ROS
+graph at all** — systemd-run or interactive. That is the intended trade — watch
+it through Foxglove (§10).
 
 The other thing M0 contributed here is the **measurement**, because the pin has a
 ceiling worth knowing before we walk into it.

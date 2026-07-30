@@ -21,6 +21,46 @@ sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
 sudo systemctl disable mote-bringup mote-health        # back to manual
 ```
 
+## Mapping a space autonomously
+
+`pixi run explore` drives autonomous coverage against a live mapping mission:
+left-wall following for dense boundary tracing, a Nav2 frontier relocation when
+the map stops growing, and a stuck-escape (back off, turn away, blacklist the
+spot) for obstacles the 2D lidar cannot see — rug edges, cables, low clutter.
+It exits when no reachable frontier remains, then the map is saved like any
+other session. The sim builds its world sites with the same tool (`pixi run
+sim-map-world`, which passes `--sim-time`).
+
+It publishes the drive mux's *teleop* input (see the drive path below) — it
+stands in for a human driver, so its wall-follow out-ranks the Nav2 goals it
+hands off during relocation. A human on the Foxglove stick shares that input
+with it, last writer wins — stop the explorer before driving by hand.
+
+**Run everything on the Pi**, in tmux, so losing wifi only loses your view of
+the mission — never the mission:
+
+```bash
+ssh <robot> tmux new -s map
+pixi run mapping      # window 1
+pixi run explore      # window 2 — watch progress via Foxglove
+pixi run save-map     # when it reports covered
+```
+
+The default thresholds suit corridor-scale spaces. Domestic layouts (~0.75 m
+doorways) want the geometry tightened, e.g.
+`pixi run explore -- --cruise 0.2 --obstacle 0.4 --desired-left 0.6 --follow-band 1.0 --blacklist-radius 1.0`.
+
+If the scan stream goes stale (wedged graph, dead lidar) the explorer stops
+and waits rather than driving blind. The graph itself cannot be stalled by
+wifi: DDS transport is **loopback-only by default** (`config/cyclonedds.xml`,
+loaded through `CYCLONEDDS_URI` by pixi activation and the systemd units
+alike), because Cyclone otherwise prefers a radio interface's locators even
+between processes on the same board, and a wifi flap then freezes same-host
+scan delivery. Foxglove still works (it is a WebSocket server, not a DDS
+peer); RViz-over-LAN does not — Foxglove is the supported window. One gotcha:
+a stale `ros2` daemon from a different environment will show an empty graph
+until `pkill -9 -f '[_]ros2_daemon'`.
+
 ## Drive path — who gets the wheels
 
 `DiffDriveController` has exactly one publisher: `twist_mux`, started with the

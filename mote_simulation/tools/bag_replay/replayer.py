@@ -9,6 +9,13 @@ ROS client for a single parameter set: it streams the bag's ``/scan_filtered`` +
 itself, so the node runs on bag time regardless of wall speed), records the
 estimator's output trajectory, and grabs the finished ``/map``.
 
+This is not a reimplementation of ``ros2 bag play``. What replay needs and bag
+play has no hook for: stripping individual TF *edges* from inside ``/tf``
+messages (bag play excludes whole topics only, and ``/tf`` must partially pass
+through), gating replay pace on the estimator actually keeping up rather than
+a fixed rate, windowing the stream in time, and capturing the output
+trajectory/map/posegraph as it goes.
+
 The one subtlety is TF ownership. A mapping bag's ``/tf`` already contains the
 edges the *original* run produced — ``map->odom`` from slam_toolbox and
 ``odom->base_footprint`` from kinematic_icp. Replaying those verbatim would fight
@@ -19,7 +26,11 @@ its odometry prior, exactly as on the robot.
 
 Outputs (in ``--out-dir``): ``series.json`` (raw re-scorable trajectory) and, in
 slam mode, ``map.npz`` (occupancy grid + resolution/origin for rendering and
-map-quality metrics). Run one replay per process for a clean rclpy context.
+map-quality metrics) plus the serialized posegraph (``map.posegraph`` +
+``map.data``) — so a replayed session is not just scoreable but *continuable*:
+the winning parameter set's output can be assembled into a site revision and
+extended on the robot in the same frame. Run one replay per process for a
+clean rclpy context.
 """
 
 from __future__ import annotations
@@ -70,13 +81,20 @@ def yaw_of(q):
 
 
 class Replayer(Node):
-    def __init__(self, mode, sample_dt):
+    def __init__(self, mode, sample_dt, frame=None):
         super().__init__("bag_replayer")
         self.set_parameters([rclpy.parameter.Parameter("use_sim_time", value=True)])
         self.mode = mode
         self.strip = STRIP[mode]
         self.out_parent, self.out_child = OUTPUT_EDGE[mode]
         self.sample_dt = sample_dt
+        # Optional SE2 pre-multiplied onto the replayed odom->base_footprint
+        # prior, so the session's map frame is *born* where you want it (e.g.
+        # registered to an earlier revision's frame) instead of wherever the
+        # bag's odometry happened to be pointing. Rotating artifacts after the
+        # fact would shear the map against its posegraph; rotating the prior
+        # keeps map, posegraph and trajectory consistent.
+        self.frame = frame  # (x, y, yaw_rad) or None
 
         self.clock_pub = self.create_publisher(Clock, "/clock", 10)
         self.tf_pub = self.create_publisher(TFMessage, "/tf", 100)
@@ -132,6 +150,24 @@ class Replayer(Node):
             for tr in msg.transforms
             if (tr.header.frame_id, tr.child_frame_id) not in self.strip
         ]
+        if self.frame is not None:
+            import math
+
+            fx, fy, fyaw = self.frame
+            c, s = math.cos(fyaw), math.sin(fyaw)
+            for tr in kept:
+                if (tr.header.frame_id, tr.child_frame_id) != (
+                    "odom",
+                    "base_footprint",
+                ):
+                    continue
+                t = tr.transform.translation
+                t.x, t.y = c * t.x - s * t.y + fx, s * t.x + c * t.y + fy
+                yaw = yaw_of(tr.transform.rotation) + fyaw
+                q = tr.transform.rotation
+                q.x = q.y = 0.0
+                q.z = math.sin(yaw / 2)
+                q.w = math.cos(yaw / 2)
         if kept:
             out = TFMessage()
             out.transforms = kept
@@ -175,17 +211,64 @@ def main():
     ap.add_argument(
         "--max-scans", type=int, default=0, help="0 = whole bag (debug cap)"
     )
+    ap.add_argument(
+        "--skip-secs",
+        type=float,
+        default=0.0,
+        help="withhold scans before this bag-relative time (TF still replays, "
+        "so the odometry prior is warm when insertion starts) — surgical "
+        "trim of a bad opening, e.g. a collision during the seeding spin",
+    )
+    ap.add_argument(
+        "--stop-secs",
+        type=float,
+        default=0.0,
+        help="stop feeding at this bag-relative time (0 = whole bag) — "
+        "surgical trim of a drifty ending",
+    )
+    ap.add_argument(
+        "--frame",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "YAW_DEG"),
+        help="SE2 pre-multiplied onto the odometry prior so the map frame is "
+        "born aligned (e.g. registered to an earlier revision)",
+    )
+    ap.add_argument(
+        "--fast",
+        action="store_true",
+        help="compute-bound replay: withhold scans well inside slam's travel "
+        "gates (see --gate-dist/--gate-yaw, pre-margined by the caller so "
+        "borderline scans are still fed and slam itself decides) and drop the "
+        "wall-clock pacing. The caller must check the stack log for "
+        "'queue is full' afterwards — any drop means rerun without --fast.",
+    )
+    ap.add_argument("--gate-dist", type=float, default=0.21)
+    ap.add_argument("--gate-yaw", type=float, default=0.21)
+    ap.add_argument(
+        "--feed-dwell",
+        type=float,
+        default=0.02,
+        help="fast mode: seconds to spin after each fed scan",
+    )
     args = ap.parse_args()
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     rclpy.init()
-    node = Replayer(args.mode, args.sample_dt)
+    frame = None
+    if args.frame:
+        import math
+
+        frame = (args.frame[0], args.frame[1], math.radians(args.frame[2]))
+    node = Replayer(args.mode, args.sample_dt, frame=frame)
 
     # Give the node-under-test a moment to come up on the graph and discover us.
     for _ in range(20):
         rclpy.spin_once(node, timeout_sec=0.1)
+
+    import math
 
     wall0 = None
     t0_ns = None
@@ -193,6 +276,8 @@ def main():
     last_sample = -1e18  # sim-time of the last trajectory sample (gap-robust)
     n_scans = 0
     stop = False
+    cur_odom = None  # latest bag odom pose (x, y, yaw), for fast-mode gating
+    fast_last = None  # odom pose at the last fed scan
 
     for topic, msg, t_ns in read_bag(args.bag):
         if t0_ns is None:
@@ -201,23 +286,52 @@ def main():
         sim_t = (t_ns - t0_ns) / 1e9
         last_ns = t_ns
 
-        # Pace to the requested fraction of realtime, spinning so /map and TF
-        # callbacks fire while we wait.
-        target = wall0 + sim_t / args.rate
-        while True:
-            dt = target - time.monotonic()
-            if dt <= 0:
-                break
-            rclpy.spin_once(node, timeout_sec=min(dt, 0.02))
+        if not args.fast:
+            # Pace to the requested fraction of realtime, spinning so /map and
+            # TF callbacks fire while we wait.
+            target = wall0 + sim_t / args.rate
+            while True:
+                dt = target - time.monotonic()
+                if dt <= 0:
+                    break
+                rclpy.spin_once(node, timeout_sec=min(dt, 0.02))
 
         node.publish_clock(t_ns)
         if topic == "/tf_static":
             node.handle_tf_static(msg)
         elif topic == "/tf":
+            for tr in msg.transforms:
+                if (tr.header.frame_id, tr.child_frame_id) == (
+                    "odom",
+                    "base_footprint",
+                ):
+                    t = tr.transform.translation
+                    cur_odom = (t.x, t.y, yaw_of(tr.transform.rotation))
             node.handle_tf(msg)
         elif topic == "/scan_filtered":
-            node.scan_pub.publish(msg)
-            n_scans += 1
+            if sim_t >= args.skip_secs:
+                feed = True
+                if args.fast and fast_last is not None and cur_odom is not None:
+                    dx = cur_odom[0] - fast_last[0]
+                    dy = cur_odom[1] - fast_last[1]
+                    dyaw = abs(
+                        math.atan2(
+                            math.sin(cur_odom[2] - fast_last[2]),
+                            math.cos(cur_odom[2] - fast_last[2]),
+                        )
+                    )
+                    feed = (
+                        dx * dx + dy * dy >= args.gate_dist**2 or dyaw >= args.gate_yaw
+                    )
+                if feed:
+                    node.scan_pub.publish(msg)
+                    n_scans += 1
+                    if cur_odom is not None:
+                        fast_last = cur_odom
+                    if args.fast:
+                        end = time.monotonic() + args.feed_dwell
+                        while time.monotonic() < end:
+                            rclpy.spin_once(node, timeout_sec=0.005)
         rclpy.spin_once(node, timeout_sec=0.0)
 
         if sim_t - last_sample >= args.sample_dt:
@@ -225,6 +339,9 @@ def main():
             last_sample = sim_t
 
         if args.max_scans and n_scans >= args.max_scans:
+            stop = True
+            break
+        if args.stop_secs and sim_t >= args.stop_secs:
             stop = True
             break
 
@@ -255,11 +372,32 @@ def main():
             last_sample = sim_t
         time.sleep(0.01)
 
+    posegraph_ok = False
+    if args.mode == "slam":
+        from slam_toolbox.srv import SerializePoseGraph
+
+        cli = node.create_client(SerializePoseGraph, "/slam_toolbox/serialize_map")
+        if cli.wait_for_service(timeout_sec=5.0):
+            req = SerializePoseGraph.Request()
+            req.filename = str(out / "map")
+            fut = cli.call_async(req)
+            deadline = time.monotonic() + 30
+            while not fut.done() and time.monotonic() < deadline:
+                rclpy.spin_once(node, timeout_sec=0.2)
+            posegraph_ok = (
+                fut.done() and fut.result() is not None and fut.result().result == 0
+            )
+        print(
+            f"posegraph serialize: {'ok' if posegraph_ok else 'FAILED'}",
+            flush=True,
+        )
+
     result = {
         "mode": args.mode,
         "bag": str(args.bag),
         "truncated": bool(stop),
         "n_scans": n_scans,
+        "posegraph": posegraph_ok,
         "traj": node.traj,
     }
     if node.latest_map is not None:
