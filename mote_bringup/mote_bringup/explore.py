@@ -152,9 +152,6 @@ class Explorer(Node):
         self.grid = None
         self.yaw_off = None
         self.cmd_vx = 0.0
-        # /scan_filtered, not /scan: the filter chain nulls the blind-spot
-        # sectors where the lidar sees the robot's own body (~0.12 m). Raw /scan
-        # would read those self-hits as a permanent wall 13 cm to each side.
         self.create_subscription(LaserScan, "/scan_filtered", self.on_scan, 10)
         self.create_subscription(
             Odometry, "/diff_drive_controller/odom", self.on_odom, 10

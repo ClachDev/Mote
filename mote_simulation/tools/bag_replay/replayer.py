@@ -9,6 +9,13 @@ ROS client for a single parameter set: it streams the bag's ``/scan_filtered`` +
 itself, so the node runs on bag time regardless of wall speed), records the
 estimator's output trajectory, and grabs the finished ``/map``.
 
+This is not a reimplementation of ``ros2 bag play``. What replay needs and bag
+play has no hook for: stripping individual TF *edges* from inside ``/tf``
+messages (bag play excludes whole topics only, and ``/tf`` must partially pass
+through), gating replay pace on the estimator actually keeping up rather than
+a fixed rate, windowing the stream in time, and capturing the output
+trajectory/map/posegraph as it goes.
+
 The one subtlety is TF ownership. A mapping bag's ``/tf`` already contains the
 edges the *original* run produced — ``map->odom`` from slam_toolbox and
 ``odom->base_footprint`` from kinematic_icp. Replaying those verbatim would fight
