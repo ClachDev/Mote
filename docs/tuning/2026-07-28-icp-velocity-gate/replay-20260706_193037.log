@@ -1,0 +1,5 @@
+20260706_193037: 1806 icp poses, 18044 wheel transforms
+[INFO] [1785278342.577612958] [icp_odom_gate]: gating odom->base_footprint at 0.251 m/s and 2.279 rad/s (x1.15 of the drive envelope)
+  0/1806  gated=1
+gate published 1806 of 1806 poses
+wrote /home/michael/.claude/jobs/cbff1358/tmp/20260706_193037-gated

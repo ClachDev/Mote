@@ -1,0 +1,12 @@
+20260706_192836: 986 icp poses, 9847 wheel transforms
+[INFO] [1785278246.610327817] [icp_odom_gate]: gating odom->base_footprint at 0.251 m/s and 2.279 rad/s (x1.15 of the drive envelope)
+  0/986  gated=1
+[WARN] [1785278247.478527195] [icp_odom_gate]: rejected icp increment 1: 0.273 m/s, 0.462 rad/s over 0.101 s (limits 0.251, 2.279) -- substituted wheel odometry [0.0218, -0.0000, -0.0023]
+[WARN] [1785278247.572126298] [icp_odom_gate]: rejected icp increment 2: 0.355 m/s, 0.022 rad/s over 0.100 s (limits 0.251, 2.279) -- substituted wheel odometry [0.0206, -0.0001, -0.0115]
+[WARN] [1785278247.608325626] [icp_odom_gate]: rejected icp increment 3: 0.304 m/s, 0.086 rad/s over 0.100 s (limits 0.251, 2.279) -- substituted wheel odometry [0.0175, -0.0001, -0.0101]
+[WARN] [1785278247.645299971] [icp_odom_gate]: rejected icp increment 4: 0.276 m/s, 0.375 rad/s over 0.100 s (limits 0.251, 2.279) -- substituted wheel odometry [0.0209, -0.0000, -0.0027]
+[WARN] [1785278247.733182284] [icp_odom_gate]: rejected icp increment 5: 0.433 m/s, 0.620 rad/s over 0.101 s (limits 0.251, 2.279) -- substituted wheel odometry [0.0203, 0.0000, 0.0034]
+[WARN] [1785278249.288240759] [icp_odom_gate]: rejected icp increment 6: 0.384 m/s, 0.014 rad/s over 0.100 s (limits 0.251, 2.279) -- substituted wheel odometry [-0.0219, -0.0000, 0.0014]
+[WARN] [1785278249.357874061] [icp_odom_gate]: rejected icp increment 7: 0.387 m/s, 0.554 rad/s over 0.101 s (limits 0.251, 2.279) -- substituted wheel odometry [-0.0220, 0.0000, -0.0002]
+gate published 986 of 986 poses
+wrote /home/michael/.claude/jobs/cbff1358/tmp/192836-gated

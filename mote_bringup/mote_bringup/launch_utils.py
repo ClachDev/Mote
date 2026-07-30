@@ -15,6 +15,22 @@ from mote_arm import config as arm_config
 
 CONTROLLERS = ("joint_state_broadcaster", "diff_drive_controller")
 
+# The two odometry leaves hanging off the base, both written by
+# localization_launch.py. They live here rather than in that file because
+# mote_launch.py needs one of them too, and a launch file cannot import another.
+#
+# WHEEL_ODOM_FRAME is the inverted wheel pose kinematic_icp reads as its motion
+# prior. ICP_ODOM_FRAME is kinematic_icp's own ungated track, deliberately not
+# `odom`: icp_odom_gate owns odom->base and publishes it with the physically
+# impossible increments taken out. slip_monitor reads the ungated leaf, because
+# its `icp_fault` verdict fires on exactly what the gate removes.
+#
+# A disagreement between any writer and reader of these names costs the reader
+# its input without failing anything loudly, which is why they are constants and
+# why test_localization_composition.py checks them against each other.
+WHEEL_ODOM_FRAME = "odom_wheel"
+ICP_ODOM_FRAME = "odom_icp"
+
 # Loaded and configured but left *inactive*. Activating a controller is what
 # claims its command interfaces, and for the arm that is what enables servo
 # torque (MoteHardware::perform_command_mode_switch) — so an arm nobody has

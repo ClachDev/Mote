@@ -1,0 +1,33 @@
+max_wheel_speed = 0.218 m/s (robot.yaml), tolerance x1.15
+
+=== 20260706_192836  (98s, 985 intervals) ===
+  path length   icp   10.97 m   wheel   11.16 m   (+1.7% wheel)
+  yaw travelled icp  1307.3 deg wheel  1233.6 deg   (-5.6% wheel)
+  residual |wheel-icp| while moving:
+      translation  p50 0.0031  p99 0.1517  max 0.2312 m/s
+      yaw          p50 3.93  p99 29.14  max 52.82 deg/s  (see time-sync caveat)
+  ICP speed above 0.251 m/s (drive cannot produce it): 7 intervals (0.71%)
+  wheel speed above the same:                        0 intervals (0.00%)
+      runs: n=7, longest=1 (~0.10s), isolated=7
+  speed p50/p99/max   icp 0.147/0.226/0.433   wheel 0.161/0.220/0.222 m/s
+
+=== 20260706_133149  (1218s, 12187 intervals) ===
+  path length   icp    0.74 m   wheel    0.54 m   (-26.8% wheel)
+  yaw travelled icp   357.9 deg wheel   386.3 deg   (+7.9% wheel)
+  residual |wheel-icp| while moving:
+      translation  p50 0.0021  p99 0.0140  max 0.0142 m/s
+      yaw          p50 3.01  p99 15.72  max 17.16 deg/s  (see time-sync caveat)
+  ICP speed above 0.251 m/s (drive cannot produce it): 3 intervals (0.02%)
+  wheel speed above the same:                        0 intervals (0.00%)
+      runs: n=3, longest=1 (~0.10s), isolated=3
+  speed p50/p99/max   icp 0.000/0.001/1.197   wheel 0.000/0.001/0.219 m/s
+
+=== 20260706_193037  (180s, 1804 intervals) ===
+  path length   icp   13.82 m   wheel   13.75 m   (-0.4% wheel)
+  yaw travelled icp  2798.5 deg wheel  2787.4 deg   (-0.4% wheel)
+  residual |wheel-icp| while moving:
+      translation  p50 0.0025  p99 0.0176  max 0.1126 m/s
+      yaw          p50 3.30  p99 23.18  max 31.73 deg/s  (see time-sync caveat)
+  ICP speed above 0.251 m/s (drive cannot produce it): 0 intervals (0.00%)
+  wheel speed above the same:                        0 intervals (0.00%)
+  speed p50/p99/max   icp 0.021/0.221/0.229   wheel 0.021/0.219/0.223 m/s

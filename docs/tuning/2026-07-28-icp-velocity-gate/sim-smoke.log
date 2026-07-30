@@ -1,0 +1,12 @@
+>> launching sim (mode:=mapping)...
+STEP1 OK: controllers active
+>> waiting for the mapping mission (slam_toolbox)...
+STEP2 OK: slam_toolbox up
+>> driving + verifying...
+forward: moved 0.600 m (expected ~0.6)
+spin: rotated 2.001 rad (expected ~2.0, wrapped)
+scan: 60 msgs, 10.0 Hz, 720/720 finite ranges, min 0.12 max 4.46
+image: 185 msgs, 30.3 Hz, 640x480 rgb8, frame_id camera_optical_link
+map: 116x116 @ 0.050 m/cell
+PASS: sim smoke test
+SMOKE TEST PASS

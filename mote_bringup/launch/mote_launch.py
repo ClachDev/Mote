@@ -12,6 +12,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 from mote_bringup import mote_home, param_overrides
 from mote_bringup.launch_utils import (
+    ICP_ODOM_FRAME,
     INACTIVE_CONTROLLERS,
     arm_config_file,
     controller_spawn_handler,
@@ -130,10 +131,17 @@ def generate_launch_description():
     # scan-match excursions on /diagnostics, which health_monitor folds into the
     # robot summary. It runs with the base rather than with a mission because
     # both of its inputs are the base's: the controller's odometry and
-    # localization_launch.py's odom->base correction.
+    # localization_launch.py's lidar odometry.
+    #
+    # It reads the *ungated* lidar track, not odom->base. Its `icp_fault`
+    # verdict fires on a body speed the drive cannot produce, and icp_odom_gate
+    # exists to keep exactly that out of odom->base -- so pointed at the gated
+    # edge the check could never fire again, and a scan match degrading behind a
+    # working gate would go unreported.
     slip_monitor = Node(
         package="mote_bringup",
         executable="slip_monitor",
+        parameters=[{"odom_frame": ICP_ODOM_FRAME}],
         **respawn,
     )
 
