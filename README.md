@@ -30,10 +30,16 @@ The main factors I've engineered for are:
 
 I've taken a lot of inspiration from projects like
 [LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi) which aim to be accessible
-and [ORP](https://openroboticplatform.com/) which wants interoperability. Apart
-from allowing me to test algorithms, I also want Mote to be a comparison
+and [ORP](https://openroboticplatform.com/) which wants interoperability.
+
+Apart from allowing me to test algorithms, I also want Mote to be a comparison
 platform between classical ROS/Nav2 navigation and learned policies via
 [LeRobot](https://github.com/huggingface/lerobot).
+
+Finally, I also want to take this project further than just getting a robot running.
+I want to use it to explore and act as a reference for what a full robotics
+stack might look like: versioned maps, zones, remote operation, and maintaining
+a multi-robot fleet.
 
 See [`design/`](design/) for hardware design decisions, requirements, and bill
 of materials.
@@ -59,17 +65,20 @@ the ability to test and iterate on that right now.
 ## Software
 
 Built with ROS2 Jazzy, managed via [pixi](https://pixi.sh). This gives us a nice
-way to package everything up without worrying about ecosystem concerns.
+way to package everything up without worrying about ecosystem concerns — no
+system ROS install needed, on the Pi or your workstation.
 
 | Package                                 | Purpose                                                   |
 | --------------------------------------- | --------------------------------------------------------- |
-| [`mote_bringup`](mote_bringup/)         | Launch files for bringing up the robot                    |
-| [`mote_description`](mote_description/) | URDF robot model and TF tree                              |
-| [`mote_hardware`](mote_hardware/)       | ros2_control hardware interface for the Feetech servo bus |
-| [`mote_nav`](mote_nav/)                 | Nav2 plugins for navigation                               |
-| [`mote_perception`](mote_perception/)   | Camera-derived perception (health monitor, depth obstacles) |
-| [`mote_tasks`](mote_tasks/)             | Behaviour-tree task layer that drives Nav2 to run missions |
-| [`mote_simulation`](mote_simulation/)   | Gazebo sim, worlds, and smoke test (workstation only)     |
+| [`mote_bringup`](mote_bringup/)         | Launch files, site management, health monitoring, provisioning, etc |
+| [`mote_description`](mote_description/) | URDF robot model and `robot.yaml` |
+| [`mote_hardware`](mote_hardware/)       | ros2_control hardware interface |
+| [`mote_nav`](mote_nav/)                 | Nav2 plugins |
+| [`mote_perception`](mote_perception/)   | Image processing pipeline (needs a separate "inference" machine) |
+| [`mote_tasks`](mote_tasks/)             | Behaviour-tree task layer |
+| [`mote_arm`](mote_arm/)                 | SO-101 arm driver |
+| [`mote_fleet`](mote_fleet/)             | Fleet control plane: fleet server, operator dashboard, map registry |
+| [`mote_simulation`](mote_simulation/)   | Gazebo sim, a world ladder, and the smoke test (workstation only) |
 
 I'm trying to keep all dependencies from
 [Robostack](https://robostack.github.io/index.html) or `conda-forge`. Anything
@@ -99,11 +108,7 @@ git clone --recurse-submodules https://github.com/ClachDev/Mote
 cd Mote
 ```
 
-If you forgot `--recurse-submodules`, fetch the submodules afterwards:
-
-```bash
-pixi run submodules
-```
+(Forgot `--recurse-submodules`? `pixi run submodules` fetches them afterwards.)
 
 ### 2. Build
 
@@ -111,13 +116,8 @@ pixi run submodules
 pixi run build
 ```
 
-If you run these on your developer machine, you can sync the code to the Pi using
-
-```bash
-pixi run sync          # one-off sync
-# or
-pixi run sync-watch    # sync changes automatically
-```
+If you run these on your developer machine, sync the code to the Pi with
+`pixi run sync`.
 
 ### 3. Setup Pi
 
@@ -140,110 +140,71 @@ prompted:
 pixi run setup-ids
 ```
 
-The IDs, baud rate and `velocity_scale` (the rad/s → raw servo-unit conversion)
-live in [`mote_description/config/robot.yaml`](mote_description/config/robot.yaml),
-which is the single source of truth for all robot configuration. Both the URDF
-and the launch file read from it.
+### 5. Map, then drive
 
-The other helper tools in [`mote_hardware/tools/`](mote_hardware/tools/) round
-this out: `servo_debug` to inspect and drive individual servos, `velocity_cal`
-to measure `velocity_scale` on your hardware, and `swap_ids` to flip the
-left/right IDs if the wheels turn the wrong way. See
-[`mote_hardware/tools/README.md`](mote_hardware/tools/README.md).
+The stack is split into two phases: an initial SLAM mapping phase and then a
+non-SLAM drive phase.
 
-### 5. Launch
+To use SLAM to generate a map:
 
 ```bash
-pixi run launch # Launches the base (hardware, lidar, camera, odometry)
-pixi run rviz   # Runs rviz to view the map and navigate
-# and
-pixi run slam   # Runs the SLAM stack to create a map
-# or
-pixi run nav    # Runs the nav stack
-
-# Convenience combos (base + the relevant stack in one command):
-pixi run mapping # = launch + slam  (build/extend a map)
-pixi run robot   # = launch + nav   (drive a saved map at ~/.mote/map.yaml)
+pixi run mapping   # bringup + SLAM: drive around (teleop or nav goals) to build a map
+pixi run save-map  # save the map + posegraph into the active site
 ```
 
-### Fleet: remote operation (optional)
-
-A robot works standalone with nothing above, but it can also join a fleet
-overlay so it is reachable and identifiable from anywhere:
+With a map saved you can just run the robot stack (no slam):
 
 ```bash
-pixi run identity set --id mote-01 --name "Scout"   # this robot's fleet id
-pixi run tailnet --role robot --auth-key tskey-auth-...  # join the Tailscale mesh
+pixi run robot     # bringup + Nav2: drive the saved map autonomously
+pixi run teleop    # Manual keyboard teleoperation, any time
 ```
 
-The robot is then reachable off-LAN at `mote-01` by MagicDNS, with no port
-forwarding and nothing exposed to the internet. A *new* Pi can be provisioned
-into that state unattended from a rendered cloud-init file
-(`pixi run provision`).
+You can also run a Foxglove desktop to connect to the robot over websocket at
+`ws://<robot-id>:8765`. The layout is defined in
+`mote_bringup/foxglove/mote.json`.
 
-See [`docs/fleet/README.md`](docs/fleet/README.md) for the runbook and
-[`docs/design/fleet.md`](docs/design/fleet.md) for where this is going.
+Maps live in **site bundles** under `~/.mote/sites/`.
 
-### Simulation (no hardware required)
+**Congratulations! At this point you should have a working robot stack: maps,
+SLAM, Nav2, and teleop.**
 
-A Gazebo (gz-sim) simulation of Mote runs entirely on a workstation — same
-controllers, same scan pipeline, so the SLAM and Nav2 stacks work against it
-unmodified. The sim dependencies live in a separate pixi environment so the
-robot install stays lean:
+## Simulation (no hardware required)
+
+A Gazebo simulation of Mote runs the same controllers, same scan pipeline, and
+crucially the *same launch files* as the real robot, so nothing can drift
+between sim and hardware. The sim dependencies live in a separate pixi
+environment so the robot install stays lean:
 
 ```bash
-pixi run sim                                                     # headless gz + robot + controllers
-pixi run sim-test                                                # ~20 s headless smoke test (drive + odom + scan + map)
-pixi run teleop                                                  # drive it around
-# Ad-hoc commands need the sim environment named explicitly:
-pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
-pixi run -e sim -- gz sim -g                                     # optional: attach the Gazebo GUI
+pixi run sim            # headless gz + robot + controllers
+pixi run sim-test       # ~20 s headless smoke test (drive + odom + scan + map)
+pixi run -e sim -- gz sim -g   # optional: attach the Gazebo GUI
 ```
-
-`sim-test` is a fast end-to-end check: it brings up the sim and SLAM, drives the
-robot, and asserts odometry integrates the motion, the lidar publishes sane
-scans, and slam_toolbox produces a map. It needs a working render backend
-(a GPU or fast software GL), so it's a local pre-PR gate rather than a
-hosted-CI job — see the comment in
-[`run_sim_smoke.sh`](mote_simulation/test/sim_smoke/run_sim_smoke.sh).
 
 The worlds in `mote_simulation/worlds/` form an easy-to-hard ladder, selectable
 with `world:=` (e.g. `pixi run sim world:=hospital_world.sdf`):
 
-- **`mote_world.sdf`** (easy) — a simple walled room with a few obstacles; the
-  default and the `sim-test` world.
-- **`office_world.sdf`** (medium) — a long hospital-ward corridor of identical
-  rooms that stresses localisation (aperture-problem drift, false loop closures).
-- **`hospital_world.sdf`** (hard) — a ~58×38 m hospital with a looping corridor
-  grid, ~50 rooms, and furniture clutter; it stacks those failure modes and adds
-  genuine navigable loops. Generated by
-  [`gen_hospital.py`](mote_simulation/worlds/gen_hospital.py) — edit the layout
-  there and regenerate rather than hand-editing the SDF.
+- **`mote_world.sdf`** (easy) — a simple walled room; the default and the
+  `sim-test` world.
+- **`office_world.sdf`** (medium) — a corridor of identical rooms that
+  stresses localisation.
+- **`hospital_world.sdf`** (hard) — a ~58×38 m hospital with a looping
+  corridor grid, ~50 rooms, and clutter.
 
-The simulated lidar uses RPLIDAR C1 datasheet values from
-[`robot.yaml`](mote_description/config/robot.yaml).
+## Perception
 
-### Deploying to the Pi
+Rather than add a £150 RGB-D camera to the build, I've been trying to make use of a
+single cheap webcam plus some smart vision models. The perception stack is
+mostly offloaded to a separate "inference server" which runs somewhere with
+access to a (cheap) GPU. This allows us to extract depth, tag objects, and
+generally navigate as if we had a full 3D camera on board.
 
-The above section assumes you are developing entirely on the Pi which is
-definitely feasible at this stage. I do however want to support a more
-"professional" workflow and so we need a way to develop on laptops and run on
-the Pi. The exact mechanism that we will use is TBD.
+- **Depth Anything V2** — monocular depth, rescaled against the lidar per frame,
+  feeds Nav2 a point cloud of the low obstacles the lidar plane can't see.
+- **Open-vocabulary** — "red mug" becomes a map pose for the fetch
+  mission, with no training.
 
-For now, I currently develop on a workstation and push to the Pi with rsync. The
-`sync` task targets an SSH host named `mote` — change the host in the
-[`pixi.toml`](pixi.toml) `[tasks]` `sync` entry to match your Pi, then:
-
-```bash
-pixi run sync             # one-shot push
-pixi run sync-watch       # keep pushing on every save (needs the dev env)
-```
-
-For pushing a finished build to one or more robots, the direction is to publish
-the first-party packages to the `prefix.dev/mote` channel (built with
-[`pixi-build-ros`](https://pixi.prefix.dev/latest/build/ros/)) so a robot just
-needs `pixi install` — no source checkout or compile on the bot. That work is in
-progress.
+I'm still experimenting with this to see how far we can push it.
 
 ## SO-101 Follower Arm
 
@@ -251,11 +212,20 @@ progress.
 
 The chassis is compatible with the [SO-101 follower
 arm](https://github.com/TheRobotStudio/SO-ARM100) via the ORP mounting grid and
-a custom base. See the SO-ARM100 project for the arm's BOM and assembly
-instructions.
+a custom base (see the SO-ARM100 project for the arm's BOM and assembly). The
+arm shares the drive wheels' servo bus, so it needs no extra electronics.
 
-My long term goal is to eventually have Mote able to explore a space and tidy
-things up off the floor [obligatory xkcd](https://xkcd.com/1425/).
+I've started integrating it into ROS in [`mote_arm`](mote_arm/), covering the
+driver, per-joint jogging, guided calibration that measures each joint's real
+travel, and taught named poses.
+
+## Fleet
+
+I'm currently working on the beginnings of a fleet layer based on Tailscale and
+MQTT. This is heavily work in progress but here's a little preview:
+
+![Fleet dashboard](docs/images/fleet-ui.webp)
+
 
 ## Contributions
 
