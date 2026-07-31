@@ -34,11 +34,10 @@ import threading
 import time
 
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-from mote_arm import config, poses
+from mote_arm import cli, config, poses
 from mote_arm.control import ArmControl
 
 
@@ -277,7 +276,7 @@ def _stream(node: PoseClient, start: dict, goals: dict, args) -> None:
     print(f"  holding at {err:.4f} rad of residual droop")
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Teach and replay arm poses")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -339,30 +338,21 @@ def main() -> None:
     )
     p_go.add_argument("--timeout", type=float, default=5.0)
     p_go.set_defaults(func=_cmd_go)
+    return parser
 
-    args = parser.parse_args()
+
+def main() -> None:
+    args = cli.parse(build_parser())
 
     rclpy.init()
     node = PoseClient()
-
-    def _spin() -> None:
-        try:
-            rclpy.spin(node)
-        except (KeyboardInterrupt, ExternalShutdownException):
-            pass
-        except Exception:  # noqa: BLE001 - context torn down by SIGINT
-            if rclpy.ok():
-                raise
-
-    threading.Thread(target=_spin, daemon=True).start()
+    spinner = cli.spin_background(node)
     try:
         args.func(node, args)
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
     finally:
-        if rclpy.ok():
-            rclpy.shutdown()
-        node.destroy_node()
+        cli.shutdown(node, spinner)
 
 
 if __name__ == "__main__":

@@ -168,12 +168,39 @@ conversions are verified without hardware.
 | `config.py` | Parses the `arm:` section; encoder<->radian conversion + soft-limit clamping. |
 | `bus.py` | `FeetechBus` — thin `scservo_sdk` wrapper (ping, read position/health, torque, position goal, homing offset). Lazy SDK import. |
 | `control.py` | The one place that knows how to talk to `arm_controller`: single-point trajectories, and activation as the torque switch. |
+| `cli.py` | The plumbing every arm CLI shares: strict argument parsing with ROS's own arguments cut out first, and a shutdown that stops spinning before it destroys the node. Both are properties that fail silently otherwise — see "Exits and arguments" below. |
 | `arm_launch.py` (in `mote_bringup`) | Bench bring-up — the same controller_manager, URDF and `controllers.yaml` as a mission, without the lidar/camera/Nav2. `pixi run arm`. |
 | `jog` (CLI) | Interactive per-joint jog. A *client of the controller* — publishes clamped trajectories, never opens the bus. `pixi run arm-jog`. |
 | `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only, but opens the bus: run with the control stack stopped. `pixi run arm-check`. |
 | `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. Owns the bus: control stack stopped. `pixi run arm-calibrate`. |
 | `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
+
+## Exits and arguments
+
+Two things every arm CLI needs, both of which fail *quietly* when hand-rolled,
+so they live in `cli.py` and nowhere else.
+
+**Destroying a node that `spin()` still holds aborts the process.** The
+executor is pulled out from under itself and the interpreter calls
+`std::terminate`: exit 134, `terminate called without an active exception`,
+after the tool has already done its work. The fix is ordering — shut the
+context down, *join the spin thread*, and only then destroy — which is what
+`cli.shutdown(node, spinner)` is for. Measured on this arm's CLIs with no
+hardware attached: `jog` (stdin closed) and `arm-pose list` each aborted 3 of 3
+runs before, and exited 0 on 3 of 3 after. It is not a rare race — with no
+stack running to talk to, it reproduced every time. `test_cli.py` watches a
+child process's exit status, because nothing in-process can catch an abort.
+
+**ROS's arguments arrive mixed in with the tool's own.** `ros2 run` hands the
+executable the whole command line, so a plain `parse_args` rejects
+`--ros-args` outright (`arm-pose list --ros-args -p use_sim_time:=true` used to
+die with "unrecognized arguments") while the usual workaround,
+`parse_known_args`, silently discards anything it does not recognise — which on
+a *safety* flag means a mistyped `--max-travel` or `--speed` does nothing and
+says nothing, and the arm moves under the default instead. `cli.parse` cuts the
+`--ros-args ... --` block out first and then parses what is left strictly, so
+ROS arguments pass through and a typo is still an error.
 
 ## `zero` and `home` are different things
 
