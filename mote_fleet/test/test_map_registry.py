@@ -72,7 +72,7 @@ def test_a_floor_reports_each_revision_with_why_it_could_be_promoted(server):
     revision = body["revisions"][0]
     assert revision["canonical"] is True
     assert revision["ok"] is True
-    assert revision["zones"] == ["kitchen", "ward"]
+    assert revision["zones"] == ["kitchen", "sluice", "ward"]
     assert revision["map"]["resolution"] == 0.05
 
 

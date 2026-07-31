@@ -52,6 +52,7 @@ ends up drawing a kitchen through a wall.
 import gzip
 import hashlib
 import io
+import re
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,6 +72,53 @@ META_YAML = "meta.yaml"
 ZONES_YAML = "zones.yaml"
 POSEGRAPH = "map.posegraph"
 POSEGRAPH_DATA = "map.data"
+
+#: The semantic role of a place, so a planner can reason about one it has never
+#: seen (zone/v0 "Kinds"). ``area`` is the unopinionated default: a named place
+#: with no further claim. The order is the spec's — structure, then level
+#: transitions, then where a platform services itself, then where work happens,
+#: then constraints.
+ZONE_KINDS = (
+    "area",
+    "room",
+    "corridor",
+    "doorway",
+    "threshold",
+    "elevator",
+    "stair",
+    "dock",
+    "charger",
+    "pickup",
+    "dropoff",
+    "staging",
+    "home",
+    "keepout",
+    "slow",
+)
+
+#: Kinds that say where a robot may *not* or *should not* go. They are in the
+#: same vocabulary as destinations because they are the same thing to an
+#: operator drawing on a floor plan; the distinction is ``navigable``, and it is
+#: machine-checkable rather than a convention. Dispatching to one is bad input,
+#: not a route, so ``navigable: true`` on one of these is refused rather than
+#: honoured — otherwise the flag would mean whatever the file last said.
+CONSTRAINT_KINDS = frozenset(("keepout", "slow"))
+
+#: A dispatchable zone name. The shared token a dispatcher types, so it is a
+#: machine name rather than a label: lowercase, no spaces, no punctuation to
+#: guess at. Anything an operator wants to *see* belongs in ``display_name``.
+ZONE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+#: Vocabulary keys a zone entry may carry, beside the geometry that binds it.
+VOCABULARY_KEYS = (
+    "display_name",
+    "aliases",
+    "kind",
+    "navigable",
+    "parent",
+    "tags",
+    "description",
+)
 
 #: Present and non-empty in every revision, whoever wrote it.
 REQUIRED = (MAP_YAML, META_YAML)
@@ -227,12 +275,17 @@ def read_map(path) -> dict:
 
 
 def read_zones(path) -> dict:
-    """A floor's ``zones.yaml`` — ``{frame_id, zones: {name: {...}}}``.
+    """A floor's ``zones.yaml`` — ``{frame_id, revision, zones: {name: {...}}}``.
 
     The authority on what a zone *means* is ``mote_tasks.zones``; this is the
     off-robot reader for the same file, so the fleet can draw taught places and
     the operator can see the ``goto`` targets they are about to type. It keeps
     the shape and checks the numbers rather than reimplementing membership.
+
+    Each parsed zone carries **both halves** of zone/v0: the geometry that binds
+    it to this floor's map frame, and the vocabulary that names it. The file
+    holds them together because they are taught together; :func:`vocabulary`
+    is what separates them for anything off-robot.
     """
     raw = load_yaml_file(path)
     zones = raw.get("zones") or {}
@@ -242,7 +295,7 @@ def read_zones(path) -> dict:
     for name, entry in zones.items():
         if not isinstance(entry, dict):
             raise BundleError(f"{Path(path).name}: zone {name!r} is not a mapping")
-        zone = {"name": str(name)}
+        zone = {"name": str(name), **zone_term(Path(path).name, name, entry)}
         for key in ("x", "y", "yaw", "radius"):
             if entry.get(key) is not None:
                 try:
@@ -261,7 +314,23 @@ def read_zones(path) -> dict:
             if "polygon" not in zone:
                 raise BundleError(f"{Path(path).name}: zone {name!r} has no position")
         parsed[str(name)] = zone
-    return {"frame_id": raw.get("frame_id") or "map", "zones": parsed}
+    return {
+        "frame_id": raw.get("frame_id") or "map",
+        "revision": _revision(Path(path).name, raw.get("vocabulary_revision")),
+        "zones": parsed,
+    }
+
+
+def _revision(where: str, raw) -> int:
+    if raw is None:
+        return 0
+    try:
+        revision = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise BundleError(f"{where}: vocabulary_revision must be an integer") from exc
+    if revision < 0:
+        raise BundleError(f"{where}: vocabulary_revision must not be negative")
+    return revision
 
 
 def _polygon(where: str, name, polygon) -> list:
@@ -278,6 +347,159 @@ def _polygon(where: str, name, polygon) -> list:
                 f"{where}: zone {name!r} has a non-numeric vertex"
             ) from exc
     return vertices
+
+
+# -- the vocabulary half (zone/v0) ----------------------------------------
+
+
+def zone_term(where: str, name, entry: dict) -> dict:
+    """The naming half of one zone entry, with zone/v0's defaults filled in.
+
+    Every field is optional in the file: a zone taught by ``save-zone`` before
+    any of this existed is a perfectly good ``area``, and the defaults here are
+    what make that true without rewriting a single ``zones.yaml``.
+    """
+    kind = entry.get("kind") or "area"
+    if kind not in ZONE_KINDS:
+        raise BundleError(
+            f"{where}: zone {name!r} has unknown kind {kind!r} "
+            f"(one of {', '.join(ZONE_KINDS)})"
+        )
+    constraint = kind in CONSTRAINT_KINDS
+    navigable = entry.get("navigable")
+    if navigable is None:
+        navigable = not constraint
+    elif not isinstance(navigable, bool):
+        raise BundleError(f"{where}: zone {name!r} navigable must be true or false")
+    elif navigable and constraint:
+        raise BundleError(
+            f"{where}: zone {name!r} is a {kind} zone, which is not a destination; "
+            "navigable cannot be true"
+        )
+    parent = entry.get("parent")
+    if parent is not None and not isinstance(parent, str):
+        raise BundleError(f"{where}: zone {name!r} parent must be a zone name")
+    return {
+        "display_name": str(entry.get("display_name") or ""),
+        "aliases": _strings(where, name, "aliases", entry.get("aliases")),
+        "kind": kind,
+        "navigable": navigable,
+        "parent": parent or None,
+        "tags": _strings(where, name, "tags", entry.get("tags")),
+        "description": str(entry.get("description") or ""),
+    }
+
+
+def _strings(where: str, name, key: str, raw) -> list:
+    if raw is None:
+        return []
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        raise BundleError(f"{where}: zone {name!r} {key} must be a list of strings")
+    return [str(item) for item in raw]
+
+
+def normalise_alias(text: str) -> str:
+    """The form two spellings of one place have to share to count as a clash.
+
+    zone/v0 matches aliases case-insensitively and whitespace-normalised, so
+    "The Kitchen" and "the  kitchen" are the same query. Collision detection has
+    to use the *same* comparison the resolver will, or a vocabulary passes
+    authoring and is ambiguous in the field.
+    """
+    return " ".join(str(text).split()).casefold()
+
+
+def check_vocabulary(terms) -> list:
+    """Everything wrong with a floor's vocabulary, as operator-readable lines.
+
+    Returns problems rather than raising because the two callers want opposite
+    things from the same rules: the robot refuses to load an ambiguous
+    vocabulary (it could not honour ``goto`` unambiguously), while the fleet
+    server reports one and still serves the map, which is unaffected.
+    """
+    terms = list(terms)
+    problems = [
+        f"zone {term['name']!r} is not a dispatchable name (want lowercase "
+        "a-z0-9_ starting with a letter); put the label in display_name"
+        for term in terms
+        if not ZONE_NAME_RE.match(term["name"])
+    ]
+    return problems + ambiguities(terms) + _check_parents(terms)
+
+
+def ambiguities(terms) -> list:
+    """The subset of :func:`check_vocabulary` that makes a name unanswerable.
+
+    Split out because it is the only half a robot must *refuse*: a zone it
+    cannot spell is still a zone it can be told to go to by its exact key, but
+    two zones answering to one query means ``goto`` has no single answer, and
+    guessing between them is the one thing zone/v0 says a resolver must not do.
+    """
+    problems = []
+    claimed = {}
+    for term in terms:
+        name = term["name"]
+        for spelling in [name, *term["aliases"]]:
+            key = normalise_alias(spelling)
+            owner = claimed.get(key)
+            if owner is not None and owner != name:
+                problems.append(
+                    f"zones {owner!r} and {name!r} both answer to {key!r}; "
+                    "a query matching both can only be ambiguous"
+                )
+            else:
+                claimed[key] = name
+    return problems
+
+
+def _check_parents(terms) -> list:
+    """``parent`` must name a zone on this floor and must not form a cycle —
+    a cycle is not merely wrong, it is a containment walk that never ends."""
+    parents = {term["name"]: term["parent"] for term in terms}
+    problems = []
+    for name, parent in parents.items():
+        if parent is None:
+            continue
+        if parent not in parents:
+            problems.append(f"zone {name!r} names parent {parent!r}, which is not here")
+            continue
+        seen, walk = {name}, parent
+        while walk is not None:
+            if walk in seen:
+                problems.append(f"zone {name!r} is inside itself via {parent!r}")
+                break
+            seen.add(walk)
+            walk = parents.get(walk)
+    return problems
+
+
+def vocabulary(zones: dict, site: str, floor: str) -> dict:
+    """The shared half of :func:`read_zones`' output, as a zone/v0 document.
+
+    This is the whole point of the split. A vocabulary travels — to a
+    dispatcher, to a second robot at the same site, to anything that needs to
+    know what places can be *named* — because names are portable. The binding
+    beside it is not: ``(2.0, 3.5)`` in one robot's map frame is a different
+    physical point in another's, and no fleet-level transform fixes that.
+
+    So the document is **built** from the fields a vocabulary may carry, never
+    *stripped* of the ones it may not. Stripping is the version of this that
+    leaks: it holds only until someone adds a geometry key to ``zones.yaml``
+    and forgets this function exists, and the leak is a plausible-looking
+    coordinate rather than a crash.
+    """
+    terms = [
+        {key: zone[key] for key in ("name",) + VOCABULARY_KEYS}
+        for zone in zones["zones"].values()
+    ]
+    return {
+        "schema": SCHEMA,
+        "site": site,
+        "floor": floor,
+        "revision": zones.get("revision", 0),
+        "zones": terms,
+        "problems": check_vocabulary(terms),
+    }
 
 
 def png_size(path) -> tuple[int, int] | None:
@@ -438,6 +660,15 @@ def validate(revision_dir, *, require_posegraph: bool = True) -> Report:
             report.zones = read_zones(revision_dir / ZONES_YAML)
         except BundleError as exc:
             report.errors.append(str(exc))
+        else:
+            # An ambiguous vocabulary is a warning here, not an error: the map
+            # is good and every coordinate in it is good. What it costs is
+            # dispatch by name, so it must be *said* — but refusing to publish
+            # a floor's map over a duplicated alias would be the wrong price.
+            report.warnings.extend(
+                f"vocabulary: {problem}"
+                for problem in check_vocabulary(report.zones["zones"].values())
+            )
     else:
         report.warnings.append("no zones.yaml — this floor has no taught places")
 

@@ -90,7 +90,9 @@ GET  /v1/audit[?limit=&robot_id=]        what was dispatched, by whom
 GET  /v1/maps                            basemaps this server can serve
 GET  /v1/maps/<site>/<floor>/map.json    resolution + origin + size
 GET  /v1/maps/<site>/<floor>/map.png     the basemap image
-GET  /v1/maps/<site>/<floor>/zones.json  the floor's taught zones
+GET  /v1/maps/<site>/<floor>/zones.json  the floor's zone *binding* (has coordinates)
+GET  /v1/zones                           every floor's zone *vocabulary* (no coordinates)
+GET  /v1/zones/<site>/<floor>            one floor's, as a zone/v0 document
 GET  /v1/sites                           the registry: every floor + its canonical revision
 GET  /v1/sites/<site>/floors/<floor>     every revision, validated, with provenance
 POST     …/revisions/<rev>               upload a candidate revision (a robot)
@@ -224,20 +226,108 @@ overwriting the directory.
 
 ### `GET /v1/maps/<site>/<floor>/zones.json`
 
-The floor's taught places, in the same map frame as the basemap, so the
-dashboard can draw them and an operator can see the `goto` targets they are
-about to type.
+The floor's taught places **with their coordinates**, in the same map frame as
+the basemap, so the dashboard can draw them and an operator can see the `goto`
+targets they are about to type. This is the zone **binding**: it is served
+beside the basemap, to a client that already has the basemap, and it is not
+what a dispatcher should be given — see [the vocabulary](#the-zone-vocabulary)
+below.
 
 ```json
 {"schema":1,"site":"home","floor":"ground","frame_id":"map","zones":[
- {"name":"kitchen","x":1.0,"y":2.0,"yaw":0.0,"radius":1.5},
+ {"name":"kitchen","x":1.0,"y":2.0,"yaw":0.0,"radius":1.5,"kind":"room",
+  "display_name":"The Kitchen","aliases":["galley"],"navigable":true},
  {"name":"ward","x":4.0,"y":1.0,"polygon":[[3,0],[5,0],[5,2],[3,2]]}]}
 ```
 
 Read from the **canonical revision's** `zones.yaml`, falling back to the
 floor-level file for a bundle seeded by rsync. `404` for a floor with no taught
 zones — an empty list would claim the floor has none, which is a different
-statement.
+statement — and `404` for a floor with no published map, because a coordinate
+with no map frame to be in is not an answer.
+
+---
+
+## The zone vocabulary
+
+**Names are shared; coordinates are not.** This is the half of a zone that is
+portable between robots, served so that the question a dispatcher most needs to
+ask — *what places can I name?* — has an answer in the API rather than out of
+band. The shape is [zone/v0](https://spec.augereai.com/zone/v0/).
+
+A zone's pose is a coordinate in one robot's map frame, and that frame's origin
+is an accident of where its SLAM session happened to start. `(2.0, 3.5)` on
+`mote-01` is a different physical point from `(2.0, 3.5)` on `mote-02`, and
+there is no fleet-level transform that fixes it — the two are independent
+estimates of the same building, drifting apart. The name, by contrast, is true
+for both. So the vocabulary travels and the binding does not, and the split is
+in the route: everything under `/v1/maps` is bound to a basemap, everything
+under `/v1/zones` is bound to nothing.
+
+A caller that must never be handed a map can be given `/v1/zones` and only
+`/v1/zones`.
+
+### `GET /v1/zones/<site>/<floor>`
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":4,"zones":[
+ {"name":"kitchen","display_name":"The Kitchen","aliases":["galley"],
+  "kind":"room","navigable":true,"parent":null,"tags":[],"description":""},
+ {"name":"sluice","display_name":"","aliases":[],
+  "kind":"keepout","navigable":false,"parent":null,"tags":[],"description":""}],
+ "problems":[]}
+```
+
+| field | |
+|---|---|
+| `name` | The shared token. `^[a-z][a-z0-9_]*$`, unique within a **floor**, not within a site — two floors may each have a `reception`. |
+| `display_name` | What an operator sees. Free text. Empty means "use the name". |
+| `aliases` | The other things people call it, for natural-language dispatch. Matched case-insensitively and whitespace-normalised. |
+| `kind` | One of `area room corridor doorway threshold elevator stair dock charger pickup dropoff staging home keepout slow`. `area` is the default and claims nothing. |
+| `navigable` | Whether it is a legal destination. Always `false` for `keepout` and `slow`. |
+| `parent` | An enclosing zone on the same floor, or `null`. |
+| `revision` | Bumped every time a zone is taught, so a binding can record which vocabulary it was built against. |
+| `problems` | Empty when the vocabulary is well-formed; see below. |
+
+There are **no coordinates, no `frame_id` and no map reference**, by
+construction: the payload is built from the fields a vocabulary may carry
+rather than filtered of the ones it may not, so a geometry key added to
+`zones.yaml` later cannot leak into it. `test_zone_vocabulary.py` asserts this
+by walking the whole payload for geometry-shaped keys rather than checking the
+ones it happens to know about.
+
+Unlike the binding, this is **not** gated on a published map. A floor someone
+has named but no robot has mapped still answers here — names are a fact about
+the building and do not wait on a SLAM session. `404` only when the floor has
+no `zones.yaml` at all.
+
+### `GET /v1/zones`
+
+Every floor's vocabulary in one call, for a dispatcher bootstrapping a fleet:
+`{"schema":1,"vocabularies":[…]}`, each element the document above. Floors with
+no zones yet are omitted rather than listed empty.
+
+### `problems`
+
+Reported, not enforced. Two things can be wrong with a vocabulary while the map
+around it is perfectly good, so the server says so and still serves it — a
+floor's basemap must not stop being served over a duplicated alias:
+
+- **an ambiguous query** — two zones answering to one name or alias. A resolver
+  must not pick between them, so the name is simply unusable until an operator
+  fixes it. The robot's own loader *does* refuse such a file, because it would
+  otherwise resolve `goto` by dictionary order.
+- **a name a dispatcher cannot type** — e.g. a zone taught as `Café`. It is
+  served verbatim rather than silently slugified to `cafe`: inventing a name is
+  a rename nobody asked for. The fix is an operator's, and is to move the label
+  into `display_name`.
+
+A file that has no coherent reading at all — an unknown `kind`, a `keepout`
+marked `navigable: true`, `aliases` that are not a list — is refused at the
+parse instead, by the same shared validator (`mote_bringup/bundle.py`) that
+`save-map` runs locally. Those are not ambiguities to report; they are
+contradictions, and honouring the last one written would make the flag mean
+whatever was typed most recently.
 
 ---
 

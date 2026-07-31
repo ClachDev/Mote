@@ -8,11 +8,11 @@
 # own taught zones.yaml.
 frame_id: map
 zones:
-  pickup: {x: 1.8, y: -1.5, yaw: 0.0}
-  dropoff: {x: -1.8, y: 1.5, yaw: 3.14}
-  home: {x: 0.0, y: 0.0, yaw: 0.0}
+  pickup: {x: 1.8, y: -1.5, yaw: 0.0, kind: pickup}
+  dropoff: {x: -1.8, y: 1.5, yaw: 3.14, kind: dropoff}
+  home: {x: 0.0, y: 0.0, yaw: 0.0, kind: home}
   # Room zones (here a radius footprint; a `polygon:` of [x, y] vertices is the
   # other form) reachable by `goto <name>`, mirroring mote_world.zones.yaml so
   # `goto kitchen` works out of the box.
-  kitchen: {x: 2.0, y: 2.0, yaw: 0.0, radius: 1.0}
-  lounge: {x: -2.0, y: 2.0, yaw: 3.14, radius: 1.0}
+  kitchen: {x: 2.0, y: 2.0, yaw: 0.0, radius: 1.0, kind: room}
+  lounge: {x: -2.0, y: 2.0, yaw: 3.14, radius: 1.0, kind: room}

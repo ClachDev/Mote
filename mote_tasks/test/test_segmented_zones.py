@@ -94,3 +94,17 @@ def test_running_it_twice_adds_nothing(tmp_path, rooms):
     assert added == []
     assert len(skipped) == 2
     assert path.read_text() == before
+
+
+def test_a_proposed_room_declares_itself_a_room(tmp_path, rooms):
+    """The one piece of vocabulary segmentation can honestly fill in.
+
+    What it carves out of free space *are* rooms, so `kind: room` is known
+    rather than guessed — and it is what the fleet serves to a dispatcher. The
+    name it invents is a placeholder; the kind is not.
+    """
+    path = tmp_path / "zones.yaml"
+    merge_into_zones(path, rooms)
+    loaded = zones_lib.load_zones(str(path))
+    assert {zone.kind for zone in loaded.values()} == {"room"}
+    assert all(zone.navigable for zone in loaded.values())

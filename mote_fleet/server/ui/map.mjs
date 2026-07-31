@@ -425,7 +425,10 @@ export class MapView {
     ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = ZONE_STROKE;
-    ctx.fillText(zone.name, point.x, point.y + 14);
+    // display_name is what an operator calls the place; the machine name is
+    // what they would type. Prefer the former on the map, where this is a
+    // label rather than a thing to copy.
+    ctx.fillText(zone.display_name || zone.name, point.x, point.y + 14);
   }
 
   _screenOf(pixel) {
