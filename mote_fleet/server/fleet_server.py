@@ -26,7 +26,9 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET  /v1/maps                            basemaps this server can serve
     GET  /v1/maps/<site>/<floor>/map.json    resolution + origin (the Q5 transform)
     GET  /v1/maps/<site>/<floor>/map.png     the basemap image
-    GET  /v1/maps/<site>/<floor>/zones.json  the floor's taught zones
+    GET  /v1/maps/<site>/<floor>/zones.json  the floor's zone *binding*
+    GET  /v1/zones                           every floor's zone *vocabulary*
+    GET  /v1/zones/<site>/<floor>            one floor's, as a zone/v0 document
     GET  /v1/sites                           the registry: floors + canonical rev
     GET  /v1/sites/<site>/floors/<floor>     revisions, validated, with provenance
     POST     .../revisions/<rev>             upload a candidate revision (robot)
@@ -53,6 +55,17 @@ origin is an accident of where SLAM started, so merging frames would break every
 taught zone (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
 validate with the *same* ROS-free module the robot writes with
 (``mote_bringup.bundle``).
+
+**Names are served; coordinates are not (zone/v0).** The same site bundles hold
+the answer to the question a dispatcher actually asks — *what places can I
+name?* — and until now the only ways to get it were an out-of-band document or
+scraping the list a robot prints when it refuses an unknown zone. ``/v1/zones``
+answers it directly, and answers it with a **vocabulary**: names, kinds and
+aliases, no coordinates, no frame. That restraint is what makes publishing it
+safe. A zone's pose is a coordinate in one robot's map frame, whose origin is an
+accident of where its SLAM session started, so it is true for that robot and
+false for the one beside it; the name is true for both. The binding stays where
+it was, under ``/v1/maps``, served to the client that also has the basemap.
 
 **Security posture for M3:** the read routes are still unauthenticated, exactly
 as M1 left them, and the broker is still anonymous. What M3 adds is a credential
@@ -287,6 +300,10 @@ class FleetHandler(BaseHTTPRequestHandler):
             )
         elif path.startswith("/v1/maps/"):
             self._map(path[len("/v1/maps/") :])
+        elif path == "/v1/zones":
+            self._store(lambda store: {"vocabularies": store.vocabularies()})
+        elif path.startswith("/v1/zones/"):
+            self._vocabulary(path[len("/v1/zones/") :])
         elif path == "/v1/sites":
             self._store(lambda store: {"sites": store.sites()})
         elif path.startswith("/v1/sites/"):
@@ -526,6 +543,27 @@ class FleetHandler(BaseHTTPRequestHandler):
             image.read_bytes(),
             Cache_Control="no-cache",
         )
+
+    # -- the zone vocabulary ----------------------------------------------
+
+    def _vocabulary(self, rest: str):
+        """``/v1/zones/<site>/<floor>`` — what places can be named here.
+
+        The split zone/v0 asks for is expressed by the route, which is why this
+        is not another leaf under ``/v1/maps``. Everything under that prefix is
+        bound to a basemap and is only true for the robot that taught it; this
+        is bound to nothing, and is true for every robot at the site. A caller
+        that must never be handed a map — an MCP front door turning "take it to
+        the kitchen" into ``goto kitchen`` — can be given this and only this.
+        """
+        parts = rest.split("/")
+        if len(parts) != 2:
+            self._error(404, "expected /v1/zones/<site>/<floor>")
+            return
+        site, floor = parts
+        if not self._names(site, floor):
+            return
+        self._store(lambda store: store.read_vocabulary(site, floor))
 
     # -- the map registry -------------------------------------------------
 

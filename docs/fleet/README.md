@@ -859,3 +859,86 @@ rsync -aL --delete michael@mote-01:~/.mote/sites/home ~/.mote-fleet/sites/
 seeded this way serves basemaps normally, but cannot be promoted onto until its
 `map/` is a symlink into `maps/<rev>/` — the API answers `409` rather than
 overwriting a directory it did not create.
+
+---
+
+## 12. Zone names: what a dispatcher may say
+
+Everything in §11 is about the *map*. This is about the **names**, which are a
+different kind of fact and travel differently.
+
+A zone in `zones.yaml` holds two things at once. Its pose is a coordinate in
+one robot's map frame, and that frame's origin is wherever that robot's SLAM
+session happened to start — so `(2.0, 3.5)` on `mote-01` is a different
+physical point from `(2.0, 3.5)` on `mote-02`, and no fleet-level transform
+fixes it. Its *name*, though, is true for every robot at the site. So the fleet
+serves the names and never the poses:
+
+```bash
+curl -s http://fleet-box:8080/v1/zones | python -m json.tool          # every floor
+curl -s http://fleet-box:8080/v1/zones/home/ground | python -m json.tool
+```
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":4,"zones":[
+ {"name":"kitchen","display_name":"The Kitchen","aliases":["galley"],
+  "kind":"room","navigable":true,"parent":null,"tags":[],"description":""}],
+ "problems":[]}
+```
+
+This is what to point a dispatcher at — anything turning "take it to the
+kitchen" into `goto kitchen`. It is safe to hand out precisely because it
+carries no coordinates: a vocabulary is portable, a binding is not. The route
+that *does* carry coordinates is `/v1/maps/<site>/<floor>/zones.json`, and it
+is for the thing drawing zones on the basemap, which already has the basemap.
+
+### Teaching the vocabulary
+
+`kind` is the one field worth setting as you teach, and `save-zone` takes it:
+
+```bash
+pixi run save-zone kitchen --radius 1.5 --kind room
+pixi run save-zone bay_3 --kind dock
+pixi run save-zone sluice --radius 0.8 --kind keepout
+```
+
+The kinds are `area room corridor doorway threshold elevator stair dock charger
+pickup dropoff staging home keepout slow`; `area` is the default and claims
+nothing, so a zone taught without `--kind` is still perfectly valid. `keepout`
+and `slow` are **constraints, not destinations** — they come out `navigable:
+false`, and `goto sluice` is refused by the robot rather than driven to.
+
+`display_name` and `aliases` are edited into `zones.yaml` by hand, since only
+you know what people call the place:
+
+```yaml
+zones:
+  kitchen: {x: 2.0, y: 3.5, yaw: 1.57, radius: 1.5, kind: room,
+            display_name: The Kitchen, aliases: [galley, the kitchen]}
+```
+
+Aliases are matched case-insensitively and whitespace-normalised, so `goto "the
+Kitchen"` reaches `kitchen`. Re-teaching a pose (`save-zone kitchen` again)
+keeps the kind and the aliases — a better coordinate is not a rename.
+
+`pixi run segment-map` fills in `kind: room` on every candidate it proposes,
+because what it segments *are* rooms; the names it invents (`room_01`…) are
+placeholders for you to replace.
+
+### When `problems` is not empty
+
+The server reports a broken vocabulary rather than refusing to serve it — the
+map is unaffected, and a floor's basemap must not stop being served over a
+duplicated alias. Two things show up there:
+
+- **two zones answering to one query.** Nothing may pick between them, so the
+  name is unusable until you fix it. The robot's own loader *refuses* such a
+  file outright, so this one will also stop `task_server` starting: fix it
+  before it reaches a robot.
+- **a name a dispatcher cannot type**, e.g. a zone taught as `Café`. It is
+  served verbatim rather than silently renamed to `cafe`. The fix is to rename
+  the zone and put the label in `display_name`.
+
+A file with no coherent reading at all — an unknown `kind`, a `keepout` marked
+`navigable: true` — is refused at the parse, by `save-map` locally and by the
+server on upload, so it never becomes a candidate.

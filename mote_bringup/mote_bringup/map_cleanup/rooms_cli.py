@@ -63,11 +63,19 @@ def load_map(map_yaml: Path) -> tuple[np.ndarray, MapGeometry]:
 
 
 def zone_entry(room: Room) -> dict:
-    """A room as a ``mote_tasks.zones`` entry: a pose plus a polygon footprint."""
+    """A room as a ``mote_tasks.zones`` entry: a pose plus a polygon footprint.
+
+    ``kind: room`` is stated rather than left to default to ``area`` because
+    this tool knows it: what it segments *are* rooms, carved out of free space
+    by where the doorways are. That is the one piece of a candidate's
+    vocabulary it can honestly fill in — the name is a placeholder for the
+    operator to replace, and only they know the aliases.
+    """
     return {
         "x": round(room.pose[0], 3),
         "y": round(room.pose[1], 3),
         "yaw": 0.0,
+        "kind": "room",
         "polygon": [[round(x, 3), round(y, 3)] for x, y in room.polygon],
     }
 

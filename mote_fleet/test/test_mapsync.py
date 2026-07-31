@@ -128,7 +128,7 @@ def test_zones_arrive_with_the_map_and_the_old_ones_are_kept(
     mapsync.pull(server.url, announcement(promoted))
 
     zones = bundle.read_zones(floor_dir / "zones.yaml")["zones"]
-    assert set(zones) == {"kitchen", "ward"}
+    assert set(zones) == {"kitchen", "sluice", "ward"}
     kept = list(floor_dir.glob("zones.*.yaml"))
     assert len(kept) == 1
     assert "old" in bundle.read_zones(kept[0])["zones"]

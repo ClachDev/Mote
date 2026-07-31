@@ -111,10 +111,12 @@ MAP_YAML = (
 )
 
 ZONES_YAML = (
-    "frame_id: map\nzones:\n"
-    "  kitchen: {x: 1.0, y: 2.0, yaw: 0.0, radius: 1.5}\n"
-    "  ward: {x: 4.0, y: 1.0, yaw: 1.57,\n"
+    "frame_id: map\nvocabulary_revision: 4\nzones:\n"
+    "  kitchen: {x: 1.0, y: 2.0, yaw: 0.0, radius: 1.5, kind: room,\n"
+    "    display_name: The Kitchen, aliases: [galley]}\n"
+    "  ward: {x: 4.0, y: 1.0, yaw: 1.57, kind: room,\n"
     "    polygon: [[3.0, 0.0], [5.0, 0.0], [5.0, 2.0], [3.0, 2.0]]}\n"
+    "  sluice: {x: 6.0, y: 6.0, radius: 0.8, kind: keepout}\n"
 )
 
 

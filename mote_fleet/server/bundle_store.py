@@ -265,25 +265,86 @@ class BundleStore:
     def read_zones(self, site: str, floor: str) -> dict:
         """The floor's taught zones, in the map frame the basemap is drawn in.
 
+        This is the **binding**: coordinates, and therefore meaningful only
+        against the map they were taught on. It is served beside the basemap,
+        to the one client that also has the basemap, and it is not what a
+        dispatcher gets — see :meth:`read_vocabulary`.
+
         Zones travel inside a published revision, because a zone is a
         coordinate in one SLAM session's frame. A floor seeded by rsync keeps
         them at floor level, as ``sites.py`` writes them, so that is the
         fallback rather than an error.
         """
-        directory = self.revision_dir(site, floor, self._live(site, floor))
-        for candidate in (
-            directory / bundle.ZONES_YAML,
-            self.floor_dir(site, floor) / bundle.ZONES_YAML,
-        ):
-            if candidate.is_file():
-                zones = bundle.read_zones(candidate)
-                return {
-                    "site": site,
-                    "floor": floor,
-                    "frame_id": zones["frame_id"],
-                    "zones": list(zones["zones"].values()),
-                }
-        raise StoreError(f"no zones for {site}/{floor}", 404)
+        # A binding without the map it is bound to is the coordinate-shaped
+        # thing this whole split exists to stop, so it stays gated on there
+        # being a published revision.
+        path = self._zones_file(site, floor, revision=self._live(site, floor))
+        if path is None:
+            raise StoreError(f"no zones for {site}/{floor}", 404)
+        zones = bundle.read_zones(path)
+        return {
+            "site": site,
+            "floor": floor,
+            "frame_id": zones["frame_id"],
+            "zones": list(zones["zones"].values()),
+        }
+
+    def read_vocabulary(self, site: str, floor: str) -> dict:
+        """The floor's zone **vocabulary** — names, kinds and aliases, no
+        coordinates and no frame.
+
+        Deliberately *not* gated on a published map, where
+        :meth:`read_zones` is. A vocabulary is a fact about the building, so a
+        floor that has been named but never mapped still has one, and a robot
+        arriving at a site can be told what the places are called before it has
+        driven a metre. That is the portability the split buys, and gating this
+        on a promoted revision would have quietly given it back.
+        """
+        path = self._zones_file(site, floor, revision=self.canonical(site, floor))
+        if path is None:
+            raise StoreError(f"no zones for {site}/{floor}", 404)
+        return bundle.vocabulary(bundle.read_zones(path), site, floor)
+
+    def vocabularies(self) -> list:
+        """Every floor's vocabulary, for a dispatcher bootstrapping a whole
+        fleet in one call. A floor with no zones yet is skipped, not an error.
+
+        Walks the floors itself rather than reusing :meth:`sites`, which lists
+        floors that have a *map*. The two sets are not the same one, and the
+        difference is the interesting case: a floor someone has named but not
+        yet mapped belongs here.
+        """
+        found = []
+        for site, floor in self._floors():
+            try:
+                found.append(self.read_vocabulary(site, floor))
+            except (StoreError, bundle.BundleError):
+                continue
+        return found
+
+    def _floors(self):
+        """Every ``(site, floor)`` in the layout, which is the record."""
+        if not self.root or not self.root.is_dir():
+            return
+        for site_dir in sorted(self.root.iterdir()):
+            floors_dir = site_dir / "floors"
+            if not floors_dir.is_dir():
+                continue
+            for floor_dir in sorted(floors_dir.iterdir()):
+                if floor_dir.is_dir():
+                    yield site_dir.name, floor_dir.name
+
+    def _zones_file(self, site: str, floor: str, revision: str = ""):
+        """``zones.yaml`` from the given revision, else the floor-level one."""
+        candidates = []
+        if revision:
+            candidates.append(self.revision_dir(site, floor, revision))
+        candidates.append(self.floor_dir(site, floor))
+        for directory in candidates:
+            path = directory / bundle.ZONES_YAML
+            if path.is_file():
+                return path
+        return None
 
     def _live(self, site: str, floor: str) -> str:
         canonical = self.canonical(site, floor)

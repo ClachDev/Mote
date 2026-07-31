@@ -12,6 +12,7 @@ SUCCESS or FAILURE.
 
 import py_trees
 
+from mote_tasks import zones as mote_zones
 from mote_tasks.behaviours.manipulation import TimedStub
 from mote_tasks.behaviours.nav import DriveTo
 from mote_tasks.behaviours.perception import AcquireObject
@@ -36,11 +37,22 @@ def parse_command(zones: dict, words: list):
     if len(words) != 3 or words[0] != COMMAND:
         raise ValueError(f"expected: {COMMAND} <target> <drop_zone>")
     target, drop = words[1], words[2]
-    if drop not in zones:
-        raise ValueError(f"unknown drop zone '{drop}', have {sorted(zones)}")
-    if target in zones:
-        return zones[target].pose, None, zones[drop].pose
-    return None, target.replace("_", " "), zones[drop].pose
+    drop_zone = mote_zones.resolve(zones, drop)
+    if drop_zone is None or not drop_zone.navigable:
+        known = sorted(name for name, z in zones.items() if z.navigable)
+        raise ValueError(f"unknown drop zone '{drop}', have {known}")
+    # A target naming a zone is a place to drive to; anything else is a label
+    # for the detector. A *non-navigable* zone name is neither — falling
+    # through would send the detector hunting for an object called "keepout".
+    target_zone = mote_zones.resolve(zones, target)
+    if target_zone is not None:
+        if not target_zone.navigable:
+            raise ValueError(
+                f"zone '{target_zone.name}' is a {target_zone.kind} zone, "
+                "not a destination"
+            )
+        return target_zone.pose, None, drop_zone.pose
+    return None, target.replace("_", " "), drop_zone.pose
 
 
 def create_fetch_tree(

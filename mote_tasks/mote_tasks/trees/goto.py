@@ -11,6 +11,7 @@ FAILURE.
 
 import py_trees
 
+from mote_tasks import zones as mote_zones
 from mote_tasks.behaviours.nav import DriveTo
 from mote_tasks.trees.common import WaitForTask
 
@@ -23,14 +24,27 @@ def parse_command(zones: dict, words: list):
     """Parse a ``goto <zone>`` command against known zones.
 
     Returns the zone's PoseStamped; raises ValueError with a user-facing
-    message when the command is malformed or the zone is unknown.
+    message when the command is malformed, the zone is unknown, or the zone is
+    not somewhere the robot may drive.
+
+    The target may be a zone's name or any of its aliases. The refusal still
+    lists the names it *would* have taken, because a dispatcher with no other
+    source has been reading that list — the vocabulary the fleet now serves at
+    ``/v1/zones`` is the supported way to ask, but breaking the accident while
+    something depends on it would be gratuitous.
     """
     if len(words) != 2 or words[0] != COMMAND:
         raise ValueError(f"expected: {COMMAND} <zone>")
-    name = words[1]
-    if name not in zones:
-        raise ValueError(f"unknown zone '{name}', have {sorted(zones)}")
-    return zones[name].pose
+    target = words[1]
+    zone = mote_zones.resolve(zones, target)
+    if zone is None:
+        known = sorted(name for name, z in zones.items() if z.navigable)
+        raise ValueError(f"unknown zone '{target}', have {known}")
+    if not zone.navigable:
+        # A keepout is in the vocabulary because it is a place an operator
+        # draws on a floor plan, not because it is a destination.
+        raise ValueError(f"zone '{zone.name}' is a {zone.kind} zone, not a destination")
+    return zone.pose
 
 
 def create_goto_tree() -> py_trees.trees.BehaviourTree:

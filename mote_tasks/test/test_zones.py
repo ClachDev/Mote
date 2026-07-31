@@ -9,6 +9,7 @@ from mote_tasks.zones import (
     append_zone,
     containing,
     load_zones,
+    resolve,
     yaw_from_quaternion,
 )
 
@@ -201,3 +202,116 @@ def test_save_zone_output_is_readable_by_the_bundle_validator(tmp_path):
     assert zones["kitchen"]["radius"] == 1.5
     assert zones["ward_east"]["polygon"][2] == [5.0, 2.0]
     assert load_zones(str(path))["ward_east"].footprint is not None
+
+
+# ---- the vocabulary half (zone/v0) --------------------------------------
+
+
+def write_zones(tmp_path, body: str):
+    path = tmp_path / "zones.yaml"
+    path.write_text(f"frame_id: map\nzones:\n{body}")
+    return path
+
+
+def test_a_zone_with_no_vocabulary_is_a_navigable_area(tmp_path):
+    """Every field is optional, so no existing zones.yaml needed rewriting."""
+    zone = load_zones(str(write_zones(tmp_path, "  bench: {x: 1.0, y: 2.0}\n")))[
+        "bench"
+    ]
+    assert (zone.kind, zone.navigable) == ("area", True)
+    assert zone.aliases == () and zone.parent is None
+    assert zone.label == "bench"  # falls back to the name
+
+
+def test_display_name_and_aliases_reach_the_zone(tmp_path):
+    path = write_zones(
+        tmp_path,
+        "  kitchen: {x: 1.0, y: 2.0, kind: room, display_name: The Kitchen,\n"
+        "    aliases: [galley, the kitchen]}\n",
+    )
+    zone = load_zones(str(path))["kitchen"]
+    assert zone.kind == "room"
+    assert zone.label == "The Kitchen"
+    assert zone.aliases == ("galley", "the kitchen")
+
+
+def test_a_constraint_kind_is_not_navigable_without_being_told(tmp_path):
+    """`navigable` follows from the kind, so a keepout cannot be taught as a
+    destination by forgetting a field."""
+    path = write_zones(tmp_path, "  sluice: {x: 1.0, y: 2.0, kind: keepout}\n")
+    assert load_zones(str(path))["sluice"].navigable is False
+
+
+def test_a_navigable_keepout_is_refused_rather_than_honoured(tmp_path):
+    path = write_zones(
+        tmp_path, "  sluice: {x: 1.0, y: 2.0, kind: keepout, navigable: true}\n"
+    )
+    with pytest.raises(ValueError, match="not a destination"):
+        load_zones(str(path))
+
+
+def test_an_unknown_kind_is_refused(tmp_path):
+    path = write_zones(tmp_path, "  lounge: {x: 1.0, y: 2.0, kind: snug}\n")
+    with pytest.raises(ValueError, match="unknown kind"):
+        load_zones(str(path))
+
+
+def test_an_ambiguous_vocabulary_is_refused_at_load(tmp_path):
+    """zone/v0: a conforming platform rejects a collision rather than picking a
+    winner. Loading it anyway would make `goto kitchen` depend on dict order.
+    """
+    path = write_zones(
+        tmp_path,
+        "  kitchen: {x: 1.0, y: 2.0}\n  galley: {x: 3.0, y: 4.0, aliases: [Kitchen]}\n",
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        load_zones(str(path))
+
+
+def test_resolve_matches_name_then_alias_then_display_name(tmp_path):
+    path = write_zones(
+        tmp_path,
+        "  kitchen: {x: 1.0, y: 2.0, display_name: The Kitchen, aliases: [galley]}\n",
+    )
+    zones = load_zones(str(path))
+    for query in ("kitchen", "galley", "The Kitchen", "the  kitchen", "GALLEY"):
+        assert resolve(zones, query).name == "kitchen", query
+    assert resolve(zones, "pantry") is None
+
+
+def test_re_teaching_a_pose_keeps_the_vocabulary(tmp_path):
+    """Driving somewhere to capture a better pose is a new coordinate, never a
+    rename — dropping the aliases an operator typed would be silent data loss.
+    """
+    path = tmp_path / "zones.yaml"
+    append_zone(path, "kitchen", 1.0, 2.0, 0.0, radius=1.5, kind="room")
+    data = yaml.safe_load(path.read_text())
+    data["zones"]["kitchen"]["aliases"] = ["galley"]
+    path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=None))
+
+    append_zone(path, "kitchen", 1.2, 2.2, 0.1)
+    zone = load_zones(str(path))["kitchen"]
+    assert zone.aliases == ("galley",) and zone.kind == "room"
+    assert zone.pose.pose.position.x == 1.2
+
+
+def test_teaching_bumps_the_vocabulary_revision(tmp_path):
+    """A binding elsewhere records which vocabulary it was built against, so
+    the counter has to move whenever a name could have."""
+    path = tmp_path / "zones.yaml"
+    append_zone(path, "kitchen", 1.0, 2.0, 0.0)
+    first = yaml.safe_load(path.read_text())["vocabulary_revision"]
+    append_zone(path, "ward", 3.0, 4.0, 0.0)
+    assert yaml.safe_load(path.read_text())["vocabulary_revision"] > first
+
+
+def test_teaching_a_constraint_kind_writes_the_flag(tmp_path):
+    path = tmp_path / "zones.yaml"
+    append_zone(path, "sluice", 1.0, 2.0, 0.0, kind="keepout")
+    assert yaml.safe_load(path.read_text())["zones"]["sluice"]["navigable"] is False
+    assert load_zones(str(path))["sluice"].navigable is False
+
+
+def test_teaching_an_unknown_kind_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="unknown kind"):
+        append_zone(tmp_path / "zones.yaml", "snug", 1.0, 2.0, 0.0, kind="snug")
