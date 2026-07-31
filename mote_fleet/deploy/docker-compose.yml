@@ -12,15 +12,26 @@ name: mote-fleet
 
 services:
   # The MQTT control plane (docs/fleet/control-plane.md), including the
-  # WebSocket listener the browser dashboard subscribes on — `pixi run
-  # fleet-broker-ws` already runs mosquitto in a container for exactly that
-  # reason (conda-forge's build has no websockets, m1-verification.md §4); this
-  # is that same container as a permanent, restarting service.
+  # WebSocket listener the browser dashboard subscribes on — conda-forge's
+  # mosquitto is built without websockets (m1-verification.md §4), so the broker
+  # runs in a container everywhere. `pixi run fleet-broker` is this same image
+  # and config as a foreground command for a workstation; this is it as a
+  # permanent, restarting service, which is the deployment.
   #
   # It mounts ../server/mosquitto.conf rather than a copy: one config for the
   # workstation broker and the deployed one, so they cannot drift.
   broker:
-    image: ${MOTE_BROKER_IMAGE:-eclipse-mosquitto:2}
+    # THE broker image pin for this repo. `broker.sh` reads this line rather
+    # than carrying a default of its own, so a workstation cannot run a
+    # different mosquitto from the fleet box.
+    #
+    # Pinned to the 2.1 minor series, not the floating `:2`, because the thing
+    # that must not change under us is the websockets implementation: 2.0 links
+    # libwebsockets, 2.1 implements it natively, and `:2` follows whatever comes
+    # next. `-alpine` is not a variant choice — 2.1 is published only as
+    # `-alpine` tags, and `:2`, `:2.1-alpine` and `:2.1.2-alpine` are the same
+    # manifest today.
+    image: ${MOTE_BROKER_IMAGE:-eclipse-mosquitto:2.1-alpine}
     restart: unless-stopped
     ports:
       - "${BIND_PREFIX-}${BROKER_PORT:-1883}:1883"
@@ -33,9 +44,16 @@ services:
     # container's filesystem. Same reason broker.sh cds to $MOTE_FLEET_HOME.
     working_dir: /mosquitto/data
     healthcheck:
-      # Ask the broker for its own uptime: a listener that accepts a TCP
+      # Two listeners, two checks, because they fail independently.
+      #
+      # 1883: ask the broker for its own uptime — a listener that accepts a TCP
       # connection but cannot serve a subscription is not healthy.
-      test: ["CMD", "mosquitto_sub", "-p", "1883", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      # 9001: the dashboard's read path. mosquitto opens the MQTT listener and
+      # keeps running even when the websockets one is refused, so without this
+      # the stack reports healthy and the UI is silently dead. A TCP probe is
+      # the whole check: the failure being caught is "the listener never
+      # opened", and mosquitto_sub cannot speak websockets to do better.
+      test: ["CMD-SHELL", "mosquitto_sub -p 1883 -t '$$SYS/broker/uptime' -C 1 -W 3 >/dev/null && nc -z 127.0.0.1 9001"]
       interval: 30s
       timeout: 10s
       start_period: 5s

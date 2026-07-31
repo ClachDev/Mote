@@ -6,13 +6,19 @@
 # broker's retained state belongs with the registry database, not in a git tree
 # that a redeploy replaces. Same split as the robot's MOTE_HOME.
 #
+# THE FLEET BOX'S BROKER IS THE COMPOSE STACK (mote_fleet/deploy/), not this
+# script. This is the workstation convenience: the same image, the same
+# mosquitto.conf and the same listeners, in the foreground and without the API
+# beside it. It owns neither of those two facts -- the config is
+# ../server/mosquitto.conf, which compose mounts too, and the image is the pin
+# in ../deploy/docker-compose.yml, which this script reads.
+#
 # WEBSOCKETS, and why the default is a container. M3's dashboard subscribes to
 # the control plane straight from the browser, which means the broker needs a
 # `protocol websockets` listener -- and conda-forge's mosquitto is built without
 # libwebsockets (measured: it refuses to start,
 # docs/fleet/m1-verification.md S4). So the broker anyone should run is
-# mosquitto in a container, which is also exactly what the deployed fleet box
-# runs (mote_fleet/deploy/docker-compose.yml): same image, same config file.
+# mosquitto in a container.
 #
 #   pixi run fleet-broker                  the container: MQTT 1883 + WS 9001
 #   pixi run -e fleet fleet-broker-local   conda's mosquitto (--local), for a
@@ -31,8 +37,27 @@ set -euo pipefail
 FLEET_HOME="${MOTE_FLEET_HOME:-$HOME/.mote-fleet}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CONF="$HERE/mosquitto.conf"
-IMAGE="${MOTE_BROKER_IMAGE:-eclipse-mosquitto:2}"
+COMPOSE="$HERE/../deploy/docker-compose.yml"
 MODE=docker
+
+# The image is pinned once, in the compose file, because that is the deployment
+# -- this script is the workstation convenience and defers to it. Reading the
+# line back is what stops the two from drifting; a literal default here would be
+# a second pin that nobody would remember to bump.
+default_image() {
+    local pinned
+    # The single quotes are the point: ${MOTE_BROKER_IMAGE:-...} is literal
+    # text being matched in the compose file, not an expansion to perform here.
+    # shellcheck disable=SC2016
+    pinned="$(sed -n 's/^ *image: *${MOTE_BROKER_IMAGE:-\([^}]*\)}.*/\1/p' "$COMPOSE" 2>/dev/null | head -1)"
+    [ -n "$pinned" ] || {
+        echo "cannot read the broker image pin from $COMPOSE" >&2
+        echo "  (expected the broker service's: image: \${MOTE_BROKER_IMAGE:-<image>:<tag>})" >&2
+        echo "  set MOTE_BROKER_IMAGE to override, or repair that file" >&2
+        exit 1
+    }
+    printf '%s\n' "$pinned"
+}
 
 case "${1:-}" in
     --local)
@@ -57,6 +82,9 @@ if [ "$MODE" = docker ]; then
     # published ports would put a NAT between the two for no benefit.
     # --user: the image's mosquitto user cannot write a state directory owned by
     # whoever runs this, and the fleet's retained state should stay theirs.
+    # Resolved here rather than at the top so that --local, which is the mode
+    # for a box with no docker, never depends on the deploy directory at all.
+    IMAGE="${MOTE_BROKER_IMAGE:-$(default_image)}"
     echo "broker: $IMAGE (docker)   state: $FLEET_HOME   config: $CONF"
     exec docker run --rm --name mote-broker --network host \
         --user "$(id -u):$(id -g)" \

@@ -144,19 +144,39 @@ registry at the end.
 
 ### The broker container, and the one config
 
-The deployed broker is `eclipse-mosquitto:2` and it mounts
+The deployed broker mounts
 [`../server/mosquitto.conf`](../../mote_fleet/server/mosquitto.conf) — the file
 the workstation broker uses too. That is deliberate: M3 already had to run
 mosquitto in a container, because conda-forge's build has no websockets
 (m1-verification.md §4) and the dashboard subscribes from the browser. `pixi run
 fleet-broker` is that container as a foreground command; this compose service
 is the same thing as a restarting service with a volume for its retained state
-and a healthcheck that asks the broker for its own uptime.
+and a healthcheck.
 
 Keeping one config means the listener set cannot drift between the box you
 develop on and the box you deploy. `working_dir: /mosquitto/data` is what puts
 `persistence_file mosquitto.db` in the volume — the same reason `broker.sh` cds
 to `$MOTE_FLEET_HOME`.
+
+**The image tag is pinned in one place**, the compose file's broker service;
+`broker.sh` reads that line rather than carrying a default of its own, so the
+foreground broker and the deployed one cannot end up on different mosquittos.
+It names a **minor** series (`2.1-alpine`) rather than the floating `:2`,
+because the thing that must not move under us is how websockets is built in:
+2.0 links libwebsockets, 2.1 implements it natively, and `:2` follows whatever
+comes next. `-alpine` is not a variant choice — upstream publishes 2.1 only as
+`-alpine` tags, and `:2`, `:2.1-alpine` and `:2.1.2-alpine` are one manifest
+today. `MOTE_BROKER_IMAGE` overrides it for both.
+
+**The healthcheck probes both listeners**, not just MQTT. Mosquitto opens the
+MQTT listener and keeps running when the websockets one is refused, so an
+MQTT-only probe reports a healthy stack whose dashboard is dead — and
+`fleet-deploy.sh up` gates on that probe, so it would report a good deploy.
+`mosquitto_sub` asks the broker for its own uptime on 1883, which is more than
+a TCP connect proves; 9001 is a TCP probe, because the failure being caught is
+"the listener never opened" and `mosquitto_sub` cannot speak websockets to do
+better. `mote_fleet/test/test_deploy_config.py` holds all of the above without
+needing docker.
 
 ### Security posture
 

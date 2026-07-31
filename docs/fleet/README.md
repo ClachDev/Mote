@@ -403,62 +403,15 @@ enrolling a robot that already has an id adopts that id.
 
 ## 6. The fleet server
 
-Two processes on one always-on box — a VPS, a home server, or a spare Pi. Both
-are ROS-free, so the box needs no robot software; the `fleet` pixi environment
-carries nothing but a broker and Python.
+Two processes on one always-on box — a VPS, a home server, or a spare Pi: an
+MQTT broker and the API that serves the registry and the dashboard. Both are
+ROS-free, so the box needs no robot software.
 
-```bash
-pixi run fleet-broker                                 # MQTT: 1883, WebSockets: 9001
-pixi run -e fleet fleet-server -- --broker-host fleet-box   # API + UI, port 8080
-```
-
-**Why the broker runs in a container.** The dashboard (§9) subscribes to the
-control plane straight from the browser, and a browser cannot speak raw MQTT —
-it needs the broker's WebSocket listener. conda-forge's mosquitto is built
-without one, so `fleet-broker` runs `eclipse-mosquitto` under Docker with the
-same `mosquitto.conf` this repo ships — which is also exactly what the deployed
-fleet box runs. For a box with no Docker there is `fleet-broker-local`, which
-uses conda's binary: robots and `fleetctl` work exactly as before, and it tells
-you on startup that the dashboard will not.
-
-```bash
-pixi run -e fleet fleet-broker-local                  # a box with no docker
-```
-
-It lives in the `fleet` environment rather than beside `fleet-broker` because
-that is where the binary it runs comes from — the container needs docker, not an
-environment.
-
-The reasoning and the measurement are in
-[`m3-verification.md`](m3-verification.md) §1.
-
-State lives in **`$MOTE_FLEET_HOME`** (default `~/.mote-fleet`) — the registry
-database, the broker's retained messages, and the site bundles the dashboard
-draws robots on. That is the server-side analogue of the robot's `MOTE_HOME`:
-redeploying the server software replaces code around it and never the fleet's
-memory of who is in it.
-
-`--broker-host` is the address **robots** should dial, so on a tailnet it is the
-fleet box's MagicDNS name (`fleet-box`), not `localhost` — it is handed out
-verbatim in every enrollment answer. It defaults to the box's hostname.
-
-**Security, plainly:** the broker is anonymous and the API's *read* routes are
-unauthenticated. Dispatch is not — it needs an operator token (§8) — but that is
-one credential on one path, not an auth story. It is proportionate only because
-the tailnet is the boundary: WireGuard authenticates, and nothing here is
-exposed to the internet. Do not put either on a network the robots are not
-already trusted on. Per-robot broker credentials and operator auth everywhere
-are M7; the shape of what changes is in
-[`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
-
-**That is the workstation shape.** A real fleet box runs both processes as
-containers, from [`mote_fleet/deploy/`](../../mote_fleet/deploy) — a compose
-file, an image and one script — with `docker` as the only thing installed on it.
-The broker is the same `eclipse-mosquitto` container `fleet-broker` runs,
-reading the same `mosquitto.conf`, but as a restarting service beside the API
-rather than a foreground command. That directory is also where the update,
-rollback, backup and restore story lives, and it is what "rebuild the fleet
-server from scratch" means in practice:
+**The fleet box runs them as containers**, from
+[`mote_fleet/deploy/`](../../mote_fleet/deploy) — a compose file, an image and
+one script — with `docker` as the only thing installed on it. That directory is
+also where the update, rollback, backup and restore story lives, and it is what
+"rebuild the fleet server from scratch" means in practice:
 
 ```bash
 cp env.example .env && $EDITOR .env       # BROKER_HOST = the address robots dial
@@ -468,11 +421,76 @@ cp env.example .env && $EDITOR .env       # BROKER_HOST = the address robots dia
 ```
 
 The runbook is [`server-pipelines.md`](server-pipelines.md); what was measured
-is [`ms-verification.md`](ms-verification.md). Two differences from running it
-by hand: the containers restart themselves, so there are no systemd units to
-write (the fleet box is deliberately not covered by `pixi run setup`, which
-provisions robots), and `fleetctl` runs *inside* the server container, because
-that is where the registry file lives.
+is [`ms-verification.md`](ms-verification.md). Two differences from running the
+processes by hand: the containers restart themselves, so there are no systemd
+units to write (the fleet box is deliberately not covered by `pixi run setup`,
+which provisions robots), and `fleetctl` runs *inside* the server container,
+because that is where the registry file lives.
+
+### The same thing on a workstation
+
+For development, or to try the stack before committing a box to it, the two
+processes run in the foreground:
+
+```bash
+pixi run fleet-broker                                 # MQTT: 1883, WebSockets: 9001
+pixi run -e fleet fleet-server -- --broker-host fleet-box   # API + UI, port 8080
+```
+
+`fleet-broker` is **the same broker as the deployment** — the same image and the
+same `mosquitto.conf`, just in the foreground and without the API beside it. It
+is not a second way to run the fleet box: the image tag is pinned once, in
+`docker-compose.yml`, and `broker.sh` reads it from there, so a workstation
+cannot end up on a different mosquitto from the one that is deployed.
+
+**Why the broker is a container at all.** The dashboard (§9) subscribes to the
+control plane straight from the browser, and a browser cannot speak raw MQTT —
+it needs the broker's WebSocket listener. conda-forge's mosquitto is built
+without one. For a box with no Docker there is `fleet-broker-local`, which uses
+conda's binary: robots and `fleetctl` work exactly as before, and it tells you on
+startup that the dashboard will not.
+
+```bash
+pixi run -e fleet fleet-broker-local                  # a box with no docker
+```
+
+It lives in the `fleet` environment rather than beside `fleet-broker` because
+that is where the binary it runs comes from — the container needs docker, not an
+environment. It is also the only case where the shipped config is not used
+verbatim: `broker.sh` strips the websockets stanza out of a *copy*, rather than
+this repo carrying two configs that can drift.
+
+The reasoning and the measurement are in
+[`m3-verification.md`](m3-verification.md) §1.
+
+**If the dashboard is blank, suspect this listener first.** Mosquitto opens the
+MQTT listener and keeps running whether or not the WebSocket one came up, so
+robots and `fleetctl` stay perfectly healthy while the browser has nothing to
+subscribe to. The startup log names every listener it opened, which is the
+direct answer; the compose healthcheck probes both ports for the same reason.
+
+### The rest of it
+
+State lives in **`$MOTE_FLEET_HOME`** (default `~/.mote-fleet`) — the registry
+database, the broker's retained messages, and the site bundles the dashboard
+draws robots on. That is the server-side analogue of the robot's `MOTE_HOME`:
+redeploying the server software replaces code around it and never the fleet's
+memory of who is in it. Under compose those are two named volumes, which is what
+`fleet-deploy.sh backup` snapshots.
+
+`--broker-host` is the address **robots** should dial, so on a tailnet it is the
+fleet box's MagicDNS name (`fleet-box`), not `localhost` — it is handed out
+verbatim in every enrollment answer. It defaults to the box's hostname. Under
+compose it is `BROKER_HOST` in `.env`, and the stack refuses to start without it.
+
+**Security, plainly:** the broker is anonymous and the API's *read* routes are
+unauthenticated. Dispatch is not — it needs an operator token (§8) — but that is
+one credential on one path, not an auth story. It is proportionate only because
+the tailnet is the boundary: WireGuard authenticates, and nothing here is
+exposed to the internet. Do not put either on a network the robots are not
+already trusted on. Per-robot broker credentials and operator auth everywhere
+are M7; the shape of what changes is in
+[`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
 
 ---
 
