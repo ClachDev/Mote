@@ -11,26 +11,47 @@
 #
 # Needs a real GPU render backend; llvmpipe is too slow. Local pre-PR gate,
 # not hosted CI.
+#
+# Isolated from every other sim on the machine, in both directions: it claims a
+# free ROS_DOMAIN_ID + GZ_PARTITION (tools/sim_domain.py, shared with bench.py)
+# so it never sees a concurrent benchmark's /scan, /tf or /clock, and its
+# teardown is scoped to its own process session and this worktree's path so it
+# never reaps another worktree's gz server.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 VERIFY="$SCRIPT_DIR/verify_sim.py"
 
 SIM_LOG="$(mktemp -t mote_sim_smoke_sim.XXXXXX.log)"
 SIM_PID=""
+SIM_SID=""
 
 cleanup() {
     [ -n "$SIM_PID" ] && kill -- -"$SIM_PID" 2>/dev/null
     sleep 2
-    # pkill matches the sim's processes, not this script
-    pkill -9 -f 'mote_world' 2>/dev/null
-    pkill -9 -f 'async_slam_toolbox_node' 2>/dev/null
+    # Everything the launch started lives in the session setsid gave it, so the
+    # session id is an exact scope: it reaps stragglers whatever they are called
+    # and can never touch another worktree's sim — which bare name matches
+    # ('mote_world', 'async_slam_toolbox_node') did.
+    [ -n "$SIM_SID" ] && pkill -9 -s "$SIM_SID" 2>/dev/null
+    # Backstop for a gz server that escaped the session, scoped to THIS
+    # worktree's world path (as bench.py's is).
+    pkill -9 -f "gz sim.*$ROOT" 2>/dev/null
+    # Daemons are per-domain, so this stops ours and leaves other runs' alone.
     ros2 daemon stop >/dev/null 2>&1
     true
 }
 trap cleanup EXIT
 
 fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && tail -25 "$2"; exit 1; }
+
+# A graph of our own: no other sim, benchmark or robot can reach it, and nothing
+# below can reach them. An inherited ROS_DOMAIN_ID/GZ_PARTITION is respected.
+DOMAIN_ENV="$(python3 "$ROOT/mote_simulation/tools/sim_domain.py" --shell --prefix mote-smoke)" \
+    || fail "could not claim a ROS domain"
+eval "$DOMAIN_ENV"
+echo ">> ROS_DOMAIN_ID=$ROS_DOMAIN_ID (${MOTE_DOMAIN_HOW:-unknown}), GZ_PARTITION=$GZ_PARTITION"
 
 # Start clean
 ros2 daemon stop >/dev/null 2>&1
@@ -39,6 +60,10 @@ sleep 1
 echo ">> launching sim (mode:=mapping)..."
 setsid ros2 launch mote_simulation sim_launch.py mode:=mapping > "$SIM_LOG" 2>&1 &
 SIM_PID=$!
+SIM_SID="$(ps -o sid= -p "$SIM_PID" 2>/dev/null | tr -d ' ')"
+# If setsid did not detach it, the launch shares OUR session and killing that
+# session would kill this script (and its caller) — drop the scope instead.
+[ "$SIM_SID" = "$(ps -o sid= -p $$ | tr -d ' ')" ] && SIM_SID=""
 for _ in $(seq 90); do
     grep -q "Configured and activated diff_drive_controller" "$SIM_LOG" && break
     grep -q "Failed to load system plugin" "$SIM_LOG" && fail "gz_ros2_control plugin failed to load" "$SIM_LOG"

@@ -89,10 +89,14 @@ is fenced off twice:
   plus a matching `GZ_PARTITION` for Gazebo's own transport, and records both in
   `run.json` / `report.md`. An inherited `ROS_DOMAIN_ID` is respected instead —
   that is how [the sweep](sweep/README.md) pins all of its sets to one domain.
+  The picker is [`../sim_domain.py`](../sim_domain.py), shared with the smoke
+  test and `map_world.sh` so every sim entry point isolates the same way.
 
-Two benchmarks can therefore run at once, but should be started from separate
-worktrees: teardown's `pkill` backstop for an escaped `gz sim` is scoped to the
-repo path, so same-repo concurrent runs would still reap each other's server.
+Teardown is scoped to match. Each launch runs in its own session, so killing
+that session reaps stragglers under any node name without reaching another run;
+the last-resort `pkill` for an escaped `gz sim` is scoped to this repo's world
+path. Two benchmarks — or a benchmark and a smoke test — can therefore run at
+once, in the same worktree or different ones.
 
 To watch a running sim in RViz, use `pixi run rviz-sim` — a default-range RViz
 cannot see a `LOCALHOST`-only participant (the reverse direction does work).
