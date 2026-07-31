@@ -15,11 +15,11 @@ jobs:
           - runner: ubuntu-24.04-arm # linux-aarch64, same arch as the Pi
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: prefix-dev/setup-pixi@v0.9.0
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           cache: true
 
