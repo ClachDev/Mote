@@ -48,6 +48,37 @@ export function pixelToWorld(map, px, py) {
   };
 }
 
+// -- pinch ---------------------------------------------------------------
+
+// Two touches, as one gesture: how far apart they are and where their midpoint
+// is. Pure, because the alternative to testing this is discovering on a phone
+// that the map flies off screen.
+export function pinchSpan(a, b) {
+  return {
+    distance: Math.hypot(a.x - b.x, a.y - b.y),
+    centre: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+  };
+}
+
+// What one move of a two-finger gesture asks for: a zoom factor, the point to
+// zoom about, and how far the fingers carried the map with them.
+//
+// The zero guard is load-bearing rather than defensive. Two pointers reported
+// at the same position give distance 0, and a factor of 0/0 or n/0 puts NaN or
+// Infinity into the view scale — from which every subsequent draw is blank,
+// with nothing on screen to say why.
+export function pinchUpdate(before, after) {
+  const factor = before.distance > 0 ? after.distance / before.distance : 1;
+  return {
+    factor,
+    centre: after.centre,
+    pan: {
+      x: after.centre.x - before.centre.x,
+      y: after.centre.y - before.centre.y,
+    },
+  };
+}
+
 // The view that shows the whole basemap, centred, with a small margin.
 export function fitView(map, width, height, margin = 16) {
   const scale = Math.min(
@@ -89,6 +120,12 @@ export class MapView {
     this.followId = null;
     this.selectedId = null;
     this._drag = null;
+    this._pointers = new Map();
+    this._pinch = null;
+    // A fit needs a sized canvas, and on a narrow viewport this one spends its
+    // early life in a hidden pane with no size at all. Track whether the map on
+    // screen has ever actually been fitted, so `shown()` can finish the job.
+    this._fitted = false;
     this._bind();
   }
 
@@ -98,7 +135,10 @@ export class MapView {
     const changed = !this.map || this.map.site !== map.site || this.map.floor !== map.floor;
     this.map = map;
     this.image = image;
-    if (changed) this.fit();
+    if (changed) {
+      this._fitted = false;
+      this.fit();
+    }
     this.draw();
   }
 
@@ -106,6 +146,7 @@ export class MapView {
     this.map = null;
     this.image = null;
     this.zones = [];
+    this._fitted = false;
     this.draw();
   }
 
@@ -137,7 +178,19 @@ export class MapView {
   fit() {
     if (!this.map) return;
     const { width, height } = this._size();
+    // A hidden pane's canvas measures 0x0, and fitting into that yields a scale
+    // of 0 or NaN — a blank map that stays blank once the pane is shown. Leave
+    // the view alone and let `shown()` fit when there is something to fit into.
+    if (!width || !height) return;
     this.view = fitView(this.map, width, height);
+    this._fitted = true;
+  }
+
+  // The map pane has become visible (a tab switch, or the viewport crossing the
+  // breakpoint). This is the first moment its canvas has a size.
+  shown() {
+    if (!this._fitted) this.fit();
+    this.draw();
   }
 
   zoomBy(factor, screenX, screenY) {
@@ -160,10 +213,31 @@ export class MapView {
     return this._screenOf(worldToPixel(this.map, worldX, worldY));
   }
 
+  // Canvas-relative coordinates. Not `offsetX`: during a pointer capture — and
+  // for the second finger of a pinch — that is measured against whatever the
+  // event happens to be over, which is not always this canvas.
+  _local(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
   _bind() {
     const canvas = this.canvas;
     canvas.addEventListener('pointerdown', (event) => {
-      const hit = this._robotAt(event.offsetX, event.offsetY);
+      canvas.setPointerCapture(event.pointerId);
+      this._pointers.set(event.pointerId, this._local(event));
+
+      // A second finger means a pinch, whatever the first one had started.
+      if (this._pointers.size === 2) {
+        this._drag = null;
+        canvas.classList.remove('dragging');
+        this._pinch = this._span();
+        return;
+      }
+      if (this._pointers.size > 2) return;
+
+      const point = this._local(event);
+      const hit = this._robotAt(point.x, point.y);
       if (hit) {
         this.onSelect(hit.id);
         return;
@@ -171,22 +245,50 @@ export class MapView {
       // Dragging the map is a deliberate pan, so it stops following: an
       // operator who grabs the canvas wants to look somewhere else.
       this.followId = null;
-      this._drag = { x: event.clientX, y: event.clientY };
-      canvas.setPointerCapture(event.pointerId);
+      this._drag = point;
       canvas.classList.add('dragging');
     });
     canvas.addEventListener('pointermove', (event) => {
+      if (!this._pointers.has(event.pointerId)) return;
+      const point = this._local(event);
+      this._pointers.set(event.pointerId, point);
+
+      if (this._pinch) {
+        const span = this._span();
+        if (!span) return;
+        const { factor, centre, pan } = pinchUpdate(this._pinch, span);
+        this._pinch = span;
+        // Fingers carry the map with them as well as scaling it, so the pan
+        // lands before the zoom is taken about where they now are.
+        this.view.tx += pan.x;
+        this.view.ty += pan.y;
+        this.zoomBy(factor, centre.x, centre.y);
+        return;
+      }
+
       if (!this._drag) return;
-      this.view.tx += event.clientX - this._drag.x;
-      this.view.ty += event.clientY - this._drag.y;
-      this._drag = { x: event.clientX, y: event.clientY };
+      this.view.tx += point.x - this._drag.x;
+      this.view.ty += point.y - this._drag.y;
+      this._drag = point;
       this.draw();
     });
     const release = (event) => {
-      this._drag = null;
-      canvas.classList.remove('dragging');
+      this._pointers.delete(event.pointerId);
       if (canvas.hasPointerCapture(event.pointerId)) {
         canvas.releasePointerCapture(event.pointerId);
+      }
+      if (this._pointers.size < 2 && this._pinch) {
+        this._pinch = null;
+        // One finger left: hand it the pan rather than freezing until it lifts.
+        // Its position is where the drag resumes, so the map does not jump.
+        const [remaining] = [...this._pointers.values()];
+        this._drag = remaining || null;
+        if (this._drag) canvas.classList.add('dragging');
+        return;
+      }
+      if (!this._pointers.size) {
+        this._drag = null;
+        canvas.classList.remove('dragging');
       }
     };
     canvas.addEventListener('pointerup', release);
@@ -199,15 +301,27 @@ export class MapView {
       },
       { passive: false },
     );
-    window.addEventListener('resize', () => this.draw());
+    window.addEventListener('resize', () => {
+      if (!this._fitted) this.fit();
+      this.draw();
+    });
+  }
+
+  _span() {
+    const [a, b] = [...this._pointers.values()];
+    return a && b ? pinchSpan(a, b) : null;
   }
 
   _robotAt(screenX, screenY) {
     if (!this.map) return null;
+    // A fingertip is not a mouse pointer: the same 14 px target that is
+    // comfortable with a cursor is most of the way to unhittable by touch.
+    const reach =
+      typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 24 : 14;
     for (const robot of this.robots) {
       if (robot.x === null || robot.x === undefined) continue;
       const point = this._toScreen(robot.x, robot.y);
-      if (Math.hypot(point.x - screenX, point.y - screenY) <= 14) return robot;
+      if (Math.hypot(point.x - screenX, point.y - screenY) <= reach) return robot;
     }
     return null;
   }
@@ -217,9 +331,16 @@ export class MapView {
   draw() {
     const { width, height } = this._size();
     const ratio = window.devicePixelRatio || 1;
-    if (this.canvas.width !== Math.round(width * ratio)) {
-      this.canvas.width = Math.round(width * ratio);
-      this.canvas.height = Math.round(height * ratio);
+    // Height as well as width: the two change independently, and on a phone the
+    // height changes often — a tab switch, the toolbar rewrapping, the URL bar
+    // sliding away. Resizing on width alone leaves the backing store at its old
+    // height, and `clearRect` (which works in CSS pixels) then cannot reach the
+    // bottom of it: the previous frame's scale bar stays on screen under the
+    // new one.
+    const backing = { w: Math.round(width * ratio), h: Math.round(height * ratio) };
+    if (this.canvas.width !== backing.w || this.canvas.height !== backing.h) {
+      this.canvas.width = backing.w;
+      this.canvas.height = backing.h;
     }
     const ctx = this.context;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -366,7 +487,12 @@ export class MapView {
     const length = metres * pixelsPerMetre;
     const x = 16;
     const y = height - 18;
-    ctx.strokeStyle = 'rgba(230, 237, 243, 0.8)';
+    // A canvas gets no cascade, so the stylesheet's light theme cannot reach in
+    // here: drawn in the dark theme's near-white this is invisible on a phone
+    // that has asked for light, over a map whose free space is white. `--dim`
+    // is chosen for legibility against either background.
+    const ink = getComputedStyle(this.canvas).getPropertyValue('--dim').trim() || '#8b949e';
+    ctx.strokeStyle = ink;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(x, y - 5);
@@ -376,7 +502,7 @@ export class MapView {
     ctx.stroke();
     ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(230, 237, 243, 0.8)';
+    ctx.fillStyle = ink;
     ctx.fillText(`${metres} m`, x + 4, y - 8);
   }
 }

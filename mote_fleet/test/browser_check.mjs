@@ -172,6 +172,121 @@ try {
   writeFileSync(shot, Buffer.from(screenshot.data, 'base64'));
   console.log(`screenshot: ${shot}`);
 
+  // -- the phone ----------------------------------------------------------
+  //
+  // The off-LAN client is a phone, and a phone is not a narrow desktop: it has
+  // one pane's worth of screen and no wheel to zoom the map with. Emulated
+  // here — a real device is still the acceptance (README §9), because emulation
+  // gets the viewport and the touch points right and the thumb wrong.
+
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 3,
+    mobile: true,
+  });
+  await session.send('Emulation.setTouchEmulationEnabled', {
+    enabled: true,
+    maxTouchPoints: 5,
+  });
+  await session.send('Page.navigate', { url });
+  await sleep(4000);
+
+  check(
+    'a coarse pointer is what the page thinks it has',
+    await session.evaluate(`window.matchMedia('(pointer: coarse)').matches`),
+  );
+
+  const onePane = await session.evaluate(`(() => ({
+    tabs: getComputedStyle(document.querySelector('.panes')).display,
+    shown: [...document.querySelectorAll('.pane')]
+      .filter(p => getComputedStyle(p).display !== 'none').length,
+  }))()`);
+  check(
+    'one pane at a time, with a tab bar to move between them',
+    onePane.tabs === 'flex' && onePane.shown === 1,
+    JSON.stringify(onePane),
+  );
+
+  // Nothing may scroll sideways: a pane wider than the screen hides whatever is
+  // off its right edge — which is where the map's follow and fit buttons are.
+  const sideways = await session.evaluate(`(() => {
+    const out = [];
+    for (const tab of document.querySelectorAll('.panes [data-pane]')) {
+      tab.click();
+      const pane = document.querySelector('.pane.active');
+      if (pane.scrollWidth > pane.clientWidth ||
+          document.documentElement.scrollWidth > window.innerWidth) out.push(tab.dataset.pane);
+    }
+    return out.join(',');
+  })()`);
+  check('no pane scrolls sideways on a phone', sideways === '', sideways);
+
+  // Switching panes changes the canvas's height but not its width. Resizing on
+  // width alone leaves a backing store `clearRect` cannot fully reach, and the
+  // previous frame stays visible along the bottom.
+  const backing = await session.evaluate(`(() => {
+    document.querySelector('.panes [data-pane="detail"]').click();
+    document.querySelector('.panes [data-pane="map"]').click();
+    const c = document.getElementById('map-canvas');
+    const r = c.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    return { w: c.width, h: c.height, want: [Math.round(r.width * ratio), Math.round(r.height * ratio)] };
+  })()`);
+  check(
+    'the canvas backing store follows the pane it is in',
+    backing.w === backing.want[0] && backing.h === backing.want[1],
+    `${backing.w}x${backing.h} for ${backing.want.join('x')}`,
+  );
+
+  const jumped = await session.evaluate(`(() => {
+    document.querySelector('.panes [data-pane="roster"]').click();
+    document.querySelector('.robot').click();
+    return document.querySelector('.pane.active').dataset.pane;
+  })()`);
+  check('picking a robot in the roster shows it on the map', jumped === 'map', jumped);
+
+  // Pinch. The wheel handler has no touch equivalent, so this is the gesture
+  // that decides whether the map is usable at all on a phone.
+  const canvas = await session.evaluate(`(() => {
+    const r = document.getElementById('map-canvas').getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()`);
+  const paint = () =>
+    session.evaluate(`(() => {
+      const c = document.getElementById('map-canvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 0;
+      for (let i = 0; i < d.length; i += 997) h = (h * 31 + d[i]) >>> 0;
+      return h;
+    })()`);
+  const touch = (type, points) =>
+    session.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: points.map(([x, y], id) => ({ x, y, id })),
+    });
+  const before = await paint();
+  await touch('touchStart', [
+    [canvas.x - 40, canvas.y],
+    [canvas.x + 40, canvas.y],
+  ]);
+  await touch('touchMove', [
+    [canvas.x - 100, canvas.y],
+    [canvas.x + 100, canvas.y],
+  ]);
+  await touch('touchMove', [
+    [canvas.x - 160, canvas.y],
+    [canvas.x + 160, canvas.y],
+  ]);
+  await touch('touchEnd', []);
+  await sleep(400);
+  check('two fingers zoom the map', (await paint()) !== before);
+
+  const phoneShot = shot.replace(/(\.png)?$/, '-phone.png');
+  const phonePng = await session.send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(phoneShot, Buffer.from(phonePng.data, 'base64'));
+  console.log(`screenshot: ${phoneShot}`);
+
   const errors = await session.evaluate(`window.__errors ? window.__errors.length : 0`);
   check('no uncaught page errors', errors === 0, String(errors));
 } finally {

@@ -320,7 +320,7 @@ why the bug survived M1.
 
 - **A phone-sized layout.** The panes stack below 1100 px, which is not the same
   as being usable one-handed on a 390 px screen — and the map canvas is the part
-  that suffers. Observed, not designed for.
+  that suffers. Observed, not designed for. **Addressed later — §9 below.**
 - **The Foxglove deep link.** The button is rendered from the configured
   template and opens `foxglove://…`, which needs both the Foxglove desktop app
   on the operator's machine and a `foxglove_bridge` on the robot. Neither exists
@@ -333,3 +333,76 @@ why the bug survived M1.
 - **A robot dropping off while the dashboard watches.** The Last Will is tested
   against a real broker (`m1-verification.md` §2) and the UI renders `offline`
   from the same retained payload, but the two have not been observed together.
+
+---
+
+## 9. The phone layout (2026-07-31)
+
+Closing §6's "the one thing the run did not enjoy is the small screen" and the
+first bullet of §8. The network path was already proven from a phone on
+cellular; what was missing was a layout for the screen it arrived on.
+
+### What was changed
+
+Below 760 px the three panes become one at a time behind a bottom tab bar;
+selecting a robot in the roster navigates to the map; the map canvas gained
+pinch-to-zoom and a fingertip-sized hit target; and the dispatch box gained a
+zone picker that writes `goto <zone>` rather than sending it. The operator flow
+is [`README.md` §9](README.md); the breakpoint lives in `server/ui/layout.mjs`
+and the stylesheet is held to it by `ui_test.mjs`, because the two failing to
+agree produces a tab bar over stacked panes rather than an error.
+
+### How it was measured
+
+`ui_test.mjs` grew the pinch arithmetic (`pinchSpan`, `pinchUpdate`) and the
+seams that fail silently: the CSS/JS breakpoint, every pane having a tab, and
+`touch-action: none` on the canvas. 24/24 under node.
+
+`browser_check.mjs` grew a **phone pass** — 390x844 at device scale 3, mobile
+metrics and touch emulation on, driven with real `Input.dispatchTouchEvent`
+gestures rather than synthesised DOM events. Against a live stack (container
+broker, fleet server, three scripted robots on the `office_world` bundle):
+
+```
+ok   a coarse pointer is what the page thinks it has
+ok   one pane at a time, with a tab bar to move between them  — {"tabs":"flex","shown":1}
+ok   no pane scrolls sideways on a phone
+ok   the canvas backing store follows the pane it is in  — 1170x1674 for 1170x1674
+ok   picking a robot in the roster shows it on the map  — map
+ok   two fingers zoom the map
+```
+
+Separately, in a Playwright context with `hasTouch` (so `pointer: coarse`
+actually matches, which CDP touch events alone do not cause): a tap landing
+**20 px** off a robot marker selected it — inside the touch target, outside the
+14 px one a mouse gets — and after a pinch centred on that marker, a tap at the
+same screen point still selected it, which is what shows the zoom anchors where
+the fingers are rather than drifting. A `goto dropoff` chosen from the zone
+picker dispatched through the API and wrote the expected audit row.
+
+### Three bugs this found, all pre-existing
+
+- **`hidden` did not hide.** `.revisions` and `.dispatch` set `display: flex`,
+  which outranks the attribute's UA-stylesheet `display: none` — so the promote
+  picker rendered empty on every floor with no candidate. Invisible on a desk;
+  a wasted row of a phone. Fixed with a `[hidden] { display: none !important }`
+  rule, which also covers anything added later.
+- **The canvas backing store was resized on width alone.** A height change
+  without a width change — a tab switch, the toolbar rewrapping, a mobile URL
+  bar sliding away — left `clearRect` unable to reach the bottom of the store,
+  and the previous frame's scale bar stayed on screen under the new one.
+- **The scale bar was drawn in the dark theme's near-white**, on a basemap whose
+  free space is white. A canvas gets no cascade, so the stylesheet's light
+  theme could not reach it; it now reads `--dim` off the canvas element and is
+  legible in both.
+
+### Not verified here
+
+- **A real device.** Everything above is emulation: it gets the viewport, the
+  device pixel ratio and the touch points right, and the thumb wrong. Reach,
+  one-handed grip, the on-screen keyboard covering the dispatch box, and iOS
+  Safari's own chrome are what a phone in a corridor tests and this does not.
+  The `100dvh` height, the `env(safe-area-inset-bottom)` padding under the tab
+  bar and the 16 px input font (which is what stops Safari zooming the page on
+  focus) are all written for that device and confirmed only in Chrome.
+- **Landscape**, and tablets between 760 and 1100 px, which still stack.

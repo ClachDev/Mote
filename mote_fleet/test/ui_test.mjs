@@ -10,6 +10,7 @@
 //     node --test mote_fleet/test/ui_test.mjs
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import {
@@ -22,7 +23,17 @@ import {
   parsePackets,
   parseTopic,
 } from '../server/ui/mqtt.mjs';
-import { fitView, pixelToWorld, worldToPixel, zoneOutline } from '../server/ui/map.mjs';
+import {
+  fitView,
+  pinchSpan,
+  pinchUpdate,
+  pixelToWorld,
+  worldToPixel,
+  zoneOutline,
+} from '../server/ui/map.mjs';
+import { NARROW_MAX_PX } from '../server/ui/layout.mjs';
+
+const read = (name) => readFileSync(new URL(`../server/ui/${name}`, import.meta.url), 'utf8');
 
 // -- the MQTT codec ------------------------------------------------------
 
@@ -183,4 +194,77 @@ test('a radius zone becomes a circle in pixels, not in metres', () => {
 test('a bare waypoint has no outline to draw', () => {
   const map = { resolution: 0.05, origin: [0, 0, 0], width: 100, height: 100 };
   assert.equal(zoneOutline(map, { name: 'pickup', x: 1, y: 1 }), null);
+});
+
+// -- pinch to zoom -------------------------------------------------------
+
+// The touch gesture the wheel handler has no equivalent for. Its arithmetic is
+// pure for the same reason the transform above is: on a phone, a sign or a
+// division wrong here is a map that leaps off screen with no way to tell why.
+
+test('fingers moving apart zoom in, and together zoom out', () => {
+  const before = pinchSpan({ x: 100, y: 100 }, { x: 200, y: 100 });
+  const wider = pinchSpan({ x: 50, y: 100 }, { x: 250, y: 100 });
+  assert.equal(pinchUpdate(before, wider).factor, 2);
+  assert.equal(pinchUpdate(wider, before).factor, 0.5);
+});
+
+test('the zoom is taken about the midpoint of the two fingers', () => {
+  const span = pinchSpan({ x: 10, y: 20 }, { x: 30, y: 60 });
+  assert.deepEqual(span.centre, { x: 20, y: 40 });
+  assert.equal(span.distance, Math.hypot(20, 40));
+});
+
+test('fingers that move together carry the map with them', () => {
+  const before = pinchSpan({ x: 0, y: 0 }, { x: 100, y: 0 });
+  const after = pinchSpan({ x: 30, y: 12 }, { x: 130, y: 12 });
+  const update = pinchUpdate(before, after);
+  assert.equal(update.factor, 1); // same span: a pan, not a zoom
+  assert.deepEqual(update.pan, { x: 30, y: 12 });
+});
+
+test('two pointers reported at one place leave the scale alone', () => {
+  // Not defensive: a factor of n/0 is Infinity and 0/0 is NaN, and either one
+  // in the view scale blanks the map permanently.
+  const together = pinchSpan({ x: 5, y: 5 }, { x: 5, y: 5 });
+  assert.equal(together.distance, 0);
+  assert.equal(pinchUpdate(together, pinchSpan({ x: 0, y: 0 }, { x: 40, y: 0 })).factor, 1);
+});
+
+// -- the narrow layout ---------------------------------------------------
+
+// Below the breakpoint the stylesheet shows one pane at a time and app.mjs
+// navigates to the map on a selection. Neither half fails loudly if they
+// disagree about where "narrow" starts, so the seams are checked here.
+
+test('the stylesheet switches to one pane at the width layout.mjs uses', () => {
+  const css = read('style.css');
+  const widths = [...css.matchAll(/@media \(max-width: (\d+)px\)/g)].map((m) => Number(m[1]));
+  assert.ok(
+    widths.includes(NARROW_MAX_PX),
+    `style.css has no @media (max-width: ${NARROW_MAX_PX}px); found ${widths.join(', ')}`,
+  );
+});
+
+test('the tab bar and the panes address each other by the same names', () => {
+  const html = read('index.html');
+  const panes = [...html.matchAll(/class="pane[^"]*" data-pane="([^"]+)"/g)].map((m) => m[1]);
+  const tabs = [...html.matchAll(/<button[^>]*data-pane="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(panes, ['roster', 'map', 'detail']);
+  // A pane with no tab is simply unreachable on a phone, and nothing says so.
+  assert.deepEqual([...tabs].sort(), [...panes].sort());
+});
+
+test('exactly one pane starts active, so a phone opens on something', () => {
+  const html = read('index.html');
+  const active = [...html.matchAll(/class="pane [^"]*\bactive\b[^"]*"/g)];
+  assert.equal(active.length, 1);
+});
+
+test('the map canvas takes its own touch gestures', () => {
+  // Without `touch-action: none` the browser consumes the drag and the pinch
+  // before the canvas sees a single pointer event.
+  const css = read('style.css');
+  const canvas = css.slice(css.indexOf('#map-canvas {'));
+  assert.match(canvas.slice(0, canvas.indexOf('}')), /touch-action:\s*none/);
 });

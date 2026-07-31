@@ -14,6 +14,7 @@
 
 import { BrokerReader, parseTopic } from './mqtt.mjs';
 import { MapView } from './map.mjs';
+import { setupPanes } from './layout.mjs';
 
 const TOKEN_KEY = 'mote.operator.token';
 
@@ -34,10 +35,12 @@ const state = {
   operator: null,
   mapKey: null,
   floor: null, // the registry's view of the floor on screen: revisions, candidates
+  zones: [], // the floor's taught places, for the map and the dispatch picker
 };
 
 const dom = {};
 let mapView = null;
+let panes = null;
 let pending = false;
 
 // -- small helpers -------------------------------------------------------
@@ -175,6 +178,7 @@ async function ensureMap(record) {
   if (key === state.mapKey) return;
   state.mapKey = key;
   state.floor = null;
+  setZones([]);
   renderRevisions();
   if (!key) {
     mapView.clearMap();
@@ -197,9 +201,17 @@ async function ensureMap(record) {
   // Taught places, in the same frame as the basemap. A floor may have none,
   // which is a 404 and not an error worth showing.
   api(`/v1/maps/${site}/${floor}/zones.json`)
-    .then((body) => state.mapKey === key && mapView.setZones(body.zones))
-    .catch(() => state.mapKey === key && mapView.setZones([]));
+    .then((body) => state.mapKey === key && setZones(body.zones))
+    .catch(() => state.mapKey === key && setZones([]));
   loadFloor(site, floor, key);
+}
+
+// Taught places go two ways: onto the basemap, and into the dispatch picker.
+// Both are the floor's, so they arrive and are cleared together.
+function setZones(zones) {
+  state.zones = zones || [];
+  mapView.setZones(state.zones);
+  renderZones();
 }
 
 // -- the map registry ----------------------------------------------------
@@ -238,6 +250,26 @@ function renderRevisions() {
       }),
     ),
   );
+}
+
+// The zones of the floor on screen, as a `goto` the operator does not have to
+// type. It writes the command rather than sending it: the send button stays the
+// one place a task leaves this page.
+function renderZones() {
+  const names = state.zones.map((zone) => zone.name).sort((a, b) => a.localeCompare(b));
+  dom.zone.hidden = names.length === 0;
+  dom.zone.replaceChildren(
+    el('option', { value: '', text: 'go to a taught zone…' }),
+    ...names.map((name) => el('option', { value: name, text: name })),
+  );
+}
+
+function onZone() {
+  const name = dom.zone.value;
+  if (!name) return;
+  dom.command.value = `goto ${name}`;
+  dom.dispatchNote.textContent = '';
+  dom.dispatchNote.className = 'note';
 }
 
 async function onPromote(event) {
@@ -322,6 +354,9 @@ function renderRoster(records) {
           onclick: () => {
             state.selected = record.id;
             state.mapKey = null; // re-resolve: the new robot may be on another floor
+            // Where the desktop layout has three panes at once, a phone has to
+            // be taken there: picking a robot means asking where it is.
+            panes.show('map');
             scheduleRender();
           },
         },
@@ -358,6 +393,9 @@ function renderRoster(records) {
 }
 
 function renderDetail(record) {
+  // On a phone the detail pane is behind a tab, so the tab is where the
+  // selection is visible at all.
+  dom.tabDetail.textContent = record ? record.id : 'robot';
   if (!record) {
     dom.detailName.textContent = 'no robot selected';
     dom.detailMeta.replaceChildren();
@@ -515,6 +553,8 @@ function bind() {
     statusLog: 'status-log',
     dispatch: 'dispatch',
     command: 'command',
+    zone: 'zone',
+    tabDetail: 'tab-detail',
     dispatchNote: 'dispatch-note',
     foxglove: 'foxglove',
     brokerState: 'broker-state',
@@ -547,6 +587,10 @@ export async function boot() {
       scheduleRender();
     },
   });
+  // The canvas has no size until its pane is on screen, so the map is told when
+  // it becomes visible rather than fitting into a hidden 0x0 box.
+  panes = setupPanes({ onShow: (name) => name === 'map' && mapView.shown() });
+  dom.zone.addEventListener('change', onZone);
   dom.fit.addEventListener('click', () => {
     mapView.follow(null);
     dom.follow.checked = false;
