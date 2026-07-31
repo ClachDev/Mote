@@ -294,6 +294,20 @@ section. Contains:
 - `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client of
   `arm_controller`* (publishes clamped single-point trajectories, limps on
   exit). It never opens the bus, so there is no contention to guard against.
+- **Every arm CLI exits and parses through `cli.py`**, because both properties
+  fail silently when hand-rolled. `cli.shutdown(node, spinner)` shuts the
+  context down, **joins the spin thread, and only then destroys the node**:
+  destroying a node `spin()` still holds aborts the interpreter (exit 134,
+  "terminate called without an active exception") *after* the tool has done its
+  work, so the run succeeds and the process still crashes — measured on `jog`
+  and `arm-pose list`, 3 of 3 runs each, with no hardware attached. This is not
+  a rare race, so a new arm CLI must not hand-roll the teardown.
+  `cli.parse(parser)` cuts the `--ros-args ... --` block out and then parses
+  strictly: `ros2 run` hands the tool ROS's arguments too, so a plain
+  `parse_args` rejects `--ros-args` outright while `parse_known_args` — the
+  usual workaround — silently discards a mistyped `--max-travel` or `--speed`
+  and drives on the default. `test_cli.py` pins both, the abort via a child
+  process's exit status since nothing in-process can catch it.
 - `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
   + `--save-zero` calibration snapshot. Run with the driver stopped (same port).
 - **`zero` is not `home`.** `robot.yaml`'s `arm.joints[].zero` is the encoder

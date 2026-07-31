@@ -323,12 +323,28 @@ motion stops at the configured `max` and the driver logs
 many times you press `+`. Repeat toward the lower limit. **This is acceptance
 criterion 2.**
 
-## Step 7 — torque-off on exit
+## Step 7 — torque-off on exit, and a clean exit
 
-In `arm-jog`, type `quit`. **Expected:** `limping arm (torque off) and
-exiting...`; the arm goes back-drivable immediately. Stop `arm` (Ctrl-C) and
-confirm it also logs a clean shutdown and leaves the arm limp. **Nothing should
-move on startup or shutdown.**
+In `arm-jog`, type `quit`. **Expected:** `limping arm (deactivating
+arm_controller) and exiting...`; the arm goes back-drivable immediately. Stop
+`arm` (Ctrl-C) and confirm it also logs a clean shutdown and leaves the arm
+limp. **Nothing should move on startup or shutdown.**
+
+Then check the exit *status*, not just the message — the arm is already limp by
+the time the process falls over, so an abort here is invisible unless looked
+for:
+
+```
+pixi run arm-jog        # 'quit' at the prompt
+echo $?                 # expect 0
+pixi run arm-pose list
+echo $?                 # expect 0
+```
+
+**Expected:** `0` from both, and no `terminate called without an active
+exception` on stderr. A `134` is the destroy-while-spinning abort (see README,
+"Exits and arguments"); it means the tool did its job and then crashed on the
+way out.
 
 ---
 

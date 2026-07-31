@@ -22,11 +22,10 @@ import threading
 import time
 
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-from mote_arm import config
+from mote_arm import cli, config
 from mote_arm.config import JointSpec
 from mote_arm.control import ArmControl
 
@@ -192,22 +191,7 @@ def _repl(node: JogClient) -> None:
 def main() -> None:
     rclpy.init()
     node = JogClient()
-
-    def _spin() -> None:
-        # SIGINT surfaces here as ExternalShutdownException; the REPL thread
-        # owns the exit path, so this one just stops quietly.
-        try:
-            rclpy.spin(node)
-        except (KeyboardInterrupt, ExternalShutdownException):
-            pass
-        except Exception:  # noqa: BLE001
-            # Context torn down by SIGINT; a real error is one that happened
-            # while the context was still valid.
-            if rclpy.ok():
-                raise
-
-    spin = threading.Thread(target=_spin, daemon=True)
-    spin.start()
+    spinner = cli.spin_background(node)
     try:
         _repl(node)
     except KeyboardInterrupt:
@@ -215,8 +199,7 @@ def main() -> None:
     finally:
         print("\nlimping arm (deactivating arm_controller) and exiting...")
         node.arm.set_holding(False)
-        rclpy.shutdown()
-        node.destroy_node()
+        cli.shutdown(node, spinner)
 
 
 if __name__ == "__main__":
