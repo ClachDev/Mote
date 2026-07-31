@@ -21,7 +21,6 @@ the timing the live system sees, at whatever wall-clock rate the replay runs at.
 from __future__ import annotations
 
 import argparse
-import subprocess
 import time
 from pathlib import Path
 
@@ -29,6 +28,7 @@ import rclpy
 import rosbag2_py
 import yaml
 from ament_index_python.packages import get_package_share_directory
+from mote_bringup.sweep_orphans import reap_group, spawn_reapable
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
@@ -168,7 +168,7 @@ def main():
         raise SystemExit("bag carries neither edge; nothing to replay")
 
     robot = robot_config()
-    gate = subprocess.Popen(
+    gate = spawn_reapable(
         [
             "ros2",
             "run",
@@ -234,8 +234,7 @@ def main():
             node.tick(icp[-1][0])
             rclpy.spin_once(node, timeout_sec=0.01)
     finally:
-        gate.terminate()
-        gate.wait(timeout=10)
+        reap_group(gate)
 
     print(f"gate published {len(node.gated)} of {len(icp)} poses")
     if len(node.gated) < len(icp):

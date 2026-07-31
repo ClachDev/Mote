@@ -330,6 +330,54 @@ The monitor is also the systemd watchdog feeder: it sends `READY=1` once up and
 pets the watchdog on every publish (`sd_notify.py`, a dependency-free
 `$NOTIFY_SOCKET` client that no-ops outside systemd).
 
+## Clearing stray ROS processes — `sweep_orphans.py`
+
+Two different messes, one module, and the difference is worth knowing before
+reaching for either.
+
+`pixi run kill` clears **this checkout's** ROS processes and resets the daemon —
+the "my stack is wedged" reset. `pixi run sweep` clears **other jobs'** leftovers:
+processes an agent worktree started and never reaped, which reparent to init and
+run until the box is rebooted. It reports by default and only acts with `--kill`:
+
+```bash
+pixi run sweep                 # what would go, grouped by the job that left it
+pixi run sweep -- --kill       # reap them
+pixi run sweep -- --json       # for a script
+```
+
+That second mess is not just untidiness. Leftovers are the exact process names a
+benchmark measures, and the system-wide counters a benchmark sits in — context
+switches, interrupts, memory pressure, CPU contention — cannot be scoped the way
+`overhead.py` scopes its own match. A drifting background makes every
+measurement on the box a little less comparable than it looks.
+
+**Matching is on process identity, never on the command line.** The `pkill -9 -f
+'<driver names>'` that `kill` used to run matched the shell running the task
+itself — those names are in its own command line — SIGKILLed it, and so never
+reached the `ros2 daemon` reset that followed; it also matched every other
+checkout and worktree on the machine. Both modes now read `/proc` and require a
+ROS environment, a path under the directory in question, and absence from the
+sweeper's own ancestry. The sweep additionally requires that the process be
+orphaned and older than `--min-age` (30 min), because a deliberately
+session-detached run — the sim smoke test `setsid`s its launch — is
+indistinguishable from a leak by ancestry alone.
+
+### Why they escape
+
+`ros2 run` is a wrapper: it `Popen`s the real executable and installs no SIGTERM
+handler, tolerating only `KeyboardInterrupt` on the assumption that the signal
+reached the whole process group — true of a Ctrl-C at a terminal, false of a
+`proc.terminate()` from a test fixture. Terminating the wrapper therefore kills
+the wrapper and hands the node to init, **once per run, on the path where the run
+succeeded**. Measured on `test_twist_mux_arbitration.py`: six tests pass and one
+`twist_mux` survives.
+
+So anything spawning `ros2 run` uses `spawn_reapable` / `reap_group` from
+`sweep_orphans`, which put the child in its own session and signal the group.
+The other half — a job killed outright, taking pytest with it before any teardown
+runs — no fixture can fix, and that is what the sweep is for.
+
 ## Known gap: battery voltage
 
 The USB-C power bank exposes **no state-of-charge or voltage telemetry**, so the
