@@ -24,6 +24,9 @@ REPO = Path(__file__).resolve().parents[2]
 COMPOSE = REPO / "mote_fleet" / "deploy" / "docker-compose.yml"
 BROKER_SH = REPO / "mote_fleet" / "server" / "broker.sh"
 MOSQUITTO_CONF = REPO / "mote_fleet" / "server" / "mosquitto.conf"
+#: The third broker that could drift: the one `fleet-ui-check` runs to check the
+#: dashboard. It reads the compose file's pin for the same reason broker.sh does.
+UI_CHECK = REPO / "mote_fleet" / "test" / "ui_check.py"
 
 PIN = re.compile(r"^ *image: *\$\{MOTE_BROKER_IMAGE:-([^}]*)\}", re.M)
 
@@ -40,7 +43,7 @@ def test_the_broker_image_is_pinned_exactly_once():
 
     others = [
         path
-        for path in (BROKER_SH, MOSQUITTO_CONF)
+        for path in (BROKER_SH, MOSQUITTO_CONF, UI_CHECK)
         if "eclipse-mosquitto:" in path.read_text()
     ]
     assert others == [], (

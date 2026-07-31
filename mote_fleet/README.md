@@ -117,11 +117,19 @@ Four tiers, so the same files give full coverage wherever they run:
   single-in-flight rule and the full agent against an injected fake MQTT client,
   so CI covers it on both architectures without a broker; and the robot's map
   staging and symlink flip against a real fleet server, with no ROS at all.
-- **browser** (`test_ui.py` → `ui_test.mjs`) — the MQTT packet codec and the
-  world→pixel transform under node, against the same `.mjs` files the browser
-  loads. Skips where there is no node. `browser_check.mjs` is the other half —
-  a real headless browser against a running stack, which needs more than CI has,
-  so it is an operator's tool rather than a test.
+- **browser** (`test_ui.py` → `ui_test.mjs`, `test_fake_robots.py`) — the MQTT
+  packet codec and the world→pixel transform under node, against the same `.mjs`
+  files the browser loads (skips where there is no node); and the wire-only
+  robots the dashboard is checked against, held to `protocol.py` and to the task
+  layer's grammar, so the fixture can never become a second definition of the
+  wire. `browser_check.mjs` is the other half —
+  a real headless browser against a running stack, which needs a docker and a
+  chrome, so it is an operator's tool rather than a test (the reasoning, and
+  what wiring it into CI would take, are in `docs/fleet/m3-verification.md` §2).
+  It needs no stack of your own: **`pixi run fleet-ui-check`** builds one —
+  broker, server, basemap, and the wire-only robots of `fake_robots.py` — on
+  ports nobody else is using, runs the checks and tears it all down. `-- --keep`
+  leaves it up instead, which is the loop for working on `server/ui/`.
 - **end to end** (`test_e2e_fleet.py`, `test_e2e_map_registry.py`,
   `test_fleet_outage.py`) — a real
   mosquitto, the real fleet server, the `enroll` CLI, a real paho client, and

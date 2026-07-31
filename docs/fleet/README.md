@@ -691,6 +691,15 @@ a second command language for the fleet server to keep in step.
 
 Between 760 and 1100 px the panes stack and scroll, as before.
 
+**Working on the page itself?** `pixi run fleet-ui-check` builds a throwaway
+fleet to point it at — a broker, a fleet server, a basemap and three robots that
+exist only on the wire — runs the browser checks against it, and tears it all
+down; `pixi run fleet-ui-check -- --keep` leaves it up and prints the URL and an
+operator token instead. It uses ports and a state directory of its own, so it
+runs beside the fleet you actually operate. Needs a docker and a chrome
+([`m3-verification.md`](m3-verification.md) §2). The checks include the phone
+layout above, so the emulated pass is one command too.
+
 **What it does not do**, deliberately: no marker clustering, no basemap tiling,
 no 3D, no camera, no teleop. The first two are what `fleet.md` Q5 describes for
 large sites and would be unmeasured complexity at this fleet size; the last

@@ -48,38 +48,115 @@ instead, and serves robots and `fleetctl` unchanged. (Ms made the container the
 default and folded the two tasks into one: that fallback is now
 `pixi run -e fleet fleet-broker-local`.)
 
-## 2. The operator view, in a real browser — **9/9 checks, off the ROS graph**
+## 2. The operator view, in a real browser — **15/15 checks, off the ROS graph**
 
-The dashboard was driven by headless Chrome over the DevTools protocol against a
-live stack: the container broker, `fleet-server` (from the ROS-free `fleet`
-environment), two enrolled robots, and an operator token.
+The dashboard is driven by headless Chrome over the DevTools protocol against a
+live stack: the container broker, `fleet-server`, a site bundle to draw on,
+enrolled robots, and an operator token. **One command builds all of that, runs
+the checks and takes it down again:**
 
 ```console
-$ node mote_fleet/test/browser_check.mjs http://127.0.0.1:8088 <token>
+$ pixi run fleet-ui-check
+broker:  eclipse-mosquitto:2.1-alpine on 52619 (mqtt) / 46001 (ws)
+server:  http://127.0.0.1:54489  (state in /tmp/mote-ui-check-qhaatfpk)
+robots:  mote-01, mote-02, mote-03  on office_world/ground
+         mote-03 is offline — the broker published its will
+
 ok   the browser connected to the broker over WebSockets  — broker connected
-ok   the roster came from retained MQTT state  — mote-01,mote-02
-ok   health states are rendered  — ok,degraded
+ok   the roster came from retained MQTT state  — mote-01,mote-02,mote-03
+ok   health states are rendered  — ok,degraded,offline
 ok   a basemap was resolved for the selected robot  — office_world/ground
 ok   the map canvas has pixels on it  — 467726 painted pixels
 ok   the health roll-up lists subsystems  — 4 rows
-ok   dispatch went through the fleet API  — dispatched f6f07ef1809a4f18
-ok   the robot answered on task/status  — accepted,dispatched,rejected
+ok   dispatch went through the fleet API  — dispatched c751a9e20c304c1e
+ok   the robot answered on task/status  — succeeded,accepted,dispatched
+screenshot: fleet-ui.png
+
+ok   a coarse pointer is what the page thinks it has
+ok   one pane at a time, with a tab bar to move between them  — {"tabs":"flex","shown":1}
+ok   no pane scrolls sideways on a phone
+ok   the canvas backing store follows the pane it is in  — 1170x1674 for 1170x1674
+ok   picking a robot in the roster shows it on the map  — map
+ok   two fingers zoom the map
+screenshot: fleet-ui-phone.png
 ok   no uncaught page errors  — 0
 
-9/9 checks passed
+15/15 checks passed
 ```
 
 ![The fleet dashboard](../images/fleet-ui.webp)
 
-Nothing was polled: the roster, the health roll-up, both robot positions and the
-task-status log are all retained MQTT state that arrived on the WebSocket within
-a second of the page loading. Both colour schemes were rendered
-(`Emulation.setEmulatedMedia`) and checked by eye.
+That is the original M3 run's 9 assertions and §9's phone pass, in one command
+against a stack it built itself — 6.2 s end to end. The painted-pixel count is
+identical to the hand-assembled run's because it is the same basemap: the
+harness serves
+`mote_simulation/sim_home/sites/office_world`, the only real saved map
+(`map.yaml` + PNG + zones) committed in the tree, so the world→pixel transform
+and the zone overlay are exercised at a real scale rather than against a fixture
+that agrees with them.
 
-The robots behind it are the wire, not the hardware — a script publishing the
-real `protocol.py` payloads and answering `task/command`. The **real** agent and
-behaviour tree are covered by the end-to-end test in §4; what this run is for is
-the half only a browser can answer.
+Nothing is polled *by the page*: the roster, the health roll-up, all three robot
+positions and the task-status log are retained MQTT state that arrives on the
+WebSocket within a second of loading. Both colour schemes were rendered
+(`Emulation.setEmulatedMedia`) and checked by eye during the original run; the
+committed checks assert what a screenshot cannot, and leave the two themes to
+the two screenshots they write.
+
+**The robots are the wire, not the hardware.** `mote_fleet/test/fake_robots.py`
+publishes `protocol.py` payloads and answers `task/command`, and that is the
+whole of it — not a second robot implementation but the contract itself, which
+is exactly what the UI consumes. What it does model is what the UI renders
+differently: an `ok` robot and a `degraded` one, a pose that moves, the task
+transitions (`goto dropoff` → dispatched/accepted/succeeded, `wibble` → rejected
+`unknown command 'wibble'`, `goto nowhere` → rejected `unknown zone 'nowhere'` —
+the same shape as §3's real robot, measured through `fleetctl` against this
+fixture), a redelivered command recognised rather than re-run, and one robot
+that **drops its socket without a DISCONNECT** so the broker publishes its will.
+The harness waits on that will rather than on a sleep: an offline row the
+fixture published for itself would not be testing the Last Will path at all. The
+**real** agent and behaviour tree are covered by the end-to-end test in §4; what
+this run is for is the half only a browser can answer.
+
+Two things it deliberately does not touch. It never uses `~/.mote-fleet` — the
+registry and the basemaps go in a temp directory that is deleted afterwards —
+and it never uses 1883/9001, because the workstation this was measured on was
+**already running a broker and a fleet server for a real robot on exactly those
+ports**, and both were still serving when the run finished. Every process starts
+in its own session, so teardown reaps this stack and nothing else (verified:
+no container, no temp directory and no process left behind). Two runs at once on
+different sites — `office_world` and `hospital_world` — both pass 15/15, sharing
+no port, container or directory.
+
+The broker image is the compose file's pin, read at startup exactly as
+`broker.sh` reads it: a tag of the harness's own would be a third broker able to
+drift onto a mosquitto whose websockets support differs, which is the failure
+`test_deploy_config.py` exists to prevent — so that test now watches this file
+too.
+
+`-- --keep` skips the browser and leaves the stack up with its URL and operator
+token printed, which is the loop for actually working on `server/ui/`.
+
+### Can it gate CI? — **no, and this is the decision rather than an oversight**
+
+It needs two things the `build` workflow's runners do not both have:
+
+- **docker**, because the browser's read path is MQTT-over-WebSockets and
+  conda-forge's mosquitto is still built without them (re-measured at 2.0.20:
+  `ldd` finds no libwebsockets). Hosted `ubuntu-latest` has docker, so this half
+  would be free there.
+- **a chrome**. `ubuntu-latest` ships one; the matrix's other half,
+  `ubuntu-24.04-arm`, does not — so wiring it in buys one architecture's
+  coverage of a page that has no architecture-specific behaviour.
+
+The flakiness objection is at least answered: every assertion now polls to a
+deadline instead of sleeping a guessed interval (`settle()` in
+`browser_check.mjs`), so a loaded shared runner makes the job slower rather than
+red. What is left is a judgement about a ~40 s job — image pull included — that
+would gate every PR on a headless browser to protect the six files in
+`server/ui/`. So it stays **a command an operator runs when touching `server/ui/`**,
+one workflow step away from being a gate if that changes. Same shape as the sim
+smoke test's answer (#51), and for one of the same reasons: hosted CI does not
+have the machine the check needs.
 
 ## 3. Dispatch is mediated — **confirmed, including the refusals**
 
@@ -361,7 +438,9 @@ seams that fail silently: the CSS/JS breakpoint, every pane having a tab, and
 `browser_check.mjs` grew a **phone pass** — 390x844 at device scale 3, mobile
 metrics and touch emulation on, driven with real `Input.dispatchTouchEvent`
 gestures rather than synthesised DOM events. Against a live stack (container
-broker, fleet server, three scripted robots on the `office_world` bundle):
+broker, fleet server, three scripted robots on the `office_world` bundle — since
+this was measured, that stack is `pixi run fleet-ui-check` and those robots are
+the committed `fake_robots.py`, so this pass is now the tail of §2's run):
 
 ```
 ok   a coarse pointer is what the page thinks it has
