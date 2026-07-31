@@ -2,7 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- `viewport-fit=cover` so the tab bar can sit in the home-indicator area
+         rather than above it; the safe-area inset in style.css keeps it
+         tappable. The page does its own pinch-zoom on the map canvas, but
+         browser zoom is deliberately left enabled: nothing here is worth
+         taking that away from someone reading a status line. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <title>mote fleet</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
@@ -25,12 +33,12 @@
     </header>
 
     <main>
-      <section class="pane roster-pane">
+      <section class="pane roster-pane active" data-pane="roster">
         <h2>roster</h2>
         <div id="roster" class="roster"></div>
       </section>
 
-      <section class="pane map-pane">
+      <section class="pane map-pane" data-pane="map">
         <div class="pane-head">
           <h2>map</h2>
           <span id="map-label" class="dim">—</span>
@@ -48,7 +56,7 @@
         <p id="promote-note" class="note"></p>
       </section>
 
-      <section class="pane detail-pane">
+      <section class="pane detail-pane" data-pane="detail">
         <div class="pane-head">
           <h2 id="detail-name">no robot selected</h2>
           <!-- Foxglove owns the single-robot deep view: 3D, sensors, teleop.
@@ -74,11 +82,19 @@
 
         <h3>dispatch</h3>
         <form id="dispatch" class="dispatch" hidden>
+          <!-- The grammar is still the robot's, parsed only by its task layer.
+               This picker types for you — it writes `goto <zone>` into the same
+               box — because on a touchscreen the cost of a command is the
+               keyboard, and the zone names are already on screen. -->
+          <select id="zone" class="zone-picker" title="taught zones on this floor" hidden>
+            <option value="">go to a taught zone…</option>
+          </select>
           <input
             id="command"
             type="text"
             placeholder="goto kitchen — or: fetch red_box dropoff"
             autocomplete="off"
+            autocapitalize="off"
             spellcheck="false"
           />
           <button type="submit">send</button>
@@ -89,6 +105,19 @@
         <div id="status-log" class="status-log"></div>
       </section>
     </main>
+
+    <!-- Only on a viewport too narrow for three panes (style.css). At the
+         bottom because the operator asking "where is it" is holding the phone
+         in one hand. -->
+    <nav class="panes" role="tablist" aria-label="view">
+      <button type="button" data-pane="roster" role="tab" aria-selected="true" class="active">
+        roster
+      </button>
+      <button type="button" data-pane="map" role="tab" aria-selected="false">map</button>
+      <button type="button" id="tab-detail" data-pane="detail" role="tab" aria-selected="false">
+        robot
+      </button>
+    </nav>
 
     <script type="module" src="/app.mjs"></script>
   </body>

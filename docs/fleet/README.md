@@ -643,8 +643,9 @@ broker credential that can publish**, and its MQTT client implements no PUBLISH
 packet at all.
 
 **The map.** A floor's PNG basemap with live robot markers on it: pan by
-dragging, zoom with the wheel, click a robot to select it, `follow` to keep the
-selected one centred, `fit` to see the whole floor. The scale bar is metres.
+dragging, zoom with the wheel or by pinching, click a robot to select it,
+`follow` to keep the selected one centred, `fit` to see the whole floor. The
+scale bar is metres.
 Only robots on the *same* site and floor as the selected one are drawn — a pose
 from another floor is a different map frame, and drawing it here would place a
 robot somewhere it is not.
@@ -663,6 +664,32 @@ canonical revision, in that revision's map frame.
 Beside the map's floor label is the **canonical revision** it is showing, and,
 when a robot has published one, a picker to promote a candidate onto the floor
 (§11). Both need the operator token; without one the pane is read-only.
+
+![The dashboard on a phone](../images/fleet-ui-phone.webp)
+
+**On a phone.** The realistic off-LAN client is a phone — it is what an operator
+has in a corridor, and "where is the robot and what is it doing" is exactly the
+question you ask from one. Below 760 px the three panes become **one at a time**
+behind a tab bar at the bottom of the screen, within thumb reach, so the map
+gets the whole display instead of a couple of hundred pixels between the roster
+and the detail pane. Two things follow from losing the side-by-side view:
+
+- **Picking a robot in the roster takes you to the map.** On a desk that
+  happens for free, both panes being visible; on a phone it has to be done.
+  The third tab is labelled with the selected robot's id, so the selection is
+  legible without switching to it.
+- **Pinch to zoom**, since there is no wheel. One finger pans, two zoom about
+  the point between them, and a two-finger drag carries the map along. Robot
+  markers get a larger hit target when the pointer is a fingertip rather than
+  a cursor.
+
+**Dispatch has a zone picker** beside the command box, listing the taught zones
+of the floor on screen. It *writes* `goto <zone>` into the box rather than
+sending it — the grammar is still the robot's, parsed only by its task layer —
+which on a touchscreen removes the keyboard from the common case without adding
+a second command language for the fleet server to keep in step.
+
+Between 760 and 1100 px the panes stack and scroll, as before.
 
 **What it does not do**, deliberately: no marker clustering, no basemap tiling,
 no 3D, no camera, no teleop. The first two are what `fleet.md` Q5 describes for
