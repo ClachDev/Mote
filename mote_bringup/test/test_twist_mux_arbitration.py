@@ -34,6 +34,8 @@ import time
 import pytest
 import yaml
 
+from mote_bringup.sweep_orphans import reap_group, spawn_reapable
+
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CONFIG = REPO / "mote_bringup" / "config" / "twist_mux.yaml"
 CONTROLLERS = REPO / "mote_bringup" / "config" / "controllers.yaml"
@@ -141,7 +143,9 @@ def mux():
     # is the one a robot on the bench drives on.
     os.environ["ROS_DOMAIN_ID"] = str(random.randint(80, 160))
 
-    proc = subprocess.Popen(
+    # spawn_reapable, not Popen: `ros2 run` forwards no signal to the node it
+    # spawned, so terminating the wrapper alone leaks a twist_mux per run.
+    proc = spawn_reapable(
         [
             "ros2",
             "run",
@@ -174,15 +178,14 @@ def mux():
         time.sleep(0.1)
     node.drive_nav(False)
     if not node.out:
-        proc.terminate()
+        reap_group(proc)
         executor.shutdown()
         rclpy.try_shutdown()
         pytest.fail("no message reached the drive topic within 30 s")
 
     yield node
 
-    proc.terminate()
-    proc.wait(timeout=10)
+    reap_group(proc)
     executor.shutdown()
     node.destroy_node()
     rclpy.try_shutdown()

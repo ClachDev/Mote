@@ -31,6 +31,8 @@ import time
 
 import pytest
 
+from mote_bringup.sweep_orphans import reap_group, spawn_reapable
+
 try:
     import websockets
 except ImportError:  # the robot environment carries no WebSocket client
@@ -98,8 +100,10 @@ def teleop_stack():
     os.environ["ROS_DOMAIN_ID"] = str(random.randint(80, 160))
     port = _free_port()
 
+    # spawn_reapable, not Popen: `ros2 run` forwards no signal to the node it
+    # spawned, so terminating the wrapper alone leaks the bridge and the relay.
     procs = [
-        subprocess.Popen(
+        spawn_reapable(
             [
                 "ros2",
                 "run",
@@ -114,7 +118,7 @@ def teleop_stack():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
         ),
-        subprocess.Popen(
+        spawn_reapable(
             [
                 "ros2",
                 "run",
@@ -139,7 +143,7 @@ def teleop_stack():
         time.sleep(0.5)
     else:
         for p in procs:
-            p.kill()
+            reap_group(p)
         pytest.fail("foxglove_bridge never opened its port")
     time.sleep(3)  # let the relay finish discovery
 
@@ -161,11 +165,7 @@ def teleop_stack():
         sink.destroy_node()
         rclpy.try_shutdown()
         for p in procs:
-            p.terminate()
-            try:
-                p.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                p.kill()
+            reap_group(p)
 
 
 async def _drive(port: int, schema_name: str, count: int = 20) -> None:

@@ -57,7 +57,15 @@ inference-deploy = "bash mote_perception/deploy/inference-deploy.sh"  # GPU box
 deploy-test = "bash mote_perception/deploy/test/drill.sh"  # blue/green drill, no GPU
 
 # Dev tasks
-kill = "pkill -9 -f 'robot_state_publisher|ros2_control_node|sllidar|v4l2_camera|spawner'; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
+# Matching is on each process' identity in /proc, not on its command line: the
+# `pkill -9 -f '<names>'` this replaces matched the shell running the task
+# itself (the names are in its own command line), SIGKILLed it, and so never
+# reached the daemon reset below -- and it matched every other checkout and
+# worktree on the box besides. See mote_bringup/sweep_orphans.py.
+kill = "PYTHONPATH=mote_bringup python -m mote_bringup.sweep_orphans --scope . --kill; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
+# Reap ROS processes left behind by agent worktrees whose job has ended. Reports
+# only; add --kill to act.
+sweep = "PYTHONPATH=mote_bringup python -m mote_bringup.sweep_orphans"
 # '.git' has no trailing slash on purpose: a submodule's .git is a *file*
 # holding a path into this checkout's .git/modules, and '.git/' (directory-only)
 # would ship it to the robot and break the robot's submodule refs.
