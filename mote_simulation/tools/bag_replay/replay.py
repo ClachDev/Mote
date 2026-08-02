@@ -18,6 +18,11 @@ per-replay ROS work lives in ``replayer.py`` (fresh rclpy context per set); the
 metric maths is the sim benchmark's ROS-free ``metrics`` module, reused not
 forked; rendering and the report are local siblings.
 
+``--lockstep`` swaps wall-clock pacing for the estimator's own consumption rate,
+turning tens of minutes per set into a couple — the mechanism is ``replayer.py``
+and ``acceptance.py``. ``--validate`` is the standing proof that it changes
+nothing: it replays one set both ways and diffs the two results.
+
 The stack is launched from ``replay_stack_launch.py`` (env packages only), so the
 harness runs against a bag without the workspace being built.
 """
@@ -56,6 +61,12 @@ KILL_NAMES = (
     "kinematic_icp_online_node",
     "lifecycle_manager",
 )
+
+# --validate's bar for "the same map". Not 100%: the solver is not bit-identical
+# run to run (the harness has always said so), so a handful of cells on a wall's
+# edge can flip between two runs of the *same* configuration. A feed that changed
+# the graph does not land near this — the failure it exists to catch scored 63%.
+CELL_AGREEMENT_MIN = 0.99
 
 
 def log(msg):
@@ -141,8 +152,12 @@ def score(series_path, map_npz):
     traj = series.get("traj", [])
     out = {
         "n_scans": series.get("n_scans", 0),
+        "n_inserted": series.get("n_inserted", 0),
         "traj_samples": len(traj),
         "loop": metrics.loop_drift(traj),
+        "feed": series.get("feed", "paced"),
+        "traj_source": series.get("traj_source", "tf"),
+        "wall_s": series.get("wall_s"),
     }
     if map_npz and Path(map_npz).exists():
         import numpy as np
@@ -152,31 +167,62 @@ def score(series_path, map_npz):
     return out, traj
 
 
-def fast_args(params_file, mode):
-    """Fast-mode gate thresholds: slam's own travel gates x 0.3, so borderline
-    scans are still fed and slam itself keeps the final say. Over-feeding is
-    free (slam discards); under-feeding would silently change the graph.
+def compare_legs(reference, candidate):
+    """Diff two replays of one parameter set: did the faster feed change the map?
 
-    EXPERIMENTAL — fidelity NOT yet validated (task #295). The first cut used
-    a 0.7 margin and produced a *silently different graph* (63% cell agreement
-    vs the paced reference, different dimensions, zero queue-full drops): the
-    gate anchor chained on fed scans while slam chains on accepted ones, so
-    feed spacing quantized slam's node spacing. 0.3 shrinks that quantization
-    but has not been proven equivalent — do not trust --fast results for
-    decisions until a paced-reference comparison passes."""
-    gd = gy = 0.3
-    if mode == "slam":
-        import yaml
+    Four things, in the order they stop being subtle. **Pose-graph node count**
+    is exact and comes from the node itself — every insertion publishes its
+    corrected pose, so counting ``/pose`` counts graph vertices — and it is the
+    first thing a mis-predicted acceptance chain would move. **The set of scans
+    inserted** catches the same count made of different scans, which the count
+    alone cannot; each ``/pose`` carries the stamp of the scan that produced it.
+    **Map dimensions** catch a graph the same size but laid out differently, and
+    also a grid captured before the run finished. **Cell agreement** is the actual
+    picture: identical geometry with different occupancy is a differently-solved
+    graph, and this is where the first attempt at a faster feed failed (63%).
+    """
+    out = {
+        "n_inserted": [reference["n_inserted"], candidate["n_inserted"]],
+        "wall_s": [reference.get("wall_s"), candidate.get("wall_s")],
+    }
+    ref_stamps = set(reference.get("inserted_stamps") or ())
+    cand_stamps = set(candidate.get("inserted_stamps") or ())
+    checks = {
+        "node_count": reference["n_inserted"] == candidate["n_inserted"],
+        # Same count, different scans, is a real and otherwise invisible failure.
+        "inserted_scans": bool(ref_stamps) and ref_stamps == cand_stamps,
+    }
+    out["inserted_only_in"] = [
+        sorted(ref_stamps - cand_stamps)[:10],
+        sorted(cand_stamps - ref_stamps)[:10],
+    ]
 
-        p = yaml.safe_load(Path(params_file).read_text()) or {}
-        rp = p.get("slam_toolbox", {}).get("ros__parameters", {})
-        gd = float(rp.get("minimum_travel_distance", 0.3))
-        gy = float(rp.get("minimum_travel_heading", 0.3))
-    return ["--fast", "--gate-dist", str(0.3 * gd), "--gate-yaw", str(0.3 * gy)]
+    ref_map, cand_map = reference.get("map"), candidate.get("map")
+    out["map"] = [ref_map, cand_map]
+    # Reported, not asserted on: a leg that captured a grid built before its last
+    # scan fails the dimension check anyway, but naming it saves the diagnosis.
+    out["map_final"] = [reference.get("map_final"), candidate.get("map_final")]
+    checks["map_dimensions"] = bool(ref_map) and ref_map == cand_map
+
+    agreement = None
+    if checks["map_dimensions"]:
+        import numpy as np
+
+        a = np.load(reference["map_npz"])["grid"]
+        b = np.load(candidate["map_npz"])["grid"]
+        agreement = float(np.mean(a == b)) if a.shape == b.shape else 0.0
+    out["cell_agreement"] = agreement
+    checks["cell_agreement"] = agreement is not None and agreement >= CELL_AGREEMENT_MIN
+
+    out["checks"] = checks
+    out["pass"] = all(checks.values())
+    return out
 
 
-def run_one(bag, params_file, name, mode, run_dir, args):
+def run_one(bag, params_file, name, mode, run_dir, args, lockstep=None):
     """Launch the stack for one parameter set, replay the bag, score, render."""
+    if lockstep is None:
+        lockstep = args.lockstep
     set_dir = run_dir / name
     set_dir.mkdir(parents=True, exist_ok=True)
     env = isolated_env()
@@ -234,7 +280,11 @@ def run_one(bag, params_file, name, mode, run_dir, args):
                 "--stop-secs",
                 str(args.stop_secs),
                 *(["--frame", *(str(v) for v in args.frame)] if args.frame else []),
-                *(fast_args(params_file, mode) if args.fast else []),
+                *(
+                    ["--lockstep", "--slam-params", str(params_file)]
+                    if lockstep
+                    else []
+                ),
             ],
             env=env,
             timeout=args.replay_timeout,
@@ -242,18 +292,6 @@ def run_one(bag, params_file, name, mode, run_dir, args):
         if rp.returncode != 0:
             log(f"[{name}] FAIL: replayer exited {rp.returncode}")
             return None
-        if args.fast:
-            drops = (
-                stack_log.read_text(errors="ignore").count("queue is full")
-                if stack_log.exists()
-                else 0
-            )
-            if drops:
-                log(
-                    f"[{name}] WARNING: {drops} queue-full drops under --fast — "
-                    "result may be DEGRADED; rerun this set without --fast"
-                )
-                (set_dir / "DEGRADED.txt").write_text(f"{drops} drops\n")
     except subprocess.TimeoutExpired:
         log(f"[{name}] FAIL: replay exceeded wall-clock timeout")
         return None
@@ -268,13 +306,67 @@ def run_one(bag, params_file, name, mode, run_dir, args):
         rel = f"{name}/map.png"
         render.render_map(map_npz, run_dir / rel, traj=traj)
         map_png = rel
+    series = json.loads((set_dir / "series.json").read_text())
     return {
         "name": name,
         "params_file": str(params_file) if mode == "slam" else None,
         "metrics": m,
         "map_png": map_png,
         "series_json": str((set_dir / "series.json").relative_to(run_dir)),
+        "n_inserted": series.get("n_inserted", 0),
+        "inserted_stamps": series.get("inserted_stamps"),
+        "map_final": series.get("map_final"),
+        "wall_s": series.get("wall_s"),
+        "map": series.get("map"),
+        "map_npz": str(map_npz) if map_npz.exists() else None,
     }
+
+
+def validate(bag, param_set, run_dir, provenance, args):
+    """Replay one parameter set paced and in lockstep, and prove they agree.
+
+    A committed harness mode rather than a one-off, because what it is checking
+    is not the code but a *transcription*: ``acceptance.py`` restates gate logic
+    that lives in someone else's C++, so an upstream release, or a parameter file
+    reaching a gate the simulator does not model, can invalidate it silently.
+    Rerun this whenever either moves.
+
+    The reference goes first, so a failure of the ordinary paced path is not
+    reported as a lockstep failure.
+    """
+    name, params_file = param_set
+    log(f"=== validating {name}: paced reference, then lockstep ===")
+    ref = run_one(
+        bag, params_file, f"{name}-paced", "slam", run_dir, args, lockstep=False
+    )
+    if ref is None:
+        log("FAIL: the paced reference did not complete")
+        return 1
+    cand = run_one(
+        bag, params_file, f"{name}-lockstep", "slam", run_dir, args, lockstep=True
+    )
+    if cand is None:
+        log("FAIL: the lockstep leg did not complete")
+        return 1
+
+    result = compare_legs(ref, cand)
+    result["provenance"] = provenance
+    result["params_file"] = str(params_file)
+    (run_dir / "validate.json").write_text(json.dumps(result, indent=2))
+
+    ref_w, cand_w = result["wall_s"]
+    log(f"pose-graph nodes: paced {ref['n_inserted']} vs lockstep {cand['n_inserted']}")
+    log(f"map: paced {ref['map']} vs lockstep {cand['map']}")
+    ag = result["cell_agreement"]
+    log(f"cell agreement: {'n/a' if ag is None else f'{ag * 100:.3f}%'}")
+    if ref_w and cand_w:
+        log(
+            f"wall: paced {ref_w:.0f}s vs lockstep {cand_w:.0f}s ({ref_w / cand_w:.1f}x)"
+        )
+    for check, ok in result["checks"].items():
+        log(f"  {'PASS' if ok else 'FAIL'}  {check}")
+    log(f"wrote {run_dir / 'validate.json'}")
+    return 0 if result["pass"] else 1
 
 
 def main():
@@ -305,22 +397,31 @@ def main():
         help="SE2 applied to the odometry prior (birth-align the map frame)",
     )
     ap.add_argument(
-        "--fast",
+        "--lockstep",
         action="store_true",
-        help="EXPERIMENTAL, fidelity unvalidated (#295) — compute-bound "
-        "replay (pre-gated scans, no wall pacing). Known failure mode: gate "
-        "chaining quantizes slam's node spacing and silently changes the "
-        "graph; the queue-drop check does NOT catch it. Validate against a "
-        "paced reference before trusting any --fast result.",
+        help="compute-bound replay (slam mode): feed only the scans "
+        "slam_toolbox's gates would keep and wait for each insertion to be "
+        "acknowledged, instead of pacing against the wall clock. Minutes "
+        "instead of tens of minutes per set; prove it with --validate.",
+    )
+    ap.add_argument(
+        "--validate",
+        action="store_true",
+        help="replay one parameter set twice — paced reference, then lockstep — "
+        "and diff pose-graph node count, map dimensions and occupancy cell "
+        "agreement. Writes validate.json and exits non-zero on a mismatch.",
     )
     ap.add_argument("--out", default=str(REPO / "bag_replay_results"))
     ap.add_argument("--boot-timeout", type=float, default=120.0)
-    ap.add_argument("--replay-timeout", type=float, default=3600.0)
+    ap.add_argument("--replay-timeout", type=float, default=7200.0)
     args = ap.parse_args()
 
     bag = Path(args.bag).expanduser()
     if not bag.exists():
         sys.exit(f"bag not found: {bag}")
+
+    if args.validate and args.mode != "slam":
+        sys.exit("--validate is slam mode only (lockstep has no icp counterpart)")
 
     if args.mode == "slam":
         param_files = [Path(p).expanduser() for p in args.params] or [
@@ -354,7 +455,11 @@ def main():
         "bag": str(bag),
         "mode": args.mode,
         "rate": args.rate,
+        "feed": "lockstep" if args.lockstep and not args.validate else "paced",
     }
+
+    if args.validate:
+        return validate(bag, sets[0], run_dir, provenance, args)
 
     results = []
     for name, pf in sets:
