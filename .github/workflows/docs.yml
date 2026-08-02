@@ -13,7 +13,10 @@ permissions:
 
 concurrency:
   group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  # A superseded PR build is worth cancelling; a run on main is not, because
+  # the group covers the deploy job too and cancelling that kills a publish
+  # half-done. GitHub's own Pages workflow never cancels for the same reason.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:

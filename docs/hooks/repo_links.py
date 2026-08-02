@@ -152,6 +152,11 @@ def on_config(config):
 
 
 def on_files(files, config):
+    # Per build, not per process: mkdocs caches the hook module, so under
+    # `mkdocs serve` this survives every rebuild, and a figure edited out or
+    # renamed mid-session would be read from its old path and raise.
+    _figures.clear()
+
     for page, source in MOUNTS.items():
         markdown = (ROOT / source).read_text(encoding="utf-8")
         files.append(
