@@ -7,24 +7,53 @@
 // in CI; what only a browser can answer is whether the page actually connects
 // to the broker over WebSockets, draws the basemap, and dispatches.
 //
+// `pixi run fleet-ui-check` builds that stack around this file — a broker, a
+// server, a basemap and a fake fleet on ports nobody else is using — and is how
+// to run these checks without one. Point it at a stack of your own with:
+//
 //     node mote_fleet/test/browser_check.mjs http://localhost:8080 [token] [out.png]
 //
 // It speaks the Chrome DevTools Protocol over node's built-in WebSocket, so it
 // needs no npm install: only a chrome/chromium on PATH.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, mkdtempSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const url = process.argv[2] || 'http://localhost:8080';
 const token = process.argv[3] || '';
 const shot = process.argv[4] || 'fleet-ui.png';
+
+function onPath(name) {
+  return (process.env.PATH || '').split(':').some((dir) => {
+    try {
+      accessSync(join(dir, name), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 const CHROME =
   process.env.CHROME ||
-  ['google-chrome', 'chromium', 'chromium-browser'].find(Boolean);
+  ['google-chrome', 'chromium', 'chromium-browser'].find(onPath) ||
+  'google-chrome';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// An ephemeral debugging port, so two of these can run at once — a fixed one
+// makes a second run attach to the first run's browser.
+const freePort = () =>
+  new Promise((resolve) => {
+    const server = createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
 
 async function devtools(port) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -81,10 +110,28 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  — ${detail}` : ''}`);
 }
 
+// Every assertion below is about something that arrives — a WebSocket
+// handshake, a retained message, a basemap decode, a robot's reply — so each
+// one polls to a deadline instead of sleeping a guessed interval. A fixed
+// sleep is either longer than it needs to be or, on a loaded machine, a red
+// result about code that is fine; that difference is what decides whether this
+// could ever be a gate rather than an operator's tool.
+const DEADLINE_MS = 20000;
+
+async function settle(session, expression, satisfied, timeout = DEADLINE_MS) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const value = await session.evaluate(expression);
+    if (satisfied(value) || Date.now() > deadline) return value;
+    await sleep(150);
+  }
+}
+
 const profile = mkdtempSync(join(tmpdir(), 'mote-ui-'));
+const debugPort = await freePort();
 const chrome = spawn(CHROME, [
   '--headless=new',
-  '--remote-debugging-port=9333',
+  `--remote-debugging-port=${debugPort}`,
   `--user-data-dir=${profile}`,
   '--window-size=1600,900',
   '--no-first-run',
@@ -97,7 +144,7 @@ chrome.on('error', (error) => {
 });
 
 try {
-  const socket = new WebSocket(await devtools(9333));
+  const socket = new WebSocket(await devtools(debugPort));
   await new Promise((resolve) => socket.addEventListener('open', resolve));
   const session = new Session(socket);
   await session.send('Runtime.enable');
@@ -106,64 +153,86 @@ try {
 
   if (token) {
     await session.send('Page.navigate', { url });
-    await sleep(1000);
+    await settle(session, `!!document.getElementById('broker-state')`, (up) => up);
     await session.evaluate(`localStorage.setItem('mote.operator.token', '${token}')`);
   }
   await session.send('Page.navigate', { url });
-  // Long enough for the config fetch, the WebSocket handshake, the retained
-  // messages and the basemap decode.
-  await sleep(4000);
 
+  const broker = await settle(
+    session,
+    `(document.getElementById('broker-state') || {}).className || ''`,
+    (className) => className.includes('connected'),
+  );
   check(
     'the browser connected to the broker over WebSockets',
-    (await session.evaluate(`document.getElementById('broker-state').className`)).includes(
-      'connected',
+    broker.includes('connected'),
+    await session.evaluate(
+      `(document.getElementById('broker-state') || {}).textContent || 'no page'`,
     ),
-    await session.evaluate(`document.getElementById('broker-state').textContent`),
   );
 
-  const roster = await session.evaluate(
+  const roster = await settle(
+    session,
     `[...document.querySelectorAll('.robot-id')].map(n => n.textContent).join(',')`,
+    (ids) => ids.includes('mote-01'),
   );
   check('the roster came from retained MQTT state', roster.includes('mote-01'), roster);
 
-  const health = await session.evaluate(
+  const health = await settle(
+    session,
     `[...document.querySelectorAll('.robot-state')].map(n => n.textContent).join(',')`,
+    (states) => /ok|degraded|fault/.test(states),
   );
   check('health states are rendered', /ok|degraded|fault/.test(health), health);
 
-  const mapLabel = await session.evaluate(
+  const mapLabel = await settle(
+    session,
     `document.getElementById('map-label').textContent`,
+    (label) => label.includes('/'),
   );
   check('a basemap was resolved for the selected robot', mapLabel.includes('/'), mapLabel);
 
-  const drawn = await session.evaluate(`(() => {
-    const canvas = document.getElementById('map-canvas');
-    const ctx = canvas.getContext('2d');
-    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    let painted = 0;
-    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted += 1;
-    return painted;
-  })()`);
+  const drawn = await settle(
+    session,
+    `(() => {
+      const canvas = document.getElementById('map-canvas');
+      const ctx = canvas.getContext('2d');
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let painted = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted += 1;
+      return painted;
+    })()`,
+    (painted) => painted > 10000,
+  );
   check('the map canvas has pixels on it', drawn > 10000, `${drawn} painted pixels`);
 
-  const subsystems = await session.evaluate(
+  const subsystems = await settle(
+    session,
     `document.querySelectorAll('#subsystems .subsystem').length`,
+    (rows) => rows > 0,
   );
   check('the health roll-up lists subsystems', subsystems > 0, `${subsystems} rows`);
 
   if (token) {
-    const dispatched = await session.evaluate(`(async () => {
+    await session.evaluate(`(() => {
       document.getElementById('command').value = 'goto dropoff';
       document.getElementById('dispatch').requestSubmit();
-      await new Promise(r => setTimeout(r, 1500));
-      return document.getElementById('dispatch-note').textContent;
     })()`);
+    const dispatched = await settle(
+      session,
+      `document.getElementById('dispatch-note').textContent`,
+      (note) => note.startsWith('dispatched'),
+    );
     check('dispatch went through the fleet API', dispatched.startsWith('dispatched'), dispatched);
 
-    await sleep(2500);
-    const statuses = await session.evaluate(
+    const statuses = await settle(
+      session,
       `[...document.querySelectorAll('#status-log .status-state')].map(n => n.textContent).join(',')`,
+      (states) => /succeeded|failed|rejected/.test(states),
+      // The assertion is `accepted`; this shorter deadline only buys the rest
+      // of the lifecycle when it is cheap (a fake robot's task takes seconds).
+      // A real robot's goto takes minutes and must not hold the run open.
+      5000,
     );
     check('the robot answered on task/status', statuses.includes('accepted'), statuses);
   }
@@ -190,7 +259,14 @@ try {
     maxTouchPoints: 5,
   });
   await session.send('Page.navigate', { url });
-  await sleep(4000);
+  // The phone checks click through the tab bar and select a robot, so the
+  // reload has to have got as far as a populated roster — waited for, not
+  // slept through, for the reason `settle` exists.
+  await settle(
+    session,
+    `document.querySelectorAll('.robot').length`,
+    (rows) => rows > 0,
+  );
 
   check(
     'a coarse pointer is what the page thinks it has',
@@ -252,20 +328,19 @@ try {
     const r = document.getElementById('map-canvas').getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   })()`);
-  const paint = () =>
-    session.evaluate(`(() => {
+  const paintHash = `(() => {
       const c = document.getElementById('map-canvas');
       const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
       let h = 0;
       for (let i = 0; i < d.length; i += 997) h = (h * 31 + d[i]) >>> 0;
       return h;
-    })()`);
+    })()`;
   const touch = (type, points) =>
     session.send('Input.dispatchTouchEvent', {
       type,
       touchPoints: points.map(([x, y], id) => ({ x, y, id })),
     });
-  const before = await paint();
+  const before = await session.evaluate(paintHash);
   await touch('touchStart', [
     [canvas.x - 40, canvas.y],
     [canvas.x + 40, canvas.y],
@@ -279,8 +354,9 @@ try {
     [canvas.x + 160, canvas.y],
   ]);
   await touch('touchEnd', []);
-  await sleep(400);
-  check('two fingers zoom the map', (await paint()) !== before);
+  // The redraw is a frame away, not a fixed interval away.
+  const after = await settle(session, paintHash, (hash) => hash !== before, 3000);
+  check('two fingers zoom the map', after !== before);
 
   const phoneShot = shot.replace(/(\.png)?$/, '-phone.png');
   const phonePng = await session.send('Page.captureScreenshot', { format: 'png' });

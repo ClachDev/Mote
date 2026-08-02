@@ -48,6 +48,13 @@ fleetctl = "python -u mote_fleet/server/fleetctl.py"          # operator CLI
 # `pixi run <task>` ambiguous. The no-docker fallback is `fleet-broker-local`,
 # below, which does need the environment: it runs conda's binary.
 fleet-broker = "bash mote_fleet/server/broker.sh"
+# The dashboard, checked in a real browser against a fake fleet: broker, server,
+# basemap, wire-only robots and the browser assertions, on ports of their own,
+# torn down afterwards (docs/fleet/m3-verification.md §2). Needs docker and a
+# chrome, so it lives here for the same reason `fleet-broker` does — a
+# dependency on the machine, not on an environment. `-- --keep` leaves the stack
+# up instead, which is the loop for working on server/ui/.
+fleet-ui-check = "python -u mote_fleet/test/ui_check.py"
 
 # Server pipelines (docs/fleet/server-pipelines.md). The deployed servers need
 # docker and nothing else — these tasks are the convenience of running the same
