@@ -594,3 +594,51 @@ main {
 .subsystems.stale .dot {
   background: var(--offline);
 }
+
+/* -- zone editor ---------------------------------------------------------- */
+
+/* A class that sets display defeats the hidden attribute (the M3 promote-
+   picker lesson), so the guard is explicit. */
+.zone-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.zone-editor[hidden] {
+  display: none;
+}
+
+.zone-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.zone-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.zone-row.selected {
+  outline: 1px solid var(--accent);
+}
+
+.zone-row input {
+  font: 12px ui-monospace, monospace;
+  min-width: 0;
+}
+
+.zone-actions {
+  display: flex;
+  gap: 6px;
+}

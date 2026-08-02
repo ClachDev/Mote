@@ -119,6 +119,9 @@ export class MapView {
     this.view = { scale: 1, tx: 0, ty: 0 };
     this.followId = null;
     this.selectedId = null;
+    // A caller-supplied pass drawn over everything (the zone editor's
+    // handles); null means no overlay and costs nothing.
+    this.overlay = null;
     this._drag = null;
     this._pointers = new Map();
     this._pinch = null;
@@ -375,6 +378,7 @@ export class MapView {
       this._drawRobot(ctx, robot);
     }
     this._drawScaleBar(ctx, height);
+    if (this.overlay) this.overlay(ctx);
   }
 
   _drawZone(ctx, zone) {

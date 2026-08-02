@@ -51,9 +51,21 @@
           </form>
           <label class="check"><input type="checkbox" id="follow" /> follow</label>
           <button id="fit" type="button">fit</button>
+          <button id="zones-edit" type="button">edit zones</button>
         </div>
         <canvas id="map-canvas"></canvas>
         <p id="promote-note" class="note"></p>
+        <!-- Zone edits never touch the canonical revision: saving derives a
+             new candidate (same map, new zones) for the picker to promote. -->
+        <div id="zone-editor" class="zone-editor" hidden>
+          <div id="zone-rows" class="zone-rows"></div>
+          <div class="zone-actions">
+            <button id="zone-add" type="button">add zone</button>
+            <button id="zone-save" type="button">save as candidate</button>
+            <button id="zone-cancel" type="button">cancel</button>
+          </div>
+          <p id="zone-note" class="note"></p>
+        </div>
       </section>
 
       <section class="pane detail-pane" data-pane="detail">

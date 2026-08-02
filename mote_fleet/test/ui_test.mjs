@@ -268,3 +268,89 @@ test('the map canvas takes its own touch gestures', () => {
   const canvas = css.slice(css.indexOf('#map-canvas {'));
   assert.match(canvas.slice(0, canvas.indexOf('}')), /touch-action:\s*none/);
 });
+
+// -- the zone editor ------------------------------------------------------
+//
+// Every edit operation is a pure function over zones in world metres, so the
+// editor's geometry is tested here with no canvas: the browser only adds
+// pointer events on top of exactly these.
+
+const { pointInPolygon, nearestVertex, nearestEdge, withVertex, withInsertedVertex, withoutVertex, translated, withPose, freshZone, zonesPayload, NAME_RE } = await import(
+  '../server/ui/zone_editor.mjs'
+);
+
+const square = {
+  name: 'kitchen',
+  x: 1,
+  y: 1,
+  polygon: [
+    [0, 0],
+    [2, 0],
+    [2, 2],
+    [0, 2],
+  ],
+};
+
+test('pointInPolygon handles a concave outline (the hallway shape)', () => {
+  const ell = [
+    [0, 0],
+    [3, 0],
+    [3, 1],
+    [1, 1],
+    [1, 3],
+    [0, 3],
+  ];
+  assert.ok(pointInPolygon(ell, 0.5, 2.5)); // in the upright of the L
+  assert.ok(pointInPolygon(ell, 2.5, 0.5)); // in the foot
+  assert.ok(!pointInPolygon(ell, 2.5, 2.5)); // in the notch: outside
+});
+
+test('vertex and edge hit-tests find the nearest, with distances', () => {
+  assert.deepEqual(nearestVertex(square, 0.1, -0.1), { index: 0, distance: Math.hypot(0.1, 0.1) });
+  const edge = nearestEdge(square, 1, -0.2);
+  assert.equal(edge.index, 0); // the bottom edge, which starts at vertex 0
+  assert.ok(Math.abs(edge.distance - 0.2) < 1e-9);
+});
+
+test('vertex edits replace, insert after the edge start, and refuse a triangle collapse', () => {
+  assert.deepEqual(withVertex(square, 0, -1, -1).polygon[0], [-1, -1]);
+  const grown = withInsertedVertex(square, 0, 1, -0.5);
+  assert.deepEqual(grown.polygon[1], [1, -0.5]);
+  assert.equal(grown.polygon.length, 5);
+  const triangle = { ...square, polygon: square.polygon.slice(0, 3) };
+  assert.equal(withoutVertex(triangle, 0), null);
+});
+
+test('moving a zone carries footprint and pose together', () => {
+  const moved = translated(square, 1, -1);
+  assert.deepEqual(moved.polygon[0], [1, -1]);
+  assert.equal(moved.x, 2);
+  assert.equal(moved.y, 0);
+  assert.deepEqual(withPose(square, 5, 5), { ...square, x: 5, y: 5 });
+});
+
+test('a fresh zone gets the first free generated name and a real footprint', () => {
+  const zone = freshZone([{ name: 'zone_01' }, { name: 'zone_02' }], 0, 0);
+  assert.equal(zone.name, 'zone_03');
+  assert.ok(NAME_RE.test(zone.name));
+  assert.equal(zone.polygon.length, 4);
+  assert.ok(pointInPolygon(zone.polygon, zone.x, zone.y));
+});
+
+test('the wire payload keys by name and never echoes it inside the entry', () => {
+  const payload = zonesPayload([{ ...square, display_name: '' }]);
+  assert.deepEqual(Object.keys(payload), ['kitchen']);
+  assert.ok(!('name' in payload.kitchen));
+  assert.ok(!('display_name' in payload.kitchen)); // empty strings are dropped
+});
+
+test('the zone editor panel hides when hidden, whatever its class sets', () => {
+  // The M3 promote-picker lesson: `hidden` does not hide an element whose
+  // class sets `display`, so the stylesheet must say so explicitly.
+  const css = read('style.css');
+  assert.match(css, /\.zone-editor\[hidden\]\s*\{\s*display:\s*none/);
+  const html = read('index.html');
+  for (const id of ['zone-editor', 'zone-rows', 'zone-add', 'zone-save', 'zone-cancel', 'zones-edit']) {
+    assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
+  }
+});
