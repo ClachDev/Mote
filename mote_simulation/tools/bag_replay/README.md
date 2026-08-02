@@ -107,6 +107,14 @@ identical odometry.
   The same module exposes `wall_rotation()` — windowed, folded 0/90, sub-bin
   interpolated — which is the canonical way to measure *how far* a map's wall
   grid is turned. Map alignment should call it rather than re-deriving the fold.
+  It is accurate to ~0.07° from 2° up and **under-reports below that** (a true
+  1.5° reads ~0.5°), because a barely-rotated line rasterises into runs that are
+  still spectrally axis-aligned — so it cannot measure a 1–2° residual shear.
+
+  Angles are reported as **wall orientations**. A wall's Fourier energy lies
+  perpendicular to it, so the raw spectrum peak is the wall *normal*; the
+  conversion happens at the reporting boundary, and the transform runs on a
+  square canvas because an oblong one skews every angle towards its long axis.
 
 ## Limitations
 
@@ -126,7 +134,7 @@ cannot prove versus the sim's ground truth:
   `angular_support_deg` to pick a winner: it is confounded by coverage, since a
   map that explored less has fewer long walls and reads as tighter. On the
   2026-07-29 run-3 pair the leg that is clearly better by loop drift (0.551 m vs
-  8.776 m) scores *worse* on it (43.0 vs 37.7), having covered 59 m² against
+  8.776 m) scores *worse* on it (42.2 vs 39.3), having covered 59 m² against
   81 m². Read it beside `explored_area_m2`, or not at all.
 - **A multi-angle building is not a defect.** A flat with an angled hallway
   genuinely has three dominant wall directions and always will. Nothing here
@@ -135,7 +143,7 @@ cannot prove versus the sim's ground truth:
   exceed the shear a genuine frame carries (the run-3 conservative leg's own
   frame is internally sheared 7.5°) or honest shear would be reported as a tear.
   It is trustworthy for the tears it is relied on for (≥~20°; run 3's real pair
-  were 22.5° and 41° apart, and the synthetic band 20–40° is pinned by tests),
+  were 25° and 41° apart, and the synthetic band 20–40° is pinned by tests),
   and a smaller rotation will show one frame, not two. Catching that needs a
   declared direction set for the site, which `angular_stats(...,
   reference_directions=...)` accepts and this report does not yet supply.

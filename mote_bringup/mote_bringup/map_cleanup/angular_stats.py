@@ -41,7 +41,7 @@ Two consumers, two entry points
 the trajectory closes, so a mapping session that exits on its exploration budget
 gives a scorer no drift number at all; for those the frame table is the only
 automated tear signal there is. It is trustworthy for the tears that matter
-(measured: run 3's two frames, 22.5 and 41 deg apart) and blind below roughly
+(measured: run 3's two frames, 25 and 41 deg apart) and blind below roughly
 its own merge tolerance — see :data:`FRAME_MERGE_DEG`.
 
 :func:`wall_rotation` is the **alignment primitive**: windowed energy, folded
@@ -71,6 +71,8 @@ __all__ = [
     "SpectrumParams",
     "angular_stats",
     "wall_rotation",
+    "spectral_to_wall",
+    "wall_to_spectral",
     "fold_90",
     "refine_peak",
     "_angular_energy",
@@ -131,11 +133,29 @@ STATS_MAX_DIRECTIONS = 12
 FRAME_MERGE_DEG = 10.0
 
 # Zero-padding added on each side before the Hann taper in `wall_rotation`, as a
-# fraction of the cropped extent. Measured on synthetic rotated room outlines
-# (mean / max rotation error over nine angles): 0.0 -> 0.68/1.24 deg,
-# 0.25 -> 0.32/1.05, 0.4 -> 0.17/0.56, 0.6 -> 0.14/0.26. Costs (1+2f)^2 in
-# transform area, so 0.5 buys most of the accuracy at 4x the pixels.
+# fraction of the (already squared) extent, so the taper's roll-off lands on
+# empty space instead of eating the walls. Measured on synthetic rotated room
+# outlines, mean / max error over six rotations of 3 deg and up:
+# 0.0 -> 0.215/1.062 deg, 0.25 -> 0.226/1.053, 0.5 -> 0.068/0.102. Costs
+# (1+2f)^2 in transform area.
 ROTATION_PAD_FRAC = 0.5
+
+# A wall's Fourier energy lies on the ridge *perpendicular* to it (a horizontal
+# line transforms to a vertical frequency ridge), so a peak in the angular
+# spectrum sits at the wall's normal, not its orientation. Everything internal
+# works in that spectral frame; angles are converted at the reporting boundary
+# so that a table labelled "wall directions" contains wall directions.
+WALL_NORMAL_OFFSET_DEG = 90.0
+
+
+def spectral_to_wall(angle_deg: float) -> float:
+    """Spectrum peak angle -> the orientation of the wall that produced it."""
+    return float((angle_deg + WALL_NORMAL_OFFSET_DEG) % 180.0)
+
+
+def wall_to_spectral(angle_deg: float) -> float:
+    """The inverse: a real wall orientation -> where its energy lands."""
+    return float((angle_deg - WALL_NORMAL_OFFSET_DEG) % 180.0)
 
 
 def _angular_energy(
@@ -145,9 +165,12 @@ def _angular_energy(
 
     Each spectrum pixel at (u, v) relative to the centre contributes to the
     orientation atan2(v, u) (mod 180, since the magnitude spectrum is
-    centro-symmetric). A wall oriented at angle a puts its energy on the line
-    through the origin at that same angle, so peaks in this histogram are the
-    map's dominant orientations.
+    centro-symmetric). A wall puts its energy on the line through the origin
+    *perpendicular* to itself -- a horizontal line transforms to a vertical
+    frequency ridge -- so a peak here is a wall **normal**. Callers reporting a
+    real angle must convert with :func:`spectral_to_wall`; callers that put
+    something back into this same index space (the declutter pass's wedges) must
+    not.
     """
     h, w = spectrum_lin.shape
     cy, cx = h / 2.0, w / 2.0
@@ -229,7 +252,41 @@ def _crop_to_content(wall: np.ndarray) -> np.ndarray:
         return wall
     r0, r1 = np.where(rows)[0][[0, -1]]
     c0, c1 = np.where(cols)[0][[0, -1]]
-    return wall[r0 : r1 + 1, c0 : c1 + 1]
+    return _pad_to_square(wall[r0 : r1 + 1, c0 : c1 + 1])
+
+
+def _pad_to_square(mask: np.ndarray) -> np.ndarray:
+    """Centre a mask in a square canvas before it is transformed.
+
+    **Load-bearing, and the failure it prevents is silent.** The angular scan
+    measures orientation in *array index* space, and a frequency-domain index
+    maps to a real frequency divided by that axis' length — so on an oblong
+    array the two axes carry different scales and every angle is skewed towards
+    the long one. A pair of walls that really are perpendicular then stops
+    looking perpendicular: at bbox aspect 0.8 a 45-deg-rotated orthogonal frame
+    splits by 12.7 deg, at 0.66 by 23.2 deg, at 0.5 by 36.9 deg — all past
+    :data:`FRAME_MERGE_DEG`, so :func:`_frames_table` reports two frames and an
+    intact building reads as torn.
+
+    Measured on an elongated but perfectly rectilinear building: rotated 10, 20
+    and 30 deg it reported 2 frames un-padded, and 1 padded. Note *which* maps
+    it spares — 0 and 90 deg are fixed points of the distortion, so an
+    axis-aligned map is unaffected and the bug only appears once the map frame
+    is rotated, which a real SLAM frame always is.
+
+    ``room_segmentation.py`` already does this, for this reason, having measured
+    an 8 deg skew on a 58 x 38 m map. The declutter pass genuinely does not need
+    it — it places its wedges back in the same index space it found them in —
+    but every angle *reported* from here is meant to be a real one.
+    """
+    h, w = mask.shape
+    if h == w:
+        return mask
+    side = max(h, w)
+    out = np.zeros((side, side), dtype=mask.dtype)
+    top, left = (side - h) // 2, (side - w) // 2
+    out[top : top + h, left : left + w] = mask
+    return out
 
 
 def _residual_spectrum(
@@ -320,21 +377,28 @@ def wall_rotation(
     magnitude rather than power, which is most likely why a hand-rolled fold
     that skipped those steps behaved differently. This is pinned by a test.
 
-    **The padding is not decoration.** Tapering a *tight* crop is worse than not
-    tapering at all — the roll-off cuts into the walls, and a rotated shape's
-    corners reach the crop edge — measured at 0.68 deg mean error against
-    0.39 deg untapered. Padded, it is 0.14 deg.
+    **The padding is not decoration.** Tapering a *tight* crop lets the
+    roll-off cut into the walls themselves, and a rotated shape's corners reach
+    the crop edge: 0.215 deg mean / 1.062 deg worst un-padded against
+    0.068/0.102 padded.
 
     Returns ``angle_deg`` (sub-bin refined, in [0, 90)), ``bin_angle_deg`` (the
     unrefined bin centre, for debugging), ``energy_frac`` (share of the folded
     residual within ``wedge_halfwidth_deg`` of the peak — low means there is no
     single dominant grid to align to) and ``windowed``.
 
-    Accuracy is limited by the map, not the bins: mean error over nine synthetic
-    rotations is 0.14 deg, worst 0.26 deg, the residual being the raster
-    staircase of a rotated line. Good enough to measure a wall grid's rotation
-    and to drive a re-solve; **not** good enough to certify a 1-2 deg shear as
-    absent.
+    **There is a hard floor at about 2 deg, and it under-reports below it.**
+    A wall line rotated by less than ~2 deg on a pixel grid rasterises into runs
+    long enough that its dominant spectral content is still axis-aligned, so the
+    peak is pulled onto the axis. Measured (true -> reported): -0.5 -> -0.13,
+    -1.0 -> -0.46, -1.5 -> -0.46, -2.0 -> -2.26, -3.0 -> -2.90, and 0.068 deg
+    mean error from 3 deg up. A bigger building does not help — it is
+    rasterisation, not resolution.
+
+    So: good for measuring a wall grid's rotation and driving a re-solve at 2
+    deg and above, and **unusable for the 1-2 deg residual shear** — it will
+    report roughly a third of it and a correction built on that will silently
+    under-correct.
     """
     params = params or SpectrumParams()
     wall = np.asarray(wall, dtype=bool)
@@ -382,7 +446,7 @@ def _directions_table(
         )
         table.append(
             {
-                "angle_deg": float(d),
+                "angle_deg": spectral_to_wall(d),
                 "energy_frac": share,
                 "width_deg": width,
             }
@@ -465,7 +529,7 @@ def _reference_fit(
     minimising the energy-weighted angular distance from the spectrum to the
     nearest reference direction.
     """
-    refs = np.asarray([float(r) % 180.0 for r in reference_directions])
+    refs = np.asarray([wall_to_spectral(float(r)) for r in reference_directions])
     if refs.size == 0:
         return {}
 

@@ -26,7 +26,9 @@ from mote_bringup.map_cleanup.angular_stats import (  # noqa: E402
     angular_stats,
     fold_90,
     refine_peak,
+    spectral_to_wall,
     wall_rotation,
+    wall_to_spectral,
 )
 
 N = 600
@@ -176,7 +178,7 @@ def test_frame_table_is_trustworthy_for_the_tears_it_is_relied_on_for(skew):
 
     Where the trajectory does not close there is no loop-drift number, and this
     table is the only automated tear signal. It is relied on for tears of about
-    20 deg and up (run 3's real pair were 22.5 and 41 deg apart), so that band
+    20 deg and up (run 3's real pair were 25 and 41 deg apart), so that band
     is pinned rather than left to the 13 deg case alone.
     """
     s = angular_stats(rotated_rooms(skew))
@@ -215,10 +217,14 @@ def test_reference_directions_convict_the_rotation_and_absolve_the_hallway():
     # Declared without the hallway, the hallway itself reads as off-reference —
     # which is precisely why the set must include it.
     corr_undeclared = angular_stats(angled_corridor(), reference_directions=ref)
-    corr_declared = angular_stats(
-        angled_corridor(),
-        reference_directions=ref + [_dirs(angular_stats(angled_corridor()))[1]],
+    # The hallway is the direction the reference set does *not* already cover --
+    # picked by distance rather than by position, since the table is sorted by
+    # angle and which slot it lands in is not stable.
+    hall = max(
+        _dirs(angular_stats(angled_corridor())),
+        key=lambda a: min(_shift(a, r) for r in ref),
     )
+    corr_declared = angular_stats(angled_corridor(), reference_directions=ref + [hall])
 
     assert clean["off_reference_energy_frac"] < 0.10
     assert rot["off_reference_energy_frac"] > 0.4
@@ -255,8 +261,13 @@ def test_ranked_scalars_survive_a_global_rotation(deg):
     base = angular_stats(pure())
     turned = angular_stats(pure(deg))
 
+    # Rotating the building changes its bounding box, hence how much zero
+    # padding squaring adds, hence the spectrum's broadband floor -- so support
+    # moves more than entropy does. Measured over +17/-31/+23/+45: support
+    # 3.6-15.2%, entropy 1.0-4.6%. Pinned with margin; this is also why support
+    # is not a ranking column.
     for key, tol in (
-        ("angular_support_deg", 0.10),
+        ("angular_support_deg", 0.20),
         ("angular_entropy_norm", 0.10),
     ):
         rel = abs(turned[key] - base[key]) / base[key]
@@ -294,20 +305,20 @@ def _room_outline(deg, n=400, half_y=120, half_x=150, thick=3):
     return outer & ~inner
 
 
-@pytest.mark.parametrize("deg", [0.0, 1.5, 7.25, 17.0, 23.5, 31.0, 44.0])
+@pytest.mark.parametrize("deg", [0.0, 3.0, 7.25, 17.0, 23.5, 31.0, 44.0])
 def test_wall_rotation_recovers_a_known_rotation(deg):
     r = wall_rotation(_room_outline(deg))
     truth = (-deg) % 90.0
     err = abs(r["angle_deg"] - truth) % 90.0
     err = min(err, 90.0 - err)
-    assert err < 1.5, (deg, truth, r)
+    assert err < 0.5, (deg, truth, r)
     assert r["energy_frac"] > 0.3, r
 
 
 def test_sub_bin_refinement_beats_the_bin_grid():
     """Why the interpolation is there: 0.5 deg bins alone are not enough."""
     raw, refined = [], []
-    for deg in (1.5, 7.25, 12.0, 23.5, 31.0, 44.0):
+    for deg in (3.0, 7.25, 12.0, 23.5, 31.0, 44.0):
         r = wall_rotation(_room_outline(deg))
         truth = (-deg) % 90.0
         for value, into in ((r["bin_angle_deg"], raw), (r["angle_deg"], refined)):
@@ -315,9 +326,9 @@ def test_sub_bin_refinement_beats_the_bin_grid():
             into.append(min(e, 90.0 - e))
     assert np.mean(refined) < np.mean(raw), (np.mean(raw), np.mean(refined))
     # Good enough to measure a wall grid, not to certify a 1-2 deg shear absent.
-    # Measured 0.14 deg mean / 0.26 deg worst; pinned with margin.
-    assert np.mean(refined) < 0.35, np.mean(refined)
-    assert max(refined) < 0.8, max(refined)
+    # Measured 0.068 deg mean / 0.102 worst, against 0.208/0.250 unrefined.
+    assert np.mean(refined) < 0.15, np.mean(refined)
+    assert max(refined) < 0.3, max(refined)
 
 
 def test_windowing_does_not_pin_the_fold_to_zero():
@@ -352,6 +363,29 @@ def test_fold_90_and_refine_peak_are_usable_standalone():
     assert fa[40] < refined < fa[41], (fa[40], refined, fa[41])
 
 
+def test_wall_rotation_under_reports_below_about_two_degrees():
+    """The floor, pinned so a consumer cannot mistake it for a shear measurement.
+
+    A wall line rotated less than ~2 deg rasterises into runs long enough that
+    the dominant spectral content is still axis-aligned, so the peak is pulled
+    onto the axis and the rotation is *under-reported* — measured at roughly a
+    third of truth. An alignment step that corrected a 1-2 deg shear from this
+    number would silently under-correct, so the shortfall is asserted rather
+    than described.
+    """
+
+    def signed(deg):
+        v = wall_rotation(_room_outline(deg))["angle_deg"]
+        return (v + 45.0) % 90.0 - 45.0
+
+    # Below the floor: badly short of truth.
+    for deg in (0.5, 1.0, 1.5):
+        assert abs(signed(deg)) < 0.6 * deg, (deg, signed(deg))
+    # At and above it: faithful.
+    for deg in (2.0, 3.0, 5.0):
+        assert abs(abs(signed(deg)) - deg) < 0.4, (deg, signed(deg))
+
+
 def test_wall_rotation_is_invariant_to_incidental_map_extent():
     """Padding the canvas must not move the measured rotation."""
     tight = _room_outline(17.0)
@@ -370,7 +404,7 @@ def test_tapering_a_tight_crop_would_be_worse_than_not_tapering():
     """
     from mote_bringup.map_cleanup import angular_stats as mod
 
-    angles = (1.5, 7.25, 12.0, 23.5, 31.0, 44.0)
+    angles = (3.0, 7.25, 12.0, 23.5, 31.0, 44.0)
 
     def mean_err(pad):
         saved, mod.ROTATION_PAD_FRAC = mod.ROTATION_PAD_FRAC, pad
@@ -393,6 +427,97 @@ def test_tapering_a_tight_crop_would_be_worse_than_not_tapering():
 def test_wall_rotation_degrades_on_a_structureless_mask():
     r = wall_rotation(np.zeros((40, 40), bool))
     assert r["angle_deg"] is None and "note" in r
+
+
+# --------------------------------------------------------------------------
+# Two defects found in review, each pinned by the case that exposed it
+
+
+def _elongated(rot=0.0, n=900, h=170, w=620):
+    """A perfectly rectilinear building whose bbox stays oblong when rotated.
+
+    A rotated *square-ish* building has a square-ish bounding box, which is why
+    the ordinary fixtures never exposed the aspect-ratio bug.
+    """
+    m = np.zeros((n, n), bool)
+    ys = np.linspace(n / 2 - h / 2, n / 2 + h / 2, 3)
+    xs = np.linspace(n / 2 - w / 2, n / 2 + w / 2, 8)
+    for y in ys:
+        m[int(y), int(xs[0]) : int(xs[-1])] = True
+    for x in xs:
+        m[int(ys[0]) : int(ys[-1]), int(x)] = True
+    if not rot:
+        return m
+    t = np.radians(rot)
+    yy, xx = np.mgrid[0:n, 0:n]
+    sy, sx = yy - n / 2.0, xx - n / 2.0
+    iy = np.rint(np.cos(t) * sy - np.sin(t) * sx + n / 2.0).astype(int)
+    ix = np.rint(np.sin(t) * sy + np.cos(t) * sx + n / 2.0).astype(int)
+    ok = (iy >= 0) & (iy < n) & (ix >= 0) & (ix < n)
+    out = np.zeros((n, n), bool)
+    out[ok] = m[iy[ok], ix[ok]]
+    return out
+
+
+@pytest.mark.parametrize("rot", [0.0, 10.0, 20.0, 30.0, 40.0])
+def test_an_oblong_intact_building_is_not_reported_as_torn(rot):
+    """The transform must run on a square canvas or every angle is skewed.
+
+    A frequency-domain index maps to a real frequency divided by that axis'
+    length, so on an oblong array a genuinely perpendicular pair of wall
+    families stops looking perpendicular and the frame table invents a tear --
+    on precisely the signal this module exists to report. Measured before the
+    fix: this fixture reported 2 frames at 10, 20 and 30 deg.
+
+    Note which maps the bug spared: 0 and 90 deg are fixed points of the
+    distortion, so it is invisible on an axis-aligned map and appears only once
+    the map frame is rotated -- which a real SLAM frame always is.
+    """
+    s = angular_stats(_elongated(rot))
+    assert s["n_frames"] == 1, (rot, s["frames"], s["directions"])
+
+
+def test_transform_canvas_is_square():
+    from mote_bringup.map_cleanup.angular_stats import _crop_to_content
+
+    out = _crop_to_content(_elongated(20.0))
+    assert out.shape[0] == out.shape[1], out.shape
+
+
+def test_reported_directions_are_wall_orientations_not_normals():
+    """A wall's energy lands perpendicular to it; the reported angle must not.
+
+    The spectrum peak for a horizontal wall sits at 90 deg (a horizontal line
+    transforms to a vertical frequency ridge). A table headed "wall directions"
+    has to report 0 deg for that wall, so the conversion happens at the
+    reporting boundary.
+    """
+    horizontal = np.zeros((400, 400), bool)
+    for y in (80, 160, 240, 320):
+        horizontal[y, 60:340] = True
+    vertical = np.zeros((400, 400), bool)
+    for x in (80, 160, 240, 320):
+        vertical[60:340, x] = True
+
+    (h,) = _dirs(angular_stats(horizontal))
+    (v,) = _dirs(angular_stats(vertical))
+    assert min(h, 180.0 - h) < 5.0, h
+    assert abs(v - 90.0) < 5.0, v
+
+
+def test_wall_and_spectral_angles_round_trip():
+    for a in (0.0, 12.5, 89.9, 90.0, 179.5):
+        assert abs(spectral_to_wall(wall_to_spectral(a)) - a) < 1e-9
+        assert 0.0 <= wall_to_spectral(a) < 180.0
+
+
+def test_a_declared_reference_set_uses_real_wall_angles():
+    """`reference_directions` is documented as wall directions, so an exact
+    declaration of the fixture's true walls must fit with ~no rotation offset."""
+    s = angular_stats(pure(), reference_directions=[0.0, 90.0])
+    assert s["off_reference_energy_frac"] < 0.10, s
+    off = abs(s["reference_offset_deg"]) % 90.0
+    assert min(off, 90.0 - off) < 2.0, s
 
 
 # --------------------------------------------------------------------------

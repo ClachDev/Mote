@@ -109,7 +109,10 @@ def _angular_tables(m) -> list:
     if not directions:
         return []
 
-    lines = ["**Wall directions** (image frame, energy-weighted):", ""]
+    lines = [
+        "**Wall directions** (wall orientations, image frame, energy-weighted):",
+        "",
+    ]
     lines.append("| angle (°) | energy frac | width (°) |")
     lines.append("| --- | --- | --- |")
     for d in directions:
@@ -174,7 +177,7 @@ def _limitations() -> list:
         "  - **`wall frames` > 1 with real energy share means two rectangular"
         " systems in one map** — i.e. a section drawn on its own axes. That is"
         " what a SLAM tear looks like. Check the per-map frame table for the"
-        " offset; run 3's two legs were torn by 22.5° and 41°.",
+        " offset; run 3's two legs were torn by 25° and 41°.",
         "  - **One extra *direction* is architecture, not damage.** A flat with"
         " an angled hallway genuinely has three wall directions. The frame table"
         " distinguishes them: a rotated section duplicates a whole frame"
@@ -188,7 +191,7 @@ def _limitations() -> list:
         "  - **`angular support` is confounded by coverage** and must not be"
         " used to rank: a map that explored less has fewer long walls and reads"
         " as tighter. On the 2026-07-29 run-3 pair the leg that is better by"
-        " loop drift (0.551 m vs 8.776 m) scores *worse* on it (43.0 vs 37.7),"
+        " loop drift (0.551 m vs 8.776 m) scores *worse* on it (42.2 vs 39.3),"
         " having covered 59 m² against 81 m². It is here to be read beside"
         " `explored area`, not to pick a winner.",
         "- No absolute scale/position check is possible without a reference map or"
