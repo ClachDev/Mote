@@ -10,6 +10,7 @@ committed file had that shape. The corpus is not the contract: the writers are.
 """
 
 import gzip
+import json
 import struct
 import zlib
 from pathlib import Path
@@ -99,6 +100,36 @@ def test_not_yaml_at_all_is_a_bundle_error(tmp_path):
     path.write_text("zones: [1, 2\n")
     with pytest.raises(bundle.BundleError, match="not valid YAML"):
         bundle.read_zones(path)
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "2026-07-05T11:16:46",  # what an rsync-seeded meta.yaml carries
+        "2026-07-05 11:16:46",  # YAML's other spelling, also implicitly typed
+        "2026-07-05T11:16:46Z",
+        "2026-07-05",  # resolves to a date, not a datetime
+    ],
+)
+def test_an_unquoted_timestamp_is_read_as_the_text_it_was_written_as(tmp_path, written):
+    """A bundle's values are served as JSON, and ``datetime`` is the one thing
+    ``safe_load`` returns that ``json.dumps`` refuses. Quoting cannot be
+    assumed: only ``sites.save_map`` goes through ``safe_dump``, and a
+    revision may be hand-edited or predate the registry.
+    """
+    path = tmp_path / "meta.yaml"
+    path.write_text(f"schema: 1\nsaved: {written}\n")
+    assert bundle.load_yaml_file(path)["saved"] == written
+
+
+def test_a_revision_report_is_json_serialisable_whatever_the_meta_says(tmp_path):
+    directory = revision(tmp_path / "20260705T111531")
+    (directory / "meta.yaml").write_text("schema: 1\nsaved: 2026-07-05T11:16:46\n")
+    report = bundle.validate(directory)
+    assert report.ok, report.errors
+    assert json.loads(json.dumps(report.as_dict()))["meta"]["saved"] == (
+        "2026-07-05T11:16:46"
+    )
 
 
 # ---- map.yaml -----------------------------------------------------------
