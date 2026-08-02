@@ -171,6 +171,18 @@ export class ZoneEditor {
     this.mapView.draw();
   }
 
+  // Saving succeeded: stop editing but keep the saved zones on screen. The
+  // canonical zones the map would otherwise re-render are the *old* ones —
+  // the edits live in an unpreviewable candidate until it is promoted, and a
+  // save that makes your work vanish reads as data loss (it did, 2026-08-02).
+  finish() {
+    this.active = false;
+    this.dom.panel.hidden = true;
+    this._drag = null;
+    this.selected = null;
+    this.mapView.draw();
+  }
+
   // -- pointer editing ---------------------------------------------------
 
   _bind() {

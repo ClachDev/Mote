@@ -180,6 +180,10 @@ async function ensureMap(record) {
   if (key === state.mapKey) return;
   state.mapKey = key;
   state.floor = null;
+  if (editor) {
+    editor.end();
+    dom.zonesEdit.disabled = false;
+  }
   setZones([]);
   renderRevisions();
   if (!key) {
@@ -324,9 +328,9 @@ async function onSaveZones() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ schema: 1, zones: editor.payload() }),
     });
-    editor.end();
+    editor.finish();
     dom.zonesEdit.disabled = false;
-    dom.promoteNote.textContent = `zone candidate ${body.revision} created \u2014 pick it in the picker and promote it`;
+    dom.promoteNote.textContent = `zone candidate ${body.revision} saved \u2014 the zones shown are the candidate's; pick it in the picker and promote it`;
     dom.promoteNote.className = 'note';
     await loadFloor(site, floor, state.mapKey);
   } catch (error) {
