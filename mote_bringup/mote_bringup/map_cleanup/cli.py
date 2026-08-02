@@ -74,11 +74,11 @@ def _energy_panel(res: StructureResult, size: tuple[int, int]) -> np.ndarray:
         cv2.line(img, (x0, y0), (x1, y1), (200, 200, 60), 1, cv2.LINE_AA)
     for d in res.directions_deg:
         x = int(d / 180.0 * (w - 1))
-        cv2.line(img, (x, 10), (x, h - 20), (80, 255, 80), 1, cv2.LINE_AA)
+        cv2.line(img, (x, 20), (x, h - 20), (80, 255, 80), 1, cv2.LINE_AA)
         cv2.putText(
             img,
             f"{d:.0f}",
-            (min(x + 2, w - 22), 22),
+            (min(x + 2, w - 28), 32),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.35,
             (80, 255, 80),
