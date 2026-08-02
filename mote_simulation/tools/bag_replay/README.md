@@ -80,6 +80,29 @@ identical odometry.
   read thicker — lower is crisper), `speckle_frac` (isolated occupied cells —
   scan-match noise, lower is cleaner), `unknown/free/occ_frac`, and
   `explored_area_m2`.
+- **angular coherence** (`angular_stats`, slam mode) — how geometrically
+  self-consistent the walls are, from the same FFT orientation spectrum the
+  declutter pass uses. `angular_support_deg` (`exp(H) × bin width` — the
+  effective number of degrees of wall direction the map uses),
+  `angular_entropy_norm` (the same in [0,1]) and `unassigned_energy_frac`
+  (energy sitting *between* wall families, i.e. genuine angular smear); lower is
+  better on all three. Plus, per map rather than as a score, a **wall-direction
+  table** and an **orthogonal-frame table**.
+
+  This exists because crispness is blind to the failure that actually matters on
+  a real bag: a section of the map drawn at the wrong *angle* is crisp,
+  unspeckled, and wrong. What it proves is narrow, so read the Limitations
+  below — in particular, **it cannot by itself tell a drift-rotated room from an
+  angled hallway.** Both are just an extra wall family. The frame table is the
+  diagnostic that distinguishes *one* extra direction (architecture) from a
+  *duplicated orthogonal frame* (a rotated section), and a real verdict needs a
+  prior — `angular_stats(..., reference_directions=[...])` takes the site's known
+  wall directions, which this report does not yet supply.
+
+  Related: `map_cleanup/room_segmentation.py` assumes "Manhattan after rotation"
+  and does not support a building with wings at 30° to each other. The frame
+  table is the measurement that tells you when that assumption is being
+  violated — more than one frame with real energy share means it is.
 
 ## Limitations
 
@@ -95,6 +118,24 @@ cannot prove versus the sim's ground truth:
 - **Crispness ≠ correctness.** A confidently *wrong* map — e.g. a mis-closed
   loop drawn with sharp walls — can score well on wall thickness and speckle. The
   crispness proxies catch blur, noise, and incompleteness, not global error.
+- **Angular coherence is confounded by coverage.** A map that explored less has
+  fewer long walls and so uses fewer directions, which reads as *tighter*. On
+  the 2026-07-29 run-3 pair the leg that is clearly better by loop drift
+  (0.551 m vs 8.776 m) scores *worse* on angular support (42.0 vs 38.1) having
+  covered 59 m² against 81 m². Read it beside `explored_area_m2`; do not rank
+  two parameter sets on it at materially different coverage.
+- **A multi-angle building is not a defect.** A flat with an angled hallway
+  genuinely has three dominant wall directions and always will. Higher angular
+  support is the honest number for it. Nothing here should be tuned until it
+  calls such a building broken.
+- **The frame table is a diagnostic, not a threshold.** Grouping directions into
+  orthogonal frames needs a merge tolerance (10°) that must exceed the shear a
+  genuine frame carries — the run-3 conservative leg's own frame is internally
+  sheared 7.5° — which is the same order as the section rotations worth
+  catching. It separates a large tear (run 3's two frames, 23° and 41° apart)
+  and will show one frame, not two, for a rotation near or below its own
+  tolerance. `n_peaks` is likewise threshold-bound (`peak_rel_threshold`,
+  `peak_nms_deg`) and capped, so it is reported and not ranked.
 - **Not bit-exact.** The recorded sensor stream makes the *input* deterministic,
   but SLAM's solver is not bit-identical run to run; treat small deltas as noise
   and lean on the map images for anything marginal.
