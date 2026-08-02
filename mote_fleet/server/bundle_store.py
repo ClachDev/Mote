@@ -36,6 +36,8 @@ import os
 import shutil
 import sys
 import tempfile
+
+import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -304,6 +306,55 @@ class BundleStore:
         if path is None:
             raise StoreError(f"no zones for {site}/{floor}", 404)
         return bundle.vocabulary(bundle.read_zones(path), site, floor)
+
+    def derive_zones(self, site: str, floor: str, zones: dict, *, by: str):
+        """A new candidate revision: the canonical map's bytes, edited zones.
+
+        An operator's zone edit never touches a stored revision — a promoted
+        revision's bytes back a digest the fleet has been told, and a candidate
+        is immutable for the same reason one id is never reused. So an edit is
+        a *derivation*: pack the canonical revision with the submitted zones in
+        place of its own, and accept the result as an ordinary candidate —
+        validated by the same code as any upload, inert until promoted.
+        Returns ``(stored_revision, report, derived_from)``.
+        """
+        canonical = self.canonical(site, floor)
+        if not canonical:
+            raise StoreError(
+                f"{site}/{floor} has no published map to edit zones on", 409
+            )
+        rev_dir = self.revision_dir(site, floor, canonical)
+        previous = {}
+        zones_file = rev_dir / bundle.ZONES_YAML
+        if zones_file.is_file():
+            try:
+                previous = bundle.read_zones(zones_file)
+            except bundle.BundleError:
+                previous = {}
+        # The submitted entries may echo their key as a `name` field (the
+        # zones.json shape); the file format keys by name and carries no copy.
+        cleaned = {}
+        for name, entry in zones.items():
+            entry = dict(entry)
+            entry.pop("name", None)
+            cleaned[name] = entry
+        payload = {
+            "frame_id": previous.get("frame_id") or "map",
+            "vocabulary_revision": int(previous.get("revision") or 0) + 1,
+            "zones": cleaned,
+        }
+        blob = bundle.pack(
+            rev_dir,
+            {bundle.ZONES_YAML: yaml.safe_dump(payload, sort_keys=False).encode()},
+        )
+        stored, report = self.accept(
+            site,
+            floor,
+            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"),
+            blob,
+            uploaded_by=by,
+        )
+        return stored, report, canonical
 
     def vocabularies(self) -> list:
         """Every floor's vocabulary, for a dispatcher bootstrapping a whole

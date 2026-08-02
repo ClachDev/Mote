@@ -14,6 +14,7 @@
 
 import { BrokerReader, parseTopic } from './mqtt.mjs';
 import { MapView } from './map.mjs';
+import { ZoneEditor } from './zone_editor.mjs';
 import { setupPanes } from './layout.mjs';
 
 const TOKEN_KEY = 'mote.operator.token';
@@ -40,6 +41,7 @@ const state = {
 
 const dom = {};
 let mapView = null;
+let editor = null;
 let panes = null;
 let pending = false;
 
@@ -178,6 +180,10 @@ async function ensureMap(record) {
   if (key === state.mapKey) return;
   state.mapKey = key;
   state.floor = null;
+  if (editor) {
+    editor.end();
+    dom.zonesEdit.disabled = false;
+  }
   setZones([]);
   renderRevisions();
   if (!key) {
@@ -294,6 +300,42 @@ async function onPromote(event) {
   } catch (error) {
     dom.promoteNote.textContent = error.message;
     dom.promoteNote.className = 'note error';
+  }
+}
+
+// Editing starts from the zones on screen — the canonical floor's — and never
+// writes back to them: saving derives a fresh candidate revision server-side,
+// which the picker then promotes like any robot-published map.
+function onEditZones() {
+  if (!state.mapKey || !mapView.map) return;
+  editor.begin(state.zones);
+  dom.zonesEdit.disabled = true;
+}
+
+async function onSaveZones() {
+  const problem = editor.problems();
+  if (problem) {
+    dom.zoneNote.textContent = problem;
+    dom.zoneNote.className = 'note error';
+    return;
+  }
+  const [site, floor] = state.mapKey.split('/');
+  dom.zoneNote.textContent = 'saving\u2026';
+  dom.zoneNote.className = 'note';
+  try {
+    const body = await api(`/v1/sites/${site}/floors/${floor}/zones`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema: 1, zones: editor.payload() }),
+    });
+    editor.finish();
+    dom.zonesEdit.disabled = false;
+    dom.promoteNote.textContent = `zone candidate ${body.revision} saved \u2014 the zones shown are the candidate's; pick it in the picker and promote it`;
+    dom.promoteNote.className = 'note';
+    await loadFloor(site, floor, state.mapKey);
+  } catch (error) {
+    dom.zoneNote.textContent = error.message;
+    dom.zoneNote.className = 'note error';
   }
 }
 
@@ -568,6 +610,13 @@ function bind() {
     canvas: 'map-canvas',
     follow: 'follow',
     fit: 'fit',
+    zonesEdit: 'zones-edit',
+    zoneEditor: 'zone-editor',
+    zoneRows: 'zone-rows',
+    zoneAdd: 'zone-add',
+    zoneSave: 'zone-save',
+    zoneCancel: 'zone-cancel',
+    zoneNote: 'zone-note',
   })) {
     dom[key] = document.getElementById(id);
   }
@@ -603,6 +652,18 @@ export async function boot() {
   });
   dom.dispatch.addEventListener('submit', onDispatch);
   dom.revisions.addEventListener('submit', onPromote);
+  editor = new ZoneEditor(mapView, {
+    panel: dom.zoneEditor,
+    rows: dom.zoneRows,
+    note: dom.zoneNote,
+  });
+  dom.zonesEdit.addEventListener('click', onEditZones);
+  dom.zoneAdd.addEventListener('click', () => editor.addZone());
+  dom.zoneSave.addEventListener('click', onSaveZones);
+  dom.zoneCancel.addEventListener('click', () => {
+    editor.end();
+    dom.zonesEdit.disabled = false;
+  });
   document.getElementById('token-form').addEventListener('submit', onToken);
 
   state.config = await api('/v1/config');

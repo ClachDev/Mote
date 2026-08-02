@@ -34,6 +34,7 @@ The contract is ``docs/fleet/fleet-api.md``::
     POST     .../revisions/<rev>             upload a candidate revision (robot)
     GET      .../revisions/<rev>/bundle.tar.gz   pull one (robot)
     POST     .../revisions/<rev>/promote     make it canonical (operator)
+    POST /v1/sites/<site>/floors/<floor>/zones  edited zones -> new candidate (operator)
     GET  /                                   the operator UI (static files)
 
     pixi run fleet-server -- --db ~/fleet/registry.db --broker-host fleet-box
@@ -327,7 +328,9 @@ class FleetHandler(BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(query)
         # The upload route carries a packed bundle, so it reads its own body:
         # everything else here is JSON and small.
-        if path.startswith("/v1/sites/") and not path.endswith("/promote"):
+        if path.startswith("/v1/sites/") and not (
+            path.endswith("/promote") or path.endswith("/zones")
+        ):
             self._upload(path[len("/v1/sites/") :], params)
             return
         try:
@@ -341,6 +344,8 @@ class FleetHandler(BaseHTTPRequestHandler):
             self._dispatch(path[len("/v1/robots/") : -len("/dispatch")], body)
         elif path.startswith("/v1/sites/") and path.endswith("/promote"):
             self._promote(path[len("/v1/sites/") :], body)
+        elif path.startswith("/v1/sites/") and path.endswith("/zones"):
+            self._edit_zones(path[len("/v1/sites/") : -len("/zones")], body)
         else:
             self._error(404, f"no route {path}")
 
@@ -782,6 +787,86 @@ class FleetHandler(BaseHTTPRequestHandler):
                 "announced": announced,
                 "detail": detail,
                 "topic": protocol.registry_topic(site, floor),
+                "audit_id": entry["id"],
+            },
+        )
+
+    def _edit_zones(self, rest: str, body: dict):
+        """An operator's zone edit: derive a candidate from the canonical map.
+
+        The edit writes nothing the fleet can see — the result is an ordinary
+        candidate (same map bytes, new zones), validated like any upload and
+        inert until the operator promotes it through the existing route. That
+        keeps promoted revisions immutable, which the announced digests rely
+        on, and keeps promotion the only write that changes a floor.
+        """
+        parts = rest.split("/")
+        if len(parts) != 3 or parts[1] != "floors":
+            self._error(404, "expected POST /v1/sites/<site>/floors/<floor>/zones")
+            return
+        site, _, floor = parts
+        registry = self.server.registry
+        target = f"{site}/{floor}"
+        try:
+            operator = self._operator()
+        except Unauthorized as exc:
+            registry.record(
+                actor="anonymous",
+                action="map.zones",
+                command=target,
+                result="unauthorized",
+                detail=str(exc),
+                remote=self.address_string(),
+            )
+            self._error(401, str(exc))
+            return
+        if not self._names(site, floor):
+            return
+        zones = body.get("zones")
+        if not isinstance(zones, dict):
+            self._error(400, "a zones mapping is required: {zones: {name: {...}}}")
+            return
+        actor = operator["name"]
+        entry = registry.record(
+            actor=actor,
+            action="map.zones",
+            command=target,
+            result="editing",
+            remote=self.address_string(),
+        )
+        try:
+            stored, report, derived_from = self.server.store.derive_zones(
+                site, floor, zones, by=actor
+            )
+        except StoreError as exc:
+            registry.finish(entry["id"], "rejected", str(exc))
+            self._send(
+                exc.code, {"schema": protocol.SCHEMA, "error": str(exc), **exc.detail}
+            )
+            return
+        except Exception as exc:
+            # An audit row opened as 'editing' has to be closed on every path,
+            # or an edit that crashes the handler leaves a row that says the
+            # edit is still in progress for ever.
+            registry.finish(entry["id"], "failed", f"{type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._error(500, "the zone edit could not be stored")
+            return
+        registry.finish(entry["id"], "stored", f"candidate {stored}")
+        print(
+            f"zone edit {target} by {actor}: candidate {stored} (from {derived_from})",
+            file=sys.stderr,
+        )
+        self._send(
+            201,
+            {
+                "schema": protocol.SCHEMA,
+                "site": site,
+                "floor": floor,
+                "revision": stored,
+                "derived_from": derived_from,
+                "promoted": False,
+                "warnings": report.warnings,
                 "audit_id": entry["id"],
             },
         )
