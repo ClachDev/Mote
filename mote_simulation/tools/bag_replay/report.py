@@ -39,9 +39,15 @@ ROWS = [
     ("occupied frac", "map.occ_frac", 4, ""),
     ("wall thickness (m)", "map.mean_wall_thickness_m", 3, "lower"),
     ("speckle frac", "map.speckle_frac", 4, "lower"),
-    ("angular support (°)", "map.angular_support_deg", 2, "lower"),
-    ("angular entropy", "map.angular_entropy_norm", 4, "lower"),
-    ("unassigned energy frac", "map.unassigned_energy_frac", 4, "lower"),
+    # Angular structure is reported per map under "## Maps", not ranked here.
+    # It is a *tear detector*, not a quality ordering: on the one real pair
+    # available it prefers the leg with 16x the loop drift, because that leg
+    # explored more and a larger map uses more wall directions. Ranking is loop
+    # drift's job (and, where the trajectory does not close, nobody's) -- so
+    # these are descriptive columns and bolding a winner among them would be a
+    # claim the numbers do not support.
+    ("angular support (°)", "map.angular_support_deg", 2, ""),
+    ("wall frames (≥15% energy)", "map.n_strong_frames", 0, ""),
 ]
 
 
@@ -158,34 +164,33 @@ def _limitations() -> list:
         "- **Map crispness** (wall thickness, speckle, unknown fraction) catches"
         " blur, noise, and incompleteness. It does **not** catch a confidently"
         " *wrong* map: a mis-closed loop drawn with sharp walls scores well here.",
-        "- **Angular coherence** (support, entropy, unassigned energy) scores how"
-        " geometrically self-consistent the walls are, which is the one thing"
-        " crispness misses: a drift-rotated section is crisp and unspeckled and"
-        " still at the wrong angle. Four confounds bound how it should be read:",
-        "  - **Coverage confounds it.** A map that explored less has fewer long"
-        " walls and so uses fewer directions, which reads as *tighter*. On the"
-        " 2026-07-29 run-3 pair the leg that is clearly better by loop drift"
-        " (0.551 m vs 8.776 m) scores worse on angular support (42.0 vs 38.1)"
-        " because it covered 59 m² against 81 m². Always read these beside"
-        " `explored area`; never rank two sets on them at different coverage.",
-        "  - **A multi-angle building is not a defect.** A flat with an angled"
-        " hallway genuinely has three dominant wall directions and always will."
-        " Higher support is the honest number for it, not a fault.",
-        "  - **Within one map, a coherent rotated section is indistinguishable"
-        " from real architecture** — both are just an extra wall family, and"
-        " `unassigned energy frac` does not rise for either. Separating them"
-        " needs a prior: a declared direction set for the site, or the same"
-        " building's other legs. The scorer accepts one"
-        " (`angular_stats(..., reference_directions=...)`) but this report does"
-        " not yet supply it.",
-        "  - **The frame table is a diagnostic, not a threshold.** Grouping"
-        " directions into orthogonal frames needs a merge tolerance (10°) that"
-        " must exceed the shear a genuine frame carries (7.5° measured) — the"
-        " same order as the section rotations worth catching. It resolves a"
-        " large tear (run 3's 23–38°); below roughly its own tolerance a rotated"
-        " section merges back into the dominant frame and it will show one"
-        " frame, not two. `n_peaks` is likewise threshold-bound and censored by"
-        " the direction cap, so it is reported but not ranked.",
+        "- **Angular structure** is a **tear detector, not a quality ranking**,"
+        " and is deliberately not bolded. It answers the one question loop drift"
+        " cannot: loop drift is only meaningful when the trajectory *closes*, so"
+        " a session that exits on its exploration budget gets no drift number at"
+        " all, and for those maps the frame table below is the only automated"
+        " tear signal there is. Read it like this:",
+        "",
+        "  - **`wall frames` > 1 with real energy share means two rectangular"
+        " systems in one map** — i.e. a section drawn on its own axes. That is"
+        " what a SLAM tear looks like. Check the per-map frame table for the"
+        " offset; run 3's two legs were torn by 22.5° and 41°.",
+        "  - **One extra *direction* is architecture, not damage.** A flat with"
+        " an angled hallway genuinely has three wall directions. The frame table"
+        " distinguishes them: a rotated section duplicates a whole frame"
+        " (`directions: 2`), a hallway adds one (`directions: 1`).",
+        "  - **It is blind below ~10°**, the frame merge tolerance, which has to"
+        " exceed the shear a genuine frame carries (7.5° measured on a real leg)"
+        " or honest shear would read as a tear. A small rotation will show one"
+        " frame. Catching that needs a declared direction set for the site,"
+        " which `angular_stats(..., reference_directions=...)` accepts and this"
+        " report does not yet supply.",
+        "  - **`angular support` is confounded by coverage** and must not be"
+        " used to rank: a map that explored less has fewer long walls and reads"
+        " as tighter. On the 2026-07-29 run-3 pair the leg that is better by"
+        " loop drift (0.551 m vs 8.776 m) scores *worse* on it (43.0 vs 37.7),"
+        " having covered 59 m² against 81 m². It is here to be read beside"
+        " `explored area`, not to pick a winner.",
         "- No absolute scale/position check is possible without a reference map or"
         " survey. For metric-accuracy claims, use the sim benchmark's ATE.",
         "- Replaying the same recorded sensor stream makes the comparison"

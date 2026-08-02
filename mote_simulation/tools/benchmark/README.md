@@ -65,22 +65,18 @@ Per trial, gated on sim `/clock` (invariant to real-time factor):
 - **motion smoothness** — RMS linear/angular jerk from `cmd_vel` and the number
   of forward/backward direction reversals.
 - **map quality** (`map_quality`, when a finished grid is scored) — crispness
-  and coverage proxies, plus **angular coherence**: `angular_support_deg`,
-  `angular_entropy_norm` and `unassigned_energy_frac` from
-  `mote_bringup.map_cleanup.angular_stats`, which measure how few and how tight
-  the map's wall directions are. Imported lazily, so this module keeps its
-  numpy-only, ROS-free contract and still scores where `mote_bringup` is not on
-  the path — the angular keys are simply absent then.
+  and coverage proxies, plus **angular structure** from
+  `mote_bringup.map_cleanup.angular_stats`: `angular_support_deg` and the
+  wall-direction / orthogonal-frame tables. Imported lazily, so this module
+  keeps its numpy-only, ROS-free contract and still scores where `mote_bringup`
+  is not on the path — the angular keys are simply absent then.
 
-  These are the **truth-free substitute** for what the sim already has: with
-  Gazebo's true pose the sim reports ATE, which is a strictly better answer, so
-  angular coherence is not part of the sim's ranking. It earns its place in the
-  **bag-replay** harness, where there is no ground truth at all. What it proves
-  is narrow — it scores angular *self-consistency*, so a small confidently-wrong
-  map can still score well, coverage confounds it (fewer long walls read as
-  tighter), and a genuinely multi-angle building honestly uses more directions
-  and is not thereby defective. See `../bag_replay/README.md` for the full
-  reading.
+  Angular structure is a **tear detector, not a quality ranking**, and the sim
+  does not rank on it: with Gazebo's true pose the sim reports ATE, which is a
+  strictly better answer. It earns its place in the **bag-replay** harness,
+  where there is no ground truth — and specifically where the trajectory does
+  not close, so loop drift is unavailable too. See `../bag_replay/README.md` for
+  how to read it and what it cannot decide.
 
 ## Ground truth
 

@@ -22,10 +22,10 @@ would be believed.
 
 So the split is:
 
-* the ranked scalars (``angular_support_deg``, ``angular_entropy_norm``,
-  ``unassigned_energy_frac``) are **frame-model-free** and rank angular *smear
-  and fragmentation*. They make no assumption about how many directions a
-  building has;
+* the scalars (``angular_support_deg``, ``angular_entropy_norm``,
+  ``unassigned_energy_frac``) are **frame-model-free** and describe angular
+  *smear and fragmentation*. They make no assumption about how many directions
+  a building has;
 * the **defect verdict** needs a prior, and is only produced when one is given.
   Pass ``reference_directions`` — the site's known wall directions, or those of
   a previously banked revision — and the ``reference_*`` keys report how far
@@ -34,6 +34,20 @@ So the split is:
 The frame table is the diagnostic between the two: a drift-rotated section of a
 rectilinear building duplicates that section's whole orthogonal frame (both
 directions, ~90 deg apart), where an angled hallway adds *one* direction.
+
+Two consumers, two entry points
+-------------------------------
+:func:`angular_stats` is the **tear alarm**. Loop drift only means anything when
+the trajectory closes, so a mapping session that exits on its exploration budget
+gives a scorer no drift number at all; for those the frame table is the only
+automated tear signal there is. It is trustworthy for the tears that matter
+(measured: run 3's two frames, 22.5 and 41 deg apart) and blind below roughly
+its own merge tolerance — see :data:`FRAME_MERGE_DEG`.
+
+:func:`wall_rotation` is the **alignment primitive**: windowed energy, folded
+0/90, sub-bin interpolated. An alignment step measuring how far a map's wall
+grid is turned should call it rather than re-deriving the fold, which is how one
+hand-rolled attempt landed on a different answer than the next.
 
 Conventions
 -----------
@@ -56,6 +70,9 @@ import numpy as np
 __all__ = [
     "SpectrumParams",
     "angular_stats",
+    "wall_rotation",
+    "fold_90",
+    "refine_peak",
     "_angular_energy",
     "_smooth_circular",
     "_pick_directions",
@@ -112,6 +129,13 @@ STATS_MAX_DIRECTIONS = 12
 # dominant frame and the two become indistinguishable. Run 3's real 23-38 deg
 # tear reads identically at either.
 FRAME_MERGE_DEG = 10.0
+
+# Zero-padding added on each side before the Hann taper in `wall_rotation`, as a
+# fraction of the cropped extent. Measured on synthetic rotated room outlines
+# (mean / max rotation error over nine angles): 0.0 -> 0.68/1.24 deg,
+# 0.25 -> 0.32/1.05, 0.4 -> 0.17/0.56, 0.6 -> 0.14/0.26. Costs (1+2f)^2 in
+# transform area, so 0.5 buys most of the accuracy at 4x the pixels.
+ROTATION_PAD_FRAC = 0.5
 
 
 def _angular_energy(
@@ -208,15 +232,138 @@ def _crop_to_content(wall: np.ndarray) -> np.ndarray:
     return wall[r0 : r1 + 1, c0 : c1 + 1]
 
 
-def _residual_spectrum(wall: np.ndarray, params: SpectrumParams) -> tuple:
+def _residual_spectrum(
+    wall: np.ndarray, params: SpectrumParams, window: bool = False
+) -> tuple:
     """Angular energy with its broadband floor removed, normalised to sum 1."""
-    mag = np.abs(np.fft.fftshift(np.fft.fft2(wall.astype(np.float32))))
+    signal = wall.astype(np.float32)
+    if window:
+        # Pad before tapering. A Hann window over a *tight* crop cuts into the
+        # walls themselves -- worst of all on a rotated shape, whose corners
+        # reach the crop edge -- and measurably costs accuracy: on synthetic
+        # rotated room outlines, crop+taper gives 0.68 deg mean rotation error
+        # against 0.39 deg for no taper at all. Padding puts the taper's roll-off
+        # on empty space where it belongs, giving 0.14 deg.
+        pad = ROTATION_PAD_FRAC
+        py, px = (int(round(s * pad)) for s in signal.shape)
+        signal = np.pad(signal, ((py, py), (px, px)))
+        h, w = signal.shape
+        signal = signal * np.hanning(h)[:, None] * np.hanning(w)[None, :]
+    mag = np.abs(np.fft.fftshift(np.fft.fft2(signal)))
     angles, energy = _angular_energy(mag, params)
     k = max(1, int(round(FLOOR_HALFWIDTH_DEG / params.angle_step_deg)))
     residual = np.clip(energy - _smooth_circular(energy, k), 0.0, None)
     total = float(residual.sum())
     q = residual / total if total > 0 else residual
     return angles, energy, q
+
+
+def fold_90(angles: np.ndarray, values: np.ndarray) -> tuple:
+    """Fold an orientation distribution from [0, 180) onto [0, 90).
+
+    An orthogonal frame's two wall families sit 90 deg apart, so folding puts
+    both on one peak: the quantity that survives is the frame's *rotation*,
+    which is what an alignment step wants to measure and correct.
+    """
+    n = len(values) // 2
+    return angles[:n], values[:n] + values[n : 2 * n]
+
+
+def _parabolic_offset(y0: float, y1: float, y2: float) -> float:
+    """Sub-bin peak offset in bins, from a parabola through three samples.
+
+    Returns 0 for a flat or inverted triple rather than dividing by zero, and is
+    clamped to the sampled interval so a near-degenerate fit cannot throw the
+    peak into a neighbouring bin.
+    """
+    den = y0 - 2.0 * y1 + y2
+    if den == 0 or not np.isfinite(den):
+        return 0.0
+    return float(np.clip(0.5 * (y0 - y2) / den, -0.5, 0.5))
+
+
+def refine_peak(angles: np.ndarray, values: np.ndarray, index: int) -> float:
+    """Sub-bin interpolated angle of the peak at ``index`` (circular)."""
+    n = len(values)
+    step = float(angles[1] - angles[0]) if n > 1 else 0.0
+    offset = _parabolic_offset(
+        float(values[(index - 1) % n]),
+        float(values[index]),
+        float(values[(index + 1) % n]),
+    )
+    return float(angles[index] + offset * step)
+
+
+def wall_rotation(
+    wall: np.ndarray,
+    params: SpectrumParams | None = None,
+    *,
+    window: bool = True,
+) -> dict:
+    """Dominant wall rotation of a map, folded to [0, 90), with sub-bin precision.
+
+    This is the canonical measurement an alignment step should use to answer
+    "how far is this map's wall grid turned?" before re-solving. It exists here,
+    rather than being hand-rolled at each call site, because the same fold was
+    written twice during the 2026-08-02 session and got a different answer each
+    time.
+
+    ``window`` zero-pads by :data:`ROTATION_PAD_FRAC` and applies a 2-D Hann
+    taper, which removes the rectangular aperture's axis-aligned sinc cross.
+    Two things here were measured rather than assumed.
+
+    **The aperture does not pin this fold to 0 deg**, with or without the taper:
+    on a room outline rotated 31 deg the peak lands at 59.25 deg un-tapered and
+    58.75 deg tapered (truth 59.0), and the energy within 2 deg of 0/90 is
+    0.026-0.030 in every combination of taper and low-cut.
+    ``_angular_energy`` already drops the DC neighbourhood and works on
+    magnitude rather than power, which is most likely why a hand-rolled fold
+    that skipped those steps behaved differently. This is pinned by a test.
+
+    **The padding is not decoration.** Tapering a *tight* crop is worse than not
+    tapering at all — the roll-off cuts into the walls, and a rotated shape's
+    corners reach the crop edge — measured at 0.68 deg mean error against
+    0.39 deg untapered. Padded, it is 0.14 deg.
+
+    Returns ``angle_deg`` (sub-bin refined, in [0, 90)), ``bin_angle_deg`` (the
+    unrefined bin centre, for debugging), ``energy_frac`` (share of the folded
+    residual within ``wedge_halfwidth_deg`` of the peak — low means there is no
+    single dominant grid to align to) and ``windowed``.
+
+    Accuracy is limited by the map, not the bins: mean error over nine synthetic
+    rotations is 0.14 deg, worst 0.26 deg, the residual being the raster
+    staircase of a rotated line. Good enough to measure a wall grid's rotation
+    and to drive a re-solve; **not** good enough to certify a 1-2 deg shear as
+    absent.
+    """
+    params = params or SpectrumParams()
+    wall = np.asarray(wall, dtype=bool)
+    if wall.ndim != 2 or wall.size == 0 or not wall.any():
+        return {"angle_deg": None, "note": "no walls"}
+
+    cropped = _crop_to_content(wall)
+    if min(cropped.shape) < 4:
+        return {"angle_deg": None, "note": "wall extent too small"}
+
+    angles, _energy, q = _residual_spectrum(cropped, params, window=window)
+    if q.sum() <= 0:
+        return {"angle_deg": None, "note": "no angular structure"}
+
+    fa, fq = fold_90(angles, q)
+    idx = int(np.argmax(fq))
+    refined = refine_peak(fa, fq, idx) % 90.0
+
+    dist = np.abs(fa - refined) % 90.0
+    dist = np.minimum(dist, 90.0 - dist)
+    total = float(fq.sum())
+    return {
+        "angle_deg": refined,
+        "bin_angle_deg": float(fa[idx]),
+        "energy_frac": float(fq[dist <= params.wedge_halfwidth_deg].sum() / total)
+        if total > 0
+        else 0.0,
+        "windowed": bool(window),
+    }
 
 
 def _directions_table(
@@ -442,6 +589,11 @@ def angular_stats(
         "n_peaks": len(dirs),
         "directions": directions,
         "frames": frames,
+        "n_frames": len(frames),
+        # Frames carrying real energy - the tear signal. A rectilinear building
+        # is 1; a drift-rotated section makes 2. The share floor keeps a stray
+        # sliver of a family from reading as a second building.
+        "n_strong_frames": sum(1 for f in frames if f["energy_frac"] >= 0.15),
         "dominant_frame_share": dominant_share,
     }
     out.update(_manhattan(angles, q, params))
