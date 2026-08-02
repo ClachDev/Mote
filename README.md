@@ -1,6 +1,10 @@
 # Mote
 
 [![build](https://github.com/ClachDev/Mote/actions/workflows/build.yml/badge.svg)](https://github.com/ClachDev/Mote/actions/workflows/build.yml)
+[![docs](https://github.com/ClachDev/Mote/actions/workflows/docs.yml/badge.svg)](https://clachdev.github.io/Mote/)
+
+**📖 [Documentation](https://clachdev.github.io/Mote/)** — this README is the
+tour; the site is the manual.
 
 ![Mote with camera](docs/images/mote_camera.webp)
 
@@ -168,6 +172,11 @@ Maps live in **site bundles** under `~/.mote/sites/`.
 **Congratulations! At this point you should have a working robot stack: maps,
 SLAM, Nav2, and teleop.**
 
+The longer version of all of the above — provisioning a clean Pi, what a site
+bundle holds, the systemd services, teaching zones and running missions — is
+[Getting started](https://clachdev.github.io/Mote/getting-started/) on the docs
+site.
+
 ## Simulation (no hardware required)
 
 A Gazebo simulation of Mote runs the same controllers, same scan pipeline, and
@@ -204,7 +213,10 @@ generally navigate as if we had a full 3D camera on board.
 - **Open-vocabulary** — "red mug" becomes a map pose for the fetch
   mission, with no training.
 
-I'm still experimenting with this to see how far we can push it.
+I'm still experimenting with this to see how far we can push it. How the
+inference machine is chosen, deployed and scaled — and what the robot does when
+it isn't there — is
+[The inference server](https://clachdev.github.io/Mote/inference-server/).
 
 ## SO-101 Follower Arm
 
@@ -226,6 +238,10 @@ MQTT. This is heavily work in progress but here's a little preview:
 
 ![Fleet dashboard](docs/images/fleet-ui.webp)
 
+The operator's side of it — overlay, enrollment, the dashboard, dispatch and
+the map registry — is the
+[fleet runbook](https://clachdev.github.io/Mote/fleet/).
+
 
 ## Contributions
 
@@ -240,6 +256,15 @@ clone, and it runs automatically on commit:
 ```bash
 pixi run lint-install   # wire it into .git/hooks (one time)
 pixi run lint           # or run across the whole tree manually (~1 s)
+```
+
+The [docs site](https://clachdev.github.io/Mote/) is built from this repo with
+mkdocs, and mounts each package's own README rather than copying it — so
+documentation is edited beside the code it describes:
+
+```bash
+pixi run docs           # live-reloading site on http://127.0.0.1:8000
+pixi run docs-build     # what CI runs, with --strict
 ```
 
 ## Sponsorship

@@ -1,0 +1,50 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The site mounts markdown from all over the repo (docs/hooks/repo_links.py), so
+# a link that stops resolving is a routine consequence of moving a file. The
+# build runs --strict on every PR to catch it there, and only main deploys.
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # No submodules: the site carries none of third_party/.
+      - uses: actions/checkout@v7
+
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          cache: true
+          environments: docs
+
+      - name: Build
+        run: pixi run docs-build
+
+      - uses: actions/upload-pages-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

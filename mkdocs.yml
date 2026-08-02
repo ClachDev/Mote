@@ -1,0 +1,157 @@
+site_name: Mote
+site_description: >-
+  A cheap, fully functioning ROS 2 robot platform — mapping, navigation,
+  perception, an arm, and a fleet control plane.
+site_url: https://clachdev.github.io/Mote/
+repo_url: https://github.com/ClachDev/Mote
+repo_name: ClachDev/Mote
+edit_uri: edit/main/docs/
+copyright: Mote is developed in the open at ClachDev/Mote.
+
+docs_dir: docs
+site_dir: site
+
+# The hook is a build-time script, not a page. Excluding it here is what keeps
+# it next to the docs it serves rather than in a directory of its own.
+exclude_docs: |
+  hooks/
+
+# Package READMEs, design notes and hardware research live with the code they
+# document; this copies them in and repairs their relative links. See the
+# module docstring for the rules.
+hooks:
+  - docs/hooks/repo_links.py
+
+# Those mounted files live outside docs_dir, so `mkdocs serve` has to be told
+# to watch for edits to them.
+watch:
+  - design
+  - mote_arm
+  - mote_bringup
+  - mote_fleet
+  - mote_hardware
+  - mote_perception
+  - mote_simulation
+  - mote_tasks
+
+theme:
+  name: material
+  # The logo is blue, and so is the header bar it sits on, so the header wears
+  # a white-filled copy of the same shapes.
+  logo: images/logo_white.svg
+  favicon: images/logo_64.png
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  # The slug function is GitHub's, set in the hook rather than here — it is a
+  # Python object, and spelling one in YAML would need a tag that `check-yaml`
+  # (correctly) refuses to load. See docs/hooks/repo_links.py.
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Hardware:
+      - Design decisions: hardware/index.md
+      - Bill of materials: hardware/bom.md
+      - Printing & assembly: hardware/assembly.md
+      - Wiring & power: hardware/wiring.md
+      - Servo bus tools: hardware/servo-tools.md
+      - Research:
+          - Caster: hardware/research/caster.md
+          - Does Mote need an IMU?: hardware/research/imu-fusion.md
+          - 2D lidar odometry: hardware/research/lidar-odometry.md
+          - SfM / multi-view depth: hardware/research/sfm-depth.md
+          - SfM stage 0 results: hardware/research/sfm-stage0.md
+  - The robot:
+      - Bringup & reliability: robot/bringup.md
+      - Sites, maps & zones: robot/sites.md
+      - Missions — fetch and goto: robot/missions.md
+      - Map cleaning & room segmentation: robot/map-cleanup.md
+      - Foxglove layout: robot/foxglove.md
+      - Chaos validation: robot/chaos.md
+  - Perception:
+      - Overview: perception/index.md
+      - The inference server: inference-server.md
+      - Camera calibration: perception/camera-calibration.md
+      - Inference benchmarks: perception/benchmarks.md
+      - Camera driver evaluation: research/usb_cam_evaluation.md
+  - SO-101 arm:
+      - Overview: arm/index.md
+      - Bench validation: arm/bench.md
+  - Fleet:
+      - Operator runbook: fleet/README.md
+      - Architecture: design/fleet.md
+      - Package layout: fleet/package.md
+      - Control plane (MQTT): fleet/control-plane.md
+      - Fleet API (HTTP): fleet/fleet-api.md
+      - Server pipelines: fleet/server-pipelines.md
+      - Verification ledgers:
+          - M0 — overlay & identity: fleet/m0-verification.md
+          - M1 — control plane: fleet/m1-verification.md
+          - M2 — remote console: fleet/m2-verification.md
+          - M3 — dashboard & dispatch: fleet/m3-verification.md
+          - M4 — map registry: fleet/m4-verification.md
+          - Ms — server pipelines: fleet/ms-verification.md
+  - Simulation:
+      - Overview: simulation.md
+      - Benchmark harness: simulation/benchmark.md
+      - Parameter sweep: simulation/sweep.md
+      - Bag-replay scoring: simulation/bag-replay.md
+  - Tuning notes:
+      - Nav2 on office_world: tuning/2026-07-23-office-nav.md
+      - "  ↳ sweep report": tuning/2026-07-23-office-nav/sweep-report.md
+      - Room segmentation: tuning/2026-07-27-room-segmentation.md
+      - ICP velocity gate: tuning/2026-07-28-icp-velocity-gate.md
+      - "  ↳ baseline benchmark": tuning/2026-07-28-icp-velocity-gate/bench-baseline.md
+      - "  ↳ gated benchmark": tuning/2026-07-28-icp-velocity-gate/bench-gated.md
+      - Slip detection: tuning/2026-07-28-slip-detection.md
+      - Camera layer decay: tuning/2026-07-29-camera-layer-decay.md

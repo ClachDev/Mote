@@ -41,7 +41,7 @@ concern, not by machine — which machine each half lands on is a deployment cho
   for the iGPU caveats). As a *deployed role* on a dedicated NVIDIA machine — a
   gaming PC or a cloud GPU — the same servers ship as a **container image**
   (`ghcr.io/clachdev/mote-inference`), so that host installs no repo, pixi, or
-  scripts: see **[`docs/inference-server.md`](../../docs/inference-server.md)**.
+  scripts: see **[`docs/inference-server.md`](../docs/inference-server.md)**.
   Every variant runs the same supervisor (`tools/inference_server.py`).
 
 The only knob is **`inference_host`** in `config/perception.yaml` (with the same
@@ -304,7 +304,7 @@ server up (`pixi run depth-server`). Shared bag loading lives in
 ### Inference-server tools
 
 Run the servers and operate them from the robot side. See
-[`docs/inference-server.md`](../../docs/inference-server.md) for the deployment
+[`docs/inference-server.md`](../docs/inference-server.md) for the deployment
 role and [`benchmarks/`](benchmarks/README.md) for numbers.
 
 - `tools/inference_server.py` — cross-platform supervisor that runs every service

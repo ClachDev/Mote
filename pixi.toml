@@ -200,6 +200,13 @@ lint = "pre-commit run --all-files"
 # One-time per clone: wire pre-commit into .git/hooks so it runs on commit
 lint-install = "pre-commit install"
 
+# The documentation site (mkdocs.yml). --strict so a link the build cannot
+# resolve fails here rather than shipping as a 404 — which is the whole point
+# of a site that mounts markdown from across the repo (docs/hooks/repo_links.py).
+[feature.docs.tasks]
+docs = "mkdocs serve"
+docs-build = "mkdocs build --strict"
+
 [dependencies]
 cmake = ">=4.3.2,<5"
 colcon-common-extensions = ">=0.3.0,<0.4"
@@ -416,6 +423,10 @@ test-foxglove = "pytest mote_bringup/test/test_foxglove_teleop.py -q"
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
 
+[feature.docs.dependencies]
+mkdocs = ">=1.6,<2"
+mkdocs-material = ">=9.7,<10"
+
 [activation]
 scripts = ["install/setup.sh"]
 # DDS transport is loopback-only by default, in every environment
@@ -440,3 +451,6 @@ inference-rocm = { features = ["inference-rocm"], no-default-feature = true }
 # can never perturb any other env.
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
 lint = { features = ["lint"], no-default-feature = true }
+# Likewise for the docs site: mkdocs needs nothing from the robot stack, and
+# building the site should not mean solving ROS on a contributor's machine.
+docs = { features = ["docs"], no-default-feature = true }
