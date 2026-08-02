@@ -30,6 +30,8 @@ def _get(d, dotted):
 # (label, dotted metric key, decimals, "lower"/"higher" is better)
 ROWS = [
     ("scans replayed", "n_scans", 0, ""),
+    ("pose-graph nodes", "n_inserted", 0, ""),
+    ("replay wall (s)", "wall_s", 0, ""),
     ("traj samples", "traj_samples", 0, ""),
     ("path length (m)", "loop.path_length_m", 2, ""),
     ("loop drift (m)", "loop.start_end_dist_m", 3, "lower"),
@@ -51,7 +53,12 @@ def build_markdown(run) -> str:
         f"- **generated (UTC):** {p['timestamp']}",
         f"- **git commit:** `{p['git_commit']}`",
         f"- **bag:** `{p['bag']}`",
-        f"- **mode:** {p['mode']}  ·  **replay rate:** {p['rate']}× realtime",
+        f"- **mode:** {p['mode']}  ·  **feed:** {p.get('feed', 'paced')}"
+        + (
+            f"  ·  **replay rate:** {p['rate']}× realtime"
+            if p.get("feed") != "lockstep"
+            else ""
+        ),
         f"- **parameter sets:** {len(results)}",
         "",
         "## Metrics",
@@ -117,6 +124,12 @@ def _limitations() -> list:
         "- Replaying the same recorded sensor stream makes the comparison"
         " deterministic in its *input*, but SLAM's solver is not bit-exact"
         " run-to-run; treat small deltas as noise.",
+        "- **Trajectory rows are only comparable within one feed mode.** A paced"
+        " leg samples `map→base_link` off TF on a fixed period; a lockstep leg"
+        " takes the pose graph's own node poses, because `map→odom` is broadcast"
+        " on a wall-clock timer that a lockstep leg outruns. Path length and"
+        " drift ratio therefore differ by *sampling*, not by quality — the map"
+        " rows and `pose-graph nodes` are the ones that cross the two.",
         "",
     ]
 
