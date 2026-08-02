@@ -176,15 +176,37 @@ class BundleError(ValueError):
 # --------------------------------------------------------------------------
 
 
+class _Loader(yaml.SafeLoader):
+    """``SafeLoader``, except that a timestamp stays the text it was written as.
+
+    A bundle's values travel: ``meta.yaml``'s provenance is served as JSON by
+    the fleet server and rendered by the dashboard, and ``datetime`` is the one
+    thing ``safe_load`` returns that ``json.dumps`` refuses — so an unquoted
+    ``saved: 2026-07-05T11:16:46`` would cost the floor route its whole
+    response rather than one field. Quoting is not something a bundle can be
+    relied on to do: a revision may be hand-edited, or seeded by rsync from
+    before the registry existed, and only the local writer (``sites.save_map``)
+    goes through ``yaml.safe_dump``.
+
+    The value is passed through verbatim rather than parsed and reformatted,
+    because a provenance stamp is a record of what was written, and inventing
+    a normal form for it would make the served string differ from the file.
+    """
+
+
+_Loader.add_constructor("tag:yaml.org,2002:timestamp", lambda loader, node: node.value)
+
+
 def load_yaml(text: str):
     """Parse bundle YAML, raising :class:`BundleError` rather than a YAMLError.
 
-    PyYAML, deliberately — see this module's docstring. The only thing added
-    here is the error type, so that every "this bundle is not readable" failure
-    reaches a caller as one exception class.
+    PyYAML, deliberately — see this module's docstring. What is added here is
+    the error type, so that every "this bundle is not readable" failure reaches
+    a caller as one exception class, and :class:`_Loader`'s guarantee that
+    every scalar in a bundle is JSON-serialisable.
     """
     try:
-        return yaml.safe_load(text)
+        return yaml.load(text, Loader=_Loader)
     except yaml.YAMLError as exc:
         raise BundleError(f"not valid YAML: {_one_line(exc)}") from exc
 

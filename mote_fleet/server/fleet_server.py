@@ -216,7 +216,15 @@ class FleetHandler(BaseHTTPRequestHandler):
     # -- plumbing ---------------------------------------------------------
 
     def _send(self, code: int, payload: dict):
-        self._send_bytes(code, "application/json", json.dumps(payload).encode())
+        # `default` is a backstop, not the contract: payloads carrying a value
+        # read off disk are typed where they are parsed (bundle._Loader), so
+        # what reaches here is already serialisable. Whatever is not, a route
+        # answers badly rather than raising through the handler — an
+        # unserialisable field otherwise closes the connection with no status
+        # line at all, and a client cannot tell that from the server being
+        # down.
+        body = json.dumps(payload, default=str).encode()
+        self._send_bytes(code, "application/json", body)
 
     def _send_bytes(self, code: int, content_type: str, body: bytes, **headers):
         self.send_response(code)

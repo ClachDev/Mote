@@ -80,6 +80,37 @@ def test_an_unknown_floor_is_404(server):
     expect_error(lambda: get(server, "/v1/sites/home/floors/attic"), 404)
 
 
+def test_a_floor_serves_a_revision_whose_meta_timestamp_was_left_unquoted(server):
+    """The registry serves revisions it did not write — uploaded, restored from
+    a backup, or seeded by rsync from before it existed — so it cannot assume
+    the typing YAML gives a file. An unquoted ``saved:`` is a ``datetime``,
+    which ``json.dumps`` refuses, and a route that raises there answers with no
+    status line at all: the connection closes, and the dashboard's floor fetch
+    fails in a way indistinguishable from the server being down.
+    """
+    meta = server.maps / SITE / "floors" / FLOOR / "maps" / "20260726T120000"
+    (meta / "meta.yaml").write_text("schema: 1\nsaved: 2026-07-05T11:16:46\n")
+    status, body = get(server, f"/v1/sites/{SITE}/floors/{FLOOR}")
+    assert status == 200
+    assert body["revisions"][0]["meta"]["saved"] == "2026-07-05T11:16:46"
+
+
+def test_a_candidate_uploaded_with_an_unquoted_meta_timestamp_is_accepted(
+    server, robot, tmp_path
+):
+    """The same value on the way in: the report is stored as JSON beside the
+    revision, so an untyped one would break the upload's own response too.
+    """
+    directory = tmp_path / "rev"
+    write_revision(directory)
+    (directory / "meta.yaml").write_text("schema: 1\nsaved: 2026-07-05T11:16:46\n")
+    status, body = upload(server, bundle.pack(directory))
+    assert status == 201
+    _, floor = get(server, f"/v1/sites/{SITE}/floors/{FLOOR}")
+    candidate = [r for r in floor["revisions"] if r["revision"] == body["revision"]][0]
+    assert candidate["meta"]["saved"] == "2026-07-05T11:16:46"
+
+
 # ---- uploading a candidate ----------------------------------------------
 
 
