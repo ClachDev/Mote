@@ -121,6 +121,70 @@ def test_map_quality_speckle_and_unknown():
     assert q["explored_area_m2"] > 0.0
 
 
+def test_map_quality_angular_keys_and_graceful_degradation():
+    """The angular keys ride on an optional import and must not be load-bearing.
+
+    ``metrics`` keeps a numpy-only, ROS-free contract, so a benchmark run in an
+    environment without ``mote_bringup`` on the path has to still score — just
+    without the angular half.
+    """
+    grid = np.full((160, 160), 0, dtype=int)
+    for y0, y1, x0, x1 in ((20, 70, 20, 80), (90, 140, 30, 120)):
+        grid[y0:y1, x0] = 100
+        grid[y0:y1, x1] = 100
+        grid[y0, x0:x1] = 100
+        grid[y1, x0:x1] = 100
+
+    ANGULAR = (
+        "angular_support_deg",
+        "angular_entropy_norm",
+        "unassigned_energy_frac",
+        "directions",
+        "frames",
+    )
+
+    q = metrics.map_quality(grid, 0.05)
+    try:
+        import mote_bringup.map_cleanup.angular_stats  # noqa: F401
+    except ImportError:
+        available = False
+    else:
+        available = True
+
+    if available:
+        for k in ANGULAR:
+            assert k in q, k
+        # Axis-aligned rectangles: two wall families in one orthogonal frame.
+        assert q["n_peaks"] == 2, q["directions"]
+        assert len(q["frames"]) == 1
+        assert q["angular_support_deg"] < 25.0
+    else:
+        for k in ANGULAR:
+            assert k not in q, k
+    # Either way the crispness half is intact.
+    assert q["mean_wall_thickness_m"] > 0.0
+
+    # And with the import forced to fail, the rest of the scoring survives.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_mote_bringup(name, *a, **kw):
+        if name.startswith("mote_bringup"):
+            raise ImportError("simulated: mote_bringup not on the path")
+        return real_import(name, *a, **kw)
+
+    builtins.__import__ = _no_mote_bringup
+    try:
+        degraded = metrics.map_quality(grid, 0.05)
+    finally:
+        builtins.__import__ = real_import
+    for k in ANGULAR:
+        assert k not in degraded, k
+    assert degraded["mean_wall_thickness_m"] == q["mean_wall_thickness_m"]
+    assert degraded["explored_area_m2"] == q["explored_area_m2"]
+
+
 def test_summarize_and_aggregate():
     truth, est = _synthetic_run()
     series = {

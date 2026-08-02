@@ -197,11 +197,31 @@ def map_quality(
     * ``speckle_frac`` — fraction of occupied cells with no occupied neighbour,
       i.e. isolated specks. Poor odometry/scan-matching sprays these; lower is
       cleaner.
+    * ``angular_support_deg`` / ``angular_entropy_norm`` /
+      ``unassigned_energy_frac``, plus the ``directions`` and ``frames`` tables
+      — how many distinct wall orientations the map uses and how tightly its
+      energy sits on them, from
+      :func:`mote_bringup.map_cleanup.angular_stats.angular_stats`. Lower is
+      better on all three. These catch the failure the crispness proxies are
+      blind to: a section of the map drawn at the wrong *angle*, which is crisp
+      and unspeckled and still wrong.
 
     Truth-free caveat: a crisp map is not necessarily a *correct* one — a
     confidently wrong map (e.g. a mis-closed loop drawn sharply) can still score
     well here. These proxies catch blur, incompleteness, and noise, not global
     metric error, which needs a surveyed reference the bag does not carry.
+
+    The angular keys are a *consistency* proxy and inherit that caveat twice
+    over. A small, confidently-wrong map can score well on them — a map that
+    explored less has fewer long walls and so uses fewer directions, which reads
+    as tighter (measured: the better of the two run-3 replay legs by loop drift
+    scores *worse* on angular support, having explored 59 m² against 81 m²), so
+    read them beside ``explored_area_m2`` and not alone. And a genuinely
+    multi-angle building — a flat with an angled hallway — honestly uses more
+    directions than a rectilinear one; that is architecture, not a defect.
+    Separating drift from architecture needs a prior, which is what
+    ``angular_stats``' ``reference_directions`` argument is for; this function
+    does not supply one.
     """
     g = np.asarray(grid)
     total = int(g.size)
@@ -231,7 +251,7 @@ def map_quality(
         speckle_frac = float(int(isolated.sum()) / n_occ)
 
     decided = total - int(unknown.sum())
-    return {
+    out = {
         "n_cells": total,
         "unknown_frac": float(int(unknown.sum()) / total),
         "free_frac": float(int(free.sum()) / total),
@@ -240,6 +260,18 @@ def map_quality(
         "mean_wall_thickness_m": thickness_m,
         "speckle_frac": speckle_frac,
     }
+
+    # Imported here, not at module scope, so this module keeps its numpy-only
+    # contract: the sim benchmark must still score in an environment that has no
+    # mote_bringup on the path. angular_stats is numpy-only precisely so this
+    # stays cheap when it does resolve.
+    try:
+        from mote_bringup.map_cleanup.angular_stats import angular_stats
+    except ImportError:
+        return out
+    if n_occ:
+        out.update(angular_stats(occ))
+    return out
 
 
 def goal_stats(goals) -> dict:

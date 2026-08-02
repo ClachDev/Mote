@@ -20,6 +20,10 @@ and OpenCV:
 
 Room segmentation (the ROSE2 layer on top of this) is intentionally out of
 scope for this module.
+
+Steps 2 and 3 — the angular spectrum and its peak-picking — live in
+:mod:`angular_stats`, which is numpy-only so that scoring a map's angular
+structure does not drag OpenCV in. This module keeps the filtering half.
 """
 
 from __future__ import annotations
@@ -28,6 +32,8 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+
+from .angular_stats import _angular_energy, _pick_directions
 
 # ROS map_server occupancy-PNG conventions.
 FREE = 254
@@ -71,75 +77,6 @@ def _binarise(occ: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     wall = occ <= (OCCUPIED + 20)
     free = occ >= (FREE - 20)
     return wall, free
-
-
-def _angular_energy(
-    spectrum_lin: np.ndarray, params: Params
-) -> tuple[np.ndarray, np.ndarray]:
-    """Sum spectral energy into angle bins over [0, 180).
-
-    Each spectrum pixel at (u, v) relative to the centre contributes to the
-    orientation atan2(v, u) (mod 180, since the magnitude spectrum is
-    centro-symmetric). A wall oriented at angle a puts its energy on the line
-    through the origin at that same angle, so peaks in this histogram are the
-    map's dominant orientations.
-    """
-    h, w = spectrum_lin.shape
-    cy, cx = h / 2.0, w / 2.0
-    yy, xx = np.mgrid[0:h, 0:w]
-    dy = yy - cy
-    dx = xx - cx
-    radius = np.hypot(dx, dy)
-    rmax = min(cy, cx)
-
-    # Drop the DC neighbourhood and the extreme high-frequency corners.
-    keep = (radius > params.lowcut_frac * rmax) & (radius <= rmax)
-
-    ang = np.degrees(np.arctan2(dy, dx)) % 180.0
-    nbins = int(round(180.0 / params.angle_step_deg))
-    bin_idx = np.clip((ang / 180.0 * nbins).astype(int), 0, nbins - 1)
-
-    weights = np.where(keep, spectrum_lin, 0.0).ravel()
-    energy = np.bincount(bin_idx.ravel(), weights=weights, minlength=nbins)
-    # Normalise out the fact that low-angle-resolution bins near the axes hold
-    # different pixel counts is negligible here; a light smoothing stabilises
-    # peak-picking on small maps.
-    energy = _smooth_circular(energy, k=max(1, int(round(2.0 / params.angle_step_deg))))
-    angles = (np.arange(nbins) + 0.5) * params.angle_step_deg
-    return angles, energy
-
-
-def _smooth_circular(x: np.ndarray, k: int) -> np.ndarray:
-    """Circular moving-average smoothing (angles wrap at 180 deg)."""
-    if k <= 1:
-        return x
-    kernel = np.ones(2 * k + 1) / (2 * k + 1)
-    padded = np.concatenate([x[-k:], x, x[:k]])
-    return np.convolve(padded, kernel, mode="valid")
-
-
-def _pick_directions(
-    angles: np.ndarray, energy: np.ndarray, params: Params
-) -> list[float]:
-    """Non-max-suppress the angular energy into a small set of orientations."""
-    thresh = params.peak_rel_threshold * float(energy.max())
-    order = np.argsort(-energy)
-    chosen: list[float] = []
-    for idx in order:
-        if energy[idx] < thresh:
-            break
-        a = float(angles[idx])
-        if all(_angdist(a, c) >= params.peak_nms_deg for c in chosen):
-            chosen.append(a)
-        if len(chosen) >= params.max_directions:
-            break
-    return sorted(chosen)
-
-
-def _angdist(a: float, b: float) -> float:
-    """Smallest distance between two orientations on the 180-deg circle."""
-    d = abs(a - b) % 180.0
-    return min(d, 180.0 - d)
 
 
 def _directional_mask(

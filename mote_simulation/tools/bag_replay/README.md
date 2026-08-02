@@ -187,6 +187,41 @@ how fast a leg can finish.
   read thicker — lower is crisper), `speckle_frac` (isolated occupied cells —
   scan-match noise, lower is cleaner), `unknown/free/occ_frac`, and
   `explored_area_m2`.
+- **angular structure** (`angular_stats`, slam mode) — a **tear detector**, from
+  the same FFT orientation spectrum the declutter pass uses. Its job is the one
+  loop drift cannot do: loop drift is only meaningful when the trajectory
+  *closes*, so a session that exits on its exploration budget produces no drift
+  number at all, and for those maps this is the only automated tear signal there
+  is.
+
+  The signal is the **orthogonal-frame table**. A rectilinear building puts all
+  its walls in one frame. A drift-rotated *section* duplicates that section's
+  whole frame — both wall directions, ~90° apart — so a second frame carrying
+  real energy means part of the map is drawn on its own axes. An angled hallway,
+  by contrast, adds a single *direction* to the existing frame. `directions: 2`
+  vs `directions: 1` in the frame table is that distinction.
+
+  Reported alongside: a **wall-direction table**, and `angular_support_deg` (the
+  effective number of degrees of wall direction the map uses) as a descriptive
+  scalar. Both are **not ranked and not bolded** — see Limitations for why
+  `angular_support_deg` must not be used to pick a winner.
+
+  Related: `map_cleanup/room_segmentation.py` assumes "Manhattan after rotation"
+  and does not support a building with wings at 30° to each other. More than one
+  frame with real energy share is the measurement that tells you that assumption
+  is being violated.
+
+  The same module exposes `wall_rotation()` — windowed, folded 0/90, sub-bin
+  interpolated — which is the canonical way to measure *how far* a map's wall
+  grid is turned. Map alignment should call it rather than re-deriving the fold.
+  It is accurate to ~0.07° from 2° up and **under-reports below that** (a true
+  1.5° reads ~0.5°), because a barely-rotated line rasterises into runs that are
+  still spectrally axis-aligned — so it cannot measure a 1–2° residual shear.
+
+  Angles are reported as **wall orientations**. A wall's Fourier energy lies
+  perpendicular to it, so the raw spectrum peak is the wall *normal*; the
+  conversion happens at the reporting boundary, and the transform runs on a
+  square canvas because an oblong one skews every angle towards its long axis.
 
 ## Limitations
 
@@ -202,6 +237,25 @@ cannot prove versus the sim's ground truth:
 - **Crispness ≠ correctness.** A confidently *wrong* map — e.g. a mis-closed
   loop drawn with sharp walls — can score well on wall thickness and speckle. The
   crispness proxies catch blur, noise, and incompleteness, not global error.
+- **Angular structure detects tears; it does not rank quality.** Do not use
+  `angular_support_deg` to pick a winner: it is confounded by coverage, since a
+  map that explored less has fewer long walls and reads as tighter. On the
+  2026-07-29 run-3 pair the leg that is clearly better by loop drift (0.551 m vs
+  8.776 m) scores *worse* on it (42.2 vs 39.3), having covered 59 m² against
+  81 m². Read it beside `explored_area_m2`, or not at all.
+- **A multi-angle building is not a defect.** A flat with an angled hallway
+  genuinely has three dominant wall directions and always will. Nothing here
+  should be tuned until it calls such a building broken.
+- **The frame table is blind below ~10°** — the merge tolerance, which must
+  exceed the shear a genuine frame carries (the run-3 conservative leg's own
+  frame is internally sheared 7.5°) or honest shear would be reported as a tear.
+  It is trustworthy for the tears it is relied on for (≥~20°; run 3's real pair
+  were 25° and 41° apart, and the synthetic band 20–40° is pinned by tests),
+  and a smaller rotation will show one frame, not two. Catching that needs a
+  declared direction set for the site, which `angular_stats(...,
+  reference_directions=...)` accepts and this report does not yet supply.
+- **`n_peaks` is threshold-bound** (`peak_rel_threshold`, `peak_nms_deg`) and
+  capped, so it is reported and never ranked.
 - **Not bit-exact.** The recorded sensor stream makes the *input* deterministic,
   but SLAM's solver is not bit-identical run to run; treat small deltas as noise
   and lean on the map images for anything marginal.
