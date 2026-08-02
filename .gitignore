@@ -7,6 +7,9 @@ build/
 install/
 log/
 
+# The rendered documentation site (`pixi run docs-build`)
+site/
+
 #llm
 .claude/
 __pycache__/

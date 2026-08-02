@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+
+  <!-- The logo as it is worn on a coloured header bar: same shapes as
+       logo.svg, filled white so they read against the primary colour (which
+       is the blue logo.svg is filled with). -->
+  <!-- Upper-left wing -->
+  <polygon points="20,120 70,33.4 84,33.4 84,126 23.5,126" fill="#ffffff"/>
+  <!-- Upper-centre rectangle -->
+  <polygon points="96,33.4 144,33.4 144,100 96,100" fill="#ffffff"/>
+  <!-- Upper-right wing -->
+  <polygon points="220,120 170,33.4 156,33.4 156,126 216.5,126" fill="#ffffff"/>
+  <!-- Lower-left wing -->
+  <polygon points="30.4,138 84,138 84,206.6 70,206.6" fill="#ffffff"/>
+  <!-- Lower-centre rectangle -->
+  <polygon points="96,112 144,112 144,206.6 96,206.6" fill="#ffffff"/>
+  <!-- Lower-right wing -->
+  <polygon points="209.6,138 156,138 156,206.6 170,206.6" fill="#ffffff"/>
+</svg>
