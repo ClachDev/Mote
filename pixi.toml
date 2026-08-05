@@ -162,6 +162,25 @@ arm-calibrate = "ros2 run mote_arm arm_calibrate"
 arm-offsets = "ros2 run mote_arm arm_offsets"
 # Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
 arm-gains = "ros2 run mote_arm arm_gains"
+# Virtual-leader teleop (mote_arm/TELEOP.md). No leader arm: the keyboard moves a
+# leader pose, `arm_mirror` rate-limits and clamps it onto arm_controller. Bring
+# the control stack up with the mirror beside it: `pixi run arm mirror:=true`.
+arm-teleop = "ros2 run mote_arm virtual_leader"
+arm-mirror = "ros2 run mote_arm arm_mirror"
+# The arm control stack's interface (trajectory topic + switch_controller) with
+# no hardware behind it — teleop, recording and replay all run against this on a
+# workstation. `-- --camera` adds a synthetic camera so episodes have frames.
+arm-mock = "ros2 run mote_arm mock_arm"
+# Record teleop episodes (observations + actions) into $MOTE_HOME/episodes, and
+# replay one on the arm at reduced speed. Export them with `arm-export` below.
+arm-record = "ros2 run mote_arm episode_record"
+arm-replay = "ros2 run mote_arm episode_replay"
+# The whole teleop -> record -> export -> replay loop against the mock arm; the
+# pre-bench gate for anything that touches the arm's teleop path.
+arm-teleop-test = "bash mote_arm/test/teleop_loop/run_teleop_loop.sh"
+# The same loop on real hardware, guided: prompts for the safety observations a
+# script cannot make, and writes a report (mote_arm/BENCH.md).
+arm-bench-teleop = "bash mote_arm/tools/bench_teleop.sh"
 # Robot-side inference diagnostics (torch-free — run in the default/robot env):
 # probe the inference machine's health/version, or benchmark round-trip latency.
 inference-health = "python -u mote_perception/tools/inference_health.py"
@@ -445,6 +464,29 @@ test-fleet = "pytest mote_fleet/test -q"
 # M2's teleop path against the real bridge; needs the dev env's WebSocket client.
 test-foxglove = "pytest mote_bringup/test/test_foxglove_teleop.py -q"
 
+# Off-board LeRobot env: converts on-robot episode captures into a LeRobotDataset
+# and inspects it with LeRobot's own tooling. Its own env, no-default-feature and
+# linux-64 only, for the same reason `inference` has one — lerobot brings torch,
+# ffmpeg and the HuggingFace stack, none of which belongs on the aarch64 Pi that
+# does the recording. The robot writes a plain capture directory; this converts
+# it (see mote_arm/tools/lerobot_export.py).
+[feature.lerobot]
+platforms = ["linux-64"]
+
+[feature.lerobot.dependencies]
+python = "3.12.*"
+numpy = ">=1.26,<3"
+pillow = ">=10,<13"
+# The video path LeRobot encodes MP4 shards with.
+ffmpeg = ">=6"
+
+[feature.lerobot.pypi-dependencies]
+# v3.0 datasets (aggregated parquet/mp4 shards) land in lerobot >= 0.4.
+lerobot = ">=0.4"
+
+[feature.lerobot.tasks]
+arm-export = "python -u mote_arm/tools/lerobot_export.py"
+
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
 
@@ -472,6 +514,8 @@ fleet = { features = ["fleet"], no-default-feature = true }
 sim = { features = ["sim"] }
 inference = { features = ["inference"], no-default-feature = true }
 inference-rocm = { features = ["inference-rocm"], no-default-feature = true }
+# Off-board episode export + LeRobot's dataset viewer. Own solve, no ROS.
+lerobot = { features = ["lerobot"], no-default-feature = true }
 # ^ GPU sibling of `inference`; own solve (no solve-group) so the ROCm torch wheel
 # can never perturb any other env.
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install

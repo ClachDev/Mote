@@ -39,6 +39,7 @@ from sensor_msgs.msg import JointState
 
 from mote_arm import cli, config, poses
 from mote_arm.control import ArmControl
+from mote_arm.motion import LagSupervisor, lag_of
 
 
 class PoseClient(Node):
@@ -233,27 +234,20 @@ def _stream(node: PoseClient, start: dict, goals: dict, args) -> None:
         f"({args.speed:.2f} rad/s), stopping if lag exceeds {args.max_lag:.2f} rad"
     )
 
-    lagging = 0.0
+    supervisor = LagSupervisor(args.max_lag, args.stall_time)
     report_every = max(1, len(stream) // 8)
     for i, setpoint in enumerate(stream, 1):
         node.send(setpoint, period)
         time.sleep(period)
         now = node.current()
-        lag = max(
-            (abs(now.get(n, setpoint[n]) - setpoint[n]) for n in setpoint),
-            default=0.0,
-        )
-        if lag > args.max_lag:
-            lagging += period
-            if lagging >= args.stall_time:
-                print(
-                    f"\nSTOPPED at setpoint {i}/{len(stream)}: the arm trailed by "
-                    f"{lag:.3f} rad for {args.stall_time:.1f}s. Holding here rather "
-                    "than driving against a load it is not overcoming."
-                )
-                return
-        else:
-            lagging = 0.0
+        lag = lag_of(setpoint, now)
+        if not supervisor.update(lag, period):
+            print(
+                f"\nSTOPPED at setpoint {i}/{len(stream)}: the arm trailed by "
+                f"{lag:.3f} rad for {args.stall_time:.1f}s. Holding here rather "
+                "than driving against a load it is not overcoming."
+            )
+            return
         if i % report_every == 0 or i == len(stream):
             print(
                 f"  {i:>4}/{len(stream)}  lag {lag:.4f} rad   "

@@ -346,6 +346,38 @@ exception` on stderr. A `134` is the destroy-while-spinning abort (see README,
 "Exits and arguments"); it means the tool did its job and then crashed on the
 way out.
 
+## Step 8 — virtual-leader teleop, recording and replay
+
+The teleop path has its own guided session, because it needs three terminals
+and because three of its checks are observations no script can make (the arm
+stopping at a limit, halting on a released key, going limp on panic).
+
+**Rehearse it headless first** — the same loop runs against the mock follower
+with no hardware at all, and a failure there is a software bug, not a bench one:
+
+```
+pixi run arm-teleop-test
+```
+
+Then, on the arm:
+
+```
+# terminal A
+pixi run arm mirror:=true
+# terminal B
+pixi run arm-teleop
+# terminal C
+pixi run arm-bench-teleop
+```
+
+Terminal C walks through the safety demonstrations, records an episode while
+you teleop it, checks the capture holds a real motion, prints the off-board
+export/inspect commands, and replays the episode at quarter speed. It writes
+`$MOTE_HOME/episodes/bench/bench-report.txt` — nothing is recorded as passing
+that you did not say you saw.
+
+Full workflow and design: [TELEOP.md](TELEOP.md).
+
 ---
 
 ## Sign-off checklist
@@ -390,6 +422,9 @@ Still open:
 - [ ] **the arm moving while the wheels are driving** — the point of the fold.
       `pixi run robot`, drive a short goal, and jog the arm at the same time;
       watch for wheel-odometry glitches that would mean the bus is oversubscribed
+- [ ] step 8: teleop, record, export/inspect and replay on the arm
+      (`pixi run arm-bench-teleop`) — verified headless against the mock
+      control stack, but not yet on hardware
 - [ ] the other five joints jogged and direction-checked (`invert`)
 - [ ] re-check the gain with a payload on the gripper — the sweep only measures
       an unloaded static hold, which is why Kp=64 was taken over a better-scoring

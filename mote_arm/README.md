@@ -28,6 +28,12 @@ stack). We chose direct Feetech control:
    same mechanism; we don't need LeRobot's dataset format to unblock the
    follow-up. If we later want that format for learning, we can convert bags or
    run LeRobot off-board.
+
+   *That follow-up has since landed, and off-board is what it does* — the robot
+   writes a stdlib-only capture and `tools/lerobot_export.py` converts it into a
+   real `LeRobotDataset` in a linux-64 environment of its own. See
+   [TELEOP.md](TELEOP.md). The decision above is unchanged: LeRobot is where the
+   dataset goes, not where the arm is driven from.
 4. **We can borrow the calibration flow without the framework.** LeRobot's
    `lerobot-calibrate` is two phases — write each servo's homing offset so
    mid-travel reads 2048, then record every joint's range in one sweep — and
@@ -175,6 +181,8 @@ conversions are verified without hardware.
 | `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. Owns the bus: control stack stopped. `pixi run arm-calibrate`. |
 | `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
+| `mock_arm` (node) | The control stack's interface — trajectory topic and `switch_controller` — with nothing behind it, plus an optional synthetic camera, so teleop, recording and replay run on a workstation. `pixi run arm-mock`. |
+| **teleop + episodes** | Virtual-leader teleoperation and LeRobot-format episode recording — `teleop.py`, `virtual_leader`, `arm_mirror`, `episode_record`, `episode_replay`, `tools/lerobot_export.py`. Its own doc: **[TELEOP.md](TELEOP.md)**. |
 
 ## Exits and arguments
 

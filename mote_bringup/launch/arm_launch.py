@@ -13,6 +13,10 @@ calibration — so what you jog on the bench is what runs on the robot. No diff_
 wheels, and the arm controller is loaded *inactive* — the arm is limp until
 `pixi run arm-jog` (or `switch_controllers --activate arm_controller`) asks it
 to hold.
+
+`mirror:=true` additionally runs `arm_mirror`, so a virtual-leader teleop
+session is two terminals (this one and `pixi run arm-teleop`) rather than
+three. See `mote_arm/TELEOP.md`.
 """
 
 import os
@@ -20,7 +24,9 @@ import os
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.substitutions import Command
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -78,6 +84,12 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "mirror",
+                default_value="false",
+                description="also run arm_mirror, for virtual-leader teleop "
+                "(see mote_arm/TELEOP.md)",
+            ),
             SetParameter(name="use_sim_time", value=False),
             robot_state_publisher,
             controller_manager,
@@ -85,6 +97,16 @@ def generate_launch_description():
                 controller_manager,
                 active=("joint_state_broadcaster",),
                 inactive=INACTIVE_CONTROLLERS,
+            ),
+            # Off by default: `arm-jog`, `arm-pose` and episode replay all
+            # command arm_controller too, and none of them wants a second
+            # thing driving the arm in the same graph.
+            Node(
+                package="mote_arm",
+                executable="arm_mirror",
+                name="arm_mirror",
+                output="screen",
+                condition=IfCondition(LaunchConfiguration("mirror")),
             ),
         ]
     )

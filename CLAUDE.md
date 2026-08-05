@@ -27,6 +27,13 @@ pixi run arm-jog        # Interactive per-joint jog CLI (needs a stack owning th
 pixi run arm-check      # Standalone arm bus enumeration + health (read-only, base stopped)
 pixi run arm-calibrate  # Range calibration: centre the joints, sweep, emit limits
 pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
+pixi run arm-teleop     # Virtual-leader teleop: keyboard -> leader pose (mote_arm/TELEOP.md)
+pixi run arm-mirror     # Mirror: leader pose -> clamped, rate-limited arm_controller goals
+pixi run arm-mock       # The arm control stack's interface, no hardware (+ --camera)
+pixi run arm-record     # Record teleop episodes into $MOTE_HOME/episodes
+pixi run arm-replay     # Replay a recorded episode on the arm, gated
+pixi run arm-teleop-test # Headless teleop->record->replay loop vs the mock arm
+pixi run arm-bench-teleop # Guided hardware teleop session (needs a human)
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -76,6 +83,12 @@ pixi run test           # colcon test for mote_hardware (gtest)
 # workstation can run broker + server + agent + a real behaviour tree at once.)
 pixi run -e fleet fleet-server     # fleet API + dashboard on the fleet box
 pixi run -e dev test-fleet      # mote_fleet tests incl. the real-broker e2e run
+
+# LeRobot environment only (`lerobot`: torch + ffmpeg + the HuggingFace stack, no
+# ROS; linux-64 only. Off-board, for the same reason `inference` is — the aarch64
+# Pi records episodes but must not carry this.)
+pixi run -e lerobot arm-export -- --capture ~/.mote/episodes/<name>  # capture -> LeRobotDataset
+pixi run -e lerobot -- lerobot-dataset-viz --repo-id <id> --root <out> --episode-index 0
 
 # Lint environment only (pre-commit; minimal env, no ROS — auto-selected)
 pixi run lint           # run all pre-commit hooks across the tree (~1 s cached)
@@ -849,6 +862,49 @@ section. Contains:
   control stack stopped (`pixi run kill`). `jog` and `arm-pose` do not.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
+- **Virtual-leader teleop + episode recording** (`mote_arm/TELEOP.md`) — teleop
+  with **no leader arm**: a leader pose held in software, moved by the keyboard
+  (`virtual_leader`, `pixi run arm-teleop`), published on `leader/joint_states`,
+  which `arm_mirror` (`pixi run arm-mirror`, or `pixi run arm mirror:=true`)
+  turns into `arm_controller` trajectories through `control.py`, like every
+  other command client. **The frontend is deliberately replaceable** — the
+  mirror's whole contract is `leader/joint_states` + a latched `teleop/estop`,
+  so a slider GUI or a gamepad is a drop-in. LeRobot's own teleop was rejected
+  for the reason the bring-up rejected LeRobot on the robot at all: it would put
+  torch on the Pi. **Every safety rule lives in `teleop.py`** and nowhere else —
+  soft-limit clamping, a 0.5 rad/s rate limit (so a leader that *jumps* becomes
+  a ramp), the deadman (the leader's *liveness* is the deadman: a released key,
+  a closed window and a dropped SSH session all arrive as "no fresh pose", and
+  the mirror then issues one goal at the arm's present position so it stops
+  there rather than coasting on), the latched panic (deactivates
+  `arm_controller` — torque *is* controller activation — and refuses goals until
+  cleared), and re-seeding from measured on every resume so a pause cannot bank
+  up motion. **The mirror ticks on its own thread, not on a ROS timer**: taking
+  hold of the arm is a `switch_controller` call, and a service call made from
+  inside an executor callback can never complete, because the future is resolved
+  by the executor the callback is blocking (`arm-jog` avoids this by driving
+  from its REPL thread). `mock_arm` (`pixi run arm-mock`) presents that same
+  ros2_control surface — trajectory topic plus `switch_controller` — with no bus
+  and an optional pure-zlib synthetic camera, so the whole loop runs on a
+  workstation: `pixi run arm-teleop-test` drives it headless and is the
+  pre-bench gate; `pixi run arm-bench-teleop` is the guided hardware session.
+  **Episodes**: `episode_record` samples `joint_states` (observation), the
+  `arm_controller/joint_trajectory` topic (action — read off the wire rather
+  than from the mirror, so an `arm-jog` session records too) and
+  `/image_raw/compressed` into a **capture** under `$MOTE_HOME/episodes/` — JSON
+  lines plus the compressed frames stored byte-for-byte, written with the
+  standard library alone, because the Pi carries no parquet or ffmpeg.
+  `tools/lerobot_export.py` (`pixi run -e lerobot arm-export`) converts a
+  capture into a real `LeRobotDataset` **through LeRobot's own API**
+  (`create`/`add_frame`/`save_episode`/`finalize`, then loads it back to verify)
+  rather than emitting the files — the format already moved once (v2.1 → v3.0)
+  and a hand-rolled writer would be wrong the next time. It resamples onto the
+  exact 1/fps grid first, since LeRobot derives timestamps from the frame index
+  and would otherwise silently stretch a slipped capture. `episode_replay`
+  (`pixi run arm-replay`) reads the *capture*, not the dataset, so replay needs
+  nothing off-board; it approaches the first pose, replays at a quarter speed,
+  and stops on sustained lag (`motion.py`, shared with `arm-pose go`). Stop the
+  leader before replaying — two things commanding `arm_controller` fight.
 - `arm_gains` (`pixi run arm-gains show|apply|sweep`) — the servos' position-loop
   gains live in EEPROM, i.e. invisible config a servo swap would silently
   revert, so `robot.yaml`'s `arm.gains` is the source of truth and this tool
