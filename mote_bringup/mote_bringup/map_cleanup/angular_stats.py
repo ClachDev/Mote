@@ -77,6 +77,8 @@ __all__ = [
     "refine_peak",
     "_angular_energy",
     "_smooth_circular",
+    "_floor_subtract",
+    "_pick_peaks",
     "_pick_directions",
     "_angdist",
 ]
@@ -96,7 +98,7 @@ class SpectrumParams:
 
     angle_step_deg: float = 0.5
     lowcut_frac: float = 0.02
-    peak_rel_threshold: float = 0.45
+    peak_rel_threshold: float = 0.15
     peak_nms_deg: float = 12.0
     max_directions: int = 5
     wedge_halfwidth_deg: float = 5.0
@@ -109,12 +111,14 @@ class SpectrumParams:
 FLOOR_HALFWIDTH_DEG = 45.0
 
 # Relative peak threshold used when picking the direction families the stats are
-# reported against. Deliberately *not* ``Params.peak_rel_threshold`` (0.45),
-# which selects wedges to keep in the declutter reconstruction — a different job
-# where being conservative is right. At 0.45, picking on the floor-subtracted
-# residual drops a whole family on some rotations of an unchanged map and its
-# energy lands in ``unassigned_energy_frac`` (measured 0.099 -> 0.181 -> 0.163
-# across 0/+17/-31 deg). At 0.15 the same map gives 0.099 / 0.071 / 0.084.
+# reported against. It is the same 0.15 as ``Params.peak_rel_threshold`` because
+# both now threshold the same *kind* of curve — a floor-subtracted residual, in
+# which a family's height is its structural energy rather than its structural
+# energy plus a broadband pedestal (see :func:`_pick_directions`). Measured here
+# first: at 0.45 picking on the residual drops a whole family on some rotations
+# of an unchanged map and its energy lands in ``unassigned_energy_frac``
+# (0.099 -> 0.181 -> 0.163 across 0/+17/-31 deg); at 0.15 the same map gives
+# 0.099 / 0.071 / 0.084.
 STATS_PEAK_REL_THRESHOLD = 0.15
 
 # At most this many direction families. ``Params.max_directions`` is 5, which
@@ -206,15 +210,32 @@ def _smooth_circular(x: np.ndarray, k: int) -> np.ndarray:
     return np.convolve(padded, kernel, mode="valid")
 
 
-def _pick_directions(
-    angles: np.ndarray, energy: np.ndarray, params: SpectrumParams
+def _floor_subtract(energy: np.ndarray, params: SpectrumParams) -> np.ndarray:
+    """Angular energy with its broadband floor removed.
+
+    The floor is the curve smoothed over :data:`FLOOR_HALFWIDTH_DEG`, i.e. what
+    is left of the energy once anything with a wall's angular sharpness is
+    averaged away. Subtracting it turns "how tall is this peak" into "how much
+    energy does this peak carry *above the background*", which is the quantity
+    every consumer here actually means.
+    """
+    k = max(1, int(round(FLOOR_HALFWIDTH_DEG / params.angle_step_deg)))
+    return np.clip(energy - _smooth_circular(energy, k), 0.0, None)
+
+
+def _pick_peaks(
+    angles: np.ndarray, curve: np.ndarray, params: SpectrumParams
 ) -> list[float]:
-    """Non-max-suppress the angular energy into a small set of orientations."""
-    thresh = params.peak_rel_threshold * float(energy.max())
-    order = np.argsort(-energy)
+    """Non-max-suppress a curve into a small set of orientations.
+
+    ``curve`` must already be floor-subtracted — see :func:`_pick_directions`,
+    which is the entry point for a caller holding raw angular energy.
+    """
+    thresh = params.peak_rel_threshold * float(curve.max())
+    order = np.argsort(-curve)
     chosen: list[float] = []
     for idx in order:
-        if energy[idx] < thresh:
+        if curve[idx] < thresh:
             break
         a = float(angles[idx])
         if all(_angdist(a, c) >= params.peak_nms_deg for c in chosen):
@@ -222,6 +243,45 @@ def _pick_directions(
         if len(chosen) >= params.max_directions:
             break
     return sorted(chosen)
+
+
+def _pick_directions(
+    angles: np.ndarray, energy: np.ndarray, params: SpectrumParams
+) -> list[float]:
+    """Dominant orientations of a raw angular-energy curve.
+
+    **The threshold is on the floor-subtracted residual, not on the raw
+    height**, and that is the whole content of this function. Clutter, speckle
+    and ragged edges put energy at *every* orientation, so a real map's angular
+    energy is a modest set of wall peaks riding on a broad pedestal — measured
+    at ~0.49 of the global maximum on the 2026-08-02 flat map. A relative-height
+    test therefore spends half its range on the pedestal: the weakest real
+    family there stands at 0.64 of the maximum and a phantom at 0.50, a ratio of
+    1.3, and no threshold placed between two such numbers is a measurement.
+    Subtract the floor and the same two are 0.296 and 0.012 — a ratio of 24.
+
+    The phantom is worth describing because it is the common case rather than a
+    curiosity: it is the *shoulder* of a real family, one NMS radius away
+    (13.0 deg from its parent at a 12 deg radius), so it survives suppression
+    and inherits most of its parent's flank height. Six of the thirteen real
+    occupancy maps on hand carried one, every one of them at 12.0-13.5 deg from
+    a stronger peak and with essentially zero prominence.
+
+    Two things were tried first and are worse, both measured on that corpus:
+
+    * **Literal topographic prominence** (height above the higher flanking
+      minimum) does not separate them. On the flat map the phantom's is 0.028 of
+      the maximum and the *real* off-axis family's is 0.033 — because that
+      family sits on the tail of the dominant one and is a shoulder too, in
+      exactly the same sense. Worse, prominence rewards isolation, so
+      thresholding it promotes lone bumps in the noise floor that carry no
+      structural energy at all (47.2 deg on the tuning map, 43.2 and 137.2 deg
+      on the replay maps) while dropping real families.
+    * **A wider NMS radius** cannot separate them either: the phantom is 13.0
+      deg from its parent and the real off-axis family is 14.5 deg from its own,
+      so any radius that suppresses the one suppresses the other.
+    """
+    return _pick_peaks(angles, _floor_subtract(energy, params), params)
 
 
 def _angdist(a: float, b: float) -> float:
@@ -308,8 +368,7 @@ def _residual_spectrum(
         signal = signal * np.hanning(h)[:, None] * np.hanning(w)[None, :]
     mag = np.abs(np.fft.fftshift(np.fft.fft2(signal)))
     angles, energy = _angular_energy(mag, params)
-    k = max(1, int(round(FLOOR_HALFWIDTH_DEG / params.angle_step_deg)))
-    residual = np.clip(energy - _smooth_circular(energy, k), 0.0, None)
+    residual = _floor_subtract(energy, params)
     total = float(residual.sum())
     q = residual / total if total > 0 else residual
     return angles, energy, q
@@ -640,7 +699,9 @@ def angular_stats(
         max_directions=max_directions,
         wedge_halfwidth_deg=params.wedge_halfwidth_deg,
     )
-    dirs = _pick_directions(angles, q, pick)
+    # ``q`` is already the floor-subtracted residual, so this is the low-level
+    # picker rather than :func:`_pick_directions`, which would subtract twice.
+    dirs = _pick_peaks(angles, q, pick)
     directions = _directions_table(angles, q, params, dirs)
     frames, dominant_share = _frames_table(directions, frame_merge_deg)
 

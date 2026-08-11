@@ -23,6 +23,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mote_bringup.map_cleanup.angular_stats import (  # noqa: E402
     SpectrumParams,
+    _angdist,
+    _angular_energy,
+    _floor_subtract,
+    _pick_directions,
+    _pick_peaks,
     angular_stats,
     fold_90,
     refine_peak,
@@ -543,6 +548,104 @@ def test_score_is_invariant_to_incidental_map_extent():
     a, b = angular_stats(m), angular_stats(padded)
     assert abs(a["angular_support_deg"] - b["angular_support_deg"]) < 1e-6
     assert abs(a["unassigned_energy_frac"] - b["unassigned_energy_frac"]) < 1e-6
+
+
+# --------------------------------------------------------------------------
+# Peak picking: what counts as a wall direction
+
+
+OLD_RULE = SpectrumParams(peak_rel_threshold=0.45)  # relative height, raw curve
+
+
+def _declutter_curve(mask):
+    """The angular energy the declutter pass sees: no crop, no taper."""
+    mag = np.abs(np.fft.fftshift(np.fft.fft2(mask.astype(np.float32))))
+    return _angular_energy(mag, SpectrumParams())
+
+
+def _shoulder_curve():
+    """A dominant family, a weaker real one, and a bump on the dominant's flank.
+
+    Shaped after the 2026-08-02 flat map, where the phantom sat 13 deg from its
+    parent — just outside the 12 deg suppression radius — on a broadband
+    pedestal measuring ~0.49 of the global maximum.
+    """
+    step = SpectrumParams().angle_step_deg
+    a = np.arange(0, 180, step) + step / 2
+
+    def gauss(centre, height, sigma):
+        d = np.abs(a - centre) % 180.0
+        return height * np.exp(-0.5 * (np.minimum(d, 180.0 - d) / sigma) ** 2)
+
+    curve = (
+        0.49
+        + gauss(90.0, 0.51, 6.0)  # dominant wall family
+        + gauss(20.0, 0.15, 6.0)  # real, weaker, off-axis family
+        + gauss(103.0, 0.06, 2.5)  # a bump on the dominant family's flank
+    )
+    return a, curve
+
+
+def test_a_shoulder_of_a_real_family_is_not_a_wall_direction():
+    """The defect: a phantom direction 13 deg from its parent, over the gate.
+
+    It is not that the shoulder is tall — it is that on a curve riding a
+    pedestal, *everything* is tall. Here it reaches 0.60 of the maximum against
+    the weakest real family's 0.64, so no relative-height threshold separates
+    them. Above the floor the same two are 0.06 and 0.30.
+    """
+    angles, curve = _shoulder_curve()
+
+    resid = _floor_subtract(curve, SpectrumParams())
+    at = lambda c: int(np.argmin(np.abs(angles - c)))  # noqa: E731
+    assert curve[at(103.0)] / curve.max() > OLD_RULE.peak_rel_threshold
+    assert resid[at(103.0)] < 0.25 * resid[at(20.0)]
+
+    picked = _pick_directions(angles, curve, SpectrumParams())
+    assert [round(d) for d in picked] == [20, 90], picked
+
+    # And what the shipped rule did with it, so the fixture is known to bite.
+    old = _pick_peaks(angles, curve, OLD_RULE)
+    assert any(_angdist(d, 103.0) <= 3.0 for d in old), old
+
+
+def test_a_broadband_pedestal_does_not_change_the_picked_directions():
+    """Clutter raises every orientation at once; that must not pick directions.
+
+    A map's angular energy is wall peaks riding on whatever speckle, ragged
+    edges and furniture contribute at *all* orientations. Since the pedestal
+    carries no orientation, adding one must leave the answer alone — and under
+    a relative-height rule it does not: the threshold ends up below the
+    pedestal, every bin clears it, and the picker returns the five
+    highest bins the suppression radius allows rather than five wall families.
+    """
+    angles, energy = _declutter_curve(pure(11.0))
+    walls = _pick_directions(angles, energy, SpectrumParams())
+    assert len(walls) == 2, walls
+
+    cluttered = energy + 3.0 * energy.max()
+    assert _pick_directions(angles, cluttered, SpectrumParams()) == walls
+    assert len(_pick_peaks(angles, cluttered, OLD_RULE)) == 5
+
+
+def test_the_declutter_pass_picks_wall_families_not_flanks():
+    """End to end through the shipped defaults, on a rectilinear map.
+
+    This is what catches the dangerous half of the change being made alone:
+    dropping the threshold to 0.15 while still measuring the raw curve returns
+    four directions on this map, of which two are flank samples.
+    """
+    from mote_bringup.map_cleanup.structure_extraction import (
+        FREE,
+        OCCUPIED,
+        Params,
+        extract_structure,
+    )
+
+    occ = np.where(pure(11.0), OCCUPIED, FREE).astype(np.uint8)
+    res = extract_structure(occ, Params())
+    assert len(res.directions_deg) == 2, res.directions_deg
+    assert abs(_angdist(*res.directions_deg) - 90.0) < 2.0, res.directions_deg
 
 
 def test_declutter_params_duck_type_in():

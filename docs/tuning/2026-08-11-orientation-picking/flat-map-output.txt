@@ -1,0 +1,10 @@
+# The 2026-08-02 flat map through the new defaults, against the outputs cleaned
+# on 2026-08-02. `cleaned` is the old default (--peak-rel 0.45); `cleaned-rel*`
+# are the hand-threaded runs. 0.55 is the one the operator shipped.
+
+new default directions: [11.75, 86.75, 110.25, 177.25]
+occupied: 4474 -> 3245
+  vs cleaned          differing cells:    664 (1.535% of the grid)
+  vs cleaned-rel0.5   differing cells:    664 (1.535% of the grid)
+  vs cleaned-rel0.55  differing cells:      0 (0.000% of the grid)   IDENTICAL
+  vs cleaned-rel0.65  differing cells:   1321 (3.054% of the grid)

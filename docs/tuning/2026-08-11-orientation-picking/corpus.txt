@@ -1,0 +1,33 @@
+# Direction sets over every genuine ROS occupancy PNG on the dev box, 2026-08-11.
+# "before" reproduces the shipped rule (relative height on the raw angular
+# energy, 0.45); "after" is the patched pipeline (relative height on the
+# floor-subtracted residual, 0.15). Angles are spectral (wall normals), as the
+# declutter CLI prints them.
+#
+# Corpus: scratchpad_results/map_cleanup/{input_map,warehouse/cleaned}.png,
+# mote_simulation/sim_home/sites/*/floors/ground/maps/*/map.png, and
+# bag_replay_results/*/*/map_raw_notraj.png.
+
+map                                            before  after  directions
+--------------------------------------------------------------------------------------------------------------
+tuning/input_map                                    4      4  UNCHANGED
+tuning/warehouse                                    1      1  UNCHANGED
+sim/hospital_world                                  2      2  UNCHANGED
+sim/mote_world                                      2      2  UNCHANGED
+sim/office_world                                    2      2  UNCHANGED
+replay/20260802T142558/r2-chain10                   5      4  dropped 73.75
+      dropped  73.75: raw h/max 0.501  residual 0.012  raw prominence/max 0.028  gap to stronger peak 13.0 deg  (weakest kept residual 0.285)
+replay/20260802T162552/r2-chain10                   5      5  UNCHANGED
+replay/20260802T162659/r2-chain10                   5      4  dropped 170.25
+      dropped 170.25: raw h/max 0.472  residual 0.070  raw prominence/max 0.014  gap to stronger peak 12.0 deg  (weakest kept residual 0.204)
+replay/20260802T162758/r2-chain10                   5      4  dropped 96.75
+      dropped  96.75: raw h/max 0.538  residual 0.105  raw prominence/max 0.000  gap to stronger peak 12.0 deg  (weakest kept residual 0.235)
+replay/20260802T163028/r2-chain10                   5      4  dropped 100.75
+      dropped 100.75: raw h/max 0.526  residual 0.028  raw prominence/max 0.000  gap to stronger peak 12.0 deg  (weakest kept residual 0.270)
+replay/20260802T163104/r2-chain10                   5      4  dropped 98.25
+      dropped  98.25: raw h/max 0.525  residual 0.104  raw prominence/max 0.000  gap to stronger peak 12.0 deg  (weakest kept residual 0.259)
+replay/20260802T163141/r2-chain10                   4      4  UNCHANGED
+replay/20260802T163259/r2-chain10-finang            5      4  dropped 80.25
+      dropped  80.25: raw h/max 0.533  residual 0.065  raw prominence/max 0.000  gap to stronger peak 12.0 deg  (weakest kept residual 0.279)
+--------------------------------------------------------------------------------------------------------------
+7 maps unchanged, 6 changed
