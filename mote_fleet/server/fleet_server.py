@@ -33,6 +33,9 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET  /v1/sites/<site>/floors/<floor>     revisions, validated, with provenance
     POST     .../revisions/<rev>             upload a candidate revision (robot)
     GET      .../revisions/<rev>/bundle.tar.gz   pull one (robot)
+    GET      .../revisions/<rev>/map.json    that revision's own Q5 transform
+    GET      .../revisions/<rev>/map.png     that revision's own image
+    GET      .../revisions/<rev>/zones.json  that revision's own zone binding
     POST     .../revisions/<rev>/promote     make it canonical (operator)
     POST /v1/sites/<site>/floors/<floor>/zones  edited zones -> new candidate (operator)
     GET  /                                   the operator UI (static files)
@@ -132,10 +135,13 @@ UI_DIR = Path(__file__).resolve().parent / "ui"
 # test without a package.json declaring the tree a module.
 mimetypes.add_type("text/javascript", ".mjs")
 
-#: Route shape for the registry's per-revision paths.
+#: Route shape for the registry's per-revision paths. The three review leaves
+#: mirror ``/v1/maps/<site>/<floor>/…`` exactly, because they answer the same
+#: three questions about a revision that is *not* the floor's canonical one —
+#: which is what an operator has to see before promoting it.
 REVISION_RE = re.compile(
     r"^(?P<site>[^/]+)/floors/(?P<floor>[^/]+)/revisions/(?P<revision>[^/]+)"
-    r"(?P<leaf>/promote|/bundle\.tar\.gz)?$"
+    r"(?P<leaf>/promote|/bundle\.tar\.gz|/map\.json|/map\.png|/zones\.json)?$"
 )
 
 
@@ -532,8 +538,17 @@ class FleetHandler(BaseHTTPRequestHandler):
         if leaf == "zones.json":
             self._store(lambda store: store.read_zones(site, floor))
             return
+        self._send_map(leaf, lambda store: store.read_map(site, floor))
+
+    def _send_map(self, leaf: str, load):
+        """``map.json`` or ``map.png`` from one ``read_map`` call.
+
+        Shared by the canonical basemap and by a revision under review, so the
+        transform and the pixels a client is handed can never come from
+        different reads of the store.
+        """
         try:
-            meta = self.server.store.read_map(site, floor)
+            meta = load(self.server.store)
         except StoreError as exc:
             self._error(exc.code, str(exc))
             return
@@ -609,12 +624,21 @@ class FleetHandler(BaseHTTPRequestHandler):
                 self._store(lambda store: store.detail(site, floor))
             return
         match = REVISION_RE.match(rest)
-        if not match or match.group("leaf") != "/bundle.tar.gz":
+        # `/promote` is a POST, and a bare revision path has nothing to answer:
+        # both are 404 here rather than falling through to the bundle.
+        if not match or match.group("leaf") in (None, "/promote"):
             self._error(404, f"no route /v1/sites/{rest}")
             return
         site, floor = match.group("site"), match.group("floor")
         revision = match.group("revision")
         if not self._names(site, floor, revision):
+            return
+        leaf = match.group("leaf").lstrip("/")
+        if leaf == "zones.json":
+            self._store(lambda store: store.read_revision_zones(site, floor, revision))
+            return
+        if leaf in ("map.json", "map.png"):
+            self._send_map(leaf, lambda store: store.read_map(site, floor, revision))
             return
         try:
             blob = self.server.store.pack(site, floor, revision)

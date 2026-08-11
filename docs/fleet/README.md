@@ -623,8 +623,10 @@ heartbeats stopped.
 
 `fleet-server` serves the operator view at `http://<fleet-box>:8080/`. It is the
 fleet-wide picture — who is out there, where they are, what they are doing, and
-sending one of them somewhere — and nothing else: the deep single-robot view
-(3D, sensors, teleop) is Foxglove's job (M2), which each robot row deep-links to.
+sending one of them somewhere — plus the one decision the fleet cannot make for
+you: which map a floor should be on (the **review** pane, §11). The deep
+single-robot view (3D, sensors, teleop) is Foxglove's job (M2), which each robot
+row deep-links to.
 
 ![The fleet dashboard](../images/fleet-ui.webp)
 
@@ -662,14 +664,17 @@ outline for a `polygon`, a cross for a bare waypoint, each labelled — so the
 canonical revision, in that revision's map frame.
 
 Beside the map's floor label is the **canonical revision** it is showing, and,
-when a robot has published one, a picker to promote a candidate onto the floor
-(§11). Both need the operator token; without one the pane is read-only.
+when the floor has candidates waiting, a button into the **review** pane —
+which is where a candidate is looked at and promoted (§11). The map pane keeps
+no promote control of its own: this canvas draws robots on the *published*
+basemap, so promoting from beside it would mean promoting a map you have not
+seen.
 
 ![The dashboard on a phone](../images/fleet-ui-phone.webp)
 
 **On a phone.** The realistic off-LAN client is a phone — it is what an operator
 has in a corridor, and "where is the robot and what is it doing" is exactly the
-question you ask from one. Below 760 px the three panes become **one at a time**
+question you ask from one. Below 760 px the four panes become **one at a time**
 behind a tab bar at the bottom of the screen, within thumb reach, so the map
 gets the whole display instead of a couple of hundred pixels between the roster
 and the detail pane. Two things follow from losing the side-by-side view:
@@ -862,7 +867,48 @@ pixi run -e fleet fleetctl -- promote home ground 20260728T090412
 #   announced on mote/v1/registry/site/home/floor/ground/current (retained); agents will pull it
 ```
 
-The dashboard does the same thing with a picker beside the map (§9).
+### Reviewing one before you promote it
+
+`fleetctl sites <site> <floor>` tells you a revision is *valid*. It cannot tell
+you whether it is the map you want, and for a long time neither could the
+dashboard: the promote picker listed candidates as timestamps and the canvas
+beside it was always the published basemap, so a promotion was an act of faith
+in a filename. The dashboard's **review** pane is where that decision is now
+made.
+
+Open it from the tab bar, or from the map pane's `N candidates — review` button,
+which appears whenever the floor on screen has something waiting. It shows:
+
+- **A site/floor picker of its own**, fed by the registry rather than by which
+  robot is selected. The floor worth reviewing is often one no robot is
+  reporting — mapped by a robot since switched off, or side-loaded.
+- **Every revision of that floor**, newest first, the published one included so
+  you can see what you would be replacing. A revision the validator refused is
+  listed too, with its reason, because "why can I not promote the map my robot
+  just published" is a question this pane should answer.
+- **The candidate's own map**, drawn from that revision's own image — not the
+  published one — with its own zones over it. Switching between two candidates
+  keeps the viewport, which is how you compare them.
+- **Why it is promotable**: the validator's verdict and warnings, plus where the
+  revision came from, when it was mapped, its size and resolution, the free/
+  occupied/unknown split, whether it carries a posegraph (i.e. whether mapping
+  can be continued in this frame), its bytes and digest.
+- **The zones in it**, and — the part that is easy to miss — whether they are
+  the revision's own or **inherited from the floor**. Inherited zones were
+  taught in a previous session's frame: they draw perfectly over the new map and
+  are wrong by however far the two origins differ. The pane says so in words,
+  because the canvas cannot.
+- **The promote button**, which is the same audited flip `fleetctl promote`
+  makes.
+
+Everything except that button is a read. Nothing you do here changes any floor
+until you promote.
+
+**A floor with nothing published yet works the same way** — which was not always
+true: the dashboard used to fetch a floor's revisions only after its basemap had
+loaded, so a floor whose only revisions were candidates listed none of them and
+its first promotion could not be made in a browser at all. Reviewing and
+promoting the first map on a floor is now the ordinary path.
 
 ### What the robots then do
 
