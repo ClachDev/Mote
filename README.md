@@ -3,10 +3,9 @@
 [![build](https://github.com/ClachDev/Mote/actions/workflows/build.yml/badge.svg)](https://github.com/ClachDev/Mote/actions/workflows/build.yml)
 [![docs](https://github.com/ClachDev/Mote/actions/workflows/docs.yml/badge.svg)](https://clachdev.github.io/Mote/)
 
-**📖 [Documentation](https://clachdev.github.io/Mote/)** — this README is the
-tour; the site is the manual.
-
 ![Mote with camera](docs/images/mote_camera.webp)
+
+This readme covers the basics of Mote and how to use it. The full user docs including build instructions, etc, can be found [here](https://clachdev.github.io/Mote/).
 
 ## *Mote*vation (I'm sorry I had to!)
 
@@ -47,6 +46,7 @@ a multi-robot fleet.
 
 See [`design/`](design/) for hardware design decisions, requirements, and bill
 of materials.
+
 
 ## Hardware
 
