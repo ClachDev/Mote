@@ -102,6 +102,7 @@ class _TopicWatch:
         self.count = 0
 
     def on_msg(self, _msg):
+        """Record an arrival. The payload is never read, and arrives raw."""
         self.last_stamp = time.monotonic()
         self.count += 1
 
@@ -157,7 +158,16 @@ class HealthMonitor(Node):
         for spec in cfg.get("topics", []):
             watch = _TopicWatch(spec)
             msg_type = get_message(spec["type"])
-            self.create_subscription(msg_type, spec["topic"], watch.on_msg, 10)
+            # Subscribed raw: the watch only counts and timestamps, so the
+            # callback never touches a field. These are the robot's highest-rate
+            # topics — a 50 Hz JointState, two LaserScans and a ~30 fps
+            # CompressedImage — and deserializing each one into a Python object
+            # to learn that it arrived costs more than everything this node does
+            # with it. The type is still needed: it is what selects the
+            # typesupport, only the delivered object changes (bytes).
+            self.create_subscription(
+                msg_type, spec["topic"], watch.on_msg, 10, raw=True
+            )
             self.topics.append(watch)
 
         self.tf_watches = [_TfWatch(s) for s in cfg.get("tf", [])]
@@ -171,6 +181,9 @@ class HealthMonitor(Node):
         )
         self.forwarded = {}
         if cfg.get("subscribe_diagnostics", True):
+            # Deserialized, unlike the freshness watches above: this callback
+            # reads status.name and status.level. It is also the one low-rate
+            # subscription here, published once per aggregation period.
             self.create_subscription(
                 DiagnosticArray, "diagnostics", self._on_diagnostics, 10
             )

@@ -108,3 +108,84 @@ def test_goto_round_trip(ros, tmp_path):
 
     server.destroy_node()
     mock.destroy_node()
+
+
+def test_idle_tick_rate_does_not_delay_the_mission(ros, tmp_path):
+    """The tree ticks slowly between missions, and instantly once given one.
+
+    Between missions the tree ticks WaitForTask and nothing else, so it runs at
+    ``idle_tick_period``. The saving is only free if accepting a command
+    restores the mission rate *and* resets the timer, because setting a period
+    does not move the expiry already pending: an idling timer switched to the
+    mission rate still has the rest of its idle period to wait, and the first
+    tick of the accepted tree — the one that sends the Nav2 goal — is what
+    would wait. So the command is deliberately sent just *after* an idle tick,
+    with a whole idle period pending, which is the case the reset exists for.
+    """
+    zones_file = tmp_path / "zones.yaml"
+    zones_file.write_text(ZONES)
+    server = TaskServer(
+        parameter_overrides=[
+            Parameter("zones_file", value=str(zones_file)),
+            Parameter("tick_period", value=0.05),
+            Parameter("idle_tick_period", value=2.0),
+        ]
+    )
+    mock = MockNav()
+    executor = SingleThreadedExecutor()
+    executor.add_node(server)
+    executor.add_node(mock)
+
+    def period_s():
+        return server.tick_timer.timer_period_ns / 1e9
+
+    def next_call_s():
+        return server.tick_timer.time_until_next_call() / 1e9
+
+    assert period_s() == pytest.approx(2.0), "an idle tree is ticking at mission rate"
+
+    assert spin_until(
+        executor, lambda: mock.command_pub.get_subscription_count() > 0
+    ), "task_server never subscribed to task/command"
+
+    # An idle tick has just fired, so a full idle period is pending.
+    assert spin_until(executor, lambda: next_call_s() > 1.5), "no idle tick fired"
+
+    mock.command_pub.publish(String(data="goto kitchen"))
+    assert spin_until(
+        executor, lambda: any(s.startswith("accepted") for s in mock.statuses)
+    ), mock.statuses
+    accepted_at = time.monotonic()
+    assert period_s() == pytest.approx(0.05), "an accepted task is ticking at idle rate"
+    assert next_call_s() <= 0.1, (
+        f"the accepted tree waits {next_call_s():.2f}s for its first tick — "
+        "the period changed but the pending idle expiry did not"
+    )
+
+    assert spin_until(
+        executor, lambda: any(s.startswith("succeeded") for s in mock.statuses)
+    ), mock.statuses
+    elapsed = time.monotonic() - accepted_at
+    assert elapsed < 1.5, f"the mission took {elapsed:.2f}s at the mission rate"
+
+    # A finished mission hands the idle rate back, or the saving lasts one task.
+    assert period_s() == pytest.approx(2.0), "the tree kept ticking after the task"
+
+    server.destroy_node()
+    mock.destroy_node()
+
+
+def test_idle_rate_is_floored_at_the_mission_rate(ros, tmp_path):
+    """An idle rate faster than the mission rate is a contradiction, not a config."""
+    zones_file = tmp_path / "zones.yaml"
+    zones_file.write_text(ZONES)
+    server = TaskServer(
+        parameter_overrides=[
+            Parameter("zones_file", value=str(zones_file)),
+            Parameter("tick_period", value=0.5),
+            Parameter("idle_tick_period", value=0.1),
+        ]
+    )
+    assert server.idle_tick_period == pytest.approx(0.5)
+    assert server.tick_timer.timer_period_ns / 1e9 == pytest.approx(0.5)
+    server.destroy_node()

@@ -1,0 +1,37 @@
+Raw sampler output behind docs/tuning/2026-08-11-monitor-cpu.md.
+
+All runs: mote-01 (Raspberry Pi 5, 4 cores), `pixi run robot` + `pixi run tasks`
+up, no task dispatched, 1 s sampling interval. Each <tag>.csv is one column per
+node per sample plus load1; <tag>.json is its summary (mean/median/p95/max).
+
+Re-summarize any of them without a robot:
+
+    python -m mote_bringup.tools.node_cpu --summary <tag>.csv
+
+  before-idle.csv        60 s. Stack as found: the drive servos were not
+                         answering, so /joint_states was 1.6 Hz and /tf 33 Hz.
+                         Kept because it is the state the robot was actually in,
+                         not because it is comparable with anything.
+
+  before-joints50.csv    60 s. Same stack, with a synthetic 50 Hz /joint_states
+                         standing in for a healthy control loop.
+
+  after-joints50.csv     60 s. The patched build, same condition — except the
+                         servo bus had partly recovered between the two runs
+                         (3159 read failures vs 564, /tf 33 Hz vs 51 Hz), which
+                         is why this pair is reported as a warning about
+                         sequential measurement rather than as a result.
+
+  ab-patched-vs-unpatched.csv
+                         120 s. The result. Patched and unpatched builds of both
+                         nodes running at the same instant, the unpatched ones
+                         renamed `_b`, so the two see identical input:
+                         health_monitor 17.1 vs health_monitor_b 18.1,
+                         task_server 6.9 vs task_server_b 7.8.
+
+  probe.csv              120 s. cpu_probe floor/raw/deser: what a bare rclpy
+                         node costs, what four subscriptions add, and what
+                         deserializing them adds on top.
+
+  probe-tf.csv           90 s. The same three probes plus one holding only a
+                         TransformListener. This is the table quoted in the doc.
