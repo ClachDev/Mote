@@ -765,12 +765,22 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
   text-overflow: ellipsis;
 }
 
-.verdict.ok {
-  color: var(--ok);
+/* A coloured dot and a word, as the roster and the subsystem list say a state.
+   The colour rides on the dot rather than the text: a sentence in green reads
+   as prose, and this has to read as a status. */
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
 }
 
-.verdict.error {
-  color: var(--fault);
+/* What the list below is, and whether it stands between the operator and the
+   button. Also the break that stops the bullets running into the provenance. */
+.notes-label {
+  margin: 2px 0 0;
+  color: var(--dim);
+  font-size: 12px;
 }
 
 .verdict-notes {

@@ -78,39 +78,57 @@ export function defaultRevision(detail) {
 // server re-runs at promotion — so this can never encourage a promotion the
 // server will refuse, nor discourage one it would accept.
 //
-// **The bar is exactly "no errors", and the verdict has to say so**, because
-// the list underneath it is not the reason for the verdict: warnings are what
-// is imperfect about a revision that passes anyway (a missing posegraph
-// navigates perfectly and simply cannot be extended). A bare "valid, with
-// warnings" over three complaints reads as a claim with its own evidence
-// against it — which is how this was first written, and it left an operator
-// asking what the answer actually was. So the verdict answers yes or no, names
-// the criterion, and introduces the list as what it is.
+// **The bar is exactly "no errors", and that has to be legible**, because the
+// list underneath is not the reason for the verdict: warnings are what is
+// imperfect about a revision that passes anyway (a missing posegraph navigates
+// perfectly and simply cannot be extended). A bare "valid, with warnings" over
+// three complaints reads as a claim with its own evidence against it, and an
+// operator looking at the first build of this pane asked what the answer was.
+//
+// The answer is a **state**, not a sentence. It was briefly written as a
+// question in the heading answered by "yes — no errors. These warnings do not
+// block it:", which says the right thing in the wrong register: this is a
+// control panel, its other headings are nouns, and a wrapped sentence dangling
+// on a colon is not how a status reads. So the state is one word beside a
+// coloured dot — the idiom the roster and the subsystem list already use — and
+// what the list *is* moves into a caption on the list, which is where it
+// belongs and which also stops the bullets running into the provenance.
 export function promotability(revision) {
-  if (!revision) return { promotable: false, verdict: 'no revision selected', notes: [] };
+  if (!revision) {
+    return {
+      promotable: false,
+      verdict: 'no revision selected',
+      state: 'unknown',
+      notes: [],
+      notesLabel: '',
+    };
+  }
   const warnings = revision.warnings || [];
+  const warningLabel = 'warnings — these do not block promotion';
   if (!revision.ok) {
     return {
       promotable: false,
-      verdict: 'no — the validator refuses it:',
+      verdict: 'not promotable',
+      state: 'fault',
       notes: revision.errors || [],
+      notesLabel: 'errors — these block promotion',
     };
   }
   if (revision.canonical) {
     return {
       promotable: false,
-      verdict: warnings.length
-        ? 'this is already the floor’s published map. Warnings:'
-        : 'this is already the floor’s published map',
+      verdict: 'already published',
+      state: 'unknown',
       notes: warnings,
+      notesLabel: warnings.length ? warningLabel : '',
     };
   }
   return {
     promotable: true,
-    verdict: warnings.length
-      ? 'yes — no errors. These warnings do not block it:'
-      : 'yes — the validator found nothing wrong with it',
+    verdict: 'promotable',
+    state: 'ok',
     notes: warnings,
+    notesLabel: warnings.length ? warningLabel : '',
   };
 }
 
@@ -384,11 +402,13 @@ export class ReviewView {
   }
 
   renderVerdict() {
-    const { promotable, verdict, notes } = promotability(this.selected);
-    this.dom.verdict.textContent = verdict;
-    this.dom.verdict.className = `verdict ${
-      this.selected && !this.selected.ok ? 'error' : promotable ? 'ok' : ''
-    }`;
+    const { promotable, verdict, state, notes, notesLabel } = promotability(this.selected);
+    this.dom.verdict.replaceChildren(
+      el('span', { class: `dot ${state}` }),
+      el('span', { text: verdict }),
+    );
+    this.dom.notesLabel.textContent = notesLabel;
+    this.dom.notesLabel.hidden = !notesLabel;
     this.dom.verdictNotes.replaceChildren(
       ...notes.map((note) => el('li', { text: note })),
     );

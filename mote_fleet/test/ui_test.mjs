@@ -471,22 +471,49 @@ test('the promote button follows the validator, not the view', () => {
   assert.equal(promotability(null).promotable, false);
 });
 
-test('the verdict answers the question and says what the bar is', () => {
-  // The heading asks "can this be promoted?". A verdict that only classifies
-  // the revision ("valid, with warnings") over a list of complaints answers a
-  // different question and reads as its own counter-evidence — an operator
-  // looking at the first build of this pane asked what the answer was.
-  assert.match(promotability(goodRevision).verdict, /^yes\b/);
-  assert.match(promotability(warnedRevision).verdict, /^yes\b/);
-  assert.match(promotability(brokenRevision).verdict, /^no\b/);
-  // The bar is "no errors", and warnings are explicitly not part of it.
-  assert.match(promotability(warnedRevision).verdict, /no errors/);
-  assert.match(promotability(warnedRevision).verdict, /do not block/);
-  // A list with nothing in it must not be introduced as though it had
-  // something in it.
-  assert.doesNotMatch(promotability(goodRevision).verdict, /:$/);
-  assert.match(promotability(warnedRevision).verdict, /:$/);
-  assert.match(promotability(brokenRevision).verdict, /:$/);
+test('the verdict is a state, not a sentence', () => {
+  // This is a control panel: a status is a word beside a coloured dot, the way
+  // the roster and the subsystem list say one. It was briefly a question in the
+  // heading answered by "yes — no errors. These warnings do not block it:",
+  // which said the right thing in the wrong register — and wrapped onto a
+  // second line ending in a dangling colon.
+  for (const revision of [goodRevision, warnedRevision, brokenRevision, canonicalRevision]) {
+    const { verdict } = promotability(revision);
+    assert.ok(verdict.split(' ').length <= 3, `"${verdict}" is a sentence, not a state`);
+    assert.doesNotMatch(verdict, /[:.]$/);
+    assert.doesNotMatch(verdict, /^(yes|no)\b/);
+  }
+  assert.equal(promotability(goodRevision).verdict, 'promotable');
+  assert.equal(promotability(brokenRevision).verdict, 'not promotable');
+  assert.equal(promotability(canonicalRevision).verdict, 'already published');
+});
+
+test('the state drives the dot, using the classes the page already has', () => {
+  assert.equal(promotability(goodRevision).state, 'ok');
+  assert.equal(promotability(warnedRevision).state, 'ok');
+  assert.equal(promotability(brokenRevision).state, 'fault');
+  assert.equal(promotability(canonicalRevision).state, 'unknown');
+  // A state string that maps to no styling is an invisible state. `unknown` is
+  // the exception by design: it is the base `.dot` colour, so it is expressed
+  // by the absence of a modifier rather than by a rule of its own.
+  const css = read('style.css');
+  for (const state of ['ok', 'fault']) {
+    assert.match(css, new RegExp(`\\.dot\\.${state}\\b`), `style.css has no .dot.${state}`);
+  }
+  assert.match(css, /\.dot \{[^}]*background:\s*var\(--unknown\)/);
+});
+
+test('the notes list is captioned with whether it blocks the button', () => {
+  // The bar is "no errors". That belongs on the list — it says what the list
+  // *is* — rather than inside a verdict standing in for the state.
+  assert.match(promotability(warnedRevision).notesLabel, /^warnings\b/);
+  assert.match(promotability(warnedRevision).notesLabel, /do not block/);
+  assert.match(promotability(brokenRevision).notesLabel, /^errors\b/);
+  assert.match(promotability(brokenRevision).notesLabel, /block/);
+  // No caption over an empty list, or it becomes a heading for nothing and the
+  // break it provides lands in the wrong place.
+  assert.equal(promotability(goodRevision).notesLabel, '');
+  assert.equal(promotability(canonicalRevision).notesLabel, '');
 });
 
 test('provenance is read off the payload the registry already sends', () => {
@@ -564,6 +591,7 @@ test('the review pane has every element app.mjs binds to it', () => {
     'review-revisions',
     'review-verdict',
     'review-verdict-notes',
+    'review-notes-label',
     'review-provenance',
     'review-zones',
     'review-zone-source',
