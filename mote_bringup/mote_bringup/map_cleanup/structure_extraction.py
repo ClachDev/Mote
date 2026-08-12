@@ -13,10 +13,17 @@ and OpenCV:
 
     1. binarise the occupancy grid into a wall image,
     2. take its 2D FFT and measure spectral energy as a function of angle,
-    3. pick the dominant orientations (local maxima of that angular energy),
+    3. pick the dominant orientations (peaks of that angular energy, measured
+       above its broadband floor rather than above zero),
     4. keep only the frequency wedges around those orientations (a directional
        band-pass) and invert the FFT to get a continuous "structure score",
     5. threshold that score back into a decluttered occupancy grid.
+
+Step 3 departs from ROSE on purpose: it picks peaks above the angular energy's
+broadband floor, where ROSE thresholds their topographic prominence at half the
+curve's range — which returns two directions on every map measured here, and
+erodes the off-axis walls a small flat actually has.
+:func:`angular_stats._pick_directions` carries the measurements.
 
 Room segmentation (the ROSE2 layer on top of this) is intentionally out of
 scope for this module.
@@ -33,7 +40,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from .angular_stats import _angular_energy, _pick_directions
+from .angular_stats import _angular_energy, _floor_subtract, _pick_peaks
 
 # ROS map_server occupancy-PNG conventions.
 FREE = 254
@@ -50,18 +57,23 @@ class StructureResult:
     spectrum: np.ndarray  # float, log magnitude spectrum (fftshifted)
     angles_deg: np.ndarray  # angular-energy sample angles, [0, 180)
     energy: np.ndarray  # angular energy per sample angle
+    residual: np.ndarray = None  # energy with its broadband floor removed
     directions_deg: list[float] = field(default_factory=list)  # detected peaks
     mask: np.ndarray = None  # float, directional band-pass mask (fftshifted)
     score: np.ndarray = None  # float in [0, 1], reconstructed structure score
     clean_wall: np.ndarray = None  # bool, decluttered walls
     cleaned_map: np.ndarray = None  # uint8, ROS occupancy PNG
+    params: "Params" = None  # the settings that produced all of the above
 
 
 @dataclass
 class Params:
     angle_step_deg: float = 0.5  # angular resolution of the energy scan
     lowcut_frac: float = 0.02  # ignore this central disc of the spectrum (DC)
-    peak_rel_threshold: float = 0.45  # peak must reach this frac of the max
+    # Peak must reach this frac of the max *of the floor-subtracted residual*,
+    # which is a different and much wider scale than the raw energy this was
+    # once compared against — see angular_stats._pick_directions.
+    peak_rel_threshold: float = 0.15
     peak_nms_deg: float = 12.0  # suppress peaks closer than this to a stronger one
     max_directions: int = 5  # keep at most this many orientations
     wedge_halfwidth_deg: float = 5.0  # angular half-width kept around each peak
@@ -113,7 +125,8 @@ def extract_structure(occ: np.ndarray, params: Params | None = None) -> Structur
     spectrum_log = np.log1p(mag)
 
     angles, energy = _angular_energy(mag, params)
-    directions = _pick_directions(angles, energy, params)
+    residual = _floor_subtract(energy, params)
+    directions = _pick_peaks(angles, residual, params)
 
     mask = _directional_mask(signal.shape, directions, params)
     filtered = fft * mask
@@ -162,11 +175,13 @@ def extract_structure(occ: np.ndarray, params: Params | None = None) -> Structur
         spectrum=spectrum_log,
         angles_deg=angles,
         energy=energy,
+        residual=residual,
         directions_deg=directions,
         mask=mask,
         score=score,
         clean_wall=clean,
         cleaned_map=cleaned_map,
+        params=params,
     )
 
 

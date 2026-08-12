@@ -18,7 +18,9 @@ orientations; clutter and speckle smear energy across *all* orientations. So:
 
 1. binarise the map into a wall image,
 2. take its 2D FFT and measure spectral energy as a function of angle,
-3. pick the dominant orientations (peaks of that angular energy),
+3. pick the dominant orientations — peaks of that angular energy measured
+   *above its broadband floor*, since the same clutter that smears energy
+   everywhere lifts every orientation at once,
 4. keep only the frequency wedges aligned with those orientations — a
    directional band-pass — and invert the FFT to get a continuous structure
    score,
@@ -30,10 +32,19 @@ The building does **not** have to be Manhattan (axis-aligned): the dominant
 orientations are whatever the map actually contains, including diagonal
 corridors.
 
+Step 3 is where this **departs from ROSE deliberately**. ROSE picks directions
+by topographic prominence at 50% of the angular curve's peak-to-trough range,
+which on every map measured here returns exactly the two strongest,
+near-orthogonal directions. That is right for the large, overwhelmingly
+rectilinear floor plans ROSE scores, and wrong for a small flat mapped by a 2-D
+lidar, which has genuine off-axis wall families that a two-direction filter
+erodes. See `angular_stats._pick_directions` and
+`docs/tuning/2026-08-11-orientation-picking.md`.
+
 ## Usage
 
 ```bash
-pixi run clean-map path/to/map.png [--out DIR] [--wedge 5] [--peak-rel 0.45] [--gate 2]
+pixi run clean-map path/to/map.png [--out DIR] [--wedge 5] [--peak-rel 0.15] [--gate 2]
 ```
 
 Writes `<map>_cleaned.png` (a ROS occupancy PNG) and `<map>_diagnostics.png`
@@ -125,6 +136,17 @@ See `Params` in `structure_extraction.py`. The two that matter most:
 off-axis walls) and `peak_rel_threshold` (higher = fewer orientations kept).
 Direction detection sharpens considerably on full-resolution maps — the current
 validation input is a low-res screenshot, which inflates spectral side-lobes.
+
+`peak_rel_threshold` (0.15) is a fraction of the strongest peak **measured above
+the angular energy's broadband floor**, not of the raw curve's maximum, and the
+two are not interchangeable: on a real map the floor is around half the maximum,
+so a fraction of the raw height spends most of its range on clutter and admits
+the *shoulder* of a real wall family as a direction of its own. Both halves of
+that change have to travel together — the old 0.45 on the residual would drop
+real families, and 0.15 on the raw curve accepts nearly anything. Why literal
+topographic prominence is not the answer either is in
+`angular_stats._pick_directions`; the measurements are in
+`docs/tuning/2026-08-11-orientation-picking.md`.
 
 `RoomParams` in `room_segmentation.py` governs the segmentation. `door_max_m`
 (1.4) is the width that still counts as a doorway rather than an opening, and

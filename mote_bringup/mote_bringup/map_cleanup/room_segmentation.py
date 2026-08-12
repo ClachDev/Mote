@@ -48,7 +48,8 @@ from .structure_extraction import (
     UNKNOWN,
     Params,
     _angular_energy,
-    _pick_directions,
+    _floor_subtract,
+    _pick_peaks,
 )
 
 
@@ -140,13 +141,16 @@ def dominant_rotation_deg(occ: np.ndarray, params: Params | None = None) -> floa
     square[top : top + wall.shape[0], left : left + wall.shape[1]] = wall
     mag = np.abs(np.fft.fftshift(np.fft.fft2(square)))
     angles, energy = _angular_energy(mag, params)
-    directions = _pick_directions(angles, energy, params)
+    residual = _floor_subtract(energy, params)
+    directions = _pick_peaks(angles, residual, params)
     if not directions:
         return 0.0
-    # Strongest direction first -- _pick_directions returns them sorted by
-    # angle, so re-rank by the energy at each.
+    # Strongest direction first -- _pick_peaks returns them sorted by angle, so
+    # re-rank by the energy at each. Ranking on the same floor-subtracted curve
+    # the peaks came from: on the raw one the tallest peak is whichever family
+    # sits highest on the pedestal, which is not the same question.
     idx = [int(np.argmin(np.abs(angles - d))) for d in directions]
-    best = directions[int(np.argmax([energy[i] for i in idx]))]
+    best = directions[int(np.argmax([residual[i] for i in idx]))]
     rot = best % 90.0
     return rot - 90.0 if rot > 45.0 else rot
 

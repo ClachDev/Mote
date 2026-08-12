@@ -1,0 +1,28 @@
+# ROSE's own peak criterion over our corpus, 2026-08-11, against this PR's.
+#
+# ROSE (arXiv:2004.08794 §3.1) selects dominant directions by topographic
+# prominence at 50% of the curve's peak-to-trough range; the reference
+# implementation (aislabunimi/ROSE2, src/rose_v1_repo/fft_structure_extraction.py)
+# is find_peaks(pol_h, prominence=(max(pol_h) - min(pol_h)) * 0.5). Applied here
+# to the same angular energy curve our declutter pass measures, with scipy's
+# prominence definition transcribed (no scipy in the robot env).
+#
+# It never admits a phantom, and it never returns more than the two strongest
+# near-orthogonal directions -- including on the maps whose real off-axis
+# families this pass has to keep. Angles are spectral (wall normals).
+
+map                                          ROSE (prom >= 0.5*range)                      this PR
+----------------------------------------------------------------------------------------------------
+tuning/input_map                                           88.2 179.8        16.2 88.2 114.8 179.8
+tuning/warehouse                                                179.8                        179.8
+sim/hospital_world                                           0.2 90.2                     0.2 90.2
+sim/mote_world                                               0.2 90.2                     0.2 90.2
+sim/office_world                                           90.2 179.2                   90.2 179.2
+replay/20260802T142558/r2-chain10                          86.8 177.2        11.8 86.8 110.2 177.2
+replay/20260802T162552/r2-chain10                          80.2 174.8    7.2 80.2 92.2 104.8 174.8
+replay/20260802T162659/r2-chain10                            2.2 90.8          2.2 14.8 90.8 114.8
+replay/20260802T162758/r2-chain10                          84.8 178.2        10.8 84.8 109.2 178.2
+replay/20260802T163028/r2-chain10                          88.2 179.8        13.2 88.2 112.8 179.8
+replay/20260802T163104/r2-chain10                          86.2 178.2        11.2 86.2 110.8 178.2
+replay/20260802T163141/r2-chain10                            2.2 92.8          2.2 14.8 92.8 114.8
+replay/20260802T163259/r2-chain10-finang                     0.2 92.2          0.2 14.2 92.2 113.8

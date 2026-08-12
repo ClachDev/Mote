@@ -61,24 +61,41 @@ def _spectrum_panel(res: StructureResult, size: tuple[int, int]) -> np.ndarray:
 
 
 def _energy_panel(res: StructureResult, size: tuple[int, int]) -> np.ndarray:
-    """Angular-energy curve g(theta) with detected peaks marked."""
+    """Angular-energy curve g(theta) with detected peaks marked.
+
+    Both curves are drawn: the raw energy dim, and the floor-subtracted
+    residual — the one the picker thresholds — bright, with the threshold
+    across it. A panel showing only the raw curve cannot explain a rejection,
+    since a phantom direction is a visible bump there and a flat nothing here.
+    """
     h, w = size
     img = np.full((h, w, 3), 30, np.uint8)
-    e = res.energy / (res.energy.max() + 1e-9)
-    n = len(e)
-    for i in range(n - 1):
-        x0 = int(i / n * (w - 1))
-        x1 = int((i + 1) / n * (w - 1))
-        y0 = int(h - 20 - e[i] * (h - 30))
-        y1 = int(h - 20 - e[i + 1] * (h - 30))
-        cv2.line(img, (x0, y0), (x1, y1), (200, 200, 60), 1, cv2.LINE_AA)
+
+    def plot(curve, colour):
+        y = curve / (curve.max() + 1e-9)
+        n = len(y)
+        for i in range(n - 1):
+            cv2.line(
+                img,
+                (int(i / n * (w - 1)), int(h - 20 - y[i] * (h - 50))),
+                (int((i + 1) / n * (w - 1)), int(h - 20 - y[i + 1] * (h - 50))),
+                colour,
+                1,
+                cv2.LINE_AA,
+            )
+
+    plot(res.energy, (90, 90, 40))
+    if res.residual is not None and res.params is not None:
+        plot(res.residual, (200, 200, 60))
+        y = int(h - 20 - res.params.peak_rel_threshold * (h - 50))
+        cv2.line(img, (0, y), (w - 1, y), (90, 90, 220), 1)
     for d in res.directions_deg:
         x = int(d / 180.0 * (w - 1))
-        cv2.line(img, (x, 10), (x, h - 20), (80, 255, 80), 1, cv2.LINE_AA)
+        cv2.line(img, (x, 20), (x, h - 20), (80, 255, 80), 1, cv2.LINE_AA)
         cv2.putText(
             img,
             f"{d:.0f}",
-            (min(x + 2, w - 22), 22),
+            (min(x + 2, w - 28), 32),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.35,
             (80, 255, 80),
@@ -87,7 +104,7 @@ def _energy_panel(res: StructureResult, size: tuple[int, int]) -> np.ndarray:
         )
     cv2.putText(
         img,
-        "angular energy vs orientation (deg)",
+        "orientation (deg): raw energy (dim), above-floor residual + threshold",
         (4, h - 6),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.35,
