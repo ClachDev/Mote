@@ -1,14 +1,23 @@
-// Zone editing on the fleet map: drag a vertex, drag a zone, drag a pose,
-// rename, add, delete — then save the lot as a *candidate* revision.
+// Zone editing on a map revision: drag a vertex, drag a zone, place a pose,
+// rename, name the kind, add aliases, add, delete — then save the lot as a
+// *candidate* revision.
 //
-// The editor never writes to the floor it is looking at. Saving POSTs the
-// edited set to the server, which derives a new candidate from the canonical
-// revision (same map bytes, new zones); the operator then promotes it through
-// the picker exactly like a robot-published map. Promoted revisions stay
-// immutable, which the announced digests rely on.
+// The editor never writes to the revision it is looking at. Saving POSTs the
+// edited set to the server, which derives a new candidate from that revision
+// (same map bytes, new zones); the operator then promotes it exactly like a
+// robot-published map. Stored revisions stay immutable, which the announced
+// digests rely on, and promotion stays the only write that changes a floor.
 //
-// Geometry lives in pure functions over zone objects in *world* metres, so
-// every edit operation is testable under node with no canvas and no DOM.
+// It lives in the review pane (`review.mjs`) because a zone is a coordinate in
+// one map frame: the map under the zones has to be the map they belong to, and
+// only that pane draws a *candidate's* own map. Editing a candidate is the
+// point — a fresh build arrives with `zone_01`..`zone_07` from `segment-map`,
+// and an editor that could only edit the published map would have required
+// promoting those placeholder names in order to be allowed to fix them.
+//
+// Geometry and the vocabulary rules live in pure functions over zone objects in
+// *world* metres, so every edit operation is testable under node with no canvas
+// and no DOM.
 
 import { pixelToWorld, worldToPixel } from './map.mjs';
 
@@ -119,13 +128,101 @@ export function freshZone(existing, cx, cy, half = 1.0) {
 // input rather than at save.
 export const NAME_RE = /^[a-z][a-z0-9_]*$/;
 
+// zone/v0's kinds, in the spec's order. Mirrored from `bundle.ZONE_KINDS`
+// rather than fetched, because this is a `<select>`'s options and a dropdown
+// that cannot be drawn until a request comes back is a worse thing than a list
+// held in step by a test (`ui_test.mjs` reads bundle.py and compares).
+export const ZONE_KINDS = [
+  'area',
+  'room',
+  'corridor',
+  'doorway',
+  'threshold',
+  'elevator',
+  'stair',
+  'dock',
+  'charger',
+  'pickup',
+  'dropoff',
+  'staging',
+  'home',
+  'keepout',
+  'slow',
+];
+
+// Kinds that say where a robot may not go, and so are not destinations.
+export const CONSTRAINT_KINDS = new Set(['keepout', 'slow']);
+
+// Whether a zone of this kind may be dispatched to, absent an explicit say-so.
+export const navigableByDefault = (kind) => !CONSTRAINT_KINDS.has(kind || 'area');
+
+// Aliases are edited as one comma-separated field, which is how an operator
+// says "it is also called this" without a list widget. Blank entries are
+// dropped and a spelling repeated in one field is kept once — a duplicate
+// inside a single zone is a typo, not the collision `ambiguities` is about.
+export function parseAliases(text) {
+  const seen = new Set();
+  const aliases = [];
+  for (const raw of String(text || '').split(',')) {
+    const alias = raw.trim();
+    if (!alias) continue;
+    const key = normaliseAlias(alias);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    aliases.push(alias);
+  }
+  return aliases;
+}
+
+export function formatAliases(aliases) {
+  return (aliases || []).join(', ');
+}
+
+// The comparison zone/v0's resolver uses, and therefore the only one collision
+// detection may use: case-insensitive and whitespace-normalised, matching
+// `bundle.normalise_alias`.
+export function normaliseAlias(text) {
+  return String(text).split(/\s+/).filter(Boolean).join(' ').toLowerCase();
+}
+
+// Two zones answering one query, which the robot's loader *refuses* to load —
+// so an editor that can produce one produces a map no robot will take. Mirrors
+// `bundle.ambiguities`: names and aliases, never display names.
+export function ambiguities(zones) {
+  const claimed = new Map();
+  const problems = [];
+  for (const zone of zones) {
+    for (const spelling of [zone.name, ...(zone.aliases || [])]) {
+      const key = normaliseAlias(spelling);
+      if (!key) continue;
+      const owner = claimed.get(key);
+      if (owner !== undefined && owner !== zone.name) {
+        problems.push(`"${owner}" and "${zone.name}" both answer to "${key}"`);
+      } else {
+        claimed.set(key, zone.name);
+      }
+    }
+  }
+  return problems;
+}
+
 // The wire shape: keyed by name, no echoed `name` field, no empty extras.
+//
+// `navigable` is dropped when it is what the kind already implies, which is
+// what makes the kind editable at all: every zone arrives from the server with
+// the field filled in (`bundle.zone_term` defaults it), so writing it back
+// verbatim would carry a `keepout`'s `navigable: false` onto a zone just
+// changed to `room` and quietly leave a room nothing can be dispatched to. A
+// value that genuinely deviates from its kind is kept, because that one was
+// meant.
 export function zonesPayload(zones) {
   const payload = {};
   for (const zone of zones) {
     const entry = {};
     for (const [key, value] of Object.entries(zone)) {
       if (key === 'name' || value === null || value === undefined || value === '') continue;
+      if (Array.isArray(value) && value.length === 0) continue;
+      if (key === 'navigable' && value === navigableByDefault(zone.kind)) continue;
       entry[key] = value;
     }
     payload[zone.name] = entry;
@@ -157,6 +254,8 @@ export class ZoneEditor {
     this.zones = (zones || []).map((zone) => JSON.parse(JSON.stringify(zone)));
     this.selected = null;
     this.active = true;
+    this._drag = null;
+    this._placing = null;
     this.dom.panel.hidden = false;
     this.dom.note.textContent = '';
     this.mapView.overlay = (ctx) => this._draw(ctx);
@@ -166,20 +265,11 @@ export class ZoneEditor {
 
   end() {
     this.active = false;
+    this._drag = null;
+    this._placing = null;
+    this.selected = null;
     this.dom.panel.hidden = true;
     this.mapView.overlay = null;
-    this.mapView.draw();
-  }
-
-  // Saving succeeded: stop editing but keep the saved zones on screen. The
-  // canonical zones the map would otherwise re-render are the *old* ones —
-  // the edits live in an unpreviewable candidate until it is promoted, and a
-  // save that makes your work vanish reads as data loss (it did, 2026-08-02).
-  finish() {
-    this.active = false;
-    this.dom.panel.hidden = true;
-    this._drag = null;
-    this.selected = null;
     this.mapView.draw();
   }
 
@@ -217,6 +307,25 @@ export class ZoneEditor {
     if (!this.active || !this.mapView.map) return;
     const point = this._world(event);
     const reach = this._reach();
+
+    // Placing a pose: the next click *is* the pose, wherever it lands, so it
+    // takes precedence over every hit test below. This is the one way to give
+    // a pose to a zone that has none — a `segment-map` room is a polygon with
+    // no `x`/`y`, so it draws no cross to drag and the robot derives a
+    // centroid to drive to, which lands wherever the outline's middle is
+    // rather than where you would send a robot in that room.
+    if (this._placing) {
+      const name = this._placing;
+      this._placing = null;
+      event.stopPropagation();
+      event.preventDefault();
+      this._update(name, (zone) => withPose(zone, point.x, point.y));
+      this.selected = name;
+      this.note('');
+      this._renderRows();
+      this.mapView.draw();
+      return;
+    }
 
     for (const zone of this.zones) {
       const vertex = zone.polygon ? nearestVertex(zone, point.x, point.y) : null;
@@ -322,9 +431,25 @@ export class ZoneEditor {
     return zonesPayload(this.zones);
   }
 
-  // Every rename is checked against the same name rule the robot enforces,
-  // and against the other zones: two zones answering one name is exactly what
-  // the loader refuses, so the editor must not produce it.
+  // Arm the next map click as this zone's pose. Nothing is changed until that
+  // click, so arming and thinking better of it costs nothing.
+  placePose(name) {
+    this._placing = this._placing === name ? null : name;
+    this.selected = name;
+    this.note(this._placing ? `click the map to place ${name}’s pose` : '');
+    this._renderRows();
+    this.mapView.draw();
+  }
+
+  note(text, bad = false) {
+    this.dom.note.textContent = text;
+    this.dom.note.className = `note ${bad ? 'error' : ''}`;
+  }
+
+  // Every rename is checked against the same rules the robot's loader enforces
+  // — the name shape, and two zones answering one query — because the loader
+  // *refuses* an ambiguous vocabulary rather than resolving it by dict order.
+  // A set this editor is willing to save is a set a robot will load.
   problems() {
     const seen = new Set();
     for (const zone of this.zones) {
@@ -332,7 +457,9 @@ export class ZoneEditor {
       if (seen.has(zone.name)) return `two zones named "${zone.name}"`;
       seen.add(zone.name);
     }
-    if (!this.zones.length) return 'no zones — delete the floor’s zones by editing on the robot instead';
+    const ambiguous = ambiguities(this.zones);
+    if (ambiguous.length) return `${ambiguous[0]} — a query matching both cannot be answered`;
+    if (!this.zones.length) return 'no zones — cancel to leave this revision’s zones as they are';
     return null;
   }
 
@@ -354,8 +481,47 @@ export class ZoneEditor {
       const display = document.createElement('input');
       display.value = zone.display_name || '';
       display.placeholder = 'display name';
+      display.title = 'what an operator sees — “The Kitchen”';
       display.addEventListener('change', () => {
         this._update(zone.name, (z) => ({ ...z, display_name: display.value.trim() }));
+      });
+      // The vocabulary half. It is edited here rather than on the robot because
+      // this is where the rooms get their names in the first place: a build
+      // arrives as `zone_01`..`zone_07`, and "which of these is the kitchen,
+      // and what else do we call it" is answered by looking at the map.
+      const kind = document.createElement('select');
+      kind.title = 'what kind of place this is (zone/v0)';
+      for (const option of ZONE_KINDS) {
+        const node = document.createElement('option');
+        node.value = option;
+        node.textContent = option;
+        kind.append(node);
+      }
+      kind.value = zone.kind || 'area';
+      kind.addEventListener('change', () => {
+        this._update(zone.name, (z) => ({ ...z, kind: kind.value }));
+        this.mapView.draw();
+      });
+      const aliases = document.createElement('input');
+      aliases.value = formatAliases(zone.aliases);
+      aliases.placeholder = 'aliases, comma separated';
+      aliases.title = 'other spellings a dispatcher may use';
+      aliases.addEventListener('change', () => {
+        const parsed = parseAliases(aliases.value);
+        aliases.value = formatAliases(parsed);
+        this._update(zone.name, (z) => ({ ...z, aliases: parsed }));
+      });
+      const pose = document.createElement('button');
+      pose.type = 'button';
+      pose.textContent = '⌖';
+      pose.className = this._placing === zone.name ? 'armed' : '';
+      pose.title =
+        typeof zone.x === 'number'
+          ? 'place this zone’s pose: click the map'
+          : 'this zone has no pose — click here, then click the map';
+      pose.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.placePose(zone.name);
       });
       const del = document.createElement('button');
       del.type = 'button';
@@ -364,6 +530,7 @@ export class ZoneEditor {
       del.addEventListener('click', () => {
         this.zones = this.zones.filter((z) => z.name !== zone.name);
         if (this.selected === zone.name) this.selected = null;
+        if (this._placing === zone.name) this._placing = null;
         this._renderRows();
         this.mapView.draw();
       });
@@ -374,7 +541,7 @@ export class ZoneEditor {
           this.mapView.draw();
         }
       });
-      row.append(name, display, del);
+      row.append(name, display, kind, aliases, pose, del);
       rows.append(row);
     }
   }

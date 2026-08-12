@@ -22,10 +22,13 @@
 //     here. The zone list below is deliberately a row per zone with its own
 //     cells, because that is where those controls go.
 //
-// The write surface does not grow: everything this view reads is a GET, and the
-// one thing it writes is the promote M4 already had.
+// Two writes leave this pane, and both are audited operator actions: the
+// promote M4 already had, and the zone edit beside it (`zone_editor.mjs`),
+// which derives a *new* candidate rather than touching the revision on screen.
+// Nothing here changes a floor until the promote.
 
 import { MapView } from './map.mjs';
+import { ZoneEditor } from './zone_editor.mjs';
 
 // -- routes ---------------------------------------------------------------
 
@@ -240,13 +243,26 @@ export class ReviewView {
     // and an image decode; without this, clicking through two candidates draws
     // whichever finished last rather than the one selected.
     this.epoch = 0;
+    // The zones last loaded for the selected revision, which is what an edit
+    // starts from and what the map goes back to if the edit is cancelled.
+    this.zones = [];
+    this.editing = false;
     this.map = new MapView(dom.canvas);
+    this.editor = new ZoneEditor(this.map, {
+      panel: dom.editor,
+      rows: dom.editorRows,
+      note: dom.editorNote,
+    });
     dom.floor.addEventListener('change', () => this.open(dom.floor.value));
     dom.promote.addEventListener('click', () => this.promote());
     dom.fit.addEventListener('click', () => {
       this.map.fit();
       this.map.draw();
     });
+    dom.zonesEdit.addEventListener('click', () => this.beginEdit());
+    dom.zoneAdd.addEventListener('click', () => this.editor.addZone());
+    dom.zoneSave.addEventListener('click', () => this.saveZones());
+    dom.zoneCancel.addEventListener('click', () => this.endEdit());
   }
 
   // The pane's canvas has no size until the pane is on screen, so a fit done
@@ -276,6 +292,11 @@ export class ReviewView {
   async open(key, revision = null) {
     const parsed = parseFloorKey(key);
     if (!parsed) return;
+    // An edit in progress owns the pane: re-opening a floor would reload the
+    // zones under it and drop the edit on the floor. The controls that lead
+    // here are disabled while editing; this covers the ones that arrive from
+    // elsewhere (the map pane's jump button).
+    if (this.editing) return;
     const epoch = (this.epoch += 1);
     this.key = key;
     this.dom.floor.value = key;
@@ -344,6 +365,89 @@ export class ReviewView {
     }
   }
 
+  // -- editing ----------------------------------------------------------
+
+  // Editable when there is a revision selected and its map is on screen: the
+  // coordinates being dragged mean nothing except against that image, and a
+  // revision whose map failed to load has none.
+  editable() {
+    return Boolean(this.selected && this.map.map);
+  }
+
+  // Editing is a mode on the selected revision, so while it is on, the things
+  // that would swap that revision out from under it are disabled rather than
+  // racing it. There is no autosave: an unsaved edit is lost to `cancel`, and
+  // nothing else can reach it.
+  renderEditControls() {
+    this.dom.zonesEdit.disabled = this.editing || !this.editable();
+    this.dom.zonesEdit.hidden = !this.editable() && !this.editing;
+    this.dom.floor.disabled = this.editing;
+    this.dom.zones.hidden = this.editing;
+    this.dom.zoneSource.hidden = this.editing;
+    for (const row of this.dom.revisions.querySelectorAll('button')) {
+      row.disabled = this.editing;
+    }
+    if (this.editing) this.dom.promote.disabled = true;
+  }
+
+  beginEdit() {
+    if (!this.editable() || this.editing) return;
+    this.editing = true;
+    // The editor draws its own zones, handles and pose crosses; leaving the
+    // read-only set under them would double every outline.
+    this.map.setZones([]);
+    this.editor.begin(this.zones);
+    this.renderEditControls();
+    this.note(
+      this.selected.canonical
+        ? 'editing the published map’s zones — saving derives a new candidate'
+        : `editing candidate ${this.selected.revision} — saving derives a new one`,
+    );
+  }
+
+  endEdit() {
+    this.editing = false;
+    this.editor.note('');
+    this.editor.end();
+    this.map.setZones(this.zones);
+    this.renderEditControls();
+    this.renderVerdict();
+  }
+
+  // Saving does not write the revision on screen: the server packs that
+  // revision's map bytes with the submitted zones and stores the result as an
+  // ordinary candidate. So the pane then *selects* the new candidate, and the
+  // zones on screen afterwards are the saved ones read back from the server —
+  // rather than the frozen overlay this needed when the editor lived on the
+  // operations map, where the only thing to re-render was the stale set the
+  // edit was made from (which read as data loss, 2026-08-02).
+  async saveZones() {
+    if (!this.editing || !this.selected) return;
+    const problem = this.editor.problems();
+    if (problem) {
+      this.editor.note(problem, true);
+      return;
+    }
+    const { site, floor } = parseFloorKey(this.key);
+    const from = this.selected.revision;
+    this.editor.note('saving…');
+    let body;
+    try {
+      body = await this.api(`/v1/sites/${site}/floors/${floor}/zones`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schema: 1, revision: from, zones: this.editor.payload() }),
+      });
+    } catch (error) {
+      this.editor.note(error.message, true);
+      return;
+    }
+    this.endEdit();
+    await this.loadFloors();
+    await this.open(this.key, body.revision);
+    this.note(`candidate ${body.revision} saved from ${from}; promote it when it looks right`);
+  }
+
   // -- rendering --------------------------------------------------------
 
   renderFloors() {
@@ -399,6 +503,7 @@ export class ReviewView {
         el('p', { class: 'empty', text: 'no revisions on this floor' }),
       );
     }
+    this.renderEditControls();
   }
 
   renderVerdict() {
@@ -423,10 +528,11 @@ export class ReviewView {
     );
   }
 
-  // One row per zone, three cells. Read-only here on purpose — the write half
-  // (rename, alias, kind, click-to-teach a pose) is task 346, and it edits
-  // exactly these rows.
+  // One row per zone, three cells — what the revision says its places are.
+  // `edit zones` replaces this list with the editable one; it is the same set
+  // of rows with inputs in them.
   renderZones(zones, source = '') {
+    this.zones = zones;
     this.dom.zoneSource.textContent = zoneSource(source, zones.length);
     this.dom.zones.replaceChildren(
       ...zones.map((zone) =>
@@ -437,6 +543,7 @@ export class ReviewView {
         ]),
       ),
     );
+    this.renderEditControls();
   }
 
   note(text, bad = false) {

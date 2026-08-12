@@ -281,9 +281,26 @@ test('both map canvases take their own touch gestures', () => {
 // editor's geometry is tested here with no canvas: the browser only adds
 // pointer events on top of exactly these.
 
-const { pointInPolygon, nearestVertex, nearestEdge, withVertex, withInsertedVertex, withoutVertex, translated, withPose, freshZone, zonesPayload, NAME_RE } = await import(
-  '../server/ui/zone_editor.mjs'
-);
+const {
+  CONSTRAINT_KINDS,
+  NAME_RE,
+  ZONE_KINDS,
+  ambiguities,
+  formatAliases,
+  freshZone,
+  nearestEdge,
+  nearestVertex,
+  navigableByDefault,
+  normaliseAlias,
+  parseAliases,
+  pointInPolygon,
+  translated,
+  withInsertedVertex,
+  withPose,
+  withVertex,
+  withoutVertex,
+  zonesPayload,
+} = await import('../server/ui/zone_editor.mjs');
 
 const square = {
   name: 'kitchen',
@@ -355,10 +372,112 @@ test('the zone editor panel hides when hidden, whatever its class sets', () => {
   // class sets `display`, so the stylesheet must say so explicitly.
   const css = read('style.css');
   assert.match(css, /\.zone-editor\[hidden\]\s*\{\s*display:\s*none/);
+  // And the read-only list it stands in for, which is a flex container: with
+  // both on screen there would be two disagreeing accounts of the zones.
+  assert.match(css, /\.zone-rows\[hidden\]\s*\{\s*display:\s*none/);
   const html = read('index.html');
   for (const id of ['zone-editor', 'zone-rows', 'zone-add', 'zone-save', 'zone-cancel', 'zones-edit']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
   }
+});
+
+test('the editor lives in the review pane, over the revision it edits', () => {
+  // Editing anywhere else edits zones against a map they may not belong to: the
+  // operations canvas draws the *published* basemap, so an editor on it could
+  // only ever derive from the published revision — which is what made renaming
+  // a candidate's rooms require promoting the placeholder names first.
+  const html = read('index.html');
+  const review = html.slice(
+    html.indexOf('class="pane review-pane"'),
+    html.indexOf('class="pane detail-pane"'),
+  );
+  for (const id of ['zones-edit', 'zone-editor', 'zone-rows', 'zone-save']) {
+    assert.ok(review.includes(`id="${id}"`), `#${id} must be in the review pane`);
+  }
+  const map = html.slice(
+    html.indexOf('class="pane map-pane"'),
+    html.indexOf('class="pane review-pane"'),
+  );
+  assert.ok(!map.includes('zone-editor'), 'the operations map must not edit zones');
+});
+
+// -- the vocabulary half --------------------------------------------------
+//
+// Names, not coordinates: the part of a zone that is true for every robot at
+// the site. The rules are the robot's, so what these hold is that this editor
+// cannot save a set the robot would refuse to load.
+
+test('the kind list is the one the bundle validator will accept', () => {
+  // A kind outside `bundle.ZONE_KINDS` is refused at the parse, so a dropdown
+  // offering one would be an option that fails on save. Read out of the python
+  // rather than duplicated in a fixture, so adding a kind there fails here.
+  const bundle = readFileSync(
+    new URL('../../mote_bringup/mote_bringup/bundle.py', import.meta.url),
+    'utf8',
+  );
+  const kinds = (source, name) =>
+    source
+      .slice(source.indexOf(`${name} = (`) + name.length + 4)
+      .split(')')[0]
+      .match(/"[a-z]+"/g)
+      .map((quoted) => quoted.slice(1, -1));
+  assert.deepEqual(ZONE_KINDS, kinds(bundle, 'ZONE_KINDS'));
+  const constraints = bundle
+    .slice(bundle.indexOf('CONSTRAINT_KINDS = frozenset(('))
+    .split('))')[0]
+    .match(/"[a-z]+"/g)
+    .map((quoted) => quoted.slice(1, -1));
+  assert.deepEqual([...CONSTRAINT_KINDS].sort(), constraints.sort());
+});
+
+test('aliases round-trip through one comma-separated field', () => {
+  assert.deepEqual(parseAliases(' galley , The Kitchen ,, galley '), [
+    'galley',
+    'The Kitchen',
+  ]);
+  assert.equal(formatAliases(['galley', 'The Kitchen']), 'galley, The Kitchen');
+  assert.deepEqual(parseAliases(''), []);
+  // The resolver's comparison, so collision detection agrees with it.
+  assert.equal(normaliseAlias('The  Kitchen'), 'the kitchen');
+});
+
+test('two zones answering one query are caught before they are saved', () => {
+  // The robot's loader refuses an ambiguous vocabulary outright rather than
+  // resolving `goto` by dict order, so a save that produced one would produce a
+  // map no robot will load. Display names are not queries and do not collide.
+  const clash = ambiguities([
+    { name: 'kitchen', aliases: [] },
+    { name: 'galley', aliases: ['Kitchen'] },
+  ]);
+  assert.equal(clash.length, 1);
+  assert.match(clash[0], /kitchen/);
+  assert.deepEqual(
+    ambiguities([
+      { name: 'kitchen', display_name: 'The Kitchen', aliases: ['galley'] },
+      { name: 'office', display_name: 'The Kitchen', aliases: [] },
+    ]),
+    [],
+  );
+});
+
+test('navigable is written only when it deviates from the kind', () => {
+  // Every zone arrives from the server with `navigable` filled in from its kind
+  // (`bundle.zone_term`), so writing it back verbatim would carry a keepout's
+  // `false` onto a zone just changed to `room` — a room nothing can be sent to,
+  // with nothing on screen to say why.
+  assert.ok(navigableByDefault('room'));
+  assert.ok(!navigableByDefault('keepout'));
+  const payload = zonesPayload([
+    { name: 'kitchen', kind: 'room', navigable: true, x: 0, y: 0, aliases: [] },
+    { name: 'sluice', kind: 'keepout', navigable: false, x: 1, y: 1, tags: [] },
+    { name: 'workshop', kind: 'room', navigable: false, x: 2, y: 2 },
+  ]);
+  assert.ok(!('navigable' in payload.kitchen));
+  assert.ok(!('navigable' in payload.sluice));
+  assert.equal(payload.workshop.navigable, false); // deviant, so it was meant
+  // Empty lists say nothing the default does not.
+  assert.ok(!('aliases' in payload.kitchen));
+  assert.ok(!('tags' in payload.sluice));
 });
 
 // -- candidate review -----------------------------------------------------

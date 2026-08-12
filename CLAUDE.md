@@ -185,6 +185,50 @@ revisions were fetched only *after* its basemap loaded, behind an early return,
 so a floor whose only revisions were candidates listed none of them and **the
 first promotion on any floor could never be made from a browser**.
 
+## Fleet: editing a candidate's zones
+
+The write half of that pane (`ui/zone_editor.mjs`, route `POST /v1/sites/<site>/
+floors/<floor>/zones`, operator flow `docs/fleet/README.md` §11, contract
+`fleet-api.md`): drag vertices and zones on the map, double-click an edge or
+vertex to add or remove one, name the zone, its `display_name`, its `kind` and
+its `aliases` in a row per zone, and arm `⌖` to place a pose with the next map
+click. **The whole design is one rule: editing is a derivation, never a
+mutation.** Saving re-packs *the revision under review* with the submitted zones
+and accepts the result as an ordinary candidate — same `accept()` as a robot's
+upload, inert until promoted — so a stored revision's bytes never change, which
+is what the announced digests depend on, and promotion stays the only write that
+moves a floor. Five things are load-bearing. **The edit names a source
+revision**, which is what makes an *unpromoted* map editable: `segment-map`
+hands over `zone_01`..`zone_07`, and deriving only from the canonical revision
+meant promoting those placeholders in order to be allowed to fix them —
+publishing a map because it was wrong — besides rebinding coordinates drawn on
+one frame onto another's. **A derivation is held to `promote`'s bar, not the
+upload's** (`accept(require_posegraph=…)`): a revision with no posegraph cannot
+be extended, which is an error for a robot's upload where the session can be
+re-run and a *warning* on something already stored, so the strict bar put an
+`edit zones` button beside a `promotable` verdict that could only ever fail
+(found in a browser; every sim bundle is such a revision). **It lives in the
+review pane and nowhere else** — the operations canvas draws the *published*
+basemap, so an editor there could only ever edit the published revision, and
+"which map are these coordinates against" must have one answer. That also
+retires the MVP's frozen-overlay workaround: after a save the pane selects the
+new candidate and re-reads its zones, so what is on screen is the saved set from
+the server rather than a held-over copy of what was typed. **`navigable` is
+written only when it deviates from the kind**, because every zone arrives from
+the server with the field filled in (`bundle.zone_term` defaults it) and writing
+it back verbatim would carry a `keepout`'s `false` onto a zone just changed to
+`room` — a room nothing can be dispatched to, with nothing on screen to say why.
+And the editor **refuses client-side exactly what the robot's loader refuses**:
+a non-dispatchable name, and two zones answering one query (`ambiguities`
+mirrors `bundle.ambiguities` — names and aliases, not display names), since a
+stored candidate no robot will load is worse than a rejected save. Editing is a
+*mode*: the floor picker, the revision list and promote are disabled while it is
+up, there is no autosave, and `cancel` discards. One pre-existing defect fell
+out and is fixed: the map pane's review button was hidden unless the floor on
+screen had candidates, and above 760 px the tab bar is hidden too — so the pane
+built for floors no robot is reporting was reachable only through a floor a robot
+was reporting.
+
 ## Fleet: the zone vocabulary
 
 The API served the roster, the basemaps and dispatch, but not the one thing a

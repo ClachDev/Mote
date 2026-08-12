@@ -663,12 +663,15 @@ outline for a `polygon`, a cross for a bare waypoint, each labelled — so the
 `goto <zone>` targets you can type are the ones you can see. They come from the
 canonical revision, in that revision's map frame.
 
-Beside the map's floor label is the **canonical revision** it is showing, and,
-when the floor has candidates waiting, a button into the **review** pane —
-which is where a candidate is looked at and promoted (§11). The map pane keeps
-no promote control of its own: this canvas draws robots on the *published*
-basemap, so promoting from beside it would mean promoting a map you have not
-seen.
+Beside the map's floor label is the **canonical revision** it is showing, and a
+button into the **review** pane — which is where a candidate is looked at, its
+zones named, and the map promoted (§11). It says how many candidates the floor
+on screen has when it knows, and it is there either way: above 760 px the tab
+bar is hidden, so a button that appeared only for a floor with candidates was
+the sole door to a pane whose whole point is the floors *no robot is reporting*.
+The map pane keeps no promote control of its own: this canvas draws robots on
+the *published* basemap, so promoting from beside it would mean promoting a map
+you have not seen.
 
 ![The dashboard on a phone](../images/fleet-ui-phone.webp)
 
@@ -901,8 +904,54 @@ which appears whenever the floor on screen has something waiting. It shows:
 - **The promote button**, which is the same audited flip `fleetctl promote`
   makes.
 
-Everything except that button is a read. Nothing you do here changes any floor
-until you promote.
+Everything except that button and the zone editor below is a read. Nothing you
+do here changes any floor until you promote.
+
+### Naming the rooms on it, before you promote it
+
+`pixi run segment-map` finds the rooms of a map but cannot know what they are
+called, so a fresh revision arrives with `zone_01`..`zone_07`. **`edit zones`**,
+beside the zone list, is where they get their names — on the candidate's own map,
+where you can see which room is which.
+
+The controls are the map and the list together:
+
+- **On the map**: drag a vertex to follow a wall, drag a zone to move footprint
+  and pose together, double-click an edge to add a vertex or a vertex to remove
+  it. A polygon needs three, so the last removal is refused rather than quietly
+  making a line.
+- **In the list**, per zone: the machine name (`goto <name>`), the display name
+  an operator sees, the **kind** (zone/v0 — `room`, `corridor`, `keepout`, …),
+  and **aliases**, comma separated, for the other things people call it. `⌖`
+  arms the next map click as that zone's pose, which is the only way to give one
+  to a zone that has none — a segmented room is an outline whose pose the robot
+  would otherwise derive as a centroid, i.e. wherever the middle happens to be
+  rather than where you would send a robot.
+- **`add zone`** drops a square at the view centre to be dragged into shape and
+  named; **`×`** deletes one.
+
+Two names the same is refused before it is saved — the robot's loader refuses a
+vocabulary where one query answers to two zones rather than picking by luck, so
+the editor must not produce one. A name a dispatcher cannot type (`Café`, `Drop
+Off`) is refused the same way.
+
+**Saving derives a new candidate**: `save as candidate` sends the edited set,
+and the server re-packs the revision you were editing with those zones in place
+of its own. The revision you edited is untouched — including when it is the
+published one — and the new candidate is selected in the pane, so the zones on
+screen afterwards are the saved ones read back from the server. Promote it when
+it looks right. Two consequences worth knowing:
+
+- **Iterating costs a candidate each save.** Editing a candidate derives from
+  *it*, so a floor's list grows while you work; the registry keeps the canonical
+  revision plus the five newest candidates, so the intermediates fall off on
+  their own.
+- **A revision that inherited the floor's zones stops inheriting.** The saved
+  candidate carries them, which is what you want: inherited zones were taught in
+  another session's frame, and dragging them onto this map is the correction.
+
+`cancel` discards the edit. There is no autosave and nothing is written until
+you save, so an edit you are unsure about costs nothing to abandon.
 
 **A floor with nothing published yet works the same way** — which was not always
 true: the dashboard used to fetch a floor's revisions only after its basemap had

@@ -63,7 +63,7 @@ pixi run -e fleet fleetctl -- dispatch mote-01 goto kitchen
 | [`server/registry.py`](server/registry.py) | the SQLite row store: robots, enrollment tokens, operators, the audit log, transactional id allocation |
 | [`server/bundle_store.py`](server/bundle_store.py) | the map registry's byte store: candidate revisions, validation on the way in, the atomic flip that publishes one |
 | [`server/fleetctl.py`](server/fleetctl.py) | operator CLI: tokens, roster, dispatch, audit, watch |
-| [`server/ui/`](server/ui/) | the dashboard: `index.html`, `app.mjs`, `map.mjs` (basemap + the Q5 transform, pan/pinch), `mqtt.mjs` (a subscribe-only MQTT client), `layout.mjs` (one pane at a time on a phone) |
+| [`server/ui/`](server/ui/) | the dashboard: `index.html`, `app.mjs`, `map.mjs` (basemap + the Q5 transform, pan/pinch), `mqtt.mjs` (a subscribe-only MQTT client), `layout.mjs` (one pane at a time on a phone), `review.mjs` (see a candidate before promoting it), `zone_editor.mjs` (name its zones, saved as a new candidate) |
 | [`server/mosquitto.conf`](server/mosquitto.conf), [`broker.sh`](server/broker.sh) | the broker, its WebSocket listener, and where its state goes |
 | [`deploy/`](deploy/) | the deployed shape: an image for the API+UI, a compose file that runs it beside the broker, and `fleet-deploy.sh` (gated update, rollback, backup, restore) |
 

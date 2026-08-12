@@ -320,6 +320,107 @@ try {
   writeFileSync(reviewShot, Buffer.from(reviewPng.data, 'base64'));
   console.log(`screenshot: ${reviewShot}`);
 
+  // -- editing the candidate's zones --------------------------------------
+  //
+  // The other half of the review decision: a build's rooms arrive as `zone_01`
+  // ..`zone_07`, and naming them is done here, against the candidate's own map,
+  // by an operator who can see which room is which. Saving derives a *new*
+  // candidate from the one on screen — so the map the coordinates were drawn on
+  // is the map they are stored against, and nothing published moves.
+
+  if (token) {
+    const editing = await session.evaluate(`(() => {
+      document.getElementById('zones-edit').click();
+      return {
+        rows: document.querySelectorAll('#zone-rows .zone-row').length,
+        readOnlyHidden: document.getElementById('review-zones').hidden,
+        listLocked: [...document.querySelectorAll('#review-revisions button')]
+          .every(button => button.disabled),
+        promoteLocked: document.getElementById('review-promote').disabled,
+      };
+    })()`);
+    check(
+      'editing opens on the selected revision’s zones and holds it still',
+      editing.rows > 0 && editing.readOnlyHidden && editing.listLocked && editing.promoteLocked,
+      JSON.stringify(editing),
+    );
+
+    // A vocabulary the robot's loader would *refuse* — two zones answering one
+    // query — must not leave the browser: it would be stored as a candidate
+    // that looks fine and cannot be loaded.
+    const refused = await session.evaluate(`(() => {
+      const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
+      const first = rows[0].querySelectorAll('input')[0].value;
+      const aliases = rows[1].querySelectorAll('input')[2];
+      aliases.value = first.toUpperCase();
+      aliases.dispatchEvent(new Event('change'));
+      document.getElementById('zone-save').click();
+      return { note: document.getElementById('zone-note').textContent };
+    })()`);
+    check(
+      'an ambiguous vocabulary is refused in the browser, not stored',
+      /both answer to/.test(refused.note),
+      refused.note,
+    );
+
+    await session.evaluate(`(() => {
+      const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
+      rows[1].querySelectorAll('input')[2].value = '';
+      rows[1].querySelectorAll('input')[2].dispatchEvent(new Event('change'));
+      const name = rows[0].querySelectorAll('input')[0];
+      const renamed = name.value + '_named';
+      name.value = renamed;
+      name.dispatchEvent(new Event('change'));
+      const fresh = [...document.querySelectorAll('#zone-rows .zone-row')][0];
+      fresh.querySelectorAll('input')[1].value = 'A Named Room';
+      fresh.querySelectorAll('input')[1].dispatchEvent(new Event('change'));
+      fresh.querySelector('select').value = 'room';
+      fresh.querySelector('select').dispatchEvent(new Event('change'));
+      document.getElementById('zone-save').click();
+      return renamed;
+    })()`);
+    const derived = await settle(
+      session,
+      `(() => ({
+        note: document.getElementById('review-note').textContent,
+        label: document.getElementById('review-map-label').textContent,
+        source: document.getElementById('review-zone-source').textContent,
+        zones: [...document.querySelectorAll('#review-zones .zone-row')]
+          .map(row => row.textContent).join(' '),
+        editorHidden: document.getElementById('zone-editor').hidden,
+      }))()`,
+      (state) => /saved from \d{8}T\d{6}/.test(state.note),
+    );
+    check(
+      'saving derives a candidate from the revision under review',
+      /saved from \d{8}T\d{6}/.test(derived.note),
+      derived.note,
+    );
+    // The edited set is on screen afterwards because it was *read back* from the
+    // new candidate — not held over as an overlay of what was typed.
+    check(
+      'the pane then shows the saved candidate’s own zones',
+      derived.editorHidden &&
+        derived.zones.includes('A Named Room') &&
+        /own frame/.test(derived.source),
+      JSON.stringify(derived),
+    );
+    check(
+      'the edited revision is still a candidate: nothing published moved',
+      !new RegExp(`${derived.label.split(' · ')[1]}`).test(
+        await session.evaluate(`document.getElementById('review-canonical').textContent`),
+      ),
+      `canonical: ${await session.evaluate(
+        `document.getElementById('review-canonical').textContent`,
+      )}`,
+    );
+
+    const editShot = shot.replace(/(\.png)?$/, '-zones.png');
+    const editPng = await session.send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(editShot, Buffer.from(editPng.data, 'base64'));
+    console.log(`screenshot: ${editShot}`);
+  }
+
   // -- the first promotion on a floor -------------------------------------
   //
   // A floor whose only revisions are candidates. Its detail used to be fetched

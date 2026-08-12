@@ -44,27 +44,17 @@
           <span id="map-label" class="dim">—</span>
           <span id="map-revision" class="pill"></span>
           <!-- A candidate is a map a robot published; it changes nothing until
-               an operator promotes it. Promotion happens in the review pane,
-               where the candidate's own map is on screen — this is only the
-               signpost that says there is something to look at. -->
-          <button id="review-jump" type="button" hidden></button>
+               an operator promotes it. Promotion, and editing its zones, happen
+               in the review pane where that candidate's own map is on screen —
+               this is the way in. It is always here, and says how many
+               candidates the floor on screen has when it knows: above 760 px
+               the tab bar is hidden, so a conditional button was the only door
+               to a pane whose whole point is floors no robot is reporting. -->
+          <button id="review-jump" type="button">review maps</button>
           <label class="check"><input type="checkbox" id="follow" /> follow</label>
           <button id="fit" type="button">fit</button>
-          <button id="zones-edit" type="button">edit zones</button>
         </div>
         <canvas id="map-canvas"></canvas>
-        <p id="promote-note" class="note"></p>
-        <!-- Zone edits never touch the canonical revision: saving derives a
-             new candidate (same map, new zones) for the picker to promote. -->
-        <div id="zone-editor" class="zone-editor" hidden>
-          <div id="zone-rows" class="zone-rows"></div>
-          <div class="zone-actions">
-            <button id="zone-add" type="button">add zone</button>
-            <button id="zone-save" type="button">save as candidate</button>
-            <button id="zone-cancel" type="button">cancel</button>
-          </div>
-          <p id="zone-note" class="note"></p>
-        </div>
       </section>
 
       <!-- Candidate review. Addressed by floor rather than by robot: the floor
@@ -109,12 +99,29 @@
 
           <div class="review-map">
             <canvas id="review-canvas"></canvas>
-            <h3>zones</h3>
+            <div class="zones-head">
+              <h3>zones</h3>
+              <!-- Editing is on the *selected revision*, which is why it is
+                   here and not on the operations map: a zone is a coordinate
+                   in one map frame, so the map under it has to be the map it
+                   belongs to. Saving derives a new candidate; the revision on
+                   screen is never written. -->
+              <button id="zones-edit" type="button" hidden>edit zones</button>
+            </div>
             <!-- Which map frame these coordinates were taught in. A revision
                  that carries no zones.yaml inherits the floor's, which is a
                  different SLAM session's frame — the trap M4 named. -->
             <p id="review-zone-source" class="dim"></p>
             <div id="review-zones" class="zone-rows"></div>
+            <div id="zone-editor" class="zone-editor" hidden>
+              <div id="zone-rows" class="zone-rows"></div>
+              <div class="zone-actions">
+                <button id="zone-add" type="button">add zone</button>
+                <button id="zone-save" type="button">save as candidate</button>
+                <button id="zone-cancel" type="button">cancel</button>
+              </div>
+              <p id="zone-note" class="note"></p>
+            </div>
           </div>
         </div>
       </section>
