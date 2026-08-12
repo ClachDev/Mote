@@ -19,6 +19,12 @@ and OpenCV:
        band-pass) and invert the FFT to get a continuous "structure score",
     5. threshold that score back into a decluttered occupancy grid.
 
+Step 3 departs from ROSE on purpose: it picks peaks above the angular energy's
+broadband floor, where ROSE thresholds their topographic prominence at half the
+curve's range — which returns two directions on every map measured here, and
+erodes the off-axis walls a small flat actually has.
+:func:`angular_stats._pick_directions` carries the measurements.
+
 Room segmentation (the ROSE2 layer on top of this) is intentionally out of
 scope for this module.
 

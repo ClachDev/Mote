@@ -34,16 +34,46 @@ stronger peak.
 
 ![before and after](2026-08-11-orientation-picking/energy-panel-before-after.png)
 
+## What ROSE itself does, and why this departs from it
+
+Worth stating plainly, because this module cites ROSE: **the shipped
+relative-height rule was never ROSE's rule**, and neither is the one replacing
+it. ROSE (Luperto et al., [arXiv:2004.08794](https://arxiv.org/abs/2004.08794),
+§3.1) selects directions by **topographic prominence**, thresholded at 50% of
+the curve's peak-to-trough range — literally, in the reference implementation
+([aislabunimi/ROSE2](https://github.com/aislabunimi/ROSE2),
+`src/rose_v1_repo/fft_structure_extraction.py`):
+
+```python
+find_peaks(pol_h, prominence=(np.max(pol_h) - np.min(pol_h)) * 0.5)
+```
+
+Run over our corpus (`rose-rule.txt`), that criterion is *more* conservative
+than either of ours: on all 13 maps it returns exactly the two strongest,
+near-orthogonal directions, and never a phantom. It also drops the real
+off-axis families along with them — 11.8° and 110.2° on the flat map — which is
+the two-direction result the operator rejected at `--peak-rel 0.65` for visibly
+eroding walls.
+
+That is a difference in the maps, not a mistake in the paper. ROSE scores large,
+overwhelmingly rectilinear building floor plans, where two directions is the
+right answer and a third is usually clutter; and its output is an abstracted
+floor plan. A small flat mapped by a 2-D lidar has genuine off-axis wall
+families, and this pass keeps *observed pixels* gated to real walls, so a
+dropped family costs real wall rather than detail.
+
 ## Two fixes that do not work
 
-**Literal topographic prominence** (a peak's height above the higher of its two
-flanking minima) does not separate the phantom from the real families. On the
-flat map the phantom's prominence is 0.028 of the maximum and the *real*
-off-axis family at 11.8° has 0.033 — because that family sits on the tail of
-the dominant one and is a shoulder too, in exactly the same sense. Thresholding
-prominence is worse than a wash: it rewards isolation, so it promotes lone
-bumps in the noise floor that carry no structural energy at all (47.2° on the
-tuning map; 43.2° and 137.2° on the replay maps) while dropping real families.
+**Literal topographic prominence**, at a threshold loose enough to keep the four
+families, cannot exclude the phantom. The real off-axis family at 11.8° scores
+0.033 of the maximum against the phantom's 0.028 — that family sits on the tail
+of the dominant one and is a shoulder too, in exactly the same sense. So
+prominence has no setting that expresses what is wanted here: the paper's
+threshold gives two directions, and any threshold that admits the third and
+fourth admits the phantom with them. Thresholding it that low is worse still,
+because prominence rewards isolation and starts promoting lone bumps in the
+noise floor that carry no structural energy at all (47.2° on the tuning map;
+43.2° and 137.2° on the replay maps).
 
 **A wider suppression radius** cannot separate them either. The phantom is
 13.0° from its parent; the real off-axis family is 14.5° from its own. Any

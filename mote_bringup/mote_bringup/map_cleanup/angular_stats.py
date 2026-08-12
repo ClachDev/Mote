@@ -270,16 +270,30 @@ def _pick_directions(
     Two things were tried first and are worse, both measured on that corpus:
 
     * **Literal topographic prominence** (height above the higher flanking
-      minimum) does not separate them. On the flat map the phantom's is 0.028 of
-      the maximum and the *real* off-axis family's is 0.033 — because that
-      family sits on the tail of the dominant one and is a shoulder too, in
-      exactly the same sense. Worse, prominence rewards isolation, so
-      thresholding it promotes lone bumps in the noise floor that carry no
-      structural energy at all (47.2 deg on the tuning map, 43.2 and 137.2 deg
-      on the replay maps) while dropping real families.
+      minimum) cannot express what is wanted here, at any threshold. It is what
+      ROSE itself uses — ``find_peaks(prominence=(max - min) * 0.5)`` in the
+      reference implementation — and at that threshold it is *more* conservative
+      than this: on all 13 maps it returns exactly the two strongest,
+      near-orthogonal directions and never a phantom. It also drops the real
+      off-axis families with them (11.8 and 110.2 deg on the flat map), which is
+      the two-direction result an operator rejected for visibly eroding walls.
+      Lower the threshold to keep those and the shoulder comes back with them:
+      the real off-axis family's prominence is 0.033 of the maximum against the
+      phantom's 0.028, since it sits on the dominant family's tail and is a
+      shoulder in exactly the same sense. Prominence also rewards isolation, so
+      a threshold low enough to admit them promotes lone bumps in the noise
+      floor carrying no structural energy at all (47.2 deg on the tuning map,
+      43.2 and 137.2 deg on the replay maps).
     * **A wider NMS radius** cannot separate them either: the phantom is 13.0
       deg from its parent and the real off-axis family is 14.5 deg from its own,
       so any radius that suppresses the one suppresses the other.
+
+    So this is a deliberate departure from ROSE, and the reason is the map: ROSE
+    scores large, overwhelmingly rectilinear building floor plans, where two
+    directions is the right answer and a third is usually clutter. A small flat
+    mapped by a 2-D lidar has genuine off-axis wall families, and the declutter
+    pass keeps *observed pixels* gated to real walls rather than abstracting a
+    floor plan, so a dropped family costs real wall rather than detail.
     """
     return _pick_peaks(angles, _floor_subtract(energy, params), params)
 

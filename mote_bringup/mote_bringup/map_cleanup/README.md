@@ -32,6 +32,15 @@ The building does **not** have to be Manhattan (axis-aligned): the dominant
 orientations are whatever the map actually contains, including diagonal
 corridors.
 
+Step 3 is where this **departs from ROSE deliberately**. ROSE picks directions
+by topographic prominence at 50% of the angular curve's peak-to-trough range,
+which on every map measured here returns exactly the two strongest,
+near-orthogonal directions. That is right for the large, overwhelmingly
+rectilinear floor plans ROSE scores, and wrong for a small flat mapped by a 2-D
+lidar, which has genuine off-axis wall families that a two-direction filter
+erodes. See `angular_stats._pick_directions` and
+`docs/tuning/2026-08-11-orientation-picking.md`.
+
 ## Usage
 
 ```bash
