@@ -10,7 +10,7 @@ to what the callback does can touch.
 
 Raw sampler output is in `2026-08-11-monitor-cpu/`; every figure below is a
 `mean` from one of those JSON files and can be re-derived with
-`mote_bringup/tools/node_cpu.py --summary <csv>`.
+`pixi run node-cpu --summary <csv>`.
 
 ## How it was measured
 
