@@ -134,8 +134,16 @@ export class MapView {
 
   // -- data -------------------------------------------------------------
 
-  setMap(map, image) {
-    const changed = !this.map || this.map.site !== map.site || this.map.floor !== map.floor;
+  // `refit` overrides the default test for a caller that knows better. The
+  // fleet map changes basemap only when it changes floor, so that is the test;
+  // the review view swaps between revisions *of* one floor, where holding the
+  // viewport is how two candidates get compared — but a revision of a different
+  // size has to be re-fitted or it lands off screen.
+  setMap(map, image, refit = null) {
+    const changed =
+      refit === null
+        ? !this.map || this.map.site !== map.site || this.map.floor !== map.floor
+        : refit;
     this.map = map;
     this.image = image;
     if (changed) {

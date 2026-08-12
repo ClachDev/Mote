@@ -97,6 +97,9 @@ GET  /v1/sites                           the registry: every floor + its canonic
 GET  /v1/sites/<site>/floors/<floor>     every revision, validated, with provenance
 POST     …/revisions/<rev>               upload a candidate revision (a robot)
 GET      …/revisions/<rev>/bundle.tar.gz pull a revision (a robot)
+GET      …/revisions/<rev>/map.json      that revision's own transform + size
+GET      …/revisions/<rev>/map.png       that revision's own image
+GET      …/revisions/<rev>/zones.json    that revision's own zone binding
 POST     …/revisions/<rev>/promote       make it canonical (an operator)
 GET  /                                   the operator UI (static files)
 ```
@@ -451,6 +454,51 @@ a temporary directory, renames it into `maps/<rev>/`, and flips the local `map`
 symlink — so a half-transferred revision is never visible and nothing has to be
 undone if the transfer dies.
 
+### `GET …/revisions/<rev>/map.json`, `…/map.png`, `…/zones.json`
+
+The same three questions `/v1/maps/<site>/<floor>/…` answers, asked of a
+revision that is **not** the floor's canonical one. Uploading is not publishing,
+so an operator has a decision to make; these are what lets them see what they
+are deciding about, and they are what the dashboard's review pane reads.
+
+`map.json` is `/v1/maps`' payload with `revision` naming this revision and
+`image_url` pointing at *this* route's `map.png`:
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":"20260802T145731",
+ "resolution":0.05,"origin":[-2.927,-2.934,0.0],"width":438,"height":238,
+ "image":"map.png",
+ "image_url":"/v1/sites/home/floors/ground/revisions/20260802T145731/map.png"}
+```
+
+That URL is load-bearing. `/v1/maps/<site>/<floor>/map.png` serves whatever is
+*published*, so a client that took the transform from here and the pixels from
+there would draw the map the operator already has under the candidate's label —
+which looks entirely convincing and is the exact failure this route removes.
+
+`zones.json` carries one extra field over the canonical route:
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":"20260802T145731",
+ "source":"floor","frame_id":"map","zones":[…]}
+```
+
+`source` is `revision` when the revision carries its own `zones.yaml` and
+`floor` when it inherits the floor's. The difference matters and the coordinates
+cannot express it: inherited zones were taught in a *previous* SLAM session's
+frame, so they draw perfectly over this map and are wrong by however far the two
+origins differ.
+
+Unlike `read_zones` on the canonical route, this is **not gated on there being a
+published map** — the review that matters most is the first candidate on a floor
+with nothing published at all. That does not loosen the vocabulary/binding
+split: these are still coordinates, still served under a path bound to a
+basemap, and still never over `/v1/zones`. Naming a revision is naming a map
+frame.
+
+All three are reads, so like every other read route they take no operator token;
+M7 changes that for all of them at once.
+
 ---
 
 ## What the browser is allowed to do
@@ -461,3 +509,9 @@ listener with a client that implements no PUBLISH packet
 ([`ui/mqtt.mjs`](../../mote_fleet/server/ui/mqtt.mjs)) — the split is enforced by
 omission, not by intention. M7 makes that structural on the broker side too,
 with a subscribe-only credential.
+
+**Reviewing a candidate is all GETs.** The review pane reads a revision's
+`map.json`, `map.png` and `zones.json` and writes nothing; its one write is the
+`promote` M4 already had, which is authorized and audited like any other. Zone
+*editing* is a separate write (`POST …/floors/<floor>/zones`) that derives a new
+candidate and still changes no published floor.

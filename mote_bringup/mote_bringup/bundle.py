@@ -651,11 +651,15 @@ def validate(revision_dir, *, require_posegraph: bool = True) -> Report:
         elif not report.files[name]:
             report.errors.append(f"{name} is empty")
 
-    for name in CONTINUABLE:
-        if report.files.get(name):
-            continue
+    # One message however many of them are absent. slam_toolbox writes the
+    # posegraph and its data as a pair, either half missing means exactly the
+    # same thing, and a line per file produced two entries with word-for-word
+    # identical text — which reads as two separate problems.
+    missing = [name for name in CONTINUABLE if not report.files.get(name)]
+    if missing:
         message = (
-            f"{name} is missing — mapping cannot be continued in this frame "
+            f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} "
+            "missing — mapping cannot be continued in this frame "
             "(extend, don't remap)"
         )
         (report.errors if require_posegraph else report.warnings).append(message)

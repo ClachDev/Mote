@@ -15,6 +15,7 @@
 import { BrokerReader, parseTopic } from './mqtt.mjs';
 import { MapView } from './map.mjs';
 import { ZoneEditor } from './zone_editor.mjs';
+import { ReviewView } from './review.mjs';
 import { setupPanes } from './layout.mjs';
 
 const TOKEN_KEY = 'mote.operator.token';
@@ -42,6 +43,7 @@ const state = {
 const dom = {};
 let mapView = null;
 let editor = null;
+let review = null;
 let panes = null;
 let pending = false;
 
@@ -192,6 +194,12 @@ async function ensureMap(record) {
     return;
   }
   dom.mapLabel.textContent = key;
+  // What revisions the floor has does not depend on it having a published map,
+  // and must not be fetched as though it did. This used to sit after the
+  // basemap fetch, behind its early return, so a floor whose only revisions
+  // were candidates reported no candidates — and the first promotion on any
+  // floor could never be made from the browser (observed live, 2026-08-02).
+  loadFloor(site, floor, key);
   try {
     const meta = await api(`/v1/maps/${site}/${floor}/map.json`);
     const image = new Image();
@@ -209,7 +217,6 @@ async function ensureMap(record) {
   api(`/v1/maps/${site}/${floor}/zones.json`)
     .then((body) => state.mapKey === key && setZones(body.zones))
     .catch(() => state.mapKey === key && setZones([]));
-  loadFloor(site, floor, key);
 }
 
 // Taught places go two ways: onto the basemap, and into the dispatch picker.
@@ -233,29 +240,25 @@ async function loadFloor(site, floor, key) {
   renderRevisions();
 }
 
-// Which revision the floor is on, and what else could be promoted onto it. A
-// candidate is a map some robot published that changes nothing until an
-// operator says so, so this is where that decision is made.
+// Which revision the floor is on, and whether anything is waiting to replace
+// it. The decision is deliberately *not* made here: this canvas draws live
+// robots on the **canonical** basemap, so a promote button beside it would be
+// a promotion made without ever seeing the map being promoted — which is what
+// the review pane exists to end. This is the signpost to it.
+//
+// Candidates the validator refused are counted too: "why can I not promote the
+// map my robot just published" is a question the review pane can answer and a
+// filtered-out row cannot.
 function renderRevisions() {
   const floor = state.floor;
-  if (!floor) {
-    dom.revisions.hidden = true;
-    dom.mapRevision.textContent = '';
-    return;
-  }
-  dom.mapRevision.textContent = floor.canonical || 'no published map';
-  const candidates = floor.revisions.filter(
-    (revision) => !revision.canonical && revision.ok,
-  );
-  dom.revisions.hidden = candidates.length === 0;
-  dom.revision.replaceChildren(
-    ...candidates.map((revision) =>
-      el('option', {
-        value: revision.revision,
-        text: `${revision.revision}${revision.robot_id ? ` · ${revision.robot_id}` : ''}`,
-      }),
-    ),
-  );
+  dom.mapRevision.textContent = floor ? floor.canonical || 'no published map' : '';
+  const candidates = floor
+    ? floor.revisions.filter((revision) => !revision.canonical)
+    : [];
+  dom.reviewJump.hidden = candidates.length === 0;
+  dom.reviewJump.textContent = `${candidates.length} candidate${
+    candidates.length === 1 ? '' : 's'
+  } — review`;
 }
 
 // The zones of the floor on screen, as a `goto` the operator does not have to
@@ -278,29 +281,18 @@ function onZone() {
   dom.dispatchNote.className = 'note';
 }
 
-async function onPromote(event) {
-  event.preventDefault();
-  const revision = dom.revision.value;
-  if (!state.floor || !revision) return;
-  const { site, floor } = state.floor;
-  dom.promoteNote.textContent = `promoting ${revision}…`;
-  dom.promoteNote.className = 'note';
-  try {
-    const body = await api(
-      `/v1/sites/${site}/floors/${floor}/revisions/${revision}/promote`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"schema":1}' },
-    );
-    dom.promoteNote.textContent = body.announced
-      ? `${site}/${floor} is on ${body.revision}; robots will pull it`
-      : `promoted, but not announced: ${body.detail}`;
-    // Re-read the floor rather than assume: the basemap on screen is now a
-    // different map.
-    state.mapKey = null;
-    scheduleRender();
-  } catch (error) {
-    dom.promoteNote.textContent = error.message;
-    dom.promoteNote.className = 'note error';
-  }
+// Into the review pane, on the floor already on screen. Promotion lives there
+// because that is where the candidate's own map is drawn.
+function onReviewJump() {
+  panes.show('review');
+  if (state.mapKey) review.open(state.mapKey);
+}
+
+// A promotion happened in the review pane: this pane's basemap is now a
+// different map, so re-resolve it rather than keep drawing the old one.
+function onPromoted() {
+  state.mapKey = null;
+  scheduleRender();
 }
 
 // Editing starts from the zones on screen — the canonical floor's — and never
@@ -330,7 +322,7 @@ async function onSaveZones() {
     });
     editor.finish();
     dom.zonesEdit.disabled = false;
-    dom.promoteNote.textContent = `zone candidate ${body.revision} saved \u2014 the zones shown are the candidate's; pick it in the picker and promote it`;
+    dom.promoteNote.textContent = `zone candidate ${body.revision} saved \u2014 the zones shown are the candidate's; open review to see it and promote it`;
     dom.promoteNote.className = 'note';
     await loadFloor(site, floor, state.mapKey);
   } catch (error) {
@@ -604,12 +596,26 @@ function bind() {
     token: 'token',
     mapLabel: 'map-label',
     mapRevision: 'map-revision',
-    revisions: 'revisions',
-    revision: 'revision',
+    reviewJump: 'review-jump',
     promoteNote: 'promote-note',
     canvas: 'map-canvas',
     follow: 'follow',
     fit: 'fit',
+    reviewFloors: 'review-floors',
+    reviewFloor: 'review-floor',
+    reviewCanonical: 'review-canonical',
+    reviewRevisions: 'review-revisions',
+    reviewVerdict: 'review-verdict',
+    reviewVerdictNotes: 'review-verdict-notes',
+    reviewNotesLabel: 'review-notes-label',
+    reviewProvenance: 'review-provenance',
+    reviewZones: 'review-zones',
+    reviewZoneSource: 'review-zone-source',
+    reviewCanvas: 'review-canvas',
+    reviewMapLabel: 'review-map-label',
+    reviewPromote: 'review-promote',
+    reviewFit: 'review-fit',
+    reviewNote: 'review-note',
     zonesEdit: 'zones-edit',
     zoneEditor: 'zone-editor',
     zoneRows: 'zone-rows',
@@ -636,10 +642,39 @@ export async function boot() {
       scheduleRender();
     },
   });
-  // The canvas has no size until its pane is on screen, so the map is told when
-  // it becomes visible rather than fitting into a hidden 0x0 box.
-  panes = setupPanes({ onShow: (name) => name === 'map' && mapView.shown() });
+  review = new ReviewView({
+    api,
+    onPromoted,
+    dom: {
+      canvas: dom.reviewCanvas,
+      floors: dom.reviewFloors,
+      floor: dom.reviewFloor,
+      canonical: dom.reviewCanonical,
+      revisions: dom.reviewRevisions,
+      verdict: dom.reviewVerdict,
+      verdictNotes: dom.reviewVerdictNotes,
+      notesLabel: dom.reviewNotesLabel,
+      provenance: dom.reviewProvenance,
+      zones: dom.reviewZones,
+      zoneSource: dom.reviewZoneSource,
+      mapLabel: dom.reviewMapLabel,
+      promote: dom.reviewPromote,
+      fit: dom.reviewFit,
+      note: dom.reviewNote,
+    },
+  });
+  // A canvas has no size until its pane is on screen, so each map is told when
+  // it becomes visible rather than fitting into a hidden 0x0 box. The review
+  // pane's canvas is hidden at *every* width until the pane is opened, so this
+  // is the only moment it can be fitted at all.
+  panes = setupPanes({
+    onShow: (name) => {
+      if (name === 'map') mapView.shown();
+      if (name === 'review') review.shown();
+    },
+  });
   dom.zone.addEventListener('change', onZone);
+  dom.reviewJump.addEventListener('click', onReviewJump);
   dom.fit.addEventListener('click', () => {
     mapView.follow(null);
     dom.follow.checked = false;
@@ -651,7 +686,6 @@ export async function boot() {
     mapView.draw();
   });
   dom.dispatch.addEventListener('submit', onDispatch);
-  dom.revisions.addEventListener('submit', onPromote);
   editor = new ZoneEditor(mapView, {
     panel: dom.zoneEditor,
     rows: dom.zoneRows,
@@ -670,6 +704,9 @@ export async function boot() {
   document.getElementById('contract').textContent = state.config.contract;
   await checkOperator();
   await loadRoster().catch((error) => console.warn('roster unavailable', error));
+  // The registry's floors, not the fleet's: a floor worth reviewing may have no
+  // robot reporting it at all.
+  await review.loadFloors().catch((error) => console.warn('registry unavailable', error));
 
   const { root, presence, health, pose, status } = state.config.topics;
   const reader = new BrokerReader({

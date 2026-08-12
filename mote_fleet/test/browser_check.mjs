@@ -11,7 +11,10 @@
 // server, a basemap and a fake fleet on ports nobody else is using — and is how
 // to run these checks without one. Point it at a stack of your own with:
 //
-//     node mote_fleet/test/browser_check.mjs http://localhost:8080 [token] [out.png]
+//     node mote_fleet/test/browser_check.mjs http://localhost:8080 [token] [out.png] [site/floor]
+//
+// The trailing `site/floor` is a floor with candidates and no published map; if
+// it is given, the bootstrap checks run against it.
 //
 // It speaks the Chrome DevTools Protocol over node's built-in WebSocket, so it
 // needs no npm install: only a chrome/chromium on PATH.
@@ -25,6 +28,7 @@ import { join } from 'node:path';
 const url = process.argv[2] || 'http://localhost:8080';
 const token = process.argv[3] || '';
 const shot = process.argv[4] || 'fleet-ui.png';
+const unpublished = process.argv[5] || '';
 
 function onPath(name) {
   return (process.env.PATH || '').split(':').some((dir) => {
@@ -118,6 +122,19 @@ function check(name, ok, detail = '') {
 // could ever be a gate rather than an operator's tool.
 const DEADLINE_MS = 20000;
 
+// How much of a canvas has been drawn on. The only honest answer to "is the map
+// there" — every other signal (a decoded image, a loaded payload) is upstream of
+// the one thing that can silently go wrong, which is fitting into a canvas that
+// had no size when it was fitted.
+const paintedPixels = (id) => `(() => {
+      const canvas = document.getElementById('${id}');
+      const ctx = canvas.getContext('2d');
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let painted = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted += 1;
+      return painted;
+    })()`;
+
 async function settle(session, expression, satisfied, timeout = DEADLINE_MS) {
   const deadline = Date.now() + timeout;
   for (;;) {
@@ -192,18 +209,7 @@ try {
   );
   check('a basemap was resolved for the selected robot', mapLabel.includes('/'), mapLabel);
 
-  const drawn = await settle(
-    session,
-    `(() => {
-      const canvas = document.getElementById('map-canvas');
-      const ctx = canvas.getContext('2d');
-      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-      let painted = 0;
-      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted += 1;
-      return painted;
-    })()`,
-    (painted) => painted > 10000,
-  );
+  const drawn = await settle(session, paintedPixels('map-canvas'), (painted) => painted > 10000);
   check('the map canvas has pixels on it', drawn > 10000, `${drawn} painted pixels`);
 
   const subsystems = await settle(
@@ -240,6 +246,125 @@ try {
   const screenshot = await session.send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(shot, Buffer.from(screenshot.data, 'base64'));
   console.log(`screenshot: ${shot}`);
+
+  // -- candidate review ---------------------------------------------------
+  //
+  // M4's rule is that uploading is not publishing, which leaves an operator a
+  // decision to make; until this pane existed the only thing on screen to make
+  // it with was a timestamp. Whether they can actually *see* the candidate is a
+  // question about a canvas, so only a browser can answer it.
+
+  const signpost = await settle(
+    session,
+    `(() => {
+      const button = document.getElementById('review-jump');
+      return button && !button.hidden ? button.textContent : '';
+    })()`,
+    (text) => text.includes('candidate'),
+  );
+  check('the map pane signposts the floor’s candidates', signpost.includes('candidate'), signpost);
+
+  await session.evaluate(`document.getElementById('review-jump').click()`);
+  const reviewed = await settle(
+    session,
+    `document.getElementById('review-map-label').textContent`,
+    (label) => /\d{8}T\d{6}/.test(label),
+  );
+  check('the review pane opened on a candidate revision', /\d{8}T\d{6}/.test(reviewed), reviewed);
+
+  const candidateDrawn = await settle(
+    session,
+    paintedPixels('review-canvas'),
+    (painted) => painted > 10000,
+  );
+  check(
+    'the candidate’s own map is drawn on the review canvas',
+    candidateDrawn > 10000,
+    `${candidateDrawn} painted pixels`,
+  );
+
+  // The fixture's candidate is the published map mirrored, so a review pane
+  // that fetched the canonical image — the defect this replaces — would draw a
+  // perfectly convincing map. The URL is what separates the two.
+  const source = await session.evaluate(
+    `[...performance.getEntriesByType('resource')]
+       .map(entry => new URL(entry.name).pathname)
+       .filter(path => path.endsWith('/map.png')).join(' ')`,
+  );
+  check(
+    'the review pane fetched a revision’s image, not the canonical basemap',
+    /\/revisions\/\d{8}T\d{6}\/map\.png/.test(source),
+    source,
+  );
+
+  const zoneRows = await settle(
+    session,
+    `document.querySelectorAll('#review-zones .zone-row').length`,
+    (rows) => rows > 0,
+  );
+  check('the candidate’s zones are listed beside it', zoneRows > 0, `${zoneRows} rows`);
+
+  const verdict = await session.evaluate(`(() => ({
+    verdict: document.getElementById('review-verdict').textContent,
+    enabled: !document.getElementById('review-promote').disabled,
+    facts: document.querySelectorAll('#review-provenance .fact').length,
+  }))()`);
+  check(
+    'the pane says why the revision is promotable, and offers to',
+    verdict.enabled && verdict.facts > 0,
+    JSON.stringify(verdict),
+  );
+
+  const reviewShot = shot.replace(/(\.png)?$/, '-review.png');
+  const reviewPng = await session.send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(reviewShot, Buffer.from(reviewPng.data, 'base64'));
+  console.log(`screenshot: ${reviewShot}`);
+
+  // -- the first promotion on a floor -------------------------------------
+  //
+  // A floor whose only revisions are candidates. Its detail used to be fetched
+  // only after a basemap had loaded — behind an early return — so it listed no
+  // candidates at all and its first promotion could never be made here.
+
+  if (unpublished && token) {
+    const opened = await session.evaluate(`(() => {
+      const select = document.getElementById('review-floor');
+      const option = [...select.options].find(o => o.value === ${JSON.stringify(unpublished)});
+      if (!option) return '';
+      select.value = option.value;
+      select.dispatchEvent(new Event('change'));
+      return option.value;
+    })()`);
+    check(`${unpublished} is in the floor picker`, opened === unpublished, opened || 'not listed');
+
+    // Settled on the *label*, not on the row count: the previous floor's rows
+    // are still on screen while this one's detail is in flight, so a predicate
+    // of "some rows exist" is satisfied before anything has changed and the
+    // promote below then fires at the wrong floor's revision.
+    const listed = await settle(
+      session,
+      `(() => ({
+        canonical: document.getElementById('review-canonical').textContent,
+        label: document.getElementById('review-map-label').textContent,
+        rows: document.querySelectorAll('#review-revisions .revision-row').length,
+        promotable: !document.getElementById('review-promote').disabled,
+      }))()`,
+      (state) => state.label.startsWith(unpublished),
+    );
+    check(
+      'a floor with nothing published still lists its candidates',
+      listed.rows > 0 && listed.promotable && /nothing published/.test(listed.canonical),
+      JSON.stringify(listed),
+    );
+
+    await session.evaluate(`document.getElementById('review-promote').click()`);
+    const promoted = await settle(
+      session,
+      `document.getElementById('review-note').textContent`,
+      (note) => /is on \d{8}T\d{6}/.test(note),
+    );
+    check('the first promotion on a floor goes through', /is on /.test(promoted), promoted);
+  }
 
   // -- the phone ----------------------------------------------------------
   //
@@ -297,6 +422,26 @@ try {
     return out.join(',');
   })()`);
   check('no pane scrolls sideways on a phone', sideways === '', sideways);
+
+  // The review canvas is hidden at *every* width until its pane is opened, so
+  // unlike the fleet map it is never fitted at load. If `shown()` is not wired
+  // through the tab bar it measures 0x0, fits to a scale of 0, and stays blank
+  // for good — with nothing on screen to say why.
+  await session.evaluate(`document.querySelector('.panes [data-pane="review"]').click()`);
+  const phoneReview = await settle(
+    session,
+    paintedPixels('review-canvas'),
+    (painted) => painted > 10000,
+  );
+  check(
+    'the review canvas fits itself when its pane is opened on a phone',
+    phoneReview > 10000,
+    `${phoneReview} painted pixels`,
+  );
+  const reviewPhoneShot = shot.replace(/(\.png)?$/, '-review-phone.png');
+  const reviewPhonePng = await session.send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(reviewPhoneShot, Buffer.from(reviewPhonePng.data, 'base64'));
+  console.log(`screenshot: ${reviewPhoneShot}`);
 
   // Switching panes changes the canvas's height but not its width. Resizing on
   // width alone leaves a backing store `clearRect` cannot fully reach, and the

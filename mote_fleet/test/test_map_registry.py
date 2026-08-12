@@ -379,6 +379,139 @@ def test_pulling_a_revision_that_is_not_there_is_404(server):
     )
 
 
+# ---- reviewing a candidate before promoting it --------------------------
+#
+# An operator who cannot see a candidate is promoting on faith in a timestamp,
+# which is what the dashboard's review view exists to end. These three routes
+# are the whole of what it reads: the candidate's own transform, its own
+# pixels, and its own zones — all three named by the revision, none of them
+# reachable through the canonical basemap's routes.
+
+
+def review(revision, leaf, site=SITE, floor=FLOOR):
+    return f"/v1/sites/{site}/floors/{floor}/revisions/{revision}/{leaf}"
+
+
+@pytest.fixture
+def candidate(server, robot, tmp_path):
+    """A stored candidate whose map is visibly not the canonical one."""
+    upload(server, packed_revision(tmp_path, name="candidate", width=60, height=45))
+    return "20260727T101500"
+
+
+def test_a_candidates_map_json_describes_that_revision(server, candidate):
+    status, body = get(server, review(candidate, "map.json"))
+    assert status == 200
+    assert (body["width"], body["height"]) == (60, 45)
+    assert body["revision"] == candidate
+    assert body["resolution"] == 0.05
+    assert body["origin"][:2] == [-2.927, -2.934]
+    # The whole point of the route: a client that follows this URL gets the
+    # candidate's pixels. Left pointing at /v1/maps — as it was — the review
+    # view would draw the canonical map under the candidate's label, which is
+    # exactly the promotion-on-faith this replaces.
+    assert body["image_url"] == review(candidate, "map.png")
+
+
+def test_a_candidates_map_png_is_not_the_canonical_maps(server, candidate):
+    status, content_type, candidate_bytes = get_bytes(
+        server, review(candidate, "map.png")
+    )
+    assert (status, content_type) == (200, "image/png")
+    _, _, canonical_bytes = get_bytes(server, f"/v1/maps/{SITE}/{FLOOR}/map.png")
+    assert candidate_bytes != canonical_bytes
+    # Nothing was promoted to get here: reviewing is a read.
+    _, floor = get(server, f"/v1/sites/{SITE}/floors/{FLOOR}")
+    assert floor["canonical"] == "20260726T120000"
+
+
+def test_a_candidates_zones_are_its_own(server, robot, tmp_path):
+    directory = write_revision(tmp_path / "rev")
+    (directory / "zones.yaml").write_text(
+        "frame_id: map\nzones:\n  loading_bay: {x: 9.0, y: -1.0}\n"
+    )
+    upload(server, bundle.pack(directory))
+    status, body = get(server, review("20260727T101500", "zones.json"))
+    assert status == 200
+    assert body["revision"] == "20260727T101500"
+    assert body["source"] == "revision"
+    assert [zone["name"] for zone in body["zones"]] == ["loading_bay"]
+    # And the floor's published binding is untouched by having been reviewed.
+    _, published = get(server, f"/v1/maps/{SITE}/{FLOOR}/zones.json")
+    assert sorted(zone["name"] for zone in published["zones"]) == [
+        "kitchen",
+        "sluice",
+        "ward",
+    ]
+
+
+def test_a_revision_with_no_zones_falls_back_to_the_floors(server, robot, tmp_path):
+    """``_zones_file``'s rule, unchanged: a floor seeded by rsync keeps its
+    zones at floor level, and a revision that carries none inherits them.
+
+    ``source`` is what makes that safe to show a reviewer. Inherited zones were
+    taught in a *previous* session's frame, so they draw perfectly over this map
+    and are wrong by however far the two origins differ — nothing in the
+    coordinates says which case this is, so the payload does.
+    """
+    upload(server, packed_revision(tmp_path, name="bare", zones=False))
+    floor_dir = server.maps / SITE / "floors" / FLOOR
+    (floor_dir / "zones.yaml").write_text(
+        "frame_id: map\nzones:\n  lobby: {x: 0.0, y: 0.0}\n"
+    )
+    _, body = get(server, review("20260727T101500", "zones.json"))
+    assert [zone["name"] for zone in body["zones"]] == ["lobby"]
+    assert body["source"] == "floor"
+
+
+def test_a_revision_with_no_zones_anywhere_is_404(server, robot, tmp_path):
+    upload(server, packed_revision(tmp_path, name="bare", zones=False))
+    expect_error(lambda: get(server, review("20260727T101500", "zones.json")), 404)
+
+
+@pytest.mark.parametrize("leaf", ["map.json", "map.png", "zones.json"])
+def test_reviewing_a_revision_that_is_not_there_is_404(server, leaf):
+    expect_error(lambda: get(server, review("20260101T000000", leaf)), 404)
+
+
+@pytest.mark.parametrize("leaf", ["map.json", "map.png", "zones.json"])
+def test_a_review_route_refuses_a_name_it_could_not_have_written(server, leaf):
+    expect_error(lambda: get(server, review("..%2F..%2Fregistry.db", leaf)), 400)
+
+
+@pytest.mark.parametrize("leaf", ["map.json", "map.png", "zones.json"])
+def test_reviewing_needs_no_operator_token(server, candidate, leaf):
+    """Reads are unauthenticated exactly as every other read route is; M7
+    changes that for all of them at once rather than for these three."""
+    assert get_bytes(server, review(candidate, leaf))[0] == 200
+
+
+def test_the_first_candidate_on_a_floor_can_be_reviewed_and_promoted(
+    server, robot, operator, tmp_path
+):
+    """The bootstrap case: a floor whose only revisions are candidates.
+
+    Nothing about review may depend on there already being a canonical map, or
+    the first promotion on any floor could never be made — which is precisely
+    the floor an operator most needs to look at before promoting.
+    """
+    upload(server, packed_revision(tmp_path, name="first"), floor="loft")
+    _, detail = get(server, f"/v1/sites/{SITE}/floors/loft")
+    assert detail["canonical"] is None
+    assert [r["revision"] for r in detail["revisions"]] == ["20260727T101500"]
+
+    _, meta = get(server, review("20260727T101500", "map.json", floor="loft"))
+    assert meta["revision"] == "20260727T101500"
+    _, zones = get(server, review("20260727T101500", "zones.json", floor="loft"))
+    assert zones["zones"]
+    assert (
+        get_bytes(server, review("20260727T101500", "map.png", floor="loft"))[0] == 200
+    )
+
+    status, body = promote(server, "20260727T101500", operator, floor="loft")
+    assert (status, body["revision"]) == (200, "20260727T101500")
+
+
 # ---- zones on the basemap -----------------------------------------------
 
 

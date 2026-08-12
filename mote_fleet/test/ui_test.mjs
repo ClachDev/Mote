@@ -1,11 +1,15 @@
-// The dashboard's two load-bearing pure pieces, under node.
+// The dashboard's load-bearing pure pieces, under node.
 //
 // Everything else in the UI is DOM and canvas, which a browser is the only
-// honest place to test. These two are not: the MQTT codec decides whether the
-// read path works at all, and the world→pixel transform decides whether a robot
-// is drawn where it actually is. Both are exported from files the browser loads
-// unchanged — `.mjs` is what lets node import them with no package.json and no
-// build step.
+// honest place to test. These are not: the MQTT codec decides whether the read
+// path works at all, the world→pixel transform decides whether a robot is drawn
+// where it actually is, the zone editor's geometry decides what an edit does,
+// and the review pane's route builders decide *which map* is on the canvas at
+// all. Each is exported from a file the browser loads unchanged — `.mjs` is what
+// lets node import them with no package.json and no build step.
+//
+// The seams the stylesheet and the markup share with all of that fail silently
+// rather than loudly, so they are read out of those files and asserted here too.
 //
 //     node --test mote_fleet/test/ui_test.mjs
 
@@ -250,7 +254,7 @@ test('the tab bar and the panes address each other by the same names', () => {
   const html = read('index.html');
   const panes = [...html.matchAll(/class="pane[^"]*" data-pane="([^"]+)"/g)].map((m) => m[1]);
   const tabs = [...html.matchAll(/<button[^>]*data-pane="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(panes, ['roster', 'map', 'detail']);
+  assert.deepEqual(panes, ['roster', 'map', 'review', 'detail']);
   // A pane with no tab is simply unreachable on a phone, and nothing says so.
   assert.deepEqual([...tabs].sort(), [...panes].sort());
 });
@@ -261,12 +265,14 @@ test('exactly one pane starts active, so a phone opens on something', () => {
   assert.equal(active.length, 1);
 });
 
-test('the map canvas takes its own touch gestures', () => {
+test('both map canvases take their own touch gestures', () => {
   // Without `touch-action: none` the browser consumes the drag and the pinch
   // before the canvas sees a single pointer event.
   const css = read('style.css');
-  const canvas = css.slice(css.indexOf('#map-canvas {'));
-  assert.match(canvas.slice(0, canvas.indexOf('}')), /touch-action:\s*none/);
+  for (const id of ['#map-canvas {', '#review-canvas {']) {
+    const canvas = css.slice(css.indexOf(id));
+    assert.match(canvas.slice(0, canvas.indexOf('}')), /touch-action:\s*none/, id);
+  }
 });
 
 // -- the zone editor ------------------------------------------------------
@@ -353,4 +359,251 @@ test('the zone editor panel hides when hidden, whatever its class sets', () => {
   for (const id of ['zone-editor', 'zone-rows', 'zone-add', 'zone-save', 'zone-cancel', 'zones-edit']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
   }
+});
+
+// -- candidate review -----------------------------------------------------
+//
+// The read half of the review pane. Its canvas needs a browser like every other
+// canvas here, but the part that decides *which map is on it* does not: these
+// are the route builders, the list ordering and the promotable verdict, and a
+// regression in the first of them is the specific failure the whole view exists
+// to remove — the canonical basemap drawn under a candidate's label.
+
+const {
+  defaultRevision,
+  floorKey,
+  floorPath,
+  formatBytes,
+  orderedRevisions,
+  parseFloorKey,
+  promotability,
+  provenanceRows,
+  revisionPath,
+  zoneSource,
+  zoneSummary,
+} = await import('../server/ui/review.mjs');
+
+test('a candidate is read from its own routes, never the canonical basemap', () => {
+  for (const leaf of ['map.json', 'map.png', 'zones.json']) {
+    const path = revisionPath('home', 'ground', '20260802T145731', leaf);
+    assert.equal(path, `/v1/sites/home/floors/ground/revisions/20260802T145731/${leaf}`);
+    // /v1/maps/<site>/<floor>/<leaf> serves whatever is *published*. A review
+    // view reading those would show the map the operator already has.
+    assert.ok(!path.startsWith('/v1/maps/'), `${leaf} must not come from /v1/maps`);
+    assert.ok(path.includes('20260802T145731'), `${leaf} must name the revision`);
+  }
+});
+
+test('a floor is addressed directly, not through a robot', () => {
+  assert.equal(floorPath('home', 'ground'), '/v1/sites/home/floors/ground');
+  assert.equal(floorKey('home', 'ground'), 'home/ground');
+  assert.deepEqual(parseFloorKey('home/ground'), { site: 'home', floor: 'ground' });
+  assert.equal(parseFloorKey('home'), null);
+  assert.equal(parseFloorKey(''), null);
+});
+
+const canonicalRevision = {
+  revision: '20260726T120000',
+  canonical: true,
+  ok: true,
+  errors: [],
+  warnings: [],
+};
+const goodRevision = {
+  revision: '20260802T145731',
+  canonical: false,
+  ok: true,
+  errors: [],
+  warnings: [],
+};
+const warnedRevision = {
+  revision: '20260802T150000',
+  canonical: false,
+  ok: true,
+  errors: [],
+  warnings: ['no map.posegraph'],
+};
+const brokenRevision = {
+  revision: '20260803T090000',
+  canonical: false,
+  ok: false,
+  errors: ['the map has no free space'],
+  warnings: [],
+};
+
+test('revisions are listed newest first, canonical included', () => {
+  const detail = { revisions: [canonicalRevision, goodRevision, brokenRevision] };
+  assert.deepEqual(
+    orderedRevisions(detail).map((entry) => entry.revision),
+    [brokenRevision.revision, goodRevision.revision, canonicalRevision.revision],
+  );
+  assert.deepEqual(orderedRevisions(null), []);
+});
+
+test('a floor opens on the newest promotable candidate', () => {
+  assert.equal(
+    defaultRevision({ revisions: [canonicalRevision, goodRevision] }).revision,
+    goodRevision.revision,
+  );
+  // A floor whose only candidate is broken still opens on it: "why can I not
+  // promote this" is the question that brought the operator here.
+  assert.equal(
+    defaultRevision({ revisions: [canonicalRevision, brokenRevision] }).revision,
+    brokenRevision.revision,
+  );
+  // Nothing but the published map: there is still something to look at.
+  assert.equal(
+    defaultRevision({ revisions: [canonicalRevision] }).revision,
+    canonicalRevision.revision,
+  );
+  assert.equal(defaultRevision({ revisions: [] }), null);
+});
+
+test('the promote button follows the validator, not the view', () => {
+  assert.equal(promotability(goodRevision).promotable, true);
+  assert.equal(promotability(warnedRevision).promotable, true);
+  assert.deepEqual(promotability(warnedRevision).notes, ['no map.posegraph']);
+  // Refused by the server too, so refusing the click is honest rather than
+  // opinionated — and the reason shown is the server's own.
+  assert.equal(promotability(brokenRevision).promotable, false);
+  assert.deepEqual(promotability(brokenRevision).notes, ['the map has no free space']);
+  assert.equal(promotability(canonicalRevision).promotable, false);
+  assert.equal(promotability(null).promotable, false);
+});
+
+test('the verdict is a state, not a sentence', () => {
+  // This is a control panel: a status is a word beside a coloured dot, the way
+  // the roster and the subsystem list say one. It was briefly a question in the
+  // heading answered by "yes — no errors. These warnings do not block it:",
+  // which said the right thing in the wrong register — and wrapped onto a
+  // second line ending in a dangling colon.
+  for (const revision of [goodRevision, warnedRevision, brokenRevision, canonicalRevision]) {
+    const { verdict } = promotability(revision);
+    assert.ok(verdict.split(' ').length <= 3, `"${verdict}" is a sentence, not a state`);
+    assert.doesNotMatch(verdict, /[:.]$/);
+    assert.doesNotMatch(verdict, /^(yes|no)\b/);
+  }
+  assert.equal(promotability(goodRevision).verdict, 'promotable');
+  assert.equal(promotability(brokenRevision).verdict, 'not promotable');
+  assert.equal(promotability(canonicalRevision).verdict, 'already published');
+});
+
+test('the state drives the dot, using the classes the page already has', () => {
+  assert.equal(promotability(goodRevision).state, 'ok');
+  assert.equal(promotability(warnedRevision).state, 'ok');
+  assert.equal(promotability(brokenRevision).state, 'fault');
+  assert.equal(promotability(canonicalRevision).state, 'unknown');
+  // A state string that maps to no styling is an invisible state. `unknown` is
+  // the exception by design: it is the base `.dot` colour, so it is expressed
+  // by the absence of a modifier rather than by a rule of its own.
+  const css = read('style.css');
+  for (const state of ['ok', 'fault']) {
+    assert.match(css, new RegExp(`\\.dot\\.${state}\\b`), `style.css has no .dot.${state}`);
+  }
+  assert.match(css, /\.dot \{[^}]*background:\s*var\(--unknown\)/);
+});
+
+test('the notes list is captioned with whether it blocks the button', () => {
+  // The bar is "no errors". That belongs on the list — it says what the list
+  // *is* — rather than inside a verdict standing in for the state.
+  assert.match(promotability(warnedRevision).notesLabel, /^warnings\b/);
+  assert.match(promotability(warnedRevision).notesLabel, /do not block/);
+  assert.match(promotability(brokenRevision).notesLabel, /^errors\b/);
+  assert.match(promotability(brokenRevision).notesLabel, /block/);
+  // No caption over an empty list, or it becomes a heading for nothing and the
+  // break it provides lands in the wrong place.
+  assert.equal(promotability(goodRevision).notesLabel, '');
+  assert.equal(promotability(canonicalRevision).notesLabel, '');
+});
+
+test('provenance is read off the payload the registry already sends', () => {
+  const rows = Object.fromEntries(
+    provenanceRows({
+      ...goodRevision,
+      robot_id: 'mote-01',
+      uploaded_at: '2026-08-02T14:57:31Z',
+      bytes: 2048,
+      sha256: 'a'.repeat(64),
+      map: { width: 500, height: 300, resolution: 0.05 },
+      occupancy: { total: 150000, free: 0.79, occupied: 0.11, unknown: 0.1 },
+      meta: { saved: '2026-08-02T14:57:31' },
+      zones: ['kitchen', 'ward'],
+      files: { 'map.posegraph': 12 },
+    }),
+  );
+  assert.equal(rows.revision, goodRevision.revision);
+  assert.equal(rows.from, 'mote-01');
+  assert.equal(rows.size, '500x300 px at 0.05 m/px');
+  assert.match(rows.occupancy, /79\.0% free/);
+  assert.equal(rows.posegraph, 'yes');
+  assert.equal(rows['zones in bundle'], '2: kitchen, ward');
+  // A revision seeded on disk rather than uploaded has no provenance at all,
+  // and saying so beats an empty cell that reads like a missing value.
+  const bare = Object.fromEntries(provenanceRows({ ...goodRevision }));
+  assert.match(bare.uploaded, /seeded on disk/);
+  assert.match(bare.posegraph, /cannot be extended/);
+});
+
+test('bytes are readable at every size a revision comes in', () => {
+  assert.equal(formatBytes(512), '512 B');
+  assert.equal(formatBytes(2048), '2.0 kB');
+  assert.equal(formatBytes(5 * 1024 * 1024), '5.0 MB');
+  assert.equal(formatBytes(undefined), '—');
+});
+
+test('a zone row says which of the three footprints it is', () => {
+  assert.equal(
+    zoneSummary({ name: 'ward', polygon: [[0, 0], [1, 0], [1, 1]] }),
+    'polygon, 3 vertices',
+  );
+  assert.equal(zoneSummary({ name: 'kitchen', x: 1, y: 2, radius: 1.5 }), 'circle, r 1.5 m');
+  assert.equal(zoneSummary({ name: 'pickup', x: 1, y: 2 }), 'waypoint 1.00, 2.00');
+});
+
+test('inherited zones are called inherited, because coordinates cannot say so', () => {
+  // A revision carrying no zones.yaml inherits the floor's, taught in another
+  // SLAM session's frame. They draw perfectly and are wrong by however far the
+  // two map origins differ — invisible on the canvas, so it is said in words.
+  assert.match(zoneSource('floor', 3), /inherited from the floor/);
+  assert.match(zoneSource('revision', 3), /own frame/);
+  assert.match(zoneSource('revision', 0), /carries no zones/);
+});
+
+test('review is a mode: opening it stands the operations panes down', () => {
+  // Two maps side by side — one canonical with robots on it, one a candidate
+  // without — is the confusion a dedicated pane exists to remove, so the rule
+  // holds at every width rather than only on a phone.
+  const css = read('style.css');
+  assert.match(
+    css,
+    /main:has\(\.review-pane\.active\) > \.pane:not\(\.review-pane\)\s*\{\s*display:\s*none/,
+  );
+  assert.match(css, /\.review-pane\.active\s*\{\s*display:\s*flex/);
+});
+
+test('the review pane has every element app.mjs binds to it', () => {
+  const html = read('index.html');
+  for (const id of [
+    'review-jump',
+    'review-floors',
+    'review-floor',
+    'review-canonical',
+    'review-revisions',
+    'review-verdict',
+    'review-verdict-notes',
+    'review-notes-label',
+    'review-provenance',
+    'review-zones',
+    'review-zone-source',
+    'review-canvas',
+    'review-map-label',
+    'review-promote',
+    'review-fit',
+    'review-note',
+  ]) {
+    assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
+  }
+  // The map pane's promote picker moved here wholesale: a promote button next
+  // to the canonical basemap is a promotion made without seeing the map.
+  assert.ok(!html.includes('id="revision"'), 'the map pane still has a promote picker');
 });

@@ -374,7 +374,23 @@ def test_a_missing_posegraph_is_an_error_for_a_publisher_and_a_warning_for_a_rea
     assert not bundle.validate(directory).ok
     lenient = bundle.validate(directory, require_posegraph=False)
     assert lenient.ok
-    assert any("map.posegraph" in warning for warning in lenient.warnings)
+    # One entry naming both halves, not one per file. slam_toolbox writes the
+    # posegraph and its data as a pair, so a line each produced two warnings
+    # with word-for-word identical text — two problems, to anyone reading them.
+    assert lenient.warnings == [
+        "map.posegraph and map.data are missing — mapping cannot be continued "
+        "in this frame (extend, don't remap)"
+    ]
+
+
+def test_half_a_posegraph_names_only_the_half_that_is_missing(tmp_path):
+    directory = revision(tmp_path / "rev")
+    (directory / "map.data").unlink()
+    report = bundle.validate(directory, require_posegraph=False)
+    assert report.warnings == [
+        "map.data is missing — mapping cannot be continued in this frame "
+        "(extend, don't remap)"
+    ]
 
 
 def test_a_truncated_upload_is_caught(tmp_path):

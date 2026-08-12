@@ -44,11 +44,10 @@
           <span id="map-label" class="dim">—</span>
           <span id="map-revision" class="pill"></span>
           <!-- A candidate is a map a robot published; it changes nothing until
-               an operator promotes it here (or with fleetctl). -->
-          <form id="revisions" class="revisions" hidden>
-            <select id="revision" title="candidate map revisions for this floor"></select>
-            <button type="submit">promote</button>
-          </form>
+               an operator promotes it. Promotion happens in the review pane,
+               where the candidate's own map is on screen — this is only the
+               signpost that says there is something to look at. -->
+          <button id="review-jump" type="button" hidden></button>
           <label class="check"><input type="checkbox" id="follow" /> follow</label>
           <button id="fit" type="button">fit</button>
           <button id="zones-edit" type="button">edit zones</button>
@@ -65,6 +64,58 @@
             <button id="zone-cancel" type="button">cancel</button>
           </div>
           <p id="zone-note" class="note"></p>
+        </div>
+      </section>
+
+      <!-- Candidate review. Addressed by floor rather than by robot: the floor
+           worth reviewing is often one no robot is reporting. Everything it
+           reads is a GET of a *revision's* own routes, so what is on the canvas
+           is the map about to be promoted and not the one already published. -->
+      <section class="pane review-pane" data-pane="review">
+        <div class="pane-head">
+          <h2>review</h2>
+          <span id="review-map-label" class="dim">—</span>
+          <button id="review-fit" type="button">fit</button>
+        </div>
+
+        <div class="review-body">
+          <div class="review-side">
+            <div id="review-floors" class="review-floors" hidden>
+              <label for="review-floor">site / floor</label>
+              <select id="review-floor" title="site and floor to review"></select>
+            </div>
+            <p class="dim">
+              published: <span id="review-canonical" class="pill">—</span>
+            </p>
+            <div id="review-revisions" class="revision-rows"></div>
+
+            <!-- A state, said the way every other state on this page is said:
+                 a coloured dot and a word. What the list underneath it is —
+                 and whether it blocks the button — is a caption on the list,
+                 not a sentence standing in for the state. -->
+            <h3>validation</h3>
+            <p id="review-verdict" class="verdict"></p>
+            <p id="review-notes-label" class="notes-label" hidden></p>
+            <ul id="review-verdict-notes" class="verdict-notes"></ul>
+
+            <h3>provenance</h3>
+            <div id="review-provenance" class="facts"></div>
+
+            <button id="review-promote" type="button" class="promote" disabled>
+              promote this revision
+            </button>
+            <p id="review-note" class="note"></p>
+          </div>
+
+          <div class="review-map">
+            <canvas id="review-canvas"></canvas>
+            <h3>zones</h3>
+            <!-- Which map frame these coordinates were taught in. A revision
+                 that carries no zones.yaml inherits the floor's, which is a
+                 different SLAM session's frame — the trap M4 named. -->
+            <p id="review-zone-source" class="dim"></p>
+            <div id="review-zones" class="zone-rows"></div>
+          </div>
         </div>
       </section>
 
@@ -126,6 +177,7 @@
         roster
       </button>
       <button type="button" data-pane="map" role="tab" aria-selected="false">map</button>
+      <button type="button" data-pane="review" role="tab" aria-selected="false">review</button>
       <button type="button" id="tab-detail" data-pane="detail" role="tab" aria-selected="false">
         robot
       </button>

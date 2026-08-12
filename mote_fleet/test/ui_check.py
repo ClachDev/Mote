@@ -63,6 +63,12 @@ SIM_SITES = REPO / "mote_simulation" / "sim_home" / "sites"
 #: link so the broker published its will.
 ROBOTS = ("ok", "degraded", "offline")
 
+#: A floor with candidates and **no published map**, which is the bootstrap case
+#: the review view had to fix: the floor detail used to be fetched only after a
+#: basemap had loaded, so a floor with nothing published listed no candidates
+#: and its first promotion could never be made from a browser.
+UNPUBLISHED_FLOOR = "unpublished"
+
 #: Where the broker image tag is pinned — once, in the compose file, for every
 #: broker the fleet runs (``broker.sh`` defers to it the same way). A tag of its
 #: own here would be a third broker that could drift onto a mosquitto whose
@@ -238,6 +244,38 @@ def seed_maps(root: Path, site: str) -> Path:
     return maps
 
 
+def seed_candidates(maps: Path, site: str, floor: str) -> dict:
+    """Two candidates to review, because a floor that has only ever had one map
+    gives the review pane nothing to say.
+
+    One lands beside the published revision of the floor the robots are on. The
+    other is the whole of a second floor with nothing published at all — the
+    bootstrap case (``UNPUBLISHED_FLOOR``). Both are derived from the committed
+    bundle rather than synthesised, so they are real revisions the validator
+    accepts; neither carries an ``upload.json``, which is also true of a floor
+    seeded by rsync and is the provenance case worth having on screen.
+    """
+    from PIL import Image
+
+    source = (maps / site / "floors" / floor / "map").resolve()
+
+    def candidate(target_floor: str, revision: str) -> str:
+        target = maps / site / "floors" / target_floor / "maps" / revision
+        shutil.copytree(source, target)
+        # Mirrored, so the candidate is visibly not the published map. A review
+        # pane that quietly drew the canonical basemap under the candidate's
+        # label — the exact defect this view removes — would otherwise look
+        # perfectly right in a screenshot.
+        with Image.open(target / "map.png") as image:
+            image.transpose(Image.FLIP_LEFT_RIGHT).save(target / "map.png")
+        return revision
+
+    return {
+        floor: candidate(floor, "20260802T145731"),
+        UNPUBLISHED_FLOOR: candidate(UNPUBLISHED_FLOOR, "20260802T150442"),
+    }
+
+
 def published_revision(maps: Path, site: str, floor: str) -> str:
     """What the floor's ``map`` symlink points at — the revision the registry
     will call canonical, and so the one the robots should report running."""
@@ -317,6 +355,7 @@ def main(argv=None):
 
         db = root / "registry.db"
         maps = seed_maps(root, args.site)
+        seed_candidates(maps, args.site, args.floor)
         stack.spawn(
             "fleet-server",
             [
@@ -399,6 +438,7 @@ def main(argv=None):
                 url,
                 token,
                 str(Path(args.screenshot).resolve()),
+                f"{args.site}/{UNPUBLISHED_FLOOR}",
             ]
         )
         return result.returncode

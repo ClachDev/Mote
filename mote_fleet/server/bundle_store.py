@@ -232,8 +232,11 @@ class BundleStore:
                 pass  # a read-only store still answers, just without the cache
         return report.as_dict()
 
+    def revision_url(self, site: str, floor: str, revision: str, leaf: str) -> str:
+        return f"/v1/sites/{site}/floors/{floor}/revisions/{revision}/{leaf}"
+
     def bundle_url(self, site: str, floor: str, revision: str) -> str:
-        return f"/v1/sites/{site}/floors/{floor}/revisions/{revision}/bundle.tar.gz"
+        return self.revision_url(site, floor, revision, "bundle.tar.gz")
 
     def read_map(self, site: str, floor: str, revision: str | None = None) -> dict:
         """A floor's map metadata for the world→pixel transform (Q5).
@@ -243,6 +246,14 @@ class BundleStore:
         revision on upload and the same the robot writes against — M3 shipped a
         hand-rolled reader here with a note that M4 would replace it, and this
         is that.
+
+        ``image_url`` names the route the caller must fetch to get *these*
+        pixels, which is not the same route in both cases: the canonical map is
+        served under ``/v1/maps`` and a named revision under its own path. A
+        payload describing a candidate's transform while pointing at the
+        canonical image is the one failure the review view exists to remove —
+        the operator would be shown the map they already have, labelled as the
+        one they are about to promote.
         """
         directory = self.revision_dir(site, floor, revision or self._live(site, floor))
         meta = bundle.read_map(directory / bundle.MAP_YAML)
@@ -259,7 +270,11 @@ class BundleStore:
             site=site,
             floor=floor,
             revision=self.canonical(site, floor) if revision is None else revision,
-            image_url=f"/v1/maps/{site}/{floor}/map.png",
+            image_url=(
+                f"/v1/maps/{site}/{floor}/map.png"
+                if revision is None
+                else self.revision_url(site, floor, revision, "map.png")
+            ),
         )
         meta["_image_path"] = str(image)
         return meta
@@ -287,6 +302,38 @@ class BundleStore:
         return {
             "site": site,
             "floor": floor,
+            "frame_id": zones["frame_id"],
+            "zones": list(zones["zones"].values()),
+        }
+
+    def read_revision_zones(self, site: str, floor: str, revision: str) -> dict:
+        """One **revision's** zones, for the operator reviewing it.
+
+        Still a binding, and still served the way a binding must be: under the
+        revision's own path, beside the revision's own basemap, never over
+        ``/v1/zones``. What it drops is :meth:`read_zones`' gate on there being
+        a published map — which is the one thing that would make it useless
+        here, because the review that matters most is the *first* candidate on
+        a floor with nothing published at all. Naming a revision is naming a
+        map frame, so the coordinates still arrive with something to mean.
+        """
+        # An unknown revision is a 404 about the revision rather than about the
+        # zones, and the floor-level fallback below must not answer for one.
+        directory = self.revision_dir(site, floor, revision)
+        path = self._zones_file(site, floor, revision=revision)
+        if path is None:
+            raise StoreError(f"no zones for {site}/{floor}/{revision}", 404)
+        zones = bundle.read_zones(path)
+        return {
+            "site": site,
+            "floor": floor,
+            "revision": revision,
+            # Which of ``_zones_file``'s two candidates answered. The reviewer
+            # cannot tell from the coordinates, and the difference is the trap
+            # M4 named: a revision carrying no zones inherits the floor's, which
+            # were taught in a *previous* SLAM session's frame and are therefore
+            # wrong for this map by exactly however far the two origins differ.
+            "source": "revision" if path.parent == directory else "floor",
             "frame_id": zones["frame_id"],
             "zones": list(zones["zones"].values()),
         }
