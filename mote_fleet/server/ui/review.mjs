@@ -73,22 +73,43 @@ export function defaultRevision(detail) {
   );
 }
 
-// Why this revision may or may not be promoted, said before the click rather
-// than discovered by it. The verdict is the *validator's* — the same report the
+// Whether this revision may be promoted, said before the click rather than
+// discovered by it. The verdict is the *validator's* — the same report the
 // server re-runs at promotion — so this can never encourage a promotion the
 // server will refuse, nor discourage one it would accept.
+//
+// **The bar is exactly "no errors", and the verdict has to say so**, because
+// the list underneath it is not the reason for the verdict: warnings are what
+// is imperfect about a revision that passes anyway (a missing posegraph
+// navigates perfectly and simply cannot be extended). A bare "valid, with
+// warnings" over three complaints reads as a claim with its own evidence
+// against it — which is how this was first written, and it left an operator
+// asking what the answer actually was. So the verdict answers yes or no, names
+// the criterion, and introduces the list as what it is.
 export function promotability(revision) {
   if (!revision) return { promotable: false, verdict: 'no revision selected', notes: [] };
   const warnings = revision.warnings || [];
   if (!revision.ok) {
-    return { promotable: false, verdict: 'not promotable', notes: revision.errors || [] };
+    return {
+      promotable: false,
+      verdict: 'no — the validator refuses it:',
+      notes: revision.errors || [],
+    };
   }
   if (revision.canonical) {
-    return { promotable: false, verdict: 'already the published map', notes: warnings };
+    return {
+      promotable: false,
+      verdict: warnings.length
+        ? 'this is already the floor’s published map. Warnings:'
+        : 'this is already the floor’s published map',
+      notes: warnings,
+    };
   }
   return {
     promotable: true,
-    verdict: warnings.length ? 'valid, with warnings' : 'valid — promotable',
+    verdict: warnings.length
+      ? 'yes — no errors. These warnings do not block it:'
+      : 'yes — the validator found nothing wrong with it',
     notes: warnings,
   };
 }

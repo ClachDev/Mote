@@ -471,6 +471,24 @@ test('the promote button follows the validator, not the view', () => {
   assert.equal(promotability(null).promotable, false);
 });
 
+test('the verdict answers the question and says what the bar is', () => {
+  // The heading asks "can this be promoted?". A verdict that only classifies
+  // the revision ("valid, with warnings") over a list of complaints answers a
+  // different question and reads as its own counter-evidence — an operator
+  // looking at the first build of this pane asked what the answer was.
+  assert.match(promotability(goodRevision).verdict, /^yes\b/);
+  assert.match(promotability(warnedRevision).verdict, /^yes\b/);
+  assert.match(promotability(brokenRevision).verdict, /^no\b/);
+  // The bar is "no errors", and warnings are explicitly not part of it.
+  assert.match(promotability(warnedRevision).verdict, /no errors/);
+  assert.match(promotability(warnedRevision).verdict, /do not block/);
+  // A list with nothing in it must not be introduced as though it had
+  // something in it.
+  assert.doesNotMatch(promotability(goodRevision).verdict, /:$/);
+  assert.match(promotability(warnedRevision).verdict, /:$/);
+  assert.match(promotability(brokenRevision).verdict, /:$/);
+});
+
 test('provenance is read off the payload the registry already sends', () => {
   const rows = Object.fromEntries(
     provenanceRows({

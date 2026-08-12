@@ -705,6 +705,24 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
   border-radius: 6px;
 }
 
+/* The picker carries a `site/floor` value and nothing else said so — with the
+   candidate count appended it read as a status line rather than a control. */
+.review-floors {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-floors label {
+  color: var(--dim);
+  flex: none;
+}
+
+.review-floors select {
+  flex: 1;
+  min-width: 0;
+}
+
 .revision-rows {
   display: flex;
   flex-direction: column;

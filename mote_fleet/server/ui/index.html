@@ -81,6 +81,7 @@
         <div class="review-body">
           <div class="review-side">
             <div id="review-floors" class="review-floors" hidden>
+              <label for="review-floor">site / floor</label>
               <select id="review-floor" title="site and floor to review"></select>
             </div>
             <p class="dim">
@@ -88,7 +89,10 @@
             </p>
             <div id="review-revisions" class="revision-rows"></div>
 
-            <h3>why it is promotable</h3>
+            <!-- A question the next line answers. It used to read "why it is
+                 promotable", which promised a reason and then showed a verdict
+                 over a list of warnings — i.e. the case *against*. -->
+            <h3>can this be promoted?</h3>
             <p id="review-verdict" class="verdict"></p>
             <ul id="review-verdict-notes" class="verdict-notes"></ul>
             <div id="review-provenance" class="facts"></div>
