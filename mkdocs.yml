@@ -155,3 +155,4 @@ nav:
       - "  ↳ gated benchmark": tuning/2026-07-28-icp-velocity-gate/bench-gated.md
       - Slip detection: tuning/2026-07-28-slip-detection.md
       - Camera layer decay: tuning/2026-07-29-camera-layer-decay.md
+      - Monitor-node CPU: tuning/2026-08-11-monitor-cpu.md

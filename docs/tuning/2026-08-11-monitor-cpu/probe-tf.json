@@ -1,0 +1,87 @@
+{
+  "csv": ".claude/worktrees/monitor-cpu/docs/tuning/2026-08-11-monitor-cpu/probe-tf.csv",
+  "samples": 90,
+  "span_s": 89.1,
+  "load1": {
+    "mean": 3.6,
+    "median": 3.5,
+    "p95": 4.8,
+    "max": 4.8
+  },
+  "cpu_pct": {
+    "cpu_probe_floor": {
+      "mean": 0.5,
+      "median": 0.0,
+      "p95": 2.0,
+      "max": 2.0
+    },
+    "cpu_probe_raw": {
+      "mean": 8.4,
+      "median": 9.0,
+      "p95": 9.0,
+      "max": 10.0
+    },
+    "cpu_probe_deser": {
+      "mean": 9.6,
+      "median": 10.0,
+      "p95": 11.0,
+      "max": 11.0
+    },
+    "cpu_probe_tf": {
+      "mean": 5.3,
+      "median": 5.0,
+      "p95": 6.0,
+      "max": 7.0
+    },
+    "health_monitor": {
+      "mean": 16.9,
+      "median": 17.0,
+      "p95": 19.0,
+      "max": 19.0
+    },
+    "task_server": {
+      "mean": 6.9,
+      "median": 7.0,
+      "p95": 8.0,
+      "max": 8.0
+    }
+  },
+  "rss_mb": {
+    "cpu_probe_floor": {
+      "mean": 65.0,
+      "median": 65.0,
+      "p95": 65.2,
+      "max": 65.2
+    },
+    "cpu_probe_raw": {
+      "mean": 69.4,
+      "median": 69.4,
+      "p95": 69.6,
+      "max": 69.6
+    },
+    "cpu_probe_deser": {
+      "mean": 70.5,
+      "median": 70.5,
+      "p95": 70.6,
+      "max": 70.7
+    },
+    "cpu_probe_tf": {
+      "mean": 69.2,
+      "median": 69.2,
+      "p95": 69.4,
+      "max": 69.4
+    },
+    "health_monitor": {
+      "mean": 79.0,
+      "median": 79.0,
+      "p95": 79.0,
+      "max": 79.0
+    },
+    "task_server": {
+      "mean": 89.3,
+      "median": 89.3,
+      "p95": 89.3,
+      "max": 89.3
+    }
+  }
+}

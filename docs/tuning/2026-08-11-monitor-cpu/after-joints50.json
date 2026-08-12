@@ -1,0 +1,63 @@
+{
+  "csv": "/home/michael/tmp/monitor-cpu/after/after-joints50.csv",
+  "samples": 60,
+  "span_s": 59.1,
+  "load1": {
+    "mean": 3.2,
+    "median": 3.1,
+    "p95": 4.1,
+    "max": 4.1
+  },
+  "cpu_pct": {
+    "health_monitor": {
+      "mean": 17.3,
+      "median": 17.0,
+      "p95": 19.0,
+      "max": 19.0
+    },
+    "task_server": {
+      "mean": 7.1,
+      "median": 7.0,
+      "p95": 8.0,
+      "max": 8.0
+    },
+    "slip_monitor": {
+      "mean": 7.3,
+      "median": 7.0,
+      "p95": 8.0,
+      "max": 8.0
+    },
+    "system_monitor": {
+      "mean": 0.6,
+      "median": 1.0,
+      "p95": 2.0,
+      "max": 2.0
+    }
+  },
+  "rss_mb": {
+    "health_monitor": {
+      "mean": 74.9,
+      "median": 74.9,
+      "p95": 75.0,
+      "max": 75.0
+    },
+    "task_server": {
+      "mean": 86.9,
+      "median": 86.9,
+      "p95": 86.9,
+      "max": 86.9
+    },
+    "slip_monitor": {
+      "mean": 73.2,
+      "median": 73.2,
+      "p95": 73.3,
+      "max": 73.3
+    },
+    "system_monitor": {
+      "mean": 68.2,
+      "median": 68.2,
+      "p95": 68.3,
+      "max": 68.3
+    }
+  }
+}
