@@ -1,0 +1,63 @@
+{
+  "csv": "/home/michael/tmp/monitor-cpu/before/before-idle.csv",
+  "samples": 60,
+  "span_s": 59.1,
+  "load1": {
+    "mean": 2.4,
+    "median": 2.4,
+    "p95": 3.1,
+    "max": 3.1
+  },
+  "cpu_pct": {
+    "health_monitor": {
+      "mean": 11.3,
+      "median": 12.0,
+      "p95": 13.0,
+      "max": 14.0
+    },
+    "task_server": {
+      "mean": 5.1,
+      "median": 5.0,
+      "p95": 6.0,
+      "max": 7.0
+    },
+    "slip_monitor": {
+      "mean": 4.5,
+      "median": 5.0,
+      "p95": 5.0,
+      "max": 6.0
+    },
+    "system_monitor": {
+      "mean": 0.5,
+      "median": 0.0,
+      "p95": 2.0,
+      "max": 2.0
+    }
+  },
+  "rss_mb": {
+    "health_monitor": {
+      "mean": 74.7,
+      "median": 74.7,
+      "p95": 74.7,
+      "max": 74.8
+    },
+    "task_server": {
+      "mean": 86.4,
+      "median": 86.4,
+      "p95": 86.5,
+      "max": 86.5
+    },
+    "slip_monitor": {
+      "mean": 72.8,
+      "median": 72.8,
+      "p95": 72.8,
+      "max": 72.9
+    },
+    "system_monitor": {
+      "mean": 68.2,
+      "median": 68.2,
+      "p95": 68.3,
+      "max": 68.3
+    }
+  }
+}

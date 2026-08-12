@@ -1,0 +1,75 @@
+{
+  "csv": "/home/michael/tmp/monitor-cpu/probe/probe.csv",
+  "samples": 120,
+  "span_s": 119.1,
+  "load1": {
+    "mean": 4.3,
+    "median": 4.2,
+    "p95": 5.8,
+    "max": 5.9
+  },
+  "cpu_pct": {
+    "cpu_probe_floor": {
+      "mean": 0.4,
+      "median": 0.0,
+      "p95": 1.0,
+      "max": 2.0
+    },
+    "cpu_probe_raw": {
+      "mean": 8.6,
+      "median": 9.0,
+      "p95": 10.0,
+      "max": 10.0
+    },
+    "cpu_probe_deser": {
+      "mean": 9.7,
+      "median": 10.0,
+      "p95": 11.0,
+      "max": 11.0
+    },
+    "health_monitor": {
+      "mean": 17.4,
+      "median": 18.0,
+      "p95": 19.0,
+      "max": 20.0
+    },
+    "task_server": {
+      "mean": 7.0,
+      "median": 7.0,
+      "p95": 8.0,
+      "max": 9.0
+    }
+  },
+  "rss_mb": {
+    "cpu_probe_floor": {
+      "mean": 63.8,
+      "median": 63.8,
+      "p95": 64.0,
+      "max": 64.0
+    },
+    "cpu_probe_raw": {
+      "mean": 68.3,
+      "median": 68.3,
+      "p95": 68.4,
+      "max": 68.5
+    },
+    "cpu_probe_deser": {
+      "mean": 69.4,
+      "median": 69.4,
+      "p95": 70.1,
+      "max": 70.1
+    },
+    "health_monitor": {
+      "mean": 78.1,
+      "median": 78.1,
+      "p95": 78.2,
+      "max": 78.2
+    },
+    "task_server": {
+      "mean": 89.1,
+      "median": 89.1,
+      "p95": 89.1,
+      "max": 89.1
+    }
+  }
+}

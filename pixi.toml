@@ -130,6 +130,11 @@ chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
 # hardware). test_costmap_layers.py holds the settings this depends on; this is
 # what proves they still add up to a mark that expires.
 camera-decay-check = "python mote_bringup/tools/camera_layer_decay.py"
+# Per-node CPU on a live robot, one column per node. Two builds of one node can
+# be sampled against each other in a single run by starting the second renamed,
+# which is the only sound way to compare them on hardware whose own condition
+# drifts between runs. See docs/tuning/2026-08-11-monitor-cpu.md.
+node-cpu = "python mote_bringup/tools/node_cpu.py"
 # SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
 # the lidar/camera/Nav2. During a mission the arm is already there (it lives in
 # mote_hardware, which owns the shared servo bus) — this is for bench work only.

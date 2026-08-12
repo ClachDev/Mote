@@ -12,6 +12,11 @@ argument names a zone. Zone names come from the zones YAML (parameter
 ``zones_file``, falling back to the committed config/zones.default.yaml).
 Outcomes are published on ``task/status`` as accepted/rejected/succeeded/failed
 strings.
+
+The active tree is ticked at ``tick_period`` while a task is running and at the
+slower ``idle_tick_period`` between them, since a tree waiting for work has
+nothing to advance. Command acceptance is unaffected either way: it happens in
+the subscription callback, not on a tick.
 """
 
 import os
@@ -32,6 +37,7 @@ class TaskServer(Node):
         super().__init__("task_server", **node_kwargs)
         zones_file = self.declare_parameter("zones_file", "").value
         tick_period = self.declare_parameter("tick_period", 0.1).value
+        idle_tick_period = self.declare_parameter("idle_tick_period", 1.0).value
         pick_duration = self.declare_parameter("pick_duration", 3.0).value
         place_duration = self.declare_parameter("place_duration", 3.0).value
 
@@ -67,7 +73,35 @@ class TaskServer(Node):
         self.status_pub = self.create_publisher(String, "task/status", 1)
         self.create_subscription(String, "task/command", self.on_command, 1)
         self.last_tip = None
-        self.create_timer(tick_period, self.tick)
+        # Two rates, because a tree between missions has nothing to advance: it
+        # idles in WaitForTask, whose whole update() is one blackboard read, and
+        # ticking that at the mission rate is ten wake-ups a second to learn
+        # nothing has changed. An idle rate faster than the mission rate would
+        # be a contradiction, so it is floored at it.
+        self.tick_period = tick_period
+        self.idle_tick_period = max(idle_tick_period, tick_period)
+        self.ticking_fast = False
+        self.tick_timer = self.create_timer(self.idle_tick_period, self.tick)
+
+    def _set_tick_rate(self, active: bool):
+        """Tick at the mission rate while a task runs, slowly between them.
+
+        The timer is *reset* as well as re-periodded, because setting a period
+        does not move the expiry already pending — measured: a 5 s timer 0.3 s
+        into its period still reports 4.7 s to go after its period is set to
+        0.05 s, and 0.05 s after ``reset()``. Without the reset, a command
+        accepted just after an idle tick would wait out the rest of the idle
+        period before the tree ticked at all. Accepting a command is already
+        independent of the tick (``on_command`` publishes the outcome itself);
+        what this protects is the first tick of the accepted tree, which is
+        what sends the Nav2 goal and starts the robot driving.
+        """
+        if active == self.ticking_fast:
+            return
+        self.ticking_fast = active
+        period = self.tick_period if active else self.idle_tick_period
+        self.tick_timer.timer_period_ns = int(period * 1e9)
+        self.tick_timer.reset()
 
     def publish_status(self, text: str):
         self.get_logger().info(text)
@@ -107,6 +141,7 @@ class TaskServer(Node):
             self.publish_status(f"rejected: '{msg.data}' ({e})")
             return
         self.blackboard.set(TASK_KEY, msg.data)
+        self._set_tick_rate(active=True)
         self.publish_status(f"accepted: {msg.data}")
 
     def tick(self):
@@ -120,9 +155,11 @@ class TaskServer(Node):
         if root.status == py_trees.common.Status.SUCCESS:
             self.publish_status(f"succeeded: {self.blackboard.task}")
             self.blackboard.set(TASK_KEY, None)
+            self._set_tick_rate(active=False)
         elif root.status == py_trees.common.Status.FAILURE:
             self.publish_status(f"failed: {self.blackboard.task} (at {label})")
             self.blackboard.set(TASK_KEY, None)
+            self._set_tick_rate(active=False)
 
 
 def main():
