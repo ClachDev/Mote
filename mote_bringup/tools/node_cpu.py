@@ -6,7 +6,7 @@ they cost is dominated by how often they are *woken* rather than by what they
 compute. Answering that needs a figure per node, before and after a change, on
 the same workload:
 
-    python -m mote_bringup.tools.node_cpu --duration 60 --tag idle \
+    pixi run node-cpu --duration 60 --tag idle \
         --out docs/tuning/2026-08-11-monitor-cpu/before
 
 CPU comes from ``/proc/<pid>/stat`` as a delta of utime+stime over the interval,
@@ -31,7 +31,7 @@ exactly what the monitors cost:
 
     ros2 run mote_bringup health_monitor --ros-args -r __node:=health_monitor_b \
         -r diagnostics_agg:=diagnostics_agg_b -r health:=health_b
-    python -m mote_bringup.tools.node_cpu --nodes health_monitor,health_monitor_b
+    pixi run node-cpu --nodes health_monitor,health_monitor_b
 
 Load average is recorded beside each sample: a percentage of a core means little
 without knowing how contended the machine was when it was measured.

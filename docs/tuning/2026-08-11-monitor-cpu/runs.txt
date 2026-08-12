@@ -6,7 +6,7 @@ node per sample plus load1; <tag>.json is its summary (mean/median/p95/max).
 
 Re-summarize any of them without a robot:
 
-    python -m mote_bringup.tools.node_cpu --summary <tag>.csv
+    pixi run node-cpu --summary <tag>.csv
 
   before-idle.csv        60 s. Stack as found: the drive servos were not
                          answering, so /joint_states was 1.6 Hz and /tf 33 Hz.
