@@ -284,12 +284,15 @@ test('both map canvases take their own touch gestures', () => {
 const {
   CONSTRAINT_KINDS,
   NAME_RE,
+  POINT_KINDS,
   ZONE_KINDS,
   ambiguities,
   cursorFor,
   formatList,
   freshZone,
   hitTest,
+  isAreaKind,
+  poseFor,
   nearestEdge,
   nearestVertex,
   navigableByDefault,
@@ -298,6 +301,7 @@ const {
   pointInPolygon,
   translated,
   withInsertedVertex,
+  withKind,
   withPose,
   withVertex,
   withoutVertex,
@@ -413,6 +417,15 @@ test('the zone editor panel hides when hidden, whatever its class sets', () => {
   }
 });
 
+test('a zone row reads as something you pick, and as picked', () => {
+  // Selection drives the panel and the map highlight, so a row that gave no
+  // sign of being selectable left the operator clicking a text box instead.
+  const css = read('style.css');
+  const rows = css.slice(css.indexOf('.zone-editor .zone-row {'));
+  assert.match(rows.slice(0, rows.indexOf('}')), /cursor:\s*pointer/);
+  assert.match(css, /\.zone-editor \.zone-row\.selected \{[^}]*border-color:\s*var\(--accent\)/);
+});
+
 test('the editor lives in the review pane, over the revision it edits', () => {
   // Editing anywhere else edits zones against a map they may not belong to: the
   // operations canvas draws the *published* basemap, so an editor on it could
@@ -439,6 +452,50 @@ test('the editor lives in the review pane, over the revision it edits', () => {
 // the site. The rules are the robot's, so what these hold is that this editor
 // cannot save a set the robot would refuse to load.
 
+test('the kind decides whether a zone is a point or an area', () => {
+  // The two are one decision, not two: a `charger` is a pose to dock at, and a
+  // `room` is a place with walls whose whole job is answering "am I in it".
+  // Edited separately, they drift into a dropoff carrying an outline nothing
+  // reads and a room with no extent `zones.containing` can ever match.
+  assert.ok(isAreaKind('room'));
+  assert.ok(isAreaKind('keepout'));
+  assert.ok(!isAreaKind('charger'));
+
+  // Naming a bare pose an area gives it something to drag onto the walls.
+  const waypoint = { name: 'home', kind: 'home', x: 2, y: 3 };
+  const room = withKind(waypoint, 'room');
+  assert.equal(room.polygon.length, 4);
+  assert.ok(pointInPolygon(room.polygon, waypoint.x, waypoint.y));
+
+  // And naming an area a point drops the outline, keeping the pose.
+  const back = withKind(room, 'charger');
+  assert.equal(back.polygon, undefined);
+  assert.deepEqual([back.x, back.y], [2, 3]);
+  assert.equal(withKind({ name: 'x', x: 0, y: 0, radius: 1.5 }, 'dock').radius, undefined);
+
+  // A zone that is *only* an outline gets the pose the robot's loader would
+  // derive — and if that centre is not inside it, the change is refused rather
+  // than putting the pose in a wall.
+  const ward = { name: 'ward', polygon: square.polygon };
+  assert.deepEqual(withKind(ward, 'dock'), { name: 'ward', kind: 'dock', x: 1, y: 1 });
+  const ell = {
+    name: 'hall',
+    polygon: [
+      [0, 0],
+      [6, 0],
+      [6, 1],
+      [1, 1],
+      [1, 6],
+      [0, 6],
+    ],
+  };
+  assert.equal(poseFor(ell), null);
+  assert.equal(withKind(ell, 'charger'), null);
+
+  // An area kind never disturbs an outline that is already there.
+  assert.deepEqual(withKind(square, 'corridor').polygon, square.polygon);
+});
+
 test('the kind list is the one the bundle validator will accept', () => {
   // A kind outside `bundle.ZONE_KINDS` is refused at the parse, so a dropdown
   // offering one would be an option that fails on save. Read out of the python
@@ -460,6 +517,14 @@ test('the kind list is the one the bundle validator will accept', () => {
     .match(/"[a-z]+"/g)
     .map((quoted) => quoted.slice(1, -1));
   assert.deepEqual([...CONSTRAINT_KINDS].sort(), constraints.sort());
+
+  // And the point/area split, which decides what geometry an edit gives a zone.
+  const points = bundle
+    .slice(bundle.indexOf('POINT_KINDS = frozenset(('))
+    .split('))')[0]
+    .match(/"[a-z]+"/g)
+    .map((quoted) => quoted.slice(1, -1));
+  assert.deepEqual([...POINT_KINDS].sort(), points.sort());
 });
 
 test('aliases and tags round-trip through one comma-separated field', () => {

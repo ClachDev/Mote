@@ -160,6 +160,60 @@ export function freshZone(existing, cx, cy, half = 1.0) {
   };
 }
 
+// A default outline, one metre either side of the pose, for a zone that has
+// just been called a room and has no extent yet. It is a starting shape to drag
+// onto the walls, not a guess at the room.
+function squareAround(zone, half = 1.0) {
+  return [
+    [round(zone.x - half), round(zone.y - half)],
+    [round(zone.x + half), round(zone.y - half)],
+    [round(zone.x + half), round(zone.y + half)],
+    [round(zone.x - half), round(zone.y + half)],
+  ];
+}
+
+// A pose for a zone that has only an outline. The robot's loader derives one
+// the same way when it loads a polygon-only zone; here it is needed when an
+// outline is about to be dropped, so that the zone is left with a position at
+// all. Concave outlines whose centroid falls outside them get `null`, and the
+// caller refuses the change rather than inventing a pose in a wall.
+export function poseFor(zone) {
+  if (typeof zone.x === 'number' && typeof zone.y === 'number') {
+    return { x: zone.x, y: zone.y };
+  }
+  if (!zone.polygon || !zone.polygon.length) return null;
+  const sum = zone.polygon.reduce((acc, [x, y]) => [acc[0] + x, acc[1] + y], [0, 0]);
+  const centre = { x: round(sum[0] / zone.polygon.length), y: round(sum[1] / zone.polygon.length) };
+  return pointInPolygon(zone.polygon, centre.x, centre.y) ? centre : null;
+}
+
+// **The kind decides whether a zone is a point or an area, and the geometry
+// follows it.** A `charger` is a pose to dock at; a `room` is a place with
+// walls, and "am I in it" is the question it exists to answer. Editing them as
+// two independent things — a kind here, an outline toggled over there — is what
+// leaves a `dropoff` carrying a seven-vertex outline nothing reads, and a room
+// with no extent that `zones.containing` can never match.
+//
+// So: naming a bare pose an area gives it a starting outline to drag onto the
+// walls, and naming an outlined zone a point drops the outline and keeps the
+// pose. Returns `null` if that second move would leave the zone with no
+// position at all, which is a zone the robot's loader refuses.
+export function withKind(zone, kind) {
+  const next = { ...zone, kind };
+  if (isAreaKind(kind)) {
+    if (!next.polygon && typeof next.radius !== 'number' && typeof next.x === 'number') {
+      next.polygon = squareAround(next);
+    }
+    return next;
+  }
+  if (!next.polygon && typeof next.radius !== 'number') return next;
+  const pose = poseFor(next);
+  if (!pose) return null;
+  delete next.polygon;
+  delete next.radius;
+  return { ...next, x: pose.x, y: pose.y };
+}
+
 // A machine name a dispatcher can type — the same rule the robot's loader and
 // the bundle validator enforce, applied here so a bad rename fails in the
 // input rather than at save.
@@ -189,6 +243,13 @@ export const ZONE_KINDS = [
 
 // Kinds that say where a robot may not go, and so are not destinations.
 export const CONSTRAINT_KINDS = new Set(['keepout', 'slow']);
+
+// Kinds that name a *pose* rather than a region — a charger is where the robot
+// docks, not somewhere it may be anywhere inside of. Mirrors
+// `bundle.POINT_KINDS`, which carries the reasoning.
+export const POINT_KINDS = new Set(['dock', 'charger', 'pickup', 'dropoff', 'home']);
+
+export const isAreaKind = (kind) => !POINT_KINDS.has(kind || 'area');
 
 // Whether a zone of this kind may be dispatched to, absent an explicit say-so.
 export const navigableByDefault = (kind) => !CONSTRAINT_KINDS.has(kind || 'area');
@@ -563,16 +624,18 @@ export class ZoneEditor {
     rows.replaceChildren();
     for (const zone of this.zones) {
       const row = document.createElement('div');
-      row.className = 'zone-row' + (zone.name === this.selected ? ' selected' : '');
-      const name = document.createElement('input');
-      name.value = zone.name;
-      name.title = 'machine name (goto <name>)';
-      name.addEventListener('change', () => {
-        this._update(zone.name, (z) => ({ ...z, name: name.value.trim() }));
-        this.selected = name.value.trim();
-        this._render();
-        this.mapView.draw();
-      });
+      const chosen = zone.name === this.selected;
+      row.className = 'zone-row' + (chosen ? ' selected' : '');
+      // The name is what you *pick* the zone by, so it is a button and looks
+      // like one being pressed. It was a text input, which put a caret where a
+      // click was meant to select — the row is a list, and renaming is a
+      // deliberate act that belongs with the zone's other fields.
+      const name = document.createElement('button');
+      name.type = 'button';
+      name.className = 'zone-name';
+      name.textContent = zone.name;
+      name.setAttribute('aria-pressed', String(chosen));
+      name.title = `select ${zone.name}`;
       // The row carries what you scan *across* zones — which place, what sort of
       // place, what shape — and nothing else. Every other field belongs to one
       // zone at a time and edits in the panel below, which is what lets zone/v0
@@ -587,8 +650,27 @@ export class ZoneEditor {
         kind.append(node);
       }
       kind.value = zone.kind || 'area';
+      kind.title =
+        'what kind of place this is — a point (charger, pickup…) or an area ' +
+        '(room, corridor, keepout…), which is what decides whether it has an ' +
+        'outline';
       kind.addEventListener('change', () => {
-        this._update(zone.name, (z) => ({ ...z, kind: kind.value }));
+        const reshaped = withKind(zone, kind.value);
+        if (!reshaped) {
+          kind.value = zone.kind || 'area';
+          this.note(
+            `${zone.name} is an outline with no pose inside it — place one with ⌖ first`,
+            true,
+          );
+          return;
+        }
+        const lost = Boolean((zone.polygon || zone.radius) && !reshaped.polygon && !reshaped.radius);
+        this._update(zone.name, () => reshaped);
+        this.selected = zone.name;
+        this.note(
+          lost ? `${zone.name} is a ${kind.value}: a pose, so its outline is gone` : '',
+        );
+        this._render();
         this.mapView.draw();
       });
       const placed = typeof zone.x === 'number';
@@ -650,7 +732,21 @@ export class ZoneEditor {
       );
       return;
     }
-    panel.append(el('h4', { text: zone.name }));
+    // Renaming is here rather than in the row for the same reason the row
+    // stopped being a form: in the list, the name is what you select by. A
+    // rename is a deliberate act on the zone you have selected, and this is
+    // where that zone's fields are.
+    const rename = document.createElement('input');
+    rename.className = 'zone-rename';
+    rename.value = zone.name;
+    rename.title = 'the machine name goto takes — lowercase, a-z0-9_';
+    rename.addEventListener('change', () => {
+      const renamed = rename.value.trim();
+      this._update(zone.name, (z) => ({ ...z, name: renamed }));
+      this.selected = renamed;
+      this._render();
+      this.mapView.draw();
+    });
 
     const text = (key, placeholder, title) => {
       const input = document.createElement('input');
@@ -711,6 +807,7 @@ export class ZoneEditor {
     // label beside it already says what the field is; the only hint worth
     // giving is the one about punctuation.
     panel.append(
+      field('name', rename),
       field('display name', text('display_name', '', 'what an operator reads')),
       field(
         'also called',

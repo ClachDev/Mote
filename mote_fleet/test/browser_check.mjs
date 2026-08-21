@@ -349,17 +349,22 @@ try {
     // selected zone, which is what lets zone/v0 grow a field without giving
     // every row another column.
     const selected = await session.evaluate(`(() => {
-      document.querySelectorAll('#zone-rows .zone-row')[0].click();
+      document.querySelectorAll('#zone-rows .zone-name')[0].click();
+      const row = document.querySelectorAll('#zone-rows .zone-row')[0];
       return {
-        cells: document.querySelectorAll('#zone-rows .zone-row')[0].children.length,
-        heading: (document.querySelector('#zone-detail h4') || {}).textContent || '',
+        cells: row.children.length,
+        marked: row.classList.contains('selected'),
+        inputsInRow: row.querySelectorAll('input').length,
         fields: [...document.querySelectorAll('#zone-detail .zone-field-name')]
           .map(node => node.textContent).join(','),
       };
     })()`);
     check(
-      'selecting a zone opens its own fields beside the list',
-      selected.cells === 4 && selected.fields.includes('also called'),
+      'picking a zone by name marks the row and opens its fields',
+      selected.cells === 4 &&
+        selected.marked &&
+        selected.inputsInRow === 0 &&
+        selected.fields.startsWith('name,'),
       JSON.stringify(selected),
     );
 
@@ -369,8 +374,8 @@ try {
     // the row selects, which is where every field but identity and shape lives.
     const refused = await session.evaluate(`(() => {
       const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
-      const first = rows[0].querySelectorAll('input')[0].value;
-      rows[1].click();
+      const first = rows[0].querySelector('.zone-name').textContent;
+      rows[1].querySelector('.zone-name').click();
       const field = [...document.querySelectorAll('#zone-detail .zone-field')]
         .find(row => row.textContent.startsWith('also called'));
       const aliases = field.querySelector('input');
@@ -397,10 +402,10 @@ try {
       };
       set('also called', '');                       // undo the clash above
       const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
-      rows[0].click();
-      const name = rows[0].querySelectorAll('input')[0];
+      rows[0].querySelector('.zone-name').click();  // the row is a list, so pick
+      const name = document.querySelector('.zone-rename');
       const renamed = name.value + '_named';
-      name.value = renamed;
+      name.value = renamed;                         // and rename in the panel
       name.dispatchEvent(new Event('change'));
       const fresh = [...document.querySelectorAll('#zone-rows .zone-row')][0];
       fresh.querySelector('select').value = 'room';
@@ -427,13 +432,21 @@ try {
       derived.note,
     );
     // The edited set is on screen afterwards because it was *read back* from the
-    // new candidate — not held over as an overlay of what was typed.
+    // new candidate — not held over as an overlay of what was typed. And the
+    // zone renamed above went in as a bare waypoint and comes back as a
+    // polygon, because calling it a `room` is what gave it an outline: the kind
+    // and the geometry are one decision, made once.
     check(
       'the pane then shows the saved candidate’s own zones',
       derived.editorHidden &&
         derived.zones.includes('A Named Room') &&
         /own frame/.test(derived.source),
       JSON.stringify(derived),
+    );
+    check(
+      'calling a bare pose a room gave it an outline, all the way to the server',
+      /A Named Roomroom\s*polygon/.test(derived.zones),
+      derived.zones,
     );
     check(
       'the edited revision is still a candidate: nothing published moved',

@@ -924,28 +924,40 @@ The controls are the map and the list together:
   the cursor says which it is: a crosshair over a vertex, a move cursor over a
   pose or a zone body, and the map's own grab cursor everywhere else — where a
   drag pans instead of editing.
-- **A row per zone** carries what you compare across zones: the machine name
-  (`goto <name>`) and the **kind**. `⌖` appears only for a zone with no pose at
-  all — a segmented room is an outline, so there is no cross to drag — and arms
-  the next map click as its pose. `×` deletes the zone; **`add zone`** drops a
-  square at the view centre to be dragged into shape and named.
-- **Selecting a row** opens that zone's own fields beside the list: the
-  **display name** an operator reads, **also called** (the other spellings
+- **A row per zone** is a list you pick from: the name selects that zone, and
+  beside it is the **kind** — the one field worth comparing down the list. `⌖`
+  appears only for a zone with no pose at all (a segmented room is an outline,
+  so there is no cross to drag) and arms the next map click as its pose. `×`
+  deletes the zone; **`add zone`** drops a square at the view centre to be
+  dragged into shape and named.
+- **Selecting a row** opens that zone's own fields beside the list: its
+  **name** (renaming is a deliberate act, not a side effect of clicking the
+  list), the **display name** an operator reads, **also called** (the other spellings
   `goto` should accept — an MCP dispatcher turning "the galley" into a command
   matches these), **navigable**, the zone it is **inside**, **tags**, and a
   **description**. They live here rather than in the row because they belong to
   one zone at a time, and because a column each would make the list unreadable
   long before zone/v0 ran out of fields.
 
-A zone's **kind** and its shape are independent, which is why a `pickup` taught
-by driving reads as an `area` with no outline: `save-zone` writes no kind, and
-`bundle.zone_term` defaults a missing one to `area` rather than inventing one.
-Giving a taught pose an outline is still `save-zone --radius` on the robot, or
-`segment-map` for a whole floor's rooms; this editor moves and names what is
-already there, and draws new zones with `add zone`. Only three kinds change what
-a robot does today — `keepout` and `slow` are not
-destinations (`goto` and `fetch` both refuse them), and `segment-map` writes
-`room` — the rest are vocabulary a planner may read over `/v1/zones`.
+**The kind decides whether a zone is a point or an area, and the geometry
+follows it.** A `charger`, `dock`, `pickup`, `dropoff` or `home` is a pose to
+drive to; everything else — `room`, `corridor`, `keepout`, `slow`, a plain
+`area` — is a place with extent, and "am I in it" is the question it exists to
+answer. So changing the kind changes the shape: call a taught waypoint a `room`
+and it gets an outline to drag onto the walls; call an outlined zone a `charger`
+and the outline goes, leaving the pose. That is how an area is drawn here, and
+it is one decision rather than two that can contradict each other.
+
+The one refusal: an outline whose centre falls outside it (a concave hallway)
+cannot become a point on its own, because there is no pose to fall back on —
+place one with `⌖` first.
+
+A zone taught by driving reads as an `area` until you say otherwise: `save-zone`
+writes no kind, and `bundle.zone_term` defaults a missing one to `area` rather
+than inventing one. Beyond geometry, three kinds change what a robot does today
+— `keepout` and `slow` are not destinations (`goto` and `fetch` both refuse
+them), and `segment-map` writes `room` — the rest are vocabulary a planner may
+read over `/v1/zones`.
 
 Two names the same is refused before it is saved — the robot's loader refuses a
 vocabulary where one query answers to two zones rather than picking by luck, so

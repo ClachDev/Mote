@@ -650,8 +650,45 @@ main {
   border-radius: 4px;
 }
 
-.zone-row.selected {
-  outline: 1px solid var(--accent);
+/* A row is picked, so it has to look pickable and then look picked. Without
+   this the only thing that changed on selection was a panel further down the
+   page and an outline on the map, neither of which is where the pointer is. */
+.zone-editor .zone-row {
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.zone-editor .zone-row:hover {
+  background: var(--bg);
+}
+
+.zone-editor .zone-row.selected {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+/* The name is the target: it fills its cell, reads as text rather than as a
+   control competing with the kind beside it, and takes the accent when its row
+   is the selected one. */
+.zone-name {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border-color: transparent;
+}
+
+.zone-row.selected .zone-name {
+  color: var(--accent);
+}
+
+/* The row is the target, not the word in it: the shared `button:hover` rule
+   would draw a box around the name and make one cell look like the control. */
+.zone-name:hover {
+  border-color: transparent;
+  color: var(--accent);
 }
 
 .zone-row input {
@@ -700,6 +737,10 @@ main {
 
 .zone-field-name {
   color: var(--dim);
+}
+
+.zone-rename {
+  font-weight: 600;
 }
 
 .zone-field input[type='checkbox'] {

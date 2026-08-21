@@ -243,11 +243,25 @@ in a panel for the *selected* zone, so a new spec field costs no column, and a
 2560 px monitor no longer stretches a twelve-character zone name into a text box
 the size of a paragraph (rows cap at 560 px). And a control exists only where dragging cannot
 reach — `⌖` (place a pose) appears **only** for a zone that has none, a
-`segment-map` room being an outline with no `x`/`y` and so no cross to drag.
-Two controls were built and then cut for failing that test: a footprint cell
-that turned a waypoint into an area (`save-zone --radius` and `segment-map`
-already teach outlines, and `add zone` draws one), and the paragraph of
-instructions that stood in for the hover feedback before it existed.
+`segment-map` room being an outline with no `x`/`y` and so no cross to drag; a
+row's name is a *button*, because in a list the name is what you select by and
+an input there put a caret where a click meant "this one" (renaming moved into
+the panel, beside the zone's other fields). Two controls were built and then cut
+for failing that test: a `+ area`/`− area` cell, and a paragraph of instructions
+standing in for the hover feedback before it existed.
+
+**The kind decides whether a zone is a point or an area, and `withKind` makes
+the geometry follow** (`bundle.POINT_KINDS`: dock, charger, pickup, dropoff,
+home). Editing the two separately is what leaves a `dropoff` carrying an outline
+nothing reads and a `room` with no extent `zones.containing` can never match —
+so naming a bare pose an area gives it a square to drag onto the walls (which is
+how an area is drawn in the UI at all), and naming an outlined zone a point
+drops the outline and keeps the pose. Two things fall out. The classification is
+**guidance, not validation**: `bundle` does not refuse an outline on a charger,
+because that would refuse maps taught before the rule existed. And the
+point-ward move is **refused** when the outline's centroid lies outside it (a
+concave hallway) rather than putting the pose in a wall — `poseFor` returns null
+and the select reverts.
 
 ## Fleet: the zone vocabulary
 
