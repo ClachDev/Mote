@@ -399,11 +399,10 @@ export class ReviewView {
     this.map.setZones([]);
     this.editor.begin(this.zones);
     this.renderEditControls();
-    this.note(
-      this.selected.canonical
-        ? 'editing the published map’s zones — saving derives a new candidate'
-        : `editing candidate ${this.selected.revision} — saving derives a new one`,
-    );
+    const source = this.selected.canonical
+      ? 'editing the published map’s zones — saving derives a new candidate'
+      : `editing candidate ${this.selected.revision} — saving derives a new one`;
+    this.note(`${source}. drags snap to the map's pixels; hold shift for free`);
   }
 
   endEdit() {

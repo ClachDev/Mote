@@ -849,6 +849,20 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
   margin: 4px 0 0;
 }
 
+/* The zones half of the pane, reserved at one height so that entering and
+   leaving edit mode does not resize the map above it. The editing surface is
+   the taller of the two, so it sets the height and the read-only list sits in
+   the same box with room to spare; a floor with more zones than fit scrolls
+   inside it rather than pushing the canvas about. */
+.zones-panel {
+  flex: none;
+  height: 300px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 #review-canvas {
   flex: 1;
   width: 100%;
@@ -1001,6 +1015,13 @@ button.promote:disabled {
   #review-canvas {
     flex: none;
     height: 46vh;
+  }
+
+  /* The pane itself scrolls on a phone, so a second scrolling box inside it is
+     a trap: the height comes off the reservation and goes back to the content. */
+  .zones-panel {
+    height: auto;
+    overflow: visible;
   }
 
   /* No width to put two columns in: the fields go back under the list. */

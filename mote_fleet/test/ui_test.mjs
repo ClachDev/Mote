@@ -299,6 +299,8 @@ const {
   normaliseAlias,
   parseList,
   pointInPolygon,
+  snapDelta,
+  snapToPixel,
   translated,
   withInsertedVertex,
   withKind,
@@ -378,6 +380,51 @@ test('the cursor says which of those it is before anything is pressed', () => {
   // Arming a pose overrides everything: the next click lands wherever it is.
   assert.equal(cursorFor(null, true), 'crosshair');
   assert.equal(cursorFor({ kind: 'zone' }, true), 'crosshair');
+});
+
+test('edits land on pixel centres, and never move more than half a pixel', () => {
+  // The map is the limit of the precision available: a vertex anywhere inside a
+  // pixel covers the same cells as one at its centre, so free-hand coordinates
+  // are digits the map cannot back — and two zones meant to share a wall land a
+  // few millimetres apart, differently every time.
+  const grid = { resolution: 0.05, origin: [-10.935, -5.958, 0], width: 500, height: 300 };
+  const centred = (value, origin) => {
+    const cells = (value - origin) / grid.resolution - 0.5;
+    return Math.abs(cells - Math.round(cells)) < 1e-9;
+  };
+  for (const [x, y] of [
+    [0, 0],
+    [-10.9, -5.9],
+    [3.14159, -2.71828],
+    [-10.935, -5.958], // the origin itself, which is a pixel *edge*
+  ]) {
+    const snapped = snapToPixel(grid, x, y);
+    assert.ok(centred(snapped.x, grid.origin[0]), `${snapped.x} is not a pixel centre`);
+    assert.ok(centred(snapped.y, grid.origin[1]), `${snapped.y} is not a pixel centre`);
+    assert.ok(Math.abs(snapped.x - x) <= grid.resolution / 2 + 1e-9);
+    assert.ok(Math.abs(snapped.y - y) <= grid.resolution / 2 + 1e-9);
+    // Idempotent, or a zone would creep every time it was touched.
+    assert.deepEqual(snapToPixel(grid, snapped.x, snapped.y), snapped);
+  }
+
+  // A body drag moves by whole pixels instead, so the shape it moves keeps its
+  // shape: snapping every vertex would pull a traced room off its walls.
+  assert.equal(snapDelta(grid, 0.03), 0.05);
+  assert.equal(snapDelta(grid, 0.02), 0);
+  assert.equal(snapDelta(grid, -0.12), -0.1);
+  const room = { ...square, polygon: [[0.013, 0.017], [2.013, 0.017], [2.013, 2.017]] };
+  const nudged = translated(room, snapDelta(grid, 0.31), snapDelta(grid, -0.07));
+  assert.deepEqual(
+    nudged.polygon.map(([x, y], i) => [
+      Math.round((x - room.polygon[i][0]) * 1000),
+      Math.round((y - room.polygon[i][1]) * 1000),
+    ]),
+    [
+      [300, -50],
+      [300, -50],
+      [300, -50],
+    ],
+  );
 });
 
 test('moving a zone carries footprint and pose together', () => {

@@ -163,12 +163,20 @@ export function freshZone(existing, cx, cy, half = 1.0) {
 // A default outline, one metre either side of the pose, for a zone that has
 // just been called a room and has no extent yet. It is a starting shape to drag
 // onto the walls, not a guess at the room.
-function squareAround(zone, half = 1.0) {
+function squareAround(zone, map, half = 1.0) {
+  // On the grid, like every other coordinate this editor writes. The *pose* is
+  // left where it is — it was measured by driving a robot there, and moving it
+  // two centimetres to tidy a number would be inventing data — but the outline
+  // is this editor's own, so it starts where the next drag would put it.
+  const corner = (x, y) => {
+    const point = snapToPixel(map, x, y);
+    return [point.x, point.y];
+  };
   return [
-    [round(zone.x - half), round(zone.y - half)],
-    [round(zone.x + half), round(zone.y - half)],
-    [round(zone.x + half), round(zone.y + half)],
-    [round(zone.x - half), round(zone.y + half)],
+    corner(zone.x - half, zone.y - half),
+    corner(zone.x + half, zone.y - half),
+    corner(zone.x + half, zone.y + half),
+    corner(zone.x - half, zone.y + half),
   ];
 }
 
@@ -198,11 +206,11 @@ export function poseFor(zone) {
 // walls, and naming an outlined zone a point drops the outline and keeps the
 // pose. Returns `null` if that second move would leave the zone with no
 // position at all, which is a zone the robot's loader refuses.
-export function withKind(zone, kind) {
+export function withKind(zone, kind, map = null) {
   const next = { ...zone, kind };
   if (isAreaKind(kind)) {
     if (!next.polygon && typeof next.radius !== 'number' && typeof next.x === 'number') {
-      next.polygon = squareAround(next);
+      next.polygon = squareAround(next, map);
     }
     return next;
   }
@@ -212,6 +220,27 @@ export function withKind(zone, kind) {
   delete next.polygon;
   delete next.radius;
   return { ...next, x: pose.x, y: pose.y };
+}
+
+// The map's own pixel grid, in world metres. A vertex dropped anywhere inside a
+// pixel covers exactly the same cells as one at its centre, so the free-hand
+// coordinate is precision the map does not have — and two zones meant to share
+// a wall end up a few millimetres apart, differently each time. Snapping to
+// centres (half a pixel off the origin, which is a pixel *edge*) makes "the
+// same place" the same number.
+export function snapToPixel(map, x, y) {
+  if (!map || !map.resolution) return { x: round(x), y: round(y) };
+  const axis = (value, origin) =>
+    round(origin + (Math.floor((value - origin) / map.resolution) + 0.5) * map.resolution);
+  return { x: axis(x, map.origin[0]), y: axis(y, map.origin[1]) };
+}
+
+// A whole number of pixels, for dragging a zone bodily: snapping each vertex
+// would pull the shape about, and snapping the *movement* keeps it rigid — a
+// room traced onto its walls stays traced when it is nudged.
+export function snapDelta(map, delta) {
+  if (!map || !map.resolution) return delta;
+  return round(Math.round(delta / map.resolution) * map.resolution);
 }
 
 // A machine name a dispatcher can type — the same rule the robot's loader and
@@ -433,6 +462,16 @@ export class ZoneEditor {
     return pixelToWorld(this.mapView.map, px, py);
   }
 
+  // Where a press *writes*, as against where it landed: on the pixel grid,
+  // unless Shift is held. Shift rather than Alt because a desktop's window
+  // manager takes Alt-drag for moving windows, and a modifier the page never
+  // receives is a modifier that does not exist.
+  _point(event) {
+    const world = this._world(event);
+    if (event.shiftKey) return world;
+    return snapToPixel(this.mapView.map, world.x, world.y);
+  }
+
   // Hit reach in metres at the current zoom: 10 screen px, whatever the scale.
   _reach() {
     const view = this.mapView.view;
@@ -441,6 +480,8 @@ export class ZoneEditor {
 
   _down(event) {
     if (!this.active || !this.mapView.map) return;
+    // The hit test asks where the pointer *is*; every write below asks where it
+    // should land, which is `_point`.
     const point = this._world(event);
     const reach = this._reach();
 
@@ -455,7 +496,8 @@ export class ZoneEditor {
       this._placing = null;
       event.stopPropagation();
       event.preventDefault();
-      this._update(name, (zone) => withPose(zone, point.x, point.y));
+      const placed = this._point(event);
+      this._update(name, (zone) => withPose(zone, placed.x, placed.y));
       this.selected = name;
       this.note('');
       this._cursor(cursorFor(this._hover, false));
@@ -466,7 +508,12 @@ export class ZoneEditor {
 
     const target = hitTest(this.zones, point.x, point.y, reach);
     if (target) {
-      this._grab(event, target.kind === 'zone' ? { ...target, last: point } : target);
+      this._grab(
+        event,
+        target.kind === 'zone'
+          ? { ...target, from: point, before: this.zones.find((z) => z.name === target.zone) }
+          : target,
+      );
       return;
     }
     this.selected = null;
@@ -516,15 +563,27 @@ export class ZoneEditor {
       return;
     }
     event.stopPropagation();
-    const point = this._world(event);
     const drag = this._drag;
-    this._update(drag.zone, (zone) => {
-      if (drag.kind === 'vertex') return withVertex(zone, drag.index, point.x, point.y);
-      if (drag.kind === 'pose') return withPose(zone, point.x, point.y);
-      const moved = translated(zone, point.x - drag.last.x, point.y - drag.last.y);
-      drag.last = point;
-      return moved;
-    });
+    if (drag.kind === 'vertex' || drag.kind === 'pose') {
+      const point = this._point(event);
+      this._update(drag.zone, (zone) =>
+        drag.kind === 'vertex'
+          ? withVertex(zone, drag.index, point.x, point.y)
+          : withPose(zone, point.x, point.y),
+      );
+    } else {
+      // Measured from the grab, against the zone as it was then: rounding each
+      // step's delta instead would leave the zone drifting behind the pointer
+      // by whatever the rounding threw away.
+      const point = this._world(event);
+      let dx = point.x - drag.from.x;
+      let dy = point.y - drag.from.y;
+      if (!event.shiftKey) {
+        dx = snapDelta(this.mapView.map, dx);
+        dy = snapDelta(this.mapView.map, dy);
+      }
+      this._update(drag.zone, () => translated(drag.before, dx, dy));
+    }
     this.mapView.draw();
   }
 
@@ -537,6 +596,7 @@ export class ZoneEditor {
   _dblclick(event) {
     if (!this.active || !this.mapView.map) return;
     const point = this._world(event);
+    const placed = this._point(event);
     const reach = this._reach();
     for (const zone of this.zones) {
       if (!zone.polygon) continue;
@@ -553,7 +613,7 @@ export class ZoneEditor {
       const edge = nearestEdge(zone, point.x, point.y);
       if (edge && edge.distance <= reach) {
         event.stopPropagation();
-        this._update(zone.name, (z) => withInsertedVertex(z, edge.index, point.x, point.y));
+        this._update(zone.name, (z) => withInsertedVertex(z, edge.index, placed.x, placed.y));
         this.mapView.draw();
         return;
       }
@@ -569,7 +629,8 @@ export class ZoneEditor {
   addZone() {
     const view = this.mapView.view;
     const rect = this.mapView.canvas.getBoundingClientRect();
-    const centre = pixelToWorld(this.mapView.map, (rect.width / 2 - view.tx) / view.scale, (rect.height / 2 - view.ty) / view.scale);
+    const middle = pixelToWorld(this.mapView.map, (rect.width / 2 - view.tx) / view.scale, (rect.height / 2 - view.ty) / view.scale);
+    const centre = snapToPixel(this.mapView.map, middle.x, middle.y);
     const zone = freshZone(this.zones, centre.x, centre.y);
     this.zones = [...this.zones, zone];
     this.selected = zone.name;
@@ -655,7 +716,7 @@ export class ZoneEditor {
         '(room, corridor, keepout…), which is what decides whether it has an ' +
         'outline';
       kind.addEventListener('change', () => {
-        const reshaped = withKind(zone, kind.value);
+        const reshaped = withKind(zone, kind.value, this.mapView.map);
         if (!reshaped) {
           kind.value = zone.kind || 'area';
           this.note(

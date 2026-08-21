@@ -99,6 +99,11 @@
 
           <div class="review-map">
             <canvas id="review-canvas"></canvas>
+            <!-- One box, whichever mode is in it. The editing surface is taller
+                 than the list it replaces, and with the canvas taking the
+                 remaining height that difference came out of the map: clicking
+                 `edit zones` resized the thing being edited. -->
+            <div class="zones-panel">
             <div class="zones-head">
               <h3>zones</h3>
               <!-- Editing is on the *selected revision*, which is why it is
@@ -126,6 +131,7 @@
                 <button id="zone-cancel" type="button">cancel</button>
               </div>
               <p id="zone-note" class="note"></p>
+            </div>
             </div>
           </div>
         </div>

@@ -924,6 +924,14 @@ The controls are the map and the list together:
   the cursor says which it is: a crosshair over a vertex, a move cursor over a
   pose or a zone body, and the map's own grab cursor everywhere else — where a
   drag pans instead of editing.
+- **Everything you drag lands on a pixel centre** — the map's own grid, so two
+  zones meant to share a wall share the same numbers, and a coordinate never
+  claims precision the map does not have. A whole zone moves by whole pixels, so
+  a traced room keeps its shape. **Hold shift to move freely**, for the rare
+  case that wants a coordinate between two pixels. Only what you drag is
+  snapped: a pose taught by driving a robot there is a measurement, and it is
+  left exactly where the robot said, while an outline this editor invents starts
+  on the grid.
 - **A row per zone** is a list you pick from: the name selects that zone, and
   beside it is the **kind** — the one field worth comparing down the list. `⌖`
   appears only for a zone with no pose at all (a segmented room is an outline,

@@ -329,6 +329,12 @@ try {
   // is the map they are stored against, and nothing published moves.
 
   if (token) {
+    // The map must not move when the editor opens: the editing surface is
+    // taller than the list it replaces, and with the canvas taking whatever
+    // height was left, clicking `edit zones` resized the thing being edited.
+    const mapBefore = await session.evaluate(
+      `Math.round(document.getElementById('review-canvas').getBoundingClientRect().height)`,
+    );
     const editing = await session.evaluate(`(() => {
       document.getElementById('zones-edit').click();
       return {
@@ -343,6 +349,15 @@ try {
       'editing opens on the selected revision’s zones and holds it still',
       editing.rows > 0 && editing.readOnlyHidden && editing.listLocked && editing.promoteLocked,
       JSON.stringify(editing),
+    );
+
+    const mapDuring = await session.evaluate(
+      `Math.round(document.getElementById('review-canvas').getBoundingClientRect().height)`,
+    );
+    check(
+      'opening the editor does not resize the map under it',
+      mapBefore > 0 && mapBefore === mapDuring,
+      `${mapBefore} px then ${mapDuring} px`,
     );
 
     // A row carries identity and shape; everything else is a form for the one
@@ -447,6 +462,34 @@ try {
       'calling a bare pose a room gave it an outline, all the way to the server',
       /A Named Roomroom\s*polygon/.test(derived.zones),
       derived.zones,
+    );
+
+    // And that outline is on the map's own pixel grid. A vertex anywhere inside
+    // a pixel covers the same cells as one at its centre, so free-hand
+    // coordinates are precision the map cannot back — and two zones meant to
+    // share a wall land millimetres apart, differently each time.
+    const onGrid = await session.evaluate(`(async () => {
+      const label = document.getElementById('review-map-label').textContent;
+      const [floor, revision] = label.split(' · ');
+      const base = '/v1/sites/' + floor.replace('/', '/floors/') + '/revisions/' + revision;
+      const [map, zones] = await Promise.all([
+        fetch(base + '/map.json').then(r => r.json()),
+        fetch(base + '/zones.json').then(r => r.json()),
+      ]);
+      const centred = (value, origin) => {
+        const cells = (value - origin) / map.resolution - 0.5;
+        return Math.abs(cells - Math.round(cells)) < 1e-6;
+      };
+      const drawn = zones.zones.filter(zone => zone.polygon);
+      const off = drawn.flatMap(zone => (zone.polygon || [])
+        .filter(([x, y]) => !(centred(x, map.origin[0]) && centred(y, map.origin[1])))
+        .map(point => zone.name + ' ' + point.join(',')));
+      return { outlines: drawn.length, off };
+    })()`);
+    check(
+      'the outline it drew sits on the map’s pixel grid',
+      onGrid.outlines > 0 && onGrid.off.length === 0,
+      JSON.stringify(onGrid),
     );
     check(
       'the edited revision is still a candidate: nothing published moved',

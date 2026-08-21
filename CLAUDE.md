@@ -250,6 +250,19 @@ the panel, beside the zone's other fields). Two controls were built and then cut
 for failing that test: a `+ area`/`− area` cell, and a paragraph of instructions
 standing in for the hover feedback before it existed.
 
+**Every coordinate an edit writes lands on a pixel centre** (`snapToPixel`;
+shift is the way off it, chosen over alt because a desktop's window manager
+takes alt-drag and a modifier the page never receives is no modifier at all).
+The map's resolution is the precision available, so a free-hand vertex is digits
+nothing can back — and two zones meant to share a wall land millimetres apart,
+differently every time. Three consequences: a *body* drag snaps its delta rather
+than each vertex (`snapDelta`), so a room traced onto its walls keeps its shape,
+and it is measured from the grab rather than accumulated per move, which would
+drift the zone behind the pointer by whatever each rounding threw away; the
+outline `withKind` invents starts on the grid, while the **pose stays where it
+was taught** — that number was measured by driving a robot there; and nothing
+re-snaps a coordinate the operator did not touch.
+
 **The kind decides whether a zone is a point or an area, and `withKind` makes
 the geometry follow** (`bundle.POINT_KINDS`: dock, charger, pickup, dropoff,
 home). Editing the two separately is what leaves a `dropoff` carrying an outline
