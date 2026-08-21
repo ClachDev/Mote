@@ -940,7 +940,8 @@ The controls are the map and the list together:
   dragged into shape and named.
 - **Selecting a row** opens that zone's own fields beside the list: its
   **name** (renaming is a deliberate act, not a side effect of clicking the
-  list), the **display name** an operator reads, **also called** (the other spellings
+  list), the **display name** an operator reads — and which the map is labelled
+  with, here and in the operations view, as soon as it is set — **also called** (the other spellings
   `goto` should accept — an MCP dispatcher turning "the galley" into a command
   matches these), **navigable**, the zone it is **inside**, **tags**, and a
   **description**. They live here rather than in the row because they belong to

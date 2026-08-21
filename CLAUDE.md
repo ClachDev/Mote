@@ -250,6 +250,14 @@ the panel, beside the zone's other fields). Two controls were built and then cut
 for failing that test: a `+ area`/`− area` cell, and a paragraph of instructions
 standing in for the hover feedback before it existed.
 
+A zone is drawn under `map.zoneLabel` — `display_name` if it has one, else the
+machine name — by the operations map and the editor's own overlay alike, so a
+place cannot answer to one name in the list and another while it is being
+edited. `color-scheme` is declared per theme in the stylesheet for the same
+class of reason: a `select`'s dropdown, a checkbox and a scrollbar are the
+browser's to paint, and left to the *system* preference while the page follows
+its own, a dark page grows a white dropdown list.
+
 **Every coordinate an edit writes lands on a pixel centre** (`snapToPixel`;
 shift is the way off it, chosen over alt because a desktop's window manager
 takes alt-drag and a modifier the page never receives is no modifier at all).

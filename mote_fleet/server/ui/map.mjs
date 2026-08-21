@@ -14,6 +14,15 @@
 // an accident of where SLAM started, so metres from one floor mean nothing on
 // another. The second hop is pan/zoom and belongs to the viewer alone.
 
+// What to call a zone on a map. `display_name` is the half meant for reading —
+// "The Kitchen" — and the machine name is the half meant for typing, so a zone
+// that has been given one is drawn with it. The editor draws its own overlay
+// and reads this too: a zone should not answer to one name in the list and
+// another the moment it is being edited.
+export function zoneLabel(zone) {
+  return (zone && (zone.display_name || zone.name)) || '';
+}
+
 // A zone as pixels on the basemap: a polygon's vertices, or a circle. Pure, so
 // the placement of a taught place is testable the same way a robot's is.
 export function zoneOutline(map, zone) {
@@ -440,7 +449,7 @@ export class MapView {
     // display_name is what an operator calls the place; the machine name is
     // what they would type. Prefer the former on the map, where this is a
     // label rather than a thing to copy.
-    ctx.fillText(zone.display_name || zone.name, point.x, point.y + 14);
+    ctx.fillText(zoneLabel(zone), point.x, point.y + 14);
   }
 
   _screenOf(pixel) {

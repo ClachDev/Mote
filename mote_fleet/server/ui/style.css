@@ -3,6 +3,12 @@
    roster (who), map (where), detail (what, and send it somewhere). */
 
 :root {
+  /* The browser draws the parts of a control we do not: a `select`'s dropdown
+     list, a checkbox, a scrollbar. Without this it draws them from the *system*
+     preference while the page is on its own, so a dark page grows a white
+     dropdown. Declared per theme rather than as `light dark`, because these
+     blocks are what decides the theme. */
+  color-scheme: dark;
   --bg: #0d1117;
   --panel: #161b22;
   --line: #30363d;
@@ -20,6 +26,7 @@
 
 @media (prefers-color-scheme: light) {
   :root {
+    color-scheme: light;
     --bg: #f6f8fa;
     --panel: #ffffff;
     --line: #d0d7de;
@@ -144,6 +151,7 @@ h3 {
 }
 
 input,
+select,
 button,
 .button {
   font: inherit;

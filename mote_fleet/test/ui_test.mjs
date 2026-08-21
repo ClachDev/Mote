@@ -33,6 +33,7 @@ import {
   pinchUpdate,
   pixelToWorld,
   worldToPixel,
+  zoneLabel,
   zoneOutline,
 } from '../server/ui/map.mjs';
 import { NARROW_MAX_PX } from '../server/ui/layout.mjs';
@@ -193,6 +194,31 @@ test('a radius zone becomes a circle in pixels, not in metres', () => {
   assert.equal(outline.kind, 'circle');
   assert.equal(outline.radius, 30); // 1.5 m at 0.05 m/px
   assert.deepEqual(outline.centre, worldToPixel(map, 1, 1));
+});
+
+test('a zone is drawn under the name a person reads', () => {
+  // `display_name` is the half meant for reading and the machine name is the
+  // half meant for typing, so a zone given one is labelled with it — on the
+  // fleet map and under the editor's own handles alike, or a zone would answer
+  // to one name in the list and another the moment it was being edited.
+  assert.equal(zoneLabel({ name: 'zone_01', display_name: 'Kitchen' }), 'Kitchen');
+  assert.equal(zoneLabel({ name: 'zone_01', display_name: '' }), 'zone_01');
+  assert.equal(zoneLabel({ name: 'zone_01' }), 'zone_01');
+  assert.equal(zoneLabel(null), '');
+});
+
+test('the browser is told which theme to draw its own controls in', () => {
+  // A `select`'s dropdown, a checkbox and a scrollbar are the browser's to
+  // paint. Left to the *system* preference while the page follows its own, a
+  // dark page grows a white dropdown list — which is what a select in the zone
+  // editor looked like.
+  const css = read('style.css');
+  const dark = css.slice(css.indexOf(':root {'));
+  assert.match(dark.slice(0, dark.indexOf('}')), /color-scheme:\s*dark/);
+  const light = css.slice(css.indexOf('@media (prefers-color-scheme: light)'));
+  assert.match(light.slice(0, light.indexOf('}')), /color-scheme:\s*light/);
+  // And the element itself, which the shared control rule used to miss.
+  assert.match(css, /input,\s*select,\s*button,\s*\.button \{/);
 });
 
 test('a bare waypoint has no outline to draw', () => {

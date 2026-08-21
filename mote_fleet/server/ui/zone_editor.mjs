@@ -19,7 +19,7 @@
 // *world* metres, so every edit operation is testable under node with no canvas
 // and no DOM.
 
-import { pixelToWorld, worldToPixel } from './map.mjs';
+import { pixelToWorld, worldToPixel, zoneLabel } from './map.mjs';
 
 // Ray-cast membership over [[x, y], ...]. Concave polygons are fine, which
 // matters because the hallway is one.
@@ -816,6 +816,7 @@ export class ZoneEditor {
       input.title = title;
       input.addEventListener('change', () => {
         this._update(zone.name, (z) => ({ ...z, [key]: input.value.trim() }));
+        this.mapView.draw();
       });
       return input;
     };
@@ -829,6 +830,7 @@ export class ZoneEditor {
         const parsed = parseList(input.value);
         input.value = formatList(parsed);
         this._update(zone.name, (z) => ({ ...z, [key]: parsed }));
+        this.mapView.draw();
       });
       return input;
     };
@@ -947,7 +949,7 @@ export class ZoneEditor {
         ctx.font = '11px ui-monospace, monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = HANDLE;
-        ctx.fillText(zone.name, point.x, point.y - 10);
+        ctx.fillText(zoneLabel(zone), point.x, point.y - 10);
       }
       ctx.restore();
     }
