@@ -251,6 +251,7 @@ export class ReviewView {
     this.editor = new ZoneEditor(this.map, {
       panel: dom.editor,
       rows: dom.editorRows,
+      detail: dom.editorDetail,
       note: dom.editorNote,
     });
     dom.floor.addEventListener('change', () => this.open(dom.floor.value));

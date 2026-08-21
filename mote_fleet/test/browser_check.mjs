@@ -345,17 +345,39 @@ try {
       JSON.stringify(editing),
     );
 
+    // A row carries identity and shape; everything else is a form for the one
+    // selected zone, which is what lets zone/v0 grow a field without giving
+    // every row another column.
+    const selected = await session.evaluate(`(() => {
+      document.querySelectorAll('#zone-rows .zone-row')[0].click();
+      return {
+        cells: document.querySelectorAll('#zone-rows .zone-row')[0].children.length,
+        heading: (document.querySelector('#zone-detail h4') || {}).textContent || '',
+        fields: [...document.querySelectorAll('#zone-detail .zone-field-name')]
+          .map(node => node.textContent).join(','),
+      };
+    })()`);
+    check(
+      'selecting a zone opens its own fields beside the list',
+      selected.cells === 4 && selected.fields.includes('also called'),
+      JSON.stringify(selected),
+    );
+
     // A vocabulary the robot's loader would *refuse* — two zones answering one
     // query — must not leave the browser: it would be stored as a candidate
-    // that looks fine and cannot be loaded.
+    // that looks fine and cannot be loaded. The alias is set through the panel
+    // the row selects, which is where every field but identity and shape lives.
     const refused = await session.evaluate(`(() => {
       const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
       const first = rows[0].querySelectorAll('input')[0].value;
-      const aliases = rows[1].querySelectorAll('input')[2];
+      rows[1].click();
+      const field = [...document.querySelectorAll('#zone-detail .zone-field')]
+        .find(row => row.textContent.startsWith('also called'));
+      const aliases = field.querySelector('input');
       aliases.value = first.toUpperCase();
       aliases.dispatchEvent(new Event('change'));
       document.getElementById('zone-save').click();
-      return { note: document.getElementById('zone-note').textContent };
+      return { note: document.getElementById('zone-note').textContent, field: !!field };
     })()`);
     check(
       'an ambiguous vocabulary is refused in the browser, not stored',
@@ -364,18 +386,26 @@ try {
     );
 
     await session.evaluate(`(() => {
+      const detailField = (label) =>
+        [...document.querySelectorAll('#zone-detail .zone-field')]
+          .find(row => row.textContent.startsWith(label))
+          .querySelector('input, select');
+      const set = (label, value) => {
+        const control = detailField(label);
+        control.value = value;
+        control.dispatchEvent(new Event('change'));
+      };
+      set('also called', '');                       // undo the clash above
       const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
-      rows[1].querySelectorAll('input')[2].value = '';
-      rows[1].querySelectorAll('input')[2].dispatchEvent(new Event('change'));
+      rows[0].click();
       const name = rows[0].querySelectorAll('input')[0];
       const renamed = name.value + '_named';
       name.value = renamed;
       name.dispatchEvent(new Event('change'));
       const fresh = [...document.querySelectorAll('#zone-rows .zone-row')][0];
-      fresh.querySelectorAll('input')[1].value = 'A Named Room';
-      fresh.querySelectorAll('input')[1].dispatchEvent(new Event('change'));
       fresh.querySelector('select').value = 'room';
       fresh.querySelector('select').dispatchEvent(new Event('change'));
+      set('display name', 'A Named Room');
       document.getElementById('zone-save').click();
       return renamed;
     })()`);

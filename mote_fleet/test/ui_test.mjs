@@ -286,13 +286,15 @@ const {
   NAME_RE,
   ZONE_KINDS,
   ambiguities,
-  formatAliases,
+  cursorFor,
+  formatList,
   freshZone,
+  hitTest,
   nearestEdge,
   nearestVertex,
   navigableByDefault,
   normaliseAlias,
-  parseAliases,
+  parseList,
   pointInPolygon,
   translated,
   withInsertedVertex,
@@ -342,6 +344,36 @@ test('vertex edits replace, insert after the edge start, and refuse a triangle c
   assert.equal(grown.polygon.length, 5);
   const triangle = { ...square, polygon: square.polygon.slice(0, 3) };
   assert.equal(withoutVertex(triangle, 0), null);
+});
+
+test('the hit test claims a vertex, then a pose, then the zone under it', () => {
+  // One function, because the hover highlight, the cursor and the drag all read
+  // it: an operator who cannot tell which of the three a press will take — or
+  // that it will pan the map instead — is guessing, and three copies of this
+  // ordering would eventually disagree about the answer.
+  const zones = [square, { name: 'home', x: 5, y: 5 }];
+  assert.deepEqual(hitTest(zones, 0.05, 0.05, 0.2), {
+    kind: 'vertex',
+    zone: 'kitchen',
+    index: 0,
+  });
+  // The pose sits inside its own footprint; the pose wins.
+  assert.deepEqual(hitTest(zones, 1, 1, 0.2), { kind: 'pose', zone: 'kitchen' });
+  assert.deepEqual(hitTest(zones, 1.6, 0.4, 0.2), { kind: 'zone', zone: 'kitchen' });
+  // A waypoint zone is reachable with no footprint at all, and beyond it is the
+  // map: `null` is what makes a drag pan rather than edit.
+  assert.deepEqual(hitTest(zones, 5.1, 5, 0.2), { kind: 'pose', zone: 'home' });
+  assert.equal(hitTest(zones, 40, 40, 0.2), null);
+});
+
+test('the cursor says which of those it is before anything is pressed', () => {
+  assert.equal(cursorFor(null), ''); // the stylesheet's grab: this pans
+  assert.equal(cursorFor({ kind: 'vertex' }), 'crosshair');
+  assert.equal(cursorFor({ kind: 'zone' }), 'move');
+  assert.equal(cursorFor({ kind: 'pose' }), 'move');
+  // Arming a pose overrides everything: the next click lands wherever it is.
+  assert.equal(cursorFor(null, true), 'crosshair');
+  assert.equal(cursorFor({ kind: 'zone' }, true), 'crosshair');
 });
 
 test('moving a zone carries footprint and pose together', () => {
@@ -430,13 +462,13 @@ test('the kind list is the one the bundle validator will accept', () => {
   assert.deepEqual([...CONSTRAINT_KINDS].sort(), constraints.sort());
 });
 
-test('aliases round-trip through one comma-separated field', () => {
-  assert.deepEqual(parseAliases(' galley , The Kitchen ,, galley '), [
+test('aliases and tags round-trip through one comma-separated field', () => {
+  assert.deepEqual(parseList(' galley , The Kitchen ,, galley '), [
     'galley',
     'The Kitchen',
   ]);
-  assert.equal(formatAliases(['galley', 'The Kitchen']), 'galley, The Kitchen');
-  assert.deepEqual(parseAliases(''), []);
+  assert.equal(formatList(['galley', 'The Kitchen']), 'galley, The Kitchen');
+  assert.deepEqual(parseList(''), []);
   // The resolver's comparison, so collision detection agrees with it.
   assert.equal(normaliseAlias('The  Kitchen'), 'the kitchen');
 });

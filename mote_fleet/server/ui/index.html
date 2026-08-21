@@ -115,6 +115,11 @@
             <div id="review-zones" class="zone-rows"></div>
             <div id="zone-editor" class="zone-editor" hidden>
               <div id="zone-rows" class="zone-rows"></div>
+              <!-- The selected zone's vocabulary. A row per zone carries what
+                   you compare across zones; this carries what belongs to one
+                   of them, and is where a new zone/v0 field lands without
+                   costing every row a column. -->
+              <div id="zone-detail" class="zone-detail"></div>
               <div class="zone-actions">
                 <button id="zone-add" type="button">add zone</button>
                 <button id="zone-save" type="button">save as candidate</button>

@@ -917,18 +917,35 @@ where you can see which room is which.
 The controls are the map and the list together:
 
 - **On the map**: drag a vertex to follow a wall, drag a zone to move footprint
-  and pose together, double-click an edge to add a vertex or a vertex to remove
-  it. A polygon needs three, so the last removal is refused rather than quietly
-  making a line.
-- **In the list**, per zone: the machine name (`goto <name>`), the display name
-  an operator sees, the **kind** (zone/v0 — `room`, `corridor`, `keepout`, …),
-  and **aliases**, comma separated, for the other things people call it. `⌖`
-  arms the next map click as that zone's pose, which is the only way to give one
-  to a zone that has none — a segmented room is an outline whose pose the robot
-  would otherwise derive as a centroid, i.e. wherever the middle happens to be
-  rather than where you would send a robot.
-- **`add zone`** drops a square at the view centre to be dragged into shape and
-  named; **`×`** deletes one.
+  and pose together, drag a pose cross to move where the robot is sent,
+  double-click an edge to add a vertex or a vertex to remove it. A polygon needs
+  three, so the last removal is refused rather than quietly making a line.
+  **Whatever the next press would take is highlighted under the pointer**, and
+  the cursor says which it is: a crosshair over a vertex, a move cursor over a
+  pose or a zone body, and the map's own grab cursor everywhere else — where a
+  drag pans instead of editing.
+- **A row per zone** carries what you compare across zones: the machine name
+  (`goto <name>`) and the **kind**. `⌖` appears only for a zone with no pose at
+  all — a segmented room is an outline, so there is no cross to drag — and arms
+  the next map click as its pose. `×` deletes the zone; **`add zone`** drops a
+  square at the view centre to be dragged into shape and named.
+- **Selecting a row** opens that zone's own fields beside the list: the
+  **display name** an operator reads, **also called** (the other spellings
+  `goto` should accept — an MCP dispatcher turning "the galley" into a command
+  matches these), **navigable**, the zone it is **inside**, **tags**, and a
+  **description**. They live here rather than in the row because they belong to
+  one zone at a time, and because a column each would make the list unreadable
+  long before zone/v0 ran out of fields.
+
+A zone's **kind** and its shape are independent, which is why a `pickup` taught
+by driving reads as an `area` with no outline: `save-zone` writes no kind, and
+`bundle.zone_term` defaults a missing one to `area` rather than inventing one.
+Giving a taught pose an outline is still `save-zone --radius` on the robot, or
+`segment-map` for a whole floor's rooms; this editor moves and names what is
+already there, and draws new zones with `add zone`. Only three kinds change what
+a robot does today — `keepout` and `slow` are not
+destinations (`goto` and `fetch` both refuse them), and `segment-map` writes
+`room` — the rest are vocabulary a planner may read over `/v1/zones`.
 
 Two names the same is refused before it is saved — the robot's loader refuses a
 vocabulary where one query answers to two zones rather than picking by luck, so

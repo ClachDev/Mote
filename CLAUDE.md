@@ -189,11 +189,9 @@ first promotion on any floor could never be made from a browser**.
 
 The write half of that pane (`ui/zone_editor.mjs`, route `POST /v1/sites/<site>/
 floors/<floor>/zones`, operator flow `docs/fleet/README.md` §11, contract
-`fleet-api.md`): drag vertices and zones on the map, double-click an edge or
-vertex to add or remove one, name the zone, its `display_name`, its `kind` and
-its `aliases` in a row per zone, and arm `⌖` to place a pose with the next map
-click. **The whole design is one rule: editing is a derivation, never a
-mutation.** Saving re-packs *the revision under review* with the submitted zones
+`fleet-api.md`): drag vertices, poses and whole zones on the map, double-click
+an edge or vertex to add or remove one, and name the places. **The whole design
+is one rule: editing is a derivation, never a mutation.** Saving re-packs *the revision under review* with the submitted zones
 and accepts the result as an ordinary candidate — same `accept()` as a robot's
 upload, inert until promoted — so a stored revision's bytes never change, which
 is what the announced digests depend on, and promotion stays the only write that
@@ -228,6 +226,28 @@ out and is fixed: the map pane's review button was hidden unless the floor on
 screen had candidates, and above 760 px the tab bar is hidden too — so the pane
 built for floors no robot is reporting was reachable only through a floor a robot
 was reporting.
+
+**What the operator can see is the other half of it**, and the first build of
+this editor failed it in four ways an operator found in one sitting. **One
+`hitTest` answers what a press will take** — the drag reads it, the cursor reads
+it, and the hover highlight draws it — because three targets (vertex, pose, zone
+body) plus a fourth meaning "this drag pans the map" is unguessable from a
+static canvas, and three copies of that ordering would eventually disagree with
+each other. Its highlight ring is *ink*, not white: a canvas gets no cascade, and
+the surface under it is not the theme's background but the basemap, whose free
+space is white in both themes (measured: white moved 1.5% of the pixels around a
+handle, ink moves 12%). **A row is a list, not a form** — it carries what is
+compared *across* zones (name, kind, footprint) and the rest of zone/v0
+(`display_name`, `aliases`, `navigable`, `parent`, `tags`, `description`) edits
+in a panel for the *selected* zone, so a new spec field costs no column, and a
+2560 px monitor no longer stretches a twelve-character zone name into a text box
+the size of a paragraph (rows cap at 560 px). And a control exists only where dragging cannot
+reach — `⌖` (place a pose) appears **only** for a zone that has none, a
+`segment-map` room being an outline with no `x`/`y` and so no cross to drag.
+Two controls were built and then cut for failing that test: a footprint cell
+that turned a waypoint into an area (`save-zone --radius` and `segment-map`
+already teach outlines, and `add zone` draws one), and the paragraph of
+instructions that stood in for the hover feedback before it existed.
 
 ## Fleet: the zone vocabulary
 

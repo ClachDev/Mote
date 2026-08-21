@@ -585,14 +585,41 @@ main {
 
 /* A class that sets display defeats the hidden attribute (the M3 promote-
    picker lesson), so the guard is explicit. */
+/* Two columns: the list of zones, and the selected one's fields beside it.
+   Stacked, the panel pushed `save` off the bottom of a laptop screen and left
+   the right two thirds of a desk-width pane empty — the fields are a narrow
+   form and the rows are a narrow list, so they sit side by side and the pane's
+   width is spent on the map above them instead of on nothing. */
 .zone-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 30em) minmax(0, 26em);
+  grid-template-rows: auto auto auto;
+  gap: 8px 24px;
+  align-items: start;
   margin: 6px 0 0;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 6px;
+}
+
+.zone-editor .zone-rows {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.zone-editor .zone-actions {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.zone-editor .note {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.zone-detail {
+  grid-column: 2;
+  grid-row: 1 / span 3;
 }
 .zone-editor[hidden] {
   display: none;
@@ -632,12 +659,65 @@ main {
   min-width: 0;
 }
 
-/* The editable row: name, label, kind, aliases, place-pose, delete. `minmax(0,
-   1fr)` on every text cell rather than `1fr`, because a grid track's automatic
-   minimum is its content and an alias list would otherwise widen the row past
-   the pane instead of scrolling inside its own input. */
+/* The editable row: name, kind, footprint, place-pose, delete — what you
+   compare *across* zones. `minmax(0, 1fr)` on the name rather than `1fr`,
+   because a grid track's automatic minimum is its content and a long name
+   would otherwise widen the row past the pane instead of scrolling in its own
+   input.
+
+   The `max-width` is the other end of the same problem: on a 2560 px monitor
+   the review pane is wide enough to stretch a twelve-character zone name into
+   a text box the size of a paragraph, which reads as a form expecting an
+   essay. The row fills a narrow pane and stops. */
 .zone-editor .zone-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto 4ch auto;
+}
+
+/* The selected zone's own fields, beside the list rather than under it. */
+.zone-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 20px;
+  border-left: 1px solid var(--line);
+}
+
+.zone-detail h4 {
+  margin: 2px 0;
+  font-size: 12px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.zone-field {
+  display: grid;
+  grid-template-columns: 13ch minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.zone-field-name {
+  color: var(--dim);
+}
+
+.zone-field input[type='checkbox'] {
+  justify-self: start;
+  width: 16px;
+  height: 16px;
+}
+
+/* Fixed, so the cells line up down the list: each row is its own grid, and an
+   `auto` track sized to "4 vertices" in one row and "waypoint" in the next
+   would step in and out. */
+/* Fixed, and held even when the cell is empty: `⌖` is offered only to a zone
+   with no pose to drag, and a column that collapsed when it was absent would
+   step the delete buttons in and out down the list. */
+.zone-editor .zone-row .place {
+  width: 4ch;
+  padding: 4px 0;
+  text-align: center;
 }
 
 .zone-editor .zone-row select {
@@ -882,11 +962,18 @@ button.promote:disabled {
     height: 46vh;
   }
 
-  /* Six cells in a phone's width leaves each one a few characters wide, so the
-     editable row wraps instead of gridding: the fields take half the width
-     each and fall onto as many lines as they need, and the buttons keep their
-     own size. Nothing is hidden — a rename typed on a phone is exactly the
-     edit someone makes standing in the room being named. */
+  /* No width to put two columns in: the fields go back under the list. */
+  .zone-editor {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .zone-detail {
+    padding: 6px 0 0;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
   .zone-editor .zone-row {
     display: flex;
     flex-wrap: wrap;
