@@ -592,42 +592,14 @@ main {
 /* -- zone editor ---------------------------------------------------------- */
 
 /* A class that sets display defeats the hidden attribute (the M3 promote-
-   picker lesson), so the guard is explicit. */
-/* Two columns: the list of zones, and the selected one's fields beside it.
-   Stacked, the panel pushed `save` off the bottom of a laptop screen and left
-   the right two thirds of a desk-width pane empty — the fields are a narrow
-   form and the rows are a narrow list, so they sit side by side and the pane's
-   width is spent on the map above them instead of on nothing. */
+   picker lesson), so the guard is explicit. The editing surface is otherwise
+   plain: it had a border and a padded box of its own, which meant clicking
+   `edit zones` drew a frame around a part of the page that had not moved. */
 .zone-editor {
-  display: grid;
-  grid-template-columns: minmax(0, 30em) minmax(0, 26em);
-  grid-template-rows: auto auto auto;
-  gap: 8px 24px;
-  align-items: start;
-  margin: 6px 0 0;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-
-.zone-editor .zone-rows {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.zone-editor .zone-actions {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.zone-editor .note {
-  grid-column: 1;
-  grid-row: 3;
-}
-
-.zone-detail {
-  grid-column: 2;
-  grid-row: 1 / span 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 .zone-editor[hidden] {
   display: none;
@@ -658,19 +630,20 @@ main {
   border-radius: 4px;
 }
 
-/* A row is picked, so it has to look pickable and then look picked. Without
-   this the only thing that changed on selection was a panel further down the
-   page and an outline on the map, neither of which is where the pointer is. */
-.zone-editor .zone-row {
+/* A row is picked, so it has to look pickable and then look picked — but only
+   when there is something to pick it for. Without this the only thing that
+   changed on selection was a panel to the side and an outline on the map,
+   neither of which is where the pointer is. */
+.zone-rows.editing .zone-row {
   cursor: pointer;
   border: 1px solid transparent;
 }
 
-.zone-editor .zone-row:hover {
+.zone-rows.editing .zone-row:hover {
   background: var(--bg);
 }
 
-.zone-editor .zone-row.selected {
+.zone-rows.editing .zone-row.selected {
   outline: none;
   border-color: var(--accent);
   background: var(--bg);
@@ -704,27 +677,44 @@ main {
   min-width: 0;
 }
 
-/* The editable row: name, kind, footprint, place-pose, delete — what you
-   compare *across* zones. `minmax(0, 1fr)` on the name rather than `1fr`,
-   because a grid track's automatic minimum is its content and a long name
-   would otherwise widen the row past the pane instead of scrolling in its own
-   input.
+/* One row shape, edited or not: name, kind, shape, place-pose, delete. The
+   cells do not move when the controls arrive in them — a list that relaid
+   itself on `edit zones` made looking and editing two different pages.
 
-   The `max-width` is the other end of the same problem: on a 2560 px monitor
-   the review pane is wide enough to stretch a twelve-character zone name into
-   a text box the size of a paragraph, which reads as a form expecting an
-   essay. The row fills a narrow pane and stops. */
-.zone-editor .zone-row {
-  grid-template-columns: minmax(0, 1fr) auto 4ch auto;
+   `minmax(0, 1fr)` on the name rather than `1fr`, because a grid track's
+   automatic minimum is its content and a long name would otherwise widen the
+   row past the pane instead of ellipsing inside its cell. The `max-width` is
+   the same problem from the other end: on a 2560 px monitor the pane is wide
+   enough to strand the kind and the shape half a screen from the name, and to
+   stretch a twelve-character name into a text box the size of a paragraph. */
+.zone-rows .zone-row {
+  grid-template-columns: minmax(0, 1fr) 10ch minmax(0, 21ch) 4ch 4ch;
+  max-width: 640px;
 }
 
-/* The selected zone's own fields, beside the list rather than under it. */
+.zone-rows .zone-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name cell, whichever it is: the button and the text line up, so entering
+   edit mode does not shift the word. */
+.zone-name,
+.zone-name-text {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+}
+
+/* The selected zone's own fields. */
 .zone-detail {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-left: 20px;
-  border-left: 1px solid var(--line);
 }
 
 .zone-detail h4 {
@@ -751,6 +741,13 @@ main {
   font-weight: 600;
 }
 
+/* A name the robot's loader would refuse, said while it is typed. The save
+   refuses it too — this is so that the rule is visible before then. */
+.zone-rename.bad {
+  border-color: var(--fault);
+  color: var(--fault);
+}
+
 .zone-field input[type='checkbox'] {
   justify-self: start;
   width: 16px;
@@ -769,7 +766,8 @@ main {
   text-align: center;
 }
 
-.zone-editor .zone-row select {
+.zone-rows .zone-row select,
+.zone-rows .zone-row .zone-del {
   font: 12px ui-monospace, monospace;
   min-width: 0;
 }
@@ -866,9 +864,26 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
   flex: none;
   height: 300px;
   overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 640px) minmax(0, 26em);
+  grid-template-rows: auto auto 1fr;
+  align-content: start;
+  gap: 6px 24px;
+}
+
+.zones-head,
+#review-zone-source,
+.zone-rows {
+  grid-column: 1;
+}
+
+/* Beside the list rather than under it, and spanning the rows above so that
+   nothing in the left column moves when it appears. */
+.zone-editor {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  border-left: 1px solid var(--line);
+  padding-left: 20px;
 }
 
 #review-canvas {
@@ -974,19 +989,6 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
   display: none;
 }
 
-/* The editable row's grid ends in `auto` columns sized to buttons; here the
-   third cell is a phrase of arbitrary length, which would push the row wider
-   than the pane. */
-#review-zones .zone-row {
-  grid-template-columns: minmax(0, 1fr) 72px minmax(0, 1fr);
-}
-
-#review-zones .zone-row > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 button.promote {
   align-self: flex-start;
 }
@@ -1026,25 +1028,22 @@ button.promote:disabled {
   }
 
   /* The pane itself scrolls on a phone, so a second scrolling box inside it is
-     a trap: the height comes off the reservation and goes back to the content. */
+     a trap: the height comes off the reservation and goes back to the content,
+     and the two columns go back to one. */
   .zones-panel {
     height: auto;
     overflow: visible;
-  }
-
-  /* No width to put two columns in: the fields go back under the list. */
-  .zone-editor {
     display: flex;
     flex-direction: column;
   }
 
-  .zone-detail {
-    padding: 6px 0 0;
+  .zone-editor {
     border-left: none;
     border-top: 1px solid var(--line);
+    padding: 8px 0 0;
   }
 
-  .zone-editor .zone-row {
+  .zone-rows .zone-row {
     display: flex;
     flex-wrap: wrap;
   }

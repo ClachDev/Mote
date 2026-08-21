@@ -237,11 +237,18 @@ each other. Its highlight ring is *ink*, not white: a canvas gets no cascade, an
 the surface under it is not the theme's background but the basemap, whose free
 space is white in both themes (measured: white moved 1.5% of the pixels around a
 handle, ink moves 12%). **A row is a list, not a form** — it carries what is
-compared *across* zones (name, kind, footprint) and the rest of zone/v0
+compared *across* zones (name, kind, shape) and the rest of zone/v0
 (`display_name`, `aliases`, `navigable`, `parent`, `tags`, `description`) edits
 in a panel for the *selected* zone, so a new spec field costs no column, and a
 2560 px monitor no longer stretches a twelve-character zone name into a text box
-the size of a paragraph (rows cap at 560 px). And a control exists only where dragging cannot
+the size of a paragraph (rows cap at 640 px). **There is one list, not two**:
+one renderer draws a revision's zones read-only and editable alike, `edit zones`
+putting controls into the same cells — two renderers were two layouts that
+drifted, and the read-only one had stranded the kind half a screen from the
+name. Nothing in that column moves when editing opens (asserted in
+`browser_check.mjs`), the editing surface has no border of its own, and a zone
+is always selected: an empty panel needs a caption, and any caption for it
+("select a zone to name it") names one of the several things it is for. And a control exists only where dragging cannot
 reach — `⌖` (place a pose) appears **only** for a zone that has none, a
 `segment-map` room being an outline with no `x`/`y` and so no cross to drag; a
 row's name is a *button*, because in a list the name is what you select by and
@@ -249,6 +256,18 @@ an input there put a caret where a click meant "this one" (renaming moved into
 the panel, beside the zone's other fields). Two controls were built and then cut
 for failing that test: a `+ area`/`− area` cell, and a paragraph of instructions
 standing in for the hover feedback before it existed.
+
+**A place is named once.** While a zone's machine name is still one nobody
+chose (`zone_03`), typing its display name sets it through `slugify` — "The
+Kitchen" gives `the_kitchen`, "Café" gives `cafe` (the letter survives, not just
+the accent). It is a proposal in a visible field, and it never rewrites a name
+an operator has chosen, since `goto` takes that name and a fetch may be scripted
+against it; a spelling that cannot become a name at all ("3rd floor") proposes
+nothing rather than mangling one. The field also marks an invalid name *as it is
+typed*: the rule is the loader's and the save enforces it, but a field that looks
+like free text until a save fails does not look like a field with a rule. That
+leaves three naming fields doing two jobs — an identifier, a label, and the
+other spellings `zones.resolve` will also match.
 
 A zone is drawn under `map.zoneLabel` — `display_name` if it has one, else the
 machine name — by the operations map and the editor's own overlay alike, so a

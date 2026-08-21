@@ -243,10 +243,51 @@ export function snapDelta(map, delta) {
   return round(Math.round(delta / map.resolution) * map.resolution);
 }
 
+// One zone's geometry in a phrase: the binding half, which is the half that is
+// only true against the map beside it. Shown in the list whether or not the
+// list is being edited — the shape is a fact about the zone, not a control.
+export function zoneSummary(zone) {
+  if (zone.polygon && zone.polygon.length >= 3) {
+    return `polygon, ${zone.polygon.length} vertices`;
+  }
+  if (typeof zone.radius === 'number') return `circle, r ${zone.radius} m`;
+  if (zone.x !== undefined && zone.y !== undefined) {
+    return `waypoint ${zone.x.toFixed(2)}, ${zone.y.toFixed(2)}`;
+  }
+  return 'no footprint';
+}
+
 // A machine name a dispatcher can type — the same rule the robot's loader and
 // the bundle validator enforce, applied here so a bad rename fails in the
 // input rather than at save.
 export const NAME_RE = /^[a-z][a-z0-9_]*$/;
+
+// The machine name a display name implies: "The Kitchen" -> `the_kitchen`,
+// "Café" -> `cafe`. Two fields for one place is a chore, and the operator is
+// naming a room, not authoring an identifier — so the identifier follows.
+//
+// It is a *proposal*, not a rule: the result is put in the name field where it
+// can be seen and changed, and it is only ever offered while the name is still
+// one nobody chose (see `isGeneratedName`). Renaming a zone an operator has
+// already named would break the `goto` that names it, which is the opposite of
+// a convenience. A spelling that cannot become a name at all (`3rd floor`)
+// yields '' and nothing is proposed.
+export function slugify(text) {
+  const slug = String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // é -> e, rather than dropping the letter
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return NAME_RE.test(slug) ? slug : '';
+}
+
+// A name nobody has chosen: what `segment-map` mints for a room it found and
+// what `add zone` mints for a new one. These are the names the editor exists to
+// replace, so they are the ones it may replace on its own.
+export function isGeneratedName(name) {
+  return /^zone_\d+$/.test(String(name || ''));
+}
 
 // zone/v0's kinds, in the spec's order. Mirrored from `bundle.ZONE_KINDS`
 // rather than fetched, because this is a `<select>`'s options and a dropdown
@@ -359,13 +400,14 @@ export function zonesPayload(zones) {
 
 const round = (value) => Math.round(value * 1000) / 1000;
 
-function el(tag, attributes = {}) {
+function el(tag, attributes = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attributes)) {
     if (key === 'class') node.className = value;
     else if (key === 'text') node.textContent = value;
     else node.setAttribute(key, value);
   }
+  for (const child of [].concat(children)) if (child) node.append(child);
   return node;
 }
 
@@ -409,9 +451,23 @@ export class ZoneEditor {
     this._bind();
   }
 
+  // The list, not being edited: the same rows the editor draws, with text where
+  // its controls are. One renderer, because two of them are two layouts that
+  // drift apart — and because the difference between looking and editing should
+  // be the controls, not the page.
+  show(zones) {
+    if (this.active) return;
+    this.zones = zones || [];
+    this.selected = null;
+    this._render();
+  }
+
   begin(zones) {
     this.zones = (zones || []).map((zone) => JSON.parse(JSON.stringify(zone)));
-    this.selected = null;
+    // Something is always selected, so the panel always has a zone in it: an
+    // empty panel is a state that has to be explained, and the explanation
+    // ("select a zone to…") can only ever name one of the things it is for.
+    this.selected = this.zones.length ? this.zones[0].name : null;
     this.active = true;
     this._drag = null;
     this._placing = null;
@@ -432,6 +488,7 @@ export class ZoneEditor {
     this._cursor('');
     this.dom.panel.hidden = true;
     this.mapView.overlay = null;
+    this._render();
     this.mapView.draw();
   }
 
@@ -683,6 +740,21 @@ export class ZoneEditor {
   _renderRows() {
     const rows = this.dom.rows;
     rows.replaceChildren();
+    rows.classList.toggle('editing', this.active);
+    if (!this.active) {
+      for (const zone of this.zones) {
+        rows.append(
+          el('div', { class: 'zone-row' }, [
+            el('span', { class: 'zone-name-text', text: zoneLabel(zone) }),
+            el('span', { class: 'zone-kind', text: zone.kind || 'area' }),
+            el('span', { class: 'dim zone-shape', text: zoneSummary(zone) }),
+            el('span', { class: 'place' }),
+            el('span', { class: 'zone-del' }),
+          ]),
+        );
+      }
+      return;
+    }
     for (const zone of this.zones) {
       const row = document.createElement('div');
       const chosen = zone.name === this.selected;
@@ -752,13 +824,22 @@ export class ZoneEditor {
           this.placePose(zone.name);
         });
       }
+      const shape = el('span', { class: 'dim zone-shape', text: zoneSummary(zone) });
       const del = document.createElement('button');
       del.type = 'button';
+      del.className = 'zone-del';
       del.textContent = '×';
       del.title = 'delete zone';
-      del.addEventListener('click', () => {
+      del.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const index = this.zones.findIndex((z) => z.name === zone.name);
         this.zones = this.zones.filter((z) => z.name !== zone.name);
-        if (this.selected === zone.name) this.selected = null;
+        if (this.selected === zone.name) {
+          // The neighbour, so the panel stays occupied and the operator stays
+          // where they were in the list.
+          const next = this.zones[Math.min(index, this.zones.length - 1)];
+          this.selected = next ? next.name : null;
+        }
         if (this._placing === zone.name) this._placing = null;
         this._render();
         this.mapView.draw();
@@ -770,7 +851,7 @@ export class ZoneEditor {
           this.mapView.draw();
         }
       });
-      row.append(name, kind, pose, del);
+      row.append(name, kind, shape, pose, del);
       rows.append(row);
     }
   }
@@ -788,9 +869,7 @@ export class ZoneEditor {
     const zone = this.zones.find((entry) => entry.name === this.selected);
     panel.replaceChildren();
     if (!zone) {
-      panel.append(
-        field('', el('p', { class: 'dim', text: 'select a zone to name it' })),
-      );
+      panel.append(el('p', { class: 'dim', text: 'no zones on this revision yet' }));
       return;
     }
     // Renaming is here rather than in the row for the same reason the row
@@ -800,7 +879,14 @@ export class ZoneEditor {
     const rename = document.createElement('input');
     rename.className = 'zone-rename';
     rename.value = zone.name;
-    rename.title = 'the machine name goto takes — lowercase, a-z0-9_';
+    rename.title = 'what goto takes: lowercase letters, digits and _';
+    // Said while it is being typed, not at save. The rule is real — the robot's
+    // loader refuses a name it cannot be told to drive to — but a field that
+    // looks like free text until a save fails is a field that does not look
+    // like it has a rule at all.
+    rename.addEventListener('input', () => {
+      rename.classList.toggle('bad', !NAME_RE.test(rename.value.trim()));
+    });
     rename.addEventListener('change', () => {
       const renamed = rename.value.trim();
       this._update(zone.name, (z) => ({ ...z, name: renamed }));
@@ -815,7 +901,20 @@ export class ZoneEditor {
       input.placeholder = placeholder;
       input.title = title;
       input.addEventListener('change', () => {
-        this._update(zone.name, (z) => ({ ...z, [key]: input.value.trim() }));
+        const value = input.value.trim();
+        this._update(zone.name, (z) => ({ ...z, [key]: value }));
+        // Naming a room is one act, so the identifier follows the label while
+        // the identifier is still one nobody chose. `zone_03` becoming
+        // `the_kitchen` when the operator types "The Kitchen" is the whole
+        // point of the pane; a name they have already set is theirs.
+        if (key === 'display_name' && isGeneratedName(this.selected)) {
+          const derived = slugify(value);
+          if (derived && !this.zones.some((other) => other.name === derived)) {
+            this._update(this.selected, (z) => ({ ...z, name: derived }));
+            this.selected = derived;
+            this._render();
+          }
+        }
         this.mapView.draw();
       });
       return input;

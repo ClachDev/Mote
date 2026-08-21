@@ -932,16 +932,21 @@ The controls are the map and the list together:
   snapped: a pose taught by driving a robot there is a measurement, and it is
   left exactly where the robot said, while an outline this editor invents starts
   on the grid.
-- **A row per zone** is a list you pick from: the name selects that zone, and
-  beside it is the **kind** — the one field worth comparing down the list. `⌖`
-  appears only for a zone with no pose at all (a segmented room is an outline,
-  so there is no cross to drag) and arms the next map click as its pose. `×`
-  deletes the zone; **`add zone`** drops a square at the view centre to be
-  dragged into shape and named.
-- **Selecting a row** opens that zone's own fields beside the list: its
-  **name** (renaming is a deliberate act, not a side effect of clicking the
-  list), the **display name** an operator reads — and which the map is labelled
-  with, here and in the operations view, as soon as it is set — **also called** (the other spellings
+- **It is the same list either way.** The zones of a revision are listed under
+  the map whether or not you are editing them — name, kind, shape — and
+  `edit zones` puts controls into those rows rather than replacing them with a
+  second list. Nothing moves when you click it: the rows stay where they are and
+  the fields open beside them.
+- **A row is a list you pick from**: the name selects that zone, beside it the
+  **kind**, then the shape it has. `⌖` appears only for a zone with no pose at
+  all (a segmented room is an outline, so there is no cross to drag) and arms
+  the next map click as its pose. `×` deletes the zone; **`add zone`** drops a
+  square at the view centre to be dragged into shape and named.
+- **Selecting a row** opens that zone's own fields beside the list — and a zone
+  is always selected, so they are always showing something: its **name**
+  (renaming is a deliberate act, not a side effect of clicking the list), the
+  **display name** an operator reads — and which the map is labelled with, here
+  and in the operations view, as soon as it is set — **also called** (the other spellings
   `goto` should accept — an MCP dispatcher turning "the galley" into a command
   matches these), **navigable**, the zone it is **inside**, **tags**, and a
   **description**. They live here rather than in the row because they belong to
@@ -967,6 +972,16 @@ than inventing one. Beyond geometry, three kinds change what a robot does today
 — `keepout` and `slow` are not destinations (`goto` and `fetch` both refuse
 them), and `segment-map` writes `room` — the rest are vocabulary a planner may
 read over `/v1/zones`.
+
+**You should not have to name a place twice.** A machine name is what `goto`
+takes (lowercase, digits, `_`, and the field says so as you type rather than at
+save), and a display name is what a person reads — so while the machine name is
+still one nobody chose (`zone_03`, as `segment-map` and `add zone` mint them),
+typing a display name sets it: "The Kitchen" gives `the_kitchen`, "Café" gives
+`cafe`. It is a proposal, in the field, editable; a name you have already chosen
+is never rewritten, because `goto` takes it and a `fetch` may be scripted
+against it. **Aliases** are the third naming field and a different job: other
+spellings a dispatcher may *say* for the same place, which `goto` also matches.
 
 Two names the same is refused before it is saved — the robot's loader refuses a
 vocabulary where one query answers to two zones rather than picking by luck, so

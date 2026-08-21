@@ -117,9 +117,12 @@
                  that carries no zones.yaml inherits the floor's, which is a
                  different SLAM session's frame — the trap M4 named. -->
             <p id="review-zone-source" class="dim"></p>
-            <div id="review-zones" class="zone-rows"></div>
+            <!-- One list, whether or not it is being edited: the same rows with
+                 text where the controls go. Two renderers were two layouts that
+                 drifted, and the difference between looking and editing should
+                 be the controls rather than the page. -->
+            <div id="zone-rows" class="zone-rows"></div>
             <div id="zone-editor" class="zone-editor" hidden>
-              <div id="zone-rows" class="zone-rows"></div>
               <!-- The selected zone's vocabulary. A row per zone carries what
                    you compare across zones; this carries what belongs to one
                    of them, and is where a new zone/v0 field lands without

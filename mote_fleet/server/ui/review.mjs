@@ -201,20 +201,6 @@ export function zoneSource(source, count) {
   return 'taught in this revision’s own frame';
 }
 
-// One zone's geometry in a phrase. The vocabulary half (kind, aliases) is shown
-// in its own cells; this is the binding half, which is the half that is only
-// true against the map beside it.
-export function zoneSummary(zone) {
-  if (zone.polygon && zone.polygon.length >= 3) {
-    return `polygon, ${zone.polygon.length} vertices`;
-  }
-  if (typeof zone.radius === 'number') return `circle, r ${zone.radius} m`;
-  if (zone.x !== undefined && zone.y !== undefined) {
-    return `waypoint ${zone.x.toFixed(2)}, ${zone.y.toFixed(2)}`;
-  }
-  return 'no footprint';
-}
-
 // -- the view -------------------------------------------------------------
 
 function el(tag, attributes = {}, children = []) {
@@ -383,8 +369,6 @@ export class ReviewView {
     this.dom.zonesEdit.disabled = this.editing || !this.editable();
     this.dom.zonesEdit.hidden = !this.editable() && !this.editing;
     this.dom.floor.disabled = this.editing;
-    this.dom.zones.hidden = this.editing;
-    this.dom.zoneSource.hidden = this.editing;
     for (const row of this.dom.revisions.querySelectorAll('button')) {
       row.disabled = this.editing;
     }
@@ -394,8 +378,8 @@ export class ReviewView {
   beginEdit() {
     if (!this.editable() || this.editing) return;
     this.editing = true;
-    // The editor draws its own zones, handles and pose crosses; leaving the
-    // read-only set under them would double every outline.
+    // The editor draws its own zones, handles and pose crosses on the canvas;
+    // leaving the read-only set under them would double every outline.
     this.map.setZones([]);
     this.editor.begin(this.zones);
     this.renderEditControls();
@@ -528,21 +512,13 @@ export class ReviewView {
     );
   }
 
-  // One row per zone, three cells — what the revision says its places are.
-  // `edit zones` replaces this list with the editable one; it is the same set
-  // of rows with inputs in them.
+  // The zones of the selected revision, drawn by the editor whether or not it
+  // is editing them: `edit zones` puts controls in these rows rather than
+  // replacing them with a second list of its own.
   renderZones(zones, source = '') {
     this.zones = zones;
     this.dom.zoneSource.textContent = zoneSource(source, zones.length);
-    this.dom.zones.replaceChildren(
-      ...zones.map((zone) =>
-        el('div', { class: 'zone-row' }, [
-          el('span', { class: 'zone-name', text: zone.display_name || zone.name }),
-          el('span', { class: 'zone-kind', text: zone.kind || 'area' }),
-          el('span', { class: 'dim', text: zoneSummary(zone) }),
-        ]),
-      ),
-    );
+    this.editor.show(zones);
     this.renderEditControls();
   }
 

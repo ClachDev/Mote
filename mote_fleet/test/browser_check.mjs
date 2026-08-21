@@ -299,7 +299,7 @@ try {
 
   const zoneRows = await settle(
     session,
-    `document.querySelectorAll('#review-zones .zone-row').length`,
+    `document.querySelectorAll('#zone-rows .zone-row').length`,
     (rows) => rows > 0,
   );
   check('the candidate’s zones are listed beside it', zoneRows > 0, `${zoneRows} rows`);
@@ -339,7 +339,8 @@ try {
       document.getElementById('zones-edit').click();
       return {
         rows: document.querySelectorAll('#zone-rows .zone-row').length,
-        readOnlyHidden: document.getElementById('review-zones').hidden,
+        // One list in both modes: the rows that were text now hold controls.
+        controls: document.querySelectorAll('#zone-rows select').length,
         listLocked: [...document.querySelectorAll('#review-revisions button')]
           .every(button => button.disabled),
         promoteLocked: document.getElementById('review-promote').disabled,
@@ -347,7 +348,10 @@ try {
     })()`);
     check(
       'editing opens on the selected revision’s zones and holds it still',
-      editing.rows > 0 && editing.readOnlyHidden && editing.listLocked && editing.promoteLocked,
+      editing.rows > 0 &&
+        editing.controls === editing.rows &&
+        editing.listLocked &&
+        editing.promoteLocked,
       JSON.stringify(editing),
     );
 
@@ -376,7 +380,7 @@ try {
     })()`);
     check(
       'picking a zone by name marks the row and opens its fields',
-      selected.cells === 4 &&
+      selected.cells === 5 &&
         selected.marked &&
         selected.inputsInRow === 0 &&
         selected.fields.startsWith('name,'),
@@ -435,7 +439,7 @@ try {
         note: document.getElementById('review-note').textContent,
         label: document.getElementById('review-map-label').textContent,
         source: document.getElementById('review-zone-source').textContent,
-        zones: [...document.querySelectorAll('#review-zones .zone-row')]
+        zones: [...document.querySelectorAll('#zone-rows .zone-row')]
           .map(row => row.textContent).join(' '),
         editorHidden: document.getElementById('zone-editor').hidden,
       }))()`,

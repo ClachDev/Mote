@@ -318,6 +318,7 @@ const {
   freshZone,
   hitTest,
   isAreaKind,
+  isGeneratedName,
   poseFor,
   nearestEdge,
   nearestVertex,
@@ -325,6 +326,8 @@ const {
   normaliseAlias,
   parseList,
   pointInPolygon,
+  slugify,
+  zoneSummary,
   snapDelta,
   snapToPixel,
   translated,
@@ -490,13 +493,30 @@ test('the zone editor panel hides when hidden, whatever its class sets', () => {
   }
 });
 
+test('a name the loader would refuse is marked while it is typed', () => {
+  // The rule is real and the save enforces it; this is so that a field with a
+  // rule does not look like free text until the save fails.
+  const css = read('style.css');
+  assert.match(css, /\.zone-rename\.bad \{[^}]*border-color:\s*var\(--fault\)/);
+  const editor = read('zone_editor.mjs');
+  assert.match(editor, /addEventListener\('input'[^)]*\)[^]*?classList\.toggle\('bad'/);
+});
+
 test('a zone row reads as something you pick, and as picked', () => {
   // Selection drives the panel and the map highlight, so a row that gave no
-  // sign of being selectable left the operator clicking a text box instead.
+  // sign of being selectable left the operator clicking a text box instead —
+  // and only while it is editable, since a row that cannot be picked must not
+  // invite it.
   const css = read('style.css');
-  const rows = css.slice(css.indexOf('.zone-editor .zone-row {'));
+  const rows = css.slice(css.indexOf('.zone-rows.editing .zone-row {'));
   assert.match(rows.slice(0, rows.indexOf('}')), /cursor:\s*pointer/);
-  assert.match(css, /\.zone-editor \.zone-row\.selected \{[^}]*border-color:\s*var\(--accent\)/);
+  assert.match(
+    css,
+    /\.zone-rows\.editing \.zone-row\.selected \{[^}]*border-color:\s*var\(--accent\)/,
+  );
+  // One list, one row shape: the cells must not move when the controls arrive.
+  assert.match(css, /\.zone-rows \.zone-row \{[^}]*grid-template-columns/);
+  assert.ok(!css.includes('#review-zones'), 'the second zone list is gone');
 });
 
 test('the editor lives in the review pane, over the revision it edits', () => {
@@ -611,6 +631,31 @@ test('aliases and tags round-trip through one comma-separated field', () => {
   assert.equal(normaliseAlias('The  Kitchen'), 'the kitchen');
 });
 
+test('the machine name a display name implies', () => {
+  // Three name fields is two too many to *type*: an operator names a room, and
+  // the identifier follows. It follows as a proposal — put in the name field,
+  // visible and editable — because `goto` takes it and a rename nobody asked
+  // for breaks the command that names the place.
+  assert.equal(slugify('The Kitchen'), 'the_kitchen');
+  assert.equal(slugify('Café'), 'cafe'); // the letter survives, not just the accent
+  assert.equal(slugify('  spare  room '), 'spare_room');
+  assert.equal(slugify('Ward 3B'), 'ward_3b');
+  // A name has to start with a letter, so there is nothing to propose here and
+  // the placeholder is left alone rather than mangled into one.
+  assert.equal(slugify('3rd floor'), '');
+  assert.equal(slugify(''), '');
+  for (const text of ['The Kitchen', 'Café', 'Ward 3B']) {
+    assert.ok(NAME_RE.test(slugify(text)), `${text} did not produce a usable name`);
+  }
+
+  // And it only ever replaces a name nobody chose: what `segment-map` mints for
+  // a room it found, and what `add zone` mints for a new one.
+  assert.ok(isGeneratedName('zone_01'));
+  assert.ok(isGeneratedName('zone_07'));
+  assert.ok(!isGeneratedName('kitchen'));
+  assert.ok(!isGeneratedName('zone_kitchen'));
+});
+
 test('two zones answering one query are caught before they are saved', () => {
   // The robot's loader refuses an ambiguous vocabulary outright rather than
   // resolving `goto` by dict order, so a save that produced one would produce a
@@ -669,7 +714,6 @@ const {
   provenanceRows,
   revisionPath,
   zoneSource,
-  zoneSummary,
 } = await import('../server/ui/review.mjs');
 
 test('a candidate is read from its own routes, never the canonical basemap', () => {
@@ -882,7 +926,6 @@ test('the review pane has every element app.mjs binds to it', () => {
     'review-verdict-notes',
     'review-notes-label',
     'review-provenance',
-    'review-zones',
     'review-zone-source',
     'review-canvas',
     'review-map-label',
