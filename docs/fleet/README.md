@@ -663,12 +663,15 @@ outline for a `polygon`, a cross for a bare waypoint, each labelled — so the
 `goto <zone>` targets you can type are the ones you can see. They come from the
 canonical revision, in that revision's map frame.
 
-Beside the map's floor label is the **canonical revision** it is showing, and,
-when the floor has candidates waiting, a button into the **review** pane —
-which is where a candidate is looked at and promoted (§11). The map pane keeps
-no promote control of its own: this canvas draws robots on the *published*
-basemap, so promoting from beside it would mean promoting a map you have not
-seen.
+Beside the map's floor label is the **canonical revision** it is showing, and a
+button into the **review** pane — which is where a candidate is looked at, its
+zones named, and the map promoted (§11). It says how many candidates the floor
+on screen has when it knows, and it is there either way: above 760 px the tab
+bar is hidden, so a button that appeared only for a floor with candidates was
+the sole door to a pane whose whole point is the floors *no robot is reporting*.
+The map pane keeps no promote control of its own: this canvas draws robots on
+the *published* basemap, so promoting from beside it would mean promoting a map
+you have not seen.
 
 ![The dashboard on a phone](../images/fleet-ui-phone.webp)
 
@@ -893,16 +896,123 @@ which appears whenever the floor on screen has something waiting. It shows:
   revision came from, when it was mapped, its size and resolution, the free/
   occupied/unknown split, whether it carries a posegraph (i.e. whether mapping
   can be continued in this frame), its bytes and digest.
-- **The zones in it**, and — the part that is easy to miss — whether they are
-  the revision's own or **inherited from the floor**. Inherited zones were
-  taught in a previous session's frame: they draw perfectly over the new map and
-  are wrong by however far the two origins differ. The pane says so in words,
-  because the canvas cannot.
+- **The zones in it**, and — the part that is easy to miss — an `inherited`
+  mark beside the heading when they are not the revision's own. A revision that
+  carries no zones is drawn with the floor's, taught in a previous session's
+  frame: they draw perfectly over the new map and are out by however far the two
+  origins differ, which the canvas cannot show. Zones that belong to the map
+  they are drawn on are marked nothing at all — that is what "zones" means.
 - **The promote button**, which is the same audited flip `fleetctl promote`
   makes.
 
-Everything except that button is a read. Nothing you do here changes any floor
-until you promote.
+Everything except that button and the zone editor below is a read. Nothing you
+do here changes any floor until you promote.
+
+### Naming the rooms on it, before you promote it
+
+`pixi run segment-map` finds the rooms of a map but cannot know what they are
+called, so a fresh revision arrives with `zone_01`..`zone_07`. **`edit zones`**,
+beside the zone list, is where they get their names — on the candidate's own map,
+where you can see which room is which.
+
+The controls are the map and the list together:
+
+- **On the map**: drag a vertex to follow a wall, drag a zone to move footprint
+  and pose together, drag a pose cross to move where the robot is sent,
+  double-click an edge to add a vertex or a vertex to remove it. A polygon needs
+  three, so the last removal is refused rather than quietly making a line.
+  **Whatever the next press would take is highlighted under the pointer**, and
+  the cursor says which it is: a crosshair over a vertex, a move cursor over a
+  pose or a zone body, and the map's own grab cursor everywhere else — where a
+  drag pans instead of editing.
+- **Everything you drag lands on a pixel centre** — the map's own grid, so two
+  zones meant to share a wall share the same numbers, and a coordinate never
+  claims precision the map does not have. A whole zone moves by whole pixels, so
+  a traced room keeps its shape. **Hold shift to move freely**, for the rare
+  case that wants a coordinate between two pixels. Only what you drag is
+  snapped: a pose taught by driving a robot there is a measurement, and it is
+  left exactly where the robot said, while an outline this editor invents starts
+  on the grid.
+- **It is the same list either way.** The zones of a revision are listed under
+  the map whether or not you are editing them — name, kind, shape — and
+  `edit zones` puts controls into those rows rather than replacing them with a
+  second list. Nothing moves when you click it: the rows stay where they are and
+  the fields open beside them.
+- **A row is a list you pick from**: the name selects that zone, beside it the
+  **kind**, then the shape it has. `⌖` appears only for a zone with no pose at
+  all (a segmented room is an outline, so there is no cross to drag) and arms
+  the next map click as its pose. `×` deletes the zone; **`add zone`**, the last
+  line of the list, drops a square at the view centre to be dragged into shape
+  and named.
+- **Where a control sits says what it acts on.** `save as candidate` and
+  `cancel` take the place of `edit zones` above the list, because they end the
+  edit that button began; `add zone` is in the list, because that is what it
+  adds to. What the save says — a refusal, or the candidate it wrote — appears
+  under the list, in room the list gives up as the message arrives, and stays
+  until another revision is opened.
+- **Selecting a row** opens that zone's own fields beside the list — and a zone
+  is always selected, so they are always showing something: its **name**
+  (renaming is a deliberate act, not a side effect of clicking the list), the
+  **display name** an operator reads — and which the map is labelled with, here
+  and in the operations view, as soon as it is set — **also called** (the other spellings
+  `goto` should accept — an MCP dispatcher turning "the galley" into a command
+  matches these), **navigable**, the zone it is **inside**, **tags**, and a
+  **description**. They live here rather than in the row because they belong to
+  one zone at a time, and because a column each would make the list unreadable
+  long before zone/v0 ran out of fields.
+
+**The kind decides whether a zone is a point or an area, and the geometry
+follows it.** A `charger`, `dock`, `pickup`, `dropoff` or `home` is a pose to
+drive to; everything else — `room`, `corridor`, `keepout`, `slow`, a plain
+`area` — is a place with extent, and "am I in it" is the question it exists to
+answer. So changing the kind changes the shape: call a taught waypoint a `room`
+and it gets an outline to drag onto the walls; call an outlined zone a `charger`
+and the outline goes, leaving the pose. That is how an area is drawn here, and
+it is one decision rather than two that can contradict each other.
+
+The one refusal: an outline whose centre falls outside it (a concave hallway)
+cannot become a point on its own, because there is no pose to fall back on —
+place one with `⌖` first.
+
+A zone taught by driving reads as an `area` until you say otherwise: `save-zone`
+writes no kind, and `bundle.zone_term` defaults a missing one to `area` rather
+than inventing one. Beyond geometry, three kinds change what a robot does today
+— `keepout` and `slow` are not destinations (`goto` and `fetch` both refuse
+them), and `segment-map` writes `room` — the rest are vocabulary a planner may
+read over `/v1/zones`.
+
+**You should not have to name a place twice.** A machine name is what `goto`
+takes (lowercase, digits, `_`, and the field says so as you type rather than at
+save), and a display name is what a person reads — so while the machine name is
+still one nobody chose (`zone_03`, as `segment-map` and `add zone` mint them),
+typing a display name sets it: "The Kitchen" gives `the_kitchen`, "Café" gives
+`cafe`. It is a proposal, in the field, editable; a name you have already chosen
+is never rewritten, because `goto` takes it and a `fetch` may be scripted
+against it. **Aliases** are the third naming field and a different job: other
+spellings a dispatcher may *say* for the same place, which `goto` also matches.
+
+Two names the same is refused before it is saved — the robot's loader refuses a
+vocabulary where one query answers to two zones rather than picking by luck, so
+the editor must not produce one. A name a dispatcher cannot type (`Café`, `Drop
+Off`) is refused the same way.
+
+**Saving derives a new candidate**: `save as candidate` sends the edited set,
+and the server re-packs the revision you were editing with those zones in place
+of its own. The revision you edited is untouched — including when it is the
+published one — and the new candidate is selected in the pane, so the zones on
+screen afterwards are the saved ones read back from the server. Promote it when
+it looks right. Two consequences worth knowing:
+
+- **Iterating costs a candidate each save.** Editing a candidate derives from
+  *it*, so a floor's list grows while you work; the registry keeps the canonical
+  revision plus the five newest candidates, so the intermediates fall off on
+  their own.
+- **A revision that inherited the floor's zones stops inheriting.** The saved
+  candidate carries them, which is what you want: inherited zones were taught in
+  another session's frame, and dragging them onto this map is the correction.
+
+`cancel` discards the edit. There is no autosave and nothing is written until
+you save, so an edit you are unsure about costs nothing to abandon.
 
 **A floor with nothing published yet works the same way** — which was not always
 true: the dashboard used to fetch a floor's revisions only after its basemap had

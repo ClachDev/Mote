@@ -104,6 +104,20 @@ ZONE_KINDS = (
 #: honoured — otherwise the flag would mean whatever the file last said.
 CONSTRAINT_KINDS = frozenset(("keepout", "slow"))
 
+#: Kinds that name a **pose** rather than a region: a charger is where the robot
+#: docks, not an area it may be anywhere inside of, and "am I in the dropoff" is
+#: not a question about it. Everything else in :data:`ZONE_KINDS` is a place with
+#: extent — a room, a corridor, a keepout — whose footprint is the point of it.
+#:
+#: This is a fact about the vocabulary and so lives beside it, but it is
+#: **guidance, not validation**: a bundle that carries an outline on a `charger`
+#: still loads, because a rule that refused one would refuse maps taught before
+#: the rule existed. What reads it is the zone editor, where changing a zone's
+#: kind is how an operator says which of the two a place is — and the geometry
+#: follows, rather than being toggled separately as though the two were
+#: unrelated.
+POINT_KINDS = frozenset(("dock", "charger", "pickup", "dropoff", "home"))
+
 #: A dispatchable zone name. The shared token a dispatcher types, so it is a
 #: machine name rather than a label: lowercase, no spaces, no punctuation to
 #: guess at. Anything an operator wants to *see* belongs in ``display_name``.

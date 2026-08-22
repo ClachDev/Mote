@@ -22,10 +22,13 @@
 //     here. The zone list below is deliberately a row per zone with its own
 //     cells, because that is where those controls go.
 //
-// The write surface does not grow: everything this view reads is a GET, and the
-// one thing it writes is the promote M4 already had.
+// Two writes leave this pane, and both are audited operator actions: the
+// promote M4 already had, and the zone edit beside it (`zone_editor.mjs`),
+// which derives a *new* candidate rather than touching the revision on screen.
+// Nothing here changes a floor until the promote.
 
 import { MapView } from './map.mjs';
+import { ZoneEditor } from './zone_editor.mjs';
 
 // -- routes ---------------------------------------------------------------
 
@@ -185,31 +188,28 @@ export function provenanceRows(revision) {
   ];
 }
 
-// Where the zones on screen came from, which the coordinates cannot say. A
-// revision that carries none inherits the floor's — taught in a *previous* SLAM
-// session's frame, and so wrong for this map by however far the two origins
-// differ. That is a reason to look before promoting, which is what this pane is
-// for, so it is said out loud rather than left to the validator's warning list.
+// Where the zones on screen came from, which the coordinates cannot say — as a
+// state beside the heading, in the idiom the rest of the page uses, rather than
+// a sentence of prose under it.
+//
+// **The ordinary case says nothing.** Zones that belong to the revision they are
+// drawn on are what "zones" already means; a caption announcing it is a label
+// for the absence of a problem, in words ("taught in this revision's own
+// frame") that only mean anything to someone who knows the problem. What is
+// worth a word is the exception: a revision carrying no zones of its own is
+// drawn with the *floor's*, taught in a previous SLAM session's frame and so
+// out by however far the two origins differ. `null` is "nothing to say".
 export function zoneSource(source, count) {
-  if (!count) return 'this revision carries no zones';
+  if (!count) return { tag: 'none', title: 'this revision carries no zones' };
   if (source === 'floor') {
-    return 'inherited from the floor — this revision carries none, so these were taught on another map frame';
+    return {
+      tag: 'inherited',
+      title:
+        'this revision carries no zones, so the floor’s are drawn: they were ' +
+        'taught on another map and line up only as far as the two frames do',
+    };
   }
-  return 'taught in this revision’s own frame';
-}
-
-// One zone's geometry in a phrase. The vocabulary half (kind, aliases) is shown
-// in its own cells; this is the binding half, which is the half that is only
-// true against the map beside it.
-export function zoneSummary(zone) {
-  if (zone.polygon && zone.polygon.length >= 3) {
-    return `polygon, ${zone.polygon.length} vertices`;
-  }
-  if (typeof zone.radius === 'number') return `circle, r ${zone.radius} m`;
-  if (zone.x !== undefined && zone.y !== undefined) {
-    return `waypoint ${zone.x.toFixed(2)}, ${zone.y.toFixed(2)}`;
-  }
-  return 'no footprint';
+  return null;
 }
 
 // -- the view -------------------------------------------------------------
@@ -240,13 +240,26 @@ export class ReviewView {
     // and an image decode; without this, clicking through two candidates draws
     // whichever finished last rather than the one selected.
     this.epoch = 0;
+    // The zones last loaded for the selected revision, which is what an edit
+    // starts from and what the map goes back to if the edit is cancelled.
+    this.zones = [];
+    this.editing = false;
     this.map = new MapView(dom.canvas);
+    this.editor = new ZoneEditor(this.map, {
+      panel: dom.editor,
+      rows: dom.editorRows,
+      detail: dom.editorDetail,
+      note: dom.editorNote,
+    });
     dom.floor.addEventListener('change', () => this.open(dom.floor.value));
     dom.promote.addEventListener('click', () => this.promote());
     dom.fit.addEventListener('click', () => {
       this.map.fit();
       this.map.draw();
     });
+    dom.zonesEdit.addEventListener('click', () => this.beginEdit());
+    dom.zoneSave.addEventListener('click', () => this.saveZones());
+    dom.zoneCancel.addEventListener('click', () => this.endEdit());
   }
 
   // The pane's canvas has no size until the pane is on screen, so a fit done
@@ -276,10 +289,16 @@ export class ReviewView {
   async open(key, revision = null) {
     const parsed = parseFloorKey(key);
     if (!parsed) return;
+    // An edit in progress owns the pane: re-opening a floor would reload the
+    // zones under it and drop the edit on the floor. The controls that lead
+    // here are disabled while editing; this covers the ones that arrive from
+    // elsewhere (the map pane's jump button).
+    if (this.editing) return;
     const epoch = (this.epoch += 1);
     this.key = key;
     this.dom.floor.value = key;
     this.note('');
+    this.editor.note('');
     try {
       this.detail = await this.api(floorPath(parsed.site, parsed.floor));
     } catch (error) {
@@ -344,6 +363,93 @@ export class ReviewView {
     }
   }
 
+  // -- editing ----------------------------------------------------------
+
+  // Editable when there is a revision selected and its map is on screen: the
+  // coordinates being dragged mean nothing except against that image, and a
+  // revision whose map failed to load has none.
+  editable() {
+    return Boolean(this.selected && this.map.map);
+  }
+
+  // Editing is a mode on the selected revision, so while it is on, the things
+  // that would swap that revision out from under it are disabled rather than
+  // racing it. There is no autosave: an unsaved edit is lost to `cancel`, and
+  // nothing else can reach it.
+  renderEditControls() {
+    // One control at a time in one place: `edit zones` is what is there to
+    // begin with, and while the edit is up its two endings stand in for it.
+    this.dom.zonesEdit.disabled = !this.editable();
+    this.dom.zonesEdit.hidden = this.editing || !this.editable();
+    this.dom.zoneSave.hidden = !this.editing;
+    this.dom.zoneCancel.hidden = !this.editing;
+    this.dom.floor.disabled = this.editing;
+    for (const row of this.dom.revisions.querySelectorAll('button')) {
+      row.disabled = this.editing;
+    }
+    if (this.editing) this.dom.promote.disabled = true;
+  }
+
+  beginEdit() {
+    if (!this.editable() || this.editing) return;
+    this.editing = true;
+    // The editor draws its own zones, handles and pose crosses on the canvas;
+    // leaving the read-only set under them would double every outline.
+    this.map.setZones([]);
+    this.editor.begin(this.zones);
+    this.renderEditControls();
+    // Not on the note line: that line is for what the operator has to read —
+    // a refusal, or what a save did — and a banner sitting in it for the whole
+    // edit would take its room from the list and say what `save as candidate`
+    // already says. The modifier has nowhere to be discovered but the surface
+    // it applies to.
+    this.dom.canvas.title = 'edits snap to the map’s pixels; hold shift to move freely';
+  }
+
+  endEdit() {
+    this.editing = false;
+    this.dom.canvas.title = '';
+    this.editor.note('');
+    this.editor.end();
+    this.map.setZones(this.zones);
+    this.renderEditControls();
+    this.renderVerdict();
+  }
+
+  // Saving does not write the revision on screen: the server packs that
+  // revision's map bytes with the submitted zones and stores the result as an
+  // ordinary candidate. So the pane then *selects* the new candidate, and the
+  // zones on screen afterwards are the saved ones read back from the server —
+  // rather than the frozen overlay this needed when the editor lived on the
+  // operations map, where the only thing to re-render was the stale set the
+  // edit was made from (which read as data loss, 2026-08-02).
+  async saveZones() {
+    if (!this.editing || !this.selected) return;
+    const problem = this.editor.problems();
+    if (problem) {
+      this.editor.note(problem, true);
+      return;
+    }
+    const { site, floor } = parseFloorKey(this.key);
+    const from = this.selected.revision;
+    this.editor.note('saving…');
+    let body;
+    try {
+      body = await this.api(`/v1/sites/${site}/floors/${floor}/zones`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schema: 1, revision: from, zones: this.editor.payload() }),
+      });
+    } catch (error) {
+      this.editor.note(error.message, true);
+      return;
+    }
+    this.endEdit();
+    await this.loadFloors();
+    await this.open(this.key, body.revision);
+    this.editor.note(`candidate ${body.revision} saved from ${from}`);
+  }
+
   // -- rendering --------------------------------------------------------
 
   renderFloors() {
@@ -399,6 +505,7 @@ export class ReviewView {
         el('p', { class: 'empty', text: 'no revisions on this floor' }),
       );
     }
+    this.renderEditControls();
   }
 
   renderVerdict() {
@@ -423,20 +530,17 @@ export class ReviewView {
     );
   }
 
-  // One row per zone, three cells. Read-only here on purpose — the write half
-  // (rename, alias, kind, click-to-teach a pose) is task 346, and it edits
-  // exactly these rows.
+  // The zones of the selected revision, drawn by the editor whether or not it
+  // is editing them: `edit zones` puts controls in these rows rather than
+  // replacing them with a second list of its own.
   renderZones(zones, source = '') {
-    this.dom.zoneSource.textContent = zoneSource(source, zones.length);
-    this.dom.zones.replaceChildren(
-      ...zones.map((zone) =>
-        el('div', { class: 'zone-row' }, [
-          el('span', { class: 'zone-name', text: zone.display_name || zone.name }),
-          el('span', { class: 'zone-kind', text: zone.kind || 'area' }),
-          el('span', { class: 'dim', text: zoneSummary(zone) }),
-        ]),
-      ),
-    );
+    this.zones = zones;
+    const origin = zoneSource(source, zones.length);
+    this.dom.zoneSource.hidden = !origin;
+    this.dom.zoneSource.textContent = origin ? origin.tag : '';
+    this.dom.zoneSource.title = origin ? origin.title : '';
+    this.editor.show(zones);
+    this.renderEditControls();
   }
 
   note(text, bad = false) {
@@ -469,7 +573,7 @@ export class ReviewView {
       await this.open(this.key, revision);
       this.note(
         body.announced
-          ? `${site}/${floor} is on ${body.revision}; robots will pull it`
+          ? `${site}/${floor} is on ${body.revision}`
           : `promoted, but not announced: ${body.detail}`,
         !body.announced,
       );

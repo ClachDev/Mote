@@ -37,7 +37,8 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET      .../revisions/<rev>/map.png     that revision's own image
     GET      .../revisions/<rev>/zones.json  that revision's own zone binding
     POST     .../revisions/<rev>/promote     make it canonical (operator)
-    POST /v1/sites/<site>/floors/<floor>/zones  edited zones -> new candidate (operator)
+    POST /v1/sites/<site>/floors/<floor>/zones  edited zones of a revision ->
+                                             a new candidate (operator)
     GET  /                                   the operator UI (static files)
 
     pixi run fleet-server -- --db ~/fleet/registry.db --broker-host fleet-box
@@ -816,13 +817,19 @@ class FleetHandler(BaseHTTPRequestHandler):
         )
 
     def _edit_zones(self, rest: str, body: dict):
-        """An operator's zone edit: derive a candidate from the canonical map.
+        """An operator's zone edit: derive a candidate from a revision.
 
         The edit writes nothing the fleet can see — the result is an ordinary
         candidate (same map bytes, new zones), validated like any upload and
         inert until the operator promotes it through the existing route. That
         keeps promoted revisions immutable, which the announced digests rely
         on, and keeps promotion the only write that changes a floor.
+
+        The body's optional ``revision`` is the revision being edited; without
+        one the canonical map is edited, as before. It is a body field rather
+        than a path segment because the edited revision is an *input* to the
+        derivation and never the thing written — the route's own resource is
+        the floor's zones, and the result is a revision id neither end chose.
         """
         parts = rest.split("/")
         if len(parts) != 3 or parts[1] != "floors":
@@ -844,23 +851,27 @@ class FleetHandler(BaseHTTPRequestHandler):
             )
             self._error(401, str(exc))
             return
-        if not self._names(site, floor):
+        source = str(body.get("revision") or "")
+        if not self._names(site, floor, *([source] if source else [])):
             return
         zones = body.get("zones")
         if not isinstance(zones, dict):
             self._error(400, "a zones mapping is required: {zones: {name: {...}}}")
             return
         actor = operator["name"]
+        # The audit row names what was edited, not only which floor: two
+        # candidates of one floor are two different maps, and "who renamed the
+        # rooms on this map" is unanswerable from the floor alone.
         entry = registry.record(
             actor=actor,
             action="map.zones",
-            command=target,
+            command=f"{target}/{source}" if source else target,
             result="editing",
             remote=self.address_string(),
         )
         try:
             stored, report, derived_from = self.server.store.derive_zones(
-                site, floor, zones, by=actor
+                site, floor, zones, by=actor, source=source
             )
         except StoreError as exc:
             registry.finish(entry["id"], "rejected", str(exc))
@@ -876,7 +887,9 @@ class FleetHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._error(500, "the zone edit could not be stored")
             return
-        registry.finish(entry["id"], "stored", f"candidate {stored}")
+        registry.finish(
+            entry["id"], "stored", f"candidate {stored} from {derived_from}"
+        )
         print(
             f"zone edit {target} by {actor}: candidate {stored} (from {derived_from})",
             file=sys.stderr,

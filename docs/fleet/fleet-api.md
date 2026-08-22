@@ -101,6 +101,8 @@ GET      …/revisions/<rev>/map.json      that revision's own transform + size
 GET      …/revisions/<rev>/map.png       that revision's own image
 GET      …/revisions/<rev>/zones.json    that revision's own zone binding
 POST     …/revisions/<rev>/promote       make it canonical (an operator)
+POST /v1/sites/<site>/floors/<floor>/zones  edited zones of a revision ->
+                                         a new candidate (an operator)
 GET  /                                   the operator UI (static files)
 ```
 
@@ -499,6 +501,69 @@ frame.
 All three are reads, so like every other read route they take no operator token;
 M7 changes that for all of them at once.
 
+### `POST /v1/sites/<site>/floors/<floor>/zones`
+
+Operator token required. The edited zone set, and the revision it was edited
+against:
+
+```json
+{"schema": 1, "revision": "20260802T145731",
+ "zones": {"kitchen": {"x": 1.0, "y": -3.0, "yaw": 0.0, "kind": "room",
+                       "display_name": "The Kitchen", "aliases": ["galley"],
+                       "polygon": [[0.0,-4.0],[2.0,-4.0],[2.0,-2.0],[0.0,-2.0]]}}}
+```
+
+`zones` is the `zones.yaml` shape — keyed by name, both halves of zone/v0 in one
+entry — and it **replaces** that revision's set rather than patching it. An entry
+may echo its key as `name`, which is dropped: the file keys by name and carries
+no second copy.
+
+```json
+{"schema":1,"site":"home","floor":"ground","revision":"20260812T211029",
+ "derived_from":"20260802T145731","promoted":false,"warnings":[],"audit_id":31}
+```
+
+| Status | Meaning |
+|---|---|
+| `201` | stored as a candidate — `revision` is the new one, `derived_from` the edited one |
+| `400` | `zones` is not a mapping, or a name is not a directory name |
+| `401` | no usable operator token (recorded as an anonymous attempt) |
+| `404` | no such floor, or no such `revision` on it |
+| `409` | no `revision` given and the floor has nothing published to edit |
+| `422` | the edited set is not readable as a `zones.yaml`; `errors` says why |
+
+**Editing is a derivation, not a mutation.** The named revision's map bytes are
+re-packed with the submitted zones in place of its own and accepted as an
+ordinary candidate — validated by the same code as a robot's upload, listed by
+the floor route, promotable through the route above. Nothing already stored is
+written: a promoted revision's bytes back a digest the fleet has been told, and a
+candidate is immutable for the same reason an id is never reused. The response
+carries `promoted: false` because that stays a separate, audited decision.
+
+**`revision` is what makes an unpromoted map editable**, and that is the point
+rather than a convenience. A fresh build arrives carrying `zone_01`..`zone_07`
+from `segment-map`; without it the only thing an edit could derive from was the
+canonical revision, so renaming those placeholders meant promoting them first —
+publishing a map *because* it was wrong. It also keeps the coordinates in the
+frame they were drawn in: the operator is looking at that revision's own map.
+Omitted, the canonical revision is edited, which is the same thing for a floor
+whose published map is what is on screen.
+
+**The bar is the source's, not the upload's.** A revision with no posegraph is
+one mapping cannot be continued from — an error for a robot's upload, where the
+session can be re-run, and a *warning* on a stored revision, which navigates
+perfectly and which `promote` will accept. A derivation is therefore validated
+the way `promote` validates: holding an edit to a stricter bar than the revision
+it derives from would put an `edit zones` button beside a `promotable` verdict
+that could only ever fail.
+
+Two things this route deliberately does not do. It does not slugify or otherwise
+repair a name — a zone a dispatcher cannot type is stored with a warning, as
+everywhere else in the vocabulary (`problems` are reported, not enforced; the
+*robot's* loader is what refuses one). And it never publishes: the audit row
+names the actor, the floor and the revision edited, and the floor's `map`
+symlink is untouched.
+
 ---
 
 ## What the browser is allowed to do
@@ -511,7 +576,8 @@ omission, not by intention. M7 makes that structural on the broker side too,
 with a subscribe-only credential.
 
 **Reviewing a candidate is all GETs.** The review pane reads a revision's
-`map.json`, `map.png` and `zones.json` and writes nothing; its one write is the
-`promote` M4 already had, which is authorized and audited like any other. Zone
-*editing* is a separate write (`POST …/floors/<floor>/zones`) that derives a new
-candidate and still changes no published floor.
+`map.json`, `map.png` and `zones.json`; the two writes beside them are the
+`promote` M4 already had and the zone edit above, both operator-authorized and
+both audited. The edit is the only write in the fleet that produces a revision,
+and it produces an inert one: a candidate nobody is running, on a floor that has
+not moved.

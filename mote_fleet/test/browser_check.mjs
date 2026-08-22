@@ -299,7 +299,7 @@ try {
 
   const zoneRows = await settle(
     session,
-    `document.querySelectorAll('#review-zones .zone-row').length`,
+    `document.querySelectorAll('#zone-rows .zone-row').length`,
     (rows) => rows > 0,
   );
   check('the candidate’s zones are listed beside it', zoneRows > 0, `${zoneRows} rows`);
@@ -319,6 +319,247 @@ try {
   const reviewPng = await session.send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(reviewShot, Buffer.from(reviewPng.data, 'base64'));
   console.log(`screenshot: ${reviewShot}`);
+
+  // -- editing the candidate's zones --------------------------------------
+  //
+  // The other half of the review decision: a build's rooms arrive as `zone_01`
+  // ..`zone_07`, and naming them is done here, against the candidate's own map,
+  // by an operator who can see which room is which. Saving derives a *new*
+  // candidate from the one on screen — so the map the coordinates were drawn on
+  // is the map they are stored against, and nothing published moves.
+
+  if (token) {
+    // The map must not move when the editor opens: the editing surface is
+    // taller than the list it replaces, and with the canvas taking whatever
+    // height was left, clicking `edit zones` resized the thing being edited.
+    const shapeOf = `(() => {
+      const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
+      return JSON.stringify({
+        map: Math.round(document.getElementById('review-canvas').getBoundingClientRect().height),
+        rows: rows.map(row => Math.round(row.getBoundingClientRect().height)),
+        top: rows.length ? Math.round(rows[0].getBoundingClientRect().top) : 0,
+        cells: rows.length ? rows[0].children.length : 0,
+      });
+    })()`;
+    const shapeBefore = await session.evaluate(shapeOf);
+    const mapBefore = JSON.parse(shapeBefore).map;
+    const editing = await session.evaluate(`(() => {
+      document.getElementById('zones-edit').click();
+      const rows = document.getElementById('zone-rows');
+      const shown = (id) => !document.getElementById(id).hidden;
+      return {
+        rows: document.querySelectorAll('#zone-rows .zone-row').length,
+        // One list in both modes: the rows that were text now hold controls.
+        controls: document.querySelectorAll('#zone-rows select').length,
+        listLocked: [...document.querySelectorAll('#review-revisions button')]
+          .every(button => button.disabled),
+        promoteLocked: document.getElementById('review-promote').disabled,
+        // The edit ends where it began, and adding a zone is the end of the
+        // list rather than a third button beside the two that end the edit.
+        ends: !shown('zones-edit') && shown('zone-save') && shown('zone-cancel'),
+        adds: rows.lastElementChild && rows.lastElementChild.className === 'zone-add',
+      };
+    })()`);
+    check(
+      'editing opens on the selected revision’s zones and holds it still',
+      editing.rows > 0 &&
+        editing.controls === editing.rows &&
+        editing.listLocked &&
+        editing.promoteLocked,
+      JSON.stringify(editing),
+    );
+    check(
+      'the edit ends where it began, and `add zone` is part of the list',
+      editing.ends && editing.adds,
+      JSON.stringify({ ends: editing.ends, adds: editing.adds }),
+    );
+
+    // One list, one shape: the rows are the same rows, in the same place, the
+    // same height, with the same cells — `edit zones` puts controls in them and
+    // changes nothing else. Every part of that has been wrong at least once: a
+    // second list with its own columns, a box drawn round the editing one, and
+    // a selection border that grew every row by two pixels.
+    const shapeDuring = await session.evaluate(shapeOf);
+    check(
+      'the list and the map are the same shape, edited or not',
+      shapeBefore === shapeDuring && JSON.parse(shapeBefore).map > 0,
+      `${shapeBefore} then ${shapeDuring}`,
+    );
+
+    // A row carries identity and shape; everything else is a form for the one
+    // selected zone, which is what lets zone/v0 grow a field without giving
+    // every row another column.
+    const selected = await session.evaluate(`(() => {
+      document.querySelectorAll('#zone-rows .zone-name')[0].click();
+      const row = document.querySelectorAll('#zone-rows .zone-row')[0];
+      return {
+        cells: row.children.length,
+        marked: row.classList.contains('selected'),
+        inputsInRow: row.querySelectorAll('input').length,
+        fields: [...document.querySelectorAll('#zone-detail .zone-field-name')]
+          .map(node => node.textContent).join(','),
+      };
+    })()`);
+    check(
+      'picking a zone by name marks the row and opens its fields',
+      selected.cells === 5 &&
+        selected.marked &&
+        selected.inputsInRow === 0 &&
+        selected.fields.startsWith('name,'),
+      JSON.stringify(selected),
+    );
+
+    // A vocabulary the robot's loader would *refuse* — two zones answering one
+    // query — must not leave the browser: it would be stored as a candidate
+    // that looks fine and cannot be loaded. The alias is set through the panel
+    // the row selects, which is where every field but identity and shape lives.
+    const refused = await session.evaluate(`(() => {
+      const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
+      const first = rows[0].querySelector('.zone-name').textContent;
+      rows[1].querySelector('.zone-name').click();
+      const field = [...document.querySelectorAll('#zone-detail .zone-field')]
+        .find(row => row.textContent.startsWith('also called'));
+      const aliases = field.querySelector('input');
+      aliases.value = first.toUpperCase();
+      aliases.dispatchEvent(new Event('change'));
+      const note = document.getElementById('zone-note');
+      const top = () => Math.round(document.querySelector('#zone-rows .zone-row').getBoundingClientRect().top);
+      const before = { top: top(), note: Math.round(note.getBoundingClientRect().height) };
+      document.getElementById('zone-save').click();
+      return {
+        note: note.textContent,
+        field: !!field,
+        before,
+        // The message takes its room from the list, which is the one thing in
+        // the box that scrolls — so nothing above it moves, and an empty one
+        // leaves no gap over the first zone.
+        after: { top: top(), note: Math.round(note.getBoundingClientRect().height) },
+        whole: note.scrollHeight <= note.clientHeight,
+      };
+    })()`);
+    check(
+      'an ambiguous vocabulary is refused in the browser, not stored',
+      /both answer to/.test(refused.note),
+      refused.note,
+    );
+    check(
+      'the refusal is readable in full and moves nothing above it',
+      refused.before.note === 0 &&
+        refused.after.note > 0 &&
+        refused.before.top === refused.after.top &&
+        refused.whole,
+      JSON.stringify({ ...refused.before, ...refused.after, whole: refused.whole }),
+    );
+
+    await session.evaluate(`(() => {
+      const detailField = (label) =>
+        [...document.querySelectorAll('#zone-detail .zone-field')]
+          .find(row => row.textContent.startsWith(label))
+          .querySelector('input, select');
+      const set = (label, value) => {
+        const control = detailField(label);
+        control.value = value;
+        control.dispatchEvent(new Event('change'));
+      };
+      set('also called', '');                       // undo the clash above
+      const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
+      rows[0].querySelector('.zone-name').click();  // the row is a list, so pick
+      const name = document.querySelector('.zone-rename');
+      const renamed = name.value + '_named';
+      name.value = renamed;                         // and rename in the panel
+      name.dispatchEvent(new Event('change'));
+      const fresh = [...document.querySelectorAll('#zone-rows .zone-row')][0];
+      fresh.querySelector('select').value = 'room';
+      fresh.querySelector('select').dispatchEvent(new Event('change'));
+      set('display name', 'A Named Room');
+      document.getElementById('zone-save').click();
+      return renamed;
+    })()`);
+    const derived = await settle(
+      session,
+      `(() => ({
+        // The line under the zones, which is where the work was: what the save
+        // did outlives the save, rather than a flash of 'saving...' here with
+        // the result reported in the far column.
+        note: document.getElementById('zone-note').textContent,
+        label: document.getElementById('review-map-label').textContent,
+        // Hidden means the zones belong to the revision they are drawn on,
+        // which is the ordinary case and says nothing.
+        inherited: !document.getElementById('review-zone-source').hidden,
+        zones: [...document.querySelectorAll('#zone-rows .zone-row')]
+          .map(row => row.textContent).join(' '),
+        editorHidden: document.getElementById('zone-editor').hidden,
+        // And the head is back to the one control that starts an edit.
+        editVisible: !document.getElementById('zones-edit').hidden,
+      }))()`,
+      (state) => /saved from \d{8}T\d{6}/.test(state.note),
+    );
+    check(
+      'saving derives a candidate from the revision under review',
+      /saved from \d{8}T\d{6}/.test(derived.note),
+      derived.note,
+    );
+    // The edited set is on screen afterwards because it was *read back* from the
+    // new candidate — not held over as an overlay of what was typed. And the
+    // zone renamed above went in as a bare waypoint and comes back as a
+    // polygon, because calling it a `room` is what gave it an outline: the kind
+    // and the geometry are one decision, made once.
+    check(
+      'the pane then shows the saved candidate’s own zones',
+      derived.editorHidden &&
+        derived.editVisible &&
+        derived.zones.includes('A Named Room') &&
+        !derived.inherited,
+      JSON.stringify(derived),
+    );
+    check(
+      'calling a bare pose a room gave it an outline, all the way to the server',
+      /A Named Roomroom\s*polygon/.test(derived.zones),
+      derived.zones,
+    );
+
+    // And that outline is on the map's own pixel grid. A vertex anywhere inside
+    // a pixel covers the same cells as one at its centre, so free-hand
+    // coordinates are precision the map cannot back — and two zones meant to
+    // share a wall land millimetres apart, differently each time.
+    const onGrid = await session.evaluate(`(async () => {
+      const label = document.getElementById('review-map-label').textContent;
+      const [floor, revision] = label.split(' · ');
+      const base = '/v1/sites/' + floor.replace('/', '/floors/') + '/revisions/' + revision;
+      const [map, zones] = await Promise.all([
+        fetch(base + '/map.json').then(r => r.json()),
+        fetch(base + '/zones.json').then(r => r.json()),
+      ]);
+      const centred = (value, origin) => {
+        const cells = (value - origin) / map.resolution - 0.5;
+        return Math.abs(cells - Math.round(cells)) < 1e-6;
+      };
+      const drawn = zones.zones.filter(zone => zone.polygon);
+      const off = drawn.flatMap(zone => (zone.polygon || [])
+        .filter(([x, y]) => !(centred(x, map.origin[0]) && centred(y, map.origin[1])))
+        .map(point => zone.name + ' ' + point.join(',')));
+      return { outlines: drawn.length, off };
+    })()`);
+    check(
+      'the outline it drew sits on the map’s pixel grid',
+      onGrid.outlines > 0 && onGrid.off.length === 0,
+      JSON.stringify(onGrid),
+    );
+    check(
+      'the edited revision is still a candidate: nothing published moved',
+      !new RegExp(`${derived.label.split(' · ')[1]}`).test(
+        await session.evaluate(`document.getElementById('review-canonical').textContent`),
+      ),
+      `canonical: ${await session.evaluate(
+        `document.getElementById('review-canonical').textContent`,
+      )}`,
+    );
+
+    const editShot = shot.replace(/(\.png)?$/, '-zones.png');
+    const editPng = await session.send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(editShot, Buffer.from(editPng.data, 'base64'));
+    console.log(`screenshot: ${editShot}`);
+  }
 
   // -- the first promotion on a floor -------------------------------------
   //

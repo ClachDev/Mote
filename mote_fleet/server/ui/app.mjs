@@ -14,7 +14,6 @@
 
 import { BrokerReader, parseTopic } from './mqtt.mjs';
 import { MapView } from './map.mjs';
-import { ZoneEditor } from './zone_editor.mjs';
 import { ReviewView } from './review.mjs';
 import { setupPanes } from './layout.mjs';
 
@@ -42,7 +41,6 @@ const state = {
 
 const dom = {};
 let mapView = null;
-let editor = null;
 let review = null;
 let panes = null;
 let pending = false;
@@ -182,10 +180,6 @@ async function ensureMap(record) {
   if (key === state.mapKey) return;
   state.mapKey = key;
   state.floor = null;
-  if (editor) {
-    editor.end();
-    dom.zonesEdit.disabled = false;
-  }
   setZones([]);
   renderRevisions();
   if (!key) {
@@ -255,10 +249,16 @@ function renderRevisions() {
   const candidates = floor
     ? floor.revisions.filter((revision) => !revision.canonical)
     : [];
-  dom.reviewJump.hidden = candidates.length === 0;
-  dom.reviewJump.textContent = `${candidates.length} candidate${
-    candidates.length === 1 ? '' : 's'
-  } — review`;
+  // Always reachable, and *not* conditional on this floor having candidates.
+  // The tab bar it shares the job with is hidden above 760 px, so while this
+  // was, a desk-width operator could reach the review pane only through a
+  // floor a robot was reporting — which is precisely the floor review is least
+  // needed for. The floor mapped last week by a robot since switched off, and
+  // the floor a build lands on with no robot near it, were both unreachable.
+  dom.reviewJump.hidden = false;
+  dom.reviewJump.textContent = candidates.length
+    ? `${candidates.length} candidate${candidates.length === 1 ? '' : 's'} — review`
+    : 'review maps';
 }
 
 // The zones of the floor on screen, as a `goto` the operator does not have to
@@ -293,42 +293,6 @@ function onReviewJump() {
 function onPromoted() {
   state.mapKey = null;
   scheduleRender();
-}
-
-// Editing starts from the zones on screen — the canonical floor's — and never
-// writes back to them: saving derives a fresh candidate revision server-side,
-// which the picker then promotes like any robot-published map.
-function onEditZones() {
-  if (!state.mapKey || !mapView.map) return;
-  editor.begin(state.zones);
-  dom.zonesEdit.disabled = true;
-}
-
-async function onSaveZones() {
-  const problem = editor.problems();
-  if (problem) {
-    dom.zoneNote.textContent = problem;
-    dom.zoneNote.className = 'note error';
-    return;
-  }
-  const [site, floor] = state.mapKey.split('/');
-  dom.zoneNote.textContent = 'saving\u2026';
-  dom.zoneNote.className = 'note';
-  try {
-    const body = await api(`/v1/sites/${site}/floors/${floor}/zones`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schema: 1, zones: editor.payload() }),
-    });
-    editor.finish();
-    dom.zonesEdit.disabled = false;
-    dom.promoteNote.textContent = `zone candidate ${body.revision} saved \u2014 the zones shown are the candidate's; open review to see it and promote it`;
-    dom.promoteNote.className = 'note';
-    await loadFloor(site, floor, state.mapKey);
-  } catch (error) {
-    dom.zoneNote.textContent = error.message;
-    dom.zoneNote.className = 'note error';
-  }
 }
 
 // -- rendering -----------------------------------------------------------
@@ -597,7 +561,6 @@ function bind() {
     mapLabel: 'map-label',
     mapRevision: 'map-revision',
     reviewJump: 'review-jump',
-    promoteNote: 'promote-note',
     canvas: 'map-canvas',
     follow: 'follow',
     fit: 'fit',
@@ -609,7 +572,6 @@ function bind() {
     reviewVerdictNotes: 'review-verdict-notes',
     reviewNotesLabel: 'review-notes-label',
     reviewProvenance: 'review-provenance',
-    reviewZones: 'review-zones',
     reviewZoneSource: 'review-zone-source',
     reviewCanvas: 'review-canvas',
     reviewMapLabel: 'review-map-label',
@@ -619,7 +581,7 @@ function bind() {
     zonesEdit: 'zones-edit',
     zoneEditor: 'zone-editor',
     zoneRows: 'zone-rows',
-    zoneAdd: 'zone-add',
+    zoneDetail: 'zone-detail',
     zoneSave: 'zone-save',
     zoneCancel: 'zone-cancel',
     zoneNote: 'zone-note',
@@ -655,12 +617,20 @@ export async function boot() {
       verdictNotes: dom.reviewVerdictNotes,
       notesLabel: dom.reviewNotesLabel,
       provenance: dom.reviewProvenance,
-      zones: dom.reviewZones,
       zoneSource: dom.reviewZoneSource,
       mapLabel: dom.reviewMapLabel,
       promote: dom.reviewPromote,
       fit: dom.reviewFit,
       note: dom.reviewNote,
+      // The zone editor's own controls. It lives in this pane because it edits
+      // the *selected revision's* zones over that revision's own map.
+      zonesEdit: dom.zonesEdit,
+      editor: dom.zoneEditor,
+      editorRows: dom.zoneRows,
+      editorDetail: dom.zoneDetail,
+      editorNote: dom.zoneNote,
+      zoneSave: dom.zoneSave,
+      zoneCancel: dom.zoneCancel,
     },
   });
   // A canvas has no size until its pane is on screen, so each map is told when
@@ -686,18 +656,6 @@ export async function boot() {
     mapView.draw();
   });
   dom.dispatch.addEventListener('submit', onDispatch);
-  editor = new ZoneEditor(mapView, {
-    panel: dom.zoneEditor,
-    rows: dom.zoneRows,
-    note: dom.zoneNote,
-  });
-  dom.zonesEdit.addEventListener('click', onEditZones);
-  dom.zoneAdd.addEventListener('click', () => editor.addZone());
-  dom.zoneSave.addEventListener('click', onSaveZones);
-  dom.zoneCancel.addEventListener('click', () => {
-    editor.end();
-    dom.zonesEdit.disabled = false;
-  });
   document.getElementById('token-form').addEventListener('submit', onToken);
 
   state.config = await api('/v1/config');

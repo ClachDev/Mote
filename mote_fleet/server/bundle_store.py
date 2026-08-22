@@ -354,26 +354,44 @@ class BundleStore:
             raise StoreError(f"no zones for {site}/{floor}", 404)
         return bundle.vocabulary(bundle.read_zones(path), site, floor)
 
-    def derive_zones(self, site: str, floor: str, zones: dict, *, by: str):
-        """A new candidate revision: the canonical map's bytes, edited zones.
+    def derive_zones(
+        self, site: str, floor: str, zones: dict, *, by: str, source: str = ""
+    ):
+        """A new candidate revision: one revision's map bytes, edited zones.
 
         An operator's zone edit never touches a stored revision — a promoted
         revision's bytes back a digest the fleet has been told, and a candidate
         is immutable for the same reason one id is never reused. So an edit is
-        a *derivation*: pack the canonical revision with the submitted zones in
+        a *derivation*: pack the source revision with the submitted zones in
         place of its own, and accept the result as an ordinary candidate —
         validated by the same code as any upload, inert until promoted.
+
+        ``source`` is the revision being edited, defaulting to the canonical
+        one. Naming a candidate is what makes an unpromoted map editable: the
+        first build of a floor arrives with `zone_01`..`zone_07` from
+        `segment-map`, and defaulting to the canonical would have meant
+        promoting placeholder names in order to be allowed to fix them —
+        publishing a map *because* it was wrong. It also puts the edit in the
+        frame it was drawn in: the operator renaming rooms is looking at the
+        candidate's own map in the review pane, and rebinding those names onto
+        the published map's frame is exactly the trap the pane exists to name.
         Returns ``(stored_revision, report, derived_from)``.
         """
-        canonical = self.canonical(site, floor)
-        if not canonical:
+        source = source or self.canonical(site, floor)
+        if not source:
             raise StoreError(
                 f"{site}/{floor} has no published map to edit zones on", 409
             )
-        rev_dir = self.revision_dir(site, floor, canonical)
+        rev_dir = self.revision_dir(site, floor, source)
         previous = {}
-        zones_file = rev_dir / bundle.ZONES_YAML
-        if zones_file.is_file():
+        # The zones the operator was shown, which is what the edit is a delta
+        # of: `_zones_file` falls back to the floor's file for a revision
+        # carrying none, and so does the review pane that fed the editor. The
+        # `frame_id` and `vocabulary_revision` come from there for the same
+        # reason — an edit that silently reset the vocabulary revision would
+        # make a later carry-forward unable to tell which naming is newer.
+        zones_file = self._zones_file(site, floor, revision=source)
+        if zones_file is not None:
             try:
                 previous = bundle.read_zones(zones_file)
             except bundle.BundleError:
@@ -400,8 +418,9 @@ class BundleStore:
             datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"),
             blob,
             uploaded_by=by,
+            require_posegraph=False,
         )
-        return stored, report, canonical
+        return stored, report, source
 
     def vocabularies(self) -> list:
         """Every floor's vocabulary, for a dispatcher bootstrapping a whole
@@ -468,6 +487,7 @@ class BundleStore:
         *,
         robot_id: str = "",
         uploaded_by: str = "",
+        require_posegraph: bool = True,
     ) -> tuple[str, bundle.Report]:
         """Store an uploaded revision as a **candidate**. Returns ``(id, report)``.
 
@@ -475,6 +495,16 @@ class BundleStore:
         robot is running. That separation is the milestone's conflict story: a
         second robot's map of the same floor is kept beside the first, and an
         operator promotes one.
+
+        ``require_posegraph`` is what a *robot's upload* is held to and what a
+        derivation is not: a mapping session that produced no posegraph produced
+        a map nothing can extend, and that is worth refusing at the source. A
+        revision already in the registry has been judged by the looser rule
+        :meth:`promote` uses, so a derivation of one must not be held to a
+        stricter bar than the revision it came from — the review pane calls such
+        a revision promotable, and an `edit zones` button beside that verdict
+        that could only ever fail is worse than no button (observed: the sim's
+        own bundles carry no posegraph).
         """
         if not self.root:
             raise StoreError("this server stores no site bundles", 404)
@@ -491,7 +521,7 @@ class BundleStore:
             except bundle.BundleError as exc:
                 raise StoreError(str(exc), 400) from exc
             try:
-                report = bundle.validate(staging)
+                report = bundle.validate(staging, require_posegraph=require_posegraph)
             except bundle.BundleError as exc:
                 # validate() documents that it reports rather than raises, and
                 # it is tested that way. Belt and braces: a validator that

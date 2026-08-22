@@ -33,6 +33,7 @@ import {
   pinchUpdate,
   pixelToWorld,
   worldToPixel,
+  zoneLabel,
   zoneOutline,
 } from '../server/ui/map.mjs';
 import { NARROW_MAX_PX } from '../server/ui/layout.mjs';
@@ -195,6 +196,31 @@ test('a radius zone becomes a circle in pixels, not in metres', () => {
   assert.deepEqual(outline.centre, worldToPixel(map, 1, 1));
 });
 
+test('a zone is drawn under the name a person reads', () => {
+  // `display_name` is the half meant for reading and the machine name is the
+  // half meant for typing, so a zone given one is labelled with it — on the
+  // fleet map and under the editor's own handles alike, or a zone would answer
+  // to one name in the list and another the moment it was being edited.
+  assert.equal(zoneLabel({ name: 'zone_01', display_name: 'Kitchen' }), 'Kitchen');
+  assert.equal(zoneLabel({ name: 'zone_01', display_name: '' }), 'zone_01');
+  assert.equal(zoneLabel({ name: 'zone_01' }), 'zone_01');
+  assert.equal(zoneLabel(null), '');
+});
+
+test('the browser is told which theme to draw its own controls in', () => {
+  // A `select`'s dropdown, a checkbox and a scrollbar are the browser's to
+  // paint. Left to the *system* preference while the page follows its own, a
+  // dark page grows a white dropdown list — which is what a select in the zone
+  // editor looked like.
+  const css = read('style.css');
+  const dark = css.slice(css.indexOf(':root {'));
+  assert.match(dark.slice(0, dark.indexOf('}')), /color-scheme:\s*dark/);
+  const light = css.slice(css.indexOf('@media (prefers-color-scheme: light)'));
+  assert.match(light.slice(0, light.indexOf('}')), /color-scheme:\s*light/);
+  // And the element itself, which the shared control rule used to miss.
+  assert.match(css, /input,\s*select,\s*button,\s*\.button \{/);
+});
+
 test('a bare waypoint has no outline to draw', () => {
   const map = { resolution: 0.05, origin: [0, 0, 0], width: 100, height: 100 };
   assert.equal(zoneOutline(map, { name: 'pickup', x: 1, y: 1 }), null);
@@ -281,9 +307,37 @@ test('both map canvases take their own touch gestures', () => {
 // editor's geometry is tested here with no canvas: the browser only adds
 // pointer events on top of exactly these.
 
-const { pointInPolygon, nearestVertex, nearestEdge, withVertex, withInsertedVertex, withoutVertex, translated, withPose, freshZone, zonesPayload, NAME_RE } = await import(
-  '../server/ui/zone_editor.mjs'
-);
+const {
+  CONSTRAINT_KINDS,
+  NAME_RE,
+  POINT_KINDS,
+  ZONE_KINDS,
+  ambiguities,
+  cursorFor,
+  formatList,
+  freshZone,
+  hitTest,
+  isAreaKind,
+  isGeneratedName,
+  poseFor,
+  nearestEdge,
+  nearestVertex,
+  navigableByDefault,
+  normaliseAlias,
+  parseList,
+  pointInPolygon,
+  slugify,
+  zoneSummary,
+  snapDelta,
+  snapToPixel,
+  translated,
+  withInsertedVertex,
+  withKind,
+  withPose,
+  withVertex,
+  withoutVertex,
+  zonesPayload,
+} = await import('../server/ui/zone_editor.mjs');
 
 const square = {
   name: 'kitchen',
@@ -327,6 +381,81 @@ test('vertex edits replace, insert after the edge start, and refuse a triangle c
   assert.equal(withoutVertex(triangle, 0), null);
 });
 
+test('the hit test claims a vertex, then a pose, then the zone under it', () => {
+  // One function, because the hover highlight, the cursor and the drag all read
+  // it: an operator who cannot tell which of the three a press will take — or
+  // that it will pan the map instead — is guessing, and three copies of this
+  // ordering would eventually disagree about the answer.
+  const zones = [square, { name: 'home', x: 5, y: 5 }];
+  assert.deepEqual(hitTest(zones, 0.05, 0.05, 0.2), {
+    kind: 'vertex',
+    zone: 'kitchen',
+    index: 0,
+  });
+  // The pose sits inside its own footprint; the pose wins.
+  assert.deepEqual(hitTest(zones, 1, 1, 0.2), { kind: 'pose', zone: 'kitchen' });
+  assert.deepEqual(hitTest(zones, 1.6, 0.4, 0.2), { kind: 'zone', zone: 'kitchen' });
+  // A waypoint zone is reachable with no footprint at all, and beyond it is the
+  // map: `null` is what makes a drag pan rather than edit.
+  assert.deepEqual(hitTest(zones, 5.1, 5, 0.2), { kind: 'pose', zone: 'home' });
+  assert.equal(hitTest(zones, 40, 40, 0.2), null);
+});
+
+test('the cursor says which of those it is before anything is pressed', () => {
+  assert.equal(cursorFor(null), ''); // the stylesheet's grab: this pans
+  assert.equal(cursorFor({ kind: 'vertex' }), 'crosshair');
+  assert.equal(cursorFor({ kind: 'zone' }), 'move');
+  assert.equal(cursorFor({ kind: 'pose' }), 'move');
+  // Arming a pose overrides everything: the next click lands wherever it is.
+  assert.equal(cursorFor(null, true), 'crosshair');
+  assert.equal(cursorFor({ kind: 'zone' }, true), 'crosshair');
+});
+
+test('edits land on pixel centres, and never move more than half a pixel', () => {
+  // The map is the limit of the precision available: a vertex anywhere inside a
+  // pixel covers the same cells as one at its centre, so free-hand coordinates
+  // are digits the map cannot back — and two zones meant to share a wall land a
+  // few millimetres apart, differently every time.
+  const grid = { resolution: 0.05, origin: [-10.935, -5.958, 0], width: 500, height: 300 };
+  const centred = (value, origin) => {
+    const cells = (value - origin) / grid.resolution - 0.5;
+    return Math.abs(cells - Math.round(cells)) < 1e-9;
+  };
+  for (const [x, y] of [
+    [0, 0],
+    [-10.9, -5.9],
+    [3.14159, -2.71828],
+    [-10.935, -5.958], // the origin itself, which is a pixel *edge*
+  ]) {
+    const snapped = snapToPixel(grid, x, y);
+    assert.ok(centred(snapped.x, grid.origin[0]), `${snapped.x} is not a pixel centre`);
+    assert.ok(centred(snapped.y, grid.origin[1]), `${snapped.y} is not a pixel centre`);
+    assert.ok(Math.abs(snapped.x - x) <= grid.resolution / 2 + 1e-9);
+    assert.ok(Math.abs(snapped.y - y) <= grid.resolution / 2 + 1e-9);
+    // Idempotent, or a zone would creep every time it was touched.
+    assert.deepEqual(snapToPixel(grid, snapped.x, snapped.y), snapped);
+  }
+
+  // A body drag moves by whole pixels instead, so the shape it moves keeps its
+  // shape: snapping every vertex would pull a traced room off its walls.
+  assert.equal(snapDelta(grid, 0.03), 0.05);
+  assert.equal(snapDelta(grid, 0.02), 0);
+  assert.equal(snapDelta(grid, -0.12), -0.1);
+  const room = { ...square, polygon: [[0.013, 0.017], [2.013, 0.017], [2.013, 2.017]] };
+  const nudged = translated(room, snapDelta(grid, 0.31), snapDelta(grid, -0.07));
+  assert.deepEqual(
+    nudged.polygon.map(([x, y], i) => [
+      Math.round((x - room.polygon[i][0]) * 1000),
+      Math.round((y - room.polygon[i][1]) * 1000),
+    ]),
+    [
+      [300, -50],
+      [300, -50],
+      [300, -50],
+    ],
+  );
+});
+
 test('moving a zone carries footprint and pose together', () => {
   const moved = translated(square, 1, -1);
   assert.deepEqual(moved.polygon[0], [1, -1]);
@@ -355,10 +484,235 @@ test('the zone editor panel hides when hidden, whatever its class sets', () => {
   // class sets `display`, so the stylesheet must say so explicitly.
   const css = read('style.css');
   assert.match(css, /\.zone-editor\[hidden\]\s*\{\s*display:\s*none/);
+  // And the read-only list it stands in for, which is a flex container: with
+  // both on screen there would be two disagreeing accounts of the zones.
+  assert.match(css, /\.zone-rows\[hidden\]\s*\{\s*display:\s*none/);
   const html = read('index.html');
-  for (const id of ['zone-editor', 'zone-rows', 'zone-add', 'zone-save', 'zone-cancel', 'zones-edit']) {
+  for (const id of ['zone-editor', 'zone-rows', 'zone-save', 'zone-cancel', 'zones-edit']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
   }
+});
+
+test('an action sits at the level of the thing it acts on', () => {
+  // Three buttons in one row said they were three of a kind. Two of them begin
+  // and end the whole edit, and belong where `edit zones` was; the third adds
+  // one item, and belongs at the end of the items.
+  const html = read('index.html');
+  const head = html.slice(html.indexOf('<div class="zones-head">'), html.indexOf('id="zone-rows"'));
+  for (const id of ['zones-edit', 'zone-save', 'zone-cancel']) {
+    assert.ok(head.includes(`id="${id}"`), `#${id} belongs with the zones heading`);
+  }
+  assert.ok(!html.includes('id="zone-add"'), 'adding a zone is rendered into the list');
+  // And what the save says is under the save, not in the column of fields for
+  // one zone — where it sat while reporting on all of them.
+  const panel = html.slice(html.indexOf('<div class="zones-panel">'), html.indexOf('id="zone-editor"'));
+  assert.ok(panel.includes('id="zone-note"'), 'the save\'s note belongs with the save');
+  const editor = read('zone_editor.mjs');
+  const rows = editor.slice(editor.indexOf('_renderRows() {'), editor.indexOf('_renderDetail() {'));
+  assert.match(rows, /className = 'zone-add'/);
+  assert.match(rows, /rows\.append\(add\)/);
+});
+
+test('a name the loader would refuse is marked while it is typed', () => {
+  // The rule is real and the save enforces it; this is so that a field with a
+  // rule does not look like free text until the save fails.
+  const css = read('style.css');
+  assert.match(css, /\.zone-rename\.bad \{[^}]*border-color:\s*var\(--fault\)/);
+  const editor = read('zone_editor.mjs');
+  assert.match(editor, /addEventListener\('input'[^)]*\)[^]*?classList\.toggle\('bad'/);
+});
+
+test('a zone row reads as something you pick, and as picked', () => {
+  // Selection drives the panel and the map highlight, so a row that gave no
+  // sign of being selectable left the operator clicking a text box instead —
+  // and only while it is editable, since a row that cannot be picked must not
+  // invite it.
+  const css = read('style.css');
+  const rows = css.slice(css.indexOf('.zone-rows.editing .zone-row {'));
+  assert.match(rows.slice(0, rows.indexOf('}')), /cursor:\s*pointer/);
+  assert.match(
+    css,
+    /\.zone-rows\.editing \.zone-row\.selected \{[^}]*border-color:\s*var\(--accent\)/,
+  );
+  // One list, one row shape: the cells must not move when the controls arrive.
+  assert.match(css, /\.zone-rows \.zone-row \{[^}]*grid-template-columns/);
+  assert.ok(!css.includes('#review-zones'), 'the second zone list is gone');
+});
+
+test('the editor lives in the review pane, over the revision it edits', () => {
+  // Editing anywhere else edits zones against a map they may not belong to: the
+  // operations canvas draws the *published* basemap, so an editor on it could
+  // only ever derive from the published revision — which is what made renaming
+  // a candidate's rooms require promoting the placeholder names first.
+  const html = read('index.html');
+  const review = html.slice(
+    html.indexOf('class="pane review-pane"'),
+    html.indexOf('class="pane detail-pane"'),
+  );
+  for (const id of ['zones-edit', 'zone-editor', 'zone-rows', 'zone-save']) {
+    assert.ok(review.includes(`id="${id}"`), `#${id} must be in the review pane`);
+  }
+  const map = html.slice(
+    html.indexOf('class="pane map-pane"'),
+    html.indexOf('class="pane review-pane"'),
+  );
+  assert.ok(!map.includes('zone-editor'), 'the operations map must not edit zones');
+});
+
+// -- the vocabulary half --------------------------------------------------
+//
+// Names, not coordinates: the part of a zone that is true for every robot at
+// the site. The rules are the robot's, so what these hold is that this editor
+// cannot save a set the robot would refuse to load.
+
+test('the kind decides whether a zone is a point or an area', () => {
+  // The two are one decision, not two: a `charger` is a pose to dock at, and a
+  // `room` is a place with walls whose whole job is answering "am I in it".
+  // Edited separately, they drift into a dropoff carrying an outline nothing
+  // reads and a room with no extent `zones.containing` can ever match.
+  assert.ok(isAreaKind('room'));
+  assert.ok(isAreaKind('keepout'));
+  assert.ok(!isAreaKind('charger'));
+
+  // Naming a bare pose an area gives it something to drag onto the walls.
+  const waypoint = { name: 'home', kind: 'home', x: 2, y: 3 };
+  const room = withKind(waypoint, 'room');
+  assert.equal(room.polygon.length, 4);
+  assert.ok(pointInPolygon(room.polygon, waypoint.x, waypoint.y));
+
+  // And naming an area a point drops the outline, keeping the pose.
+  const back = withKind(room, 'charger');
+  assert.equal(back.polygon, undefined);
+  assert.deepEqual([back.x, back.y], [2, 3]);
+  assert.equal(withKind({ name: 'x', x: 0, y: 0, radius: 1.5 }, 'dock').radius, undefined);
+
+  // A zone that is *only* an outline gets the pose the robot's loader would
+  // derive — and if that centre is not inside it, the change is refused rather
+  // than putting the pose in a wall.
+  const ward = { name: 'ward', polygon: square.polygon };
+  assert.deepEqual(withKind(ward, 'dock'), { name: 'ward', kind: 'dock', x: 1, y: 1 });
+  const ell = {
+    name: 'hall',
+    polygon: [
+      [0, 0],
+      [6, 0],
+      [6, 1],
+      [1, 1],
+      [1, 6],
+      [0, 6],
+    ],
+  };
+  assert.equal(poseFor(ell), null);
+  assert.equal(withKind(ell, 'charger'), null);
+
+  // An area kind never disturbs an outline that is already there.
+  assert.deepEqual(withKind(square, 'corridor').polygon, square.polygon);
+});
+
+test('the kind list is the one the bundle validator will accept', () => {
+  // A kind outside `bundle.ZONE_KINDS` is refused at the parse, so a dropdown
+  // offering one would be an option that fails on save. Read out of the python
+  // rather than duplicated in a fixture, so adding a kind there fails here.
+  const bundle = readFileSync(
+    new URL('../../mote_bringup/mote_bringup/bundle.py', import.meta.url),
+    'utf8',
+  );
+  const kinds = (source, name) =>
+    source
+      .slice(source.indexOf(`${name} = (`) + name.length + 4)
+      .split(')')[0]
+      .match(/"[a-z]+"/g)
+      .map((quoted) => quoted.slice(1, -1));
+  assert.deepEqual(ZONE_KINDS, kinds(bundle, 'ZONE_KINDS'));
+  const constraints = bundle
+    .slice(bundle.indexOf('CONSTRAINT_KINDS = frozenset(('))
+    .split('))')[0]
+    .match(/"[a-z]+"/g)
+    .map((quoted) => quoted.slice(1, -1));
+  assert.deepEqual([...CONSTRAINT_KINDS].sort(), constraints.sort());
+
+  // And the point/area split, which decides what geometry an edit gives a zone.
+  const points = bundle
+    .slice(bundle.indexOf('POINT_KINDS = frozenset(('))
+    .split('))')[0]
+    .match(/"[a-z]+"/g)
+    .map((quoted) => quoted.slice(1, -1));
+  assert.deepEqual([...POINT_KINDS].sort(), points.sort());
+});
+
+test('aliases and tags round-trip through one comma-separated field', () => {
+  assert.deepEqual(parseList(' galley , The Kitchen ,, galley '), [
+    'galley',
+    'The Kitchen',
+  ]);
+  assert.equal(formatList(['galley', 'The Kitchen']), 'galley, The Kitchen');
+  assert.deepEqual(parseList(''), []);
+  // The resolver's comparison, so collision detection agrees with it.
+  assert.equal(normaliseAlias('The  Kitchen'), 'the kitchen');
+});
+
+test('the machine name a display name implies', () => {
+  // Three name fields is two too many to *type*: an operator names a room, and
+  // the identifier follows. It follows as a proposal — put in the name field,
+  // visible and editable — because `goto` takes it and a rename nobody asked
+  // for breaks the command that names the place.
+  assert.equal(slugify('The Kitchen'), 'the_kitchen');
+  assert.equal(slugify('Café'), 'cafe'); // the letter survives, not just the accent
+  assert.equal(slugify('  spare  room '), 'spare_room');
+  assert.equal(slugify('Ward 3B'), 'ward_3b');
+  // A name has to start with a letter, so there is nothing to propose here and
+  // the placeholder is left alone rather than mangled into one.
+  assert.equal(slugify('3rd floor'), '');
+  assert.equal(slugify(''), '');
+  for (const text of ['The Kitchen', 'Café', 'Ward 3B']) {
+    assert.ok(NAME_RE.test(slugify(text)), `${text} did not produce a usable name`);
+  }
+
+  // And it only ever replaces a name nobody chose: what `segment-map` mints for
+  // a room it found, and what `add zone` mints for a new one.
+  assert.ok(isGeneratedName('zone_01'));
+  assert.ok(isGeneratedName('zone_07'));
+  assert.ok(!isGeneratedName('kitchen'));
+  assert.ok(!isGeneratedName('zone_kitchen'));
+});
+
+test('two zones answering one query are caught before they are saved', () => {
+  // The robot's loader refuses an ambiguous vocabulary outright rather than
+  // resolving `goto` by dict order, so a save that produced one would produce a
+  // map no robot will load. Display names are not queries and do not collide.
+  const clash = ambiguities([
+    { name: 'kitchen', aliases: [] },
+    { name: 'galley', aliases: ['Kitchen'] },
+  ]);
+  assert.equal(clash.length, 1);
+  assert.match(clash[0], /kitchen/);
+  assert.deepEqual(
+    ambiguities([
+      { name: 'kitchen', display_name: 'The Kitchen', aliases: ['galley'] },
+      { name: 'office', display_name: 'The Kitchen', aliases: [] },
+    ]),
+    [],
+  );
+});
+
+test('navigable is written only when it deviates from the kind', () => {
+  // Every zone arrives from the server with `navigable` filled in from its kind
+  // (`bundle.zone_term`), so writing it back verbatim would carry a keepout's
+  // `false` onto a zone just changed to `room` — a room nothing can be sent to,
+  // with nothing on screen to say why.
+  assert.ok(navigableByDefault('room'));
+  assert.ok(!navigableByDefault('keepout'));
+  const payload = zonesPayload([
+    { name: 'kitchen', kind: 'room', navigable: true, x: 0, y: 0, aliases: [] },
+    { name: 'sluice', kind: 'keepout', navigable: false, x: 1, y: 1, tags: [] },
+    { name: 'workshop', kind: 'room', navigable: false, x: 2, y: 2 },
+  ]);
+  assert.ok(!('navigable' in payload.kitchen));
+  assert.ok(!('navigable' in payload.sluice));
+  assert.equal(payload.workshop.navigable, false); // deviant, so it was meant
+  // Empty lists say nothing the default does not.
+  assert.ok(!('aliases' in payload.kitchen));
+  assert.ok(!('tags' in payload.sluice));
 });
 
 // -- candidate review -----------------------------------------------------
@@ -380,7 +734,6 @@ const {
   provenanceRows,
   revisionPath,
   zoneSource,
-  zoneSummary,
 } = await import('../server/ui/review.mjs');
 
 test('a candidate is read from its own routes, never the canonical basemap', () => {
@@ -560,13 +913,16 @@ test('a zone row says which of the three footprints it is', () => {
   assert.equal(zoneSummary({ name: 'pickup', x: 1, y: 2 }), 'waypoint 1.00, 2.00');
 });
 
-test('inherited zones are called inherited, because coordinates cannot say so', () => {
+test('inherited zones are called inherited, and the ordinary case is silent', () => {
   // A revision carrying no zones.yaml inherits the floor's, taught in another
   // SLAM session's frame. They draw perfectly and are wrong by however far the
-  // two map origins differ — invisible on the canvas, so it is said in words.
-  assert.match(zoneSource('floor', 3), /inherited from the floor/);
-  assert.match(zoneSource('revision', 3), /own frame/);
-  assert.match(zoneSource('revision', 0), /carries no zones/);
+  // two map origins differ — invisible on the canvas, so it is said.
+  assert.equal(zoneSource('floor', 3).tag, 'inherited');
+  assert.match(zoneSource('floor', 3).title, /taught on another map/);
+  assert.equal(zoneSource('revision', 0).tag, 'none');
+  // And zones that belong to the map they are drawn on are just zones: a label
+  // for the absence of a problem is a label nobody can act on.
+  assert.equal(zoneSource('revision', 3), null);
 });
 
 test('review is a mode: opening it stands the operations panes down', () => {
@@ -593,7 +949,6 @@ test('the review pane has every element app.mjs binds to it', () => {
     'review-verdict-notes',
     'review-notes-label',
     'review-provenance',
-    'review-zones',
     'review-zone-source',
     'review-canvas',
     'review-map-label',

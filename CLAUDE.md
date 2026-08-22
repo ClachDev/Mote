@@ -185,6 +185,139 @@ revisions were fetched only *after* its basemap loaded, behind an early return,
 so a floor whose only revisions were candidates listed none of them and **the
 first promotion on any floor could never be made from a browser**.
 
+## Fleet: editing a candidate's zones
+
+The write half of that pane (`ui/zone_editor.mjs`, route `POST /v1/sites/<site>/
+floors/<floor>/zones`, operator flow `docs/fleet/README.md` §11, contract
+`fleet-api.md`): drag vertices, poses and whole zones on the map, double-click
+an edge or vertex to add or remove one, and name the places. **The whole design
+is one rule: editing is a derivation, never a mutation.** Saving re-packs *the revision under review* with the submitted zones
+and accepts the result as an ordinary candidate — same `accept()` as a robot's
+upload, inert until promoted — so a stored revision's bytes never change, which
+is what the announced digests depend on, and promotion stays the only write that
+moves a floor. Five things are load-bearing. **The edit names a source
+revision**, which is what makes an *unpromoted* map editable: `segment-map`
+hands over `zone_01`..`zone_07`, and deriving only from the canonical revision
+meant promoting those placeholders in order to be allowed to fix them —
+publishing a map because it was wrong — besides rebinding coordinates drawn on
+one frame onto another's. **A derivation is held to `promote`'s bar, not the
+upload's** (`accept(require_posegraph=…)`): a revision with no posegraph cannot
+be extended, which is an error for a robot's upload where the session can be
+re-run and a *warning* on something already stored, so the strict bar put an
+`edit zones` button beside a `promotable` verdict that could only ever fail
+(found in a browser; every sim bundle is such a revision). **It lives in the
+review pane and nowhere else** — the operations canvas draws the *published*
+basemap, so an editor there could only ever edit the published revision, and
+"which map are these coordinates against" must have one answer. That also
+retires the MVP's frozen-overlay workaround: after a save the pane selects the
+new candidate and re-reads its zones, so what is on screen is the saved set from
+the server rather than a held-over copy of what was typed. **`navigable` is
+written only when it deviates from the kind**, because every zone arrives from
+the server with the field filled in (`bundle.zone_term` defaults it) and writing
+it back verbatim would carry a `keepout`'s `false` onto a zone just changed to
+`room` — a room nothing can be dispatched to, with nothing on screen to say why.
+And the editor **refuses client-side exactly what the robot's loader refuses**:
+a non-dispatchable name, and two zones answering one query (`ambiguities`
+mirrors `bundle.ambiguities` — names and aliases, not display names), since a
+stored candidate no robot will load is worse than a rejected save. Editing is a
+*mode*: the floor picker, the revision list and promote are disabled while it is
+up, there is no autosave, and `cancel` discards. One pre-existing defect fell
+out and is fixed: the map pane's review button was hidden unless the floor on
+screen had candidates, and above 760 px the tab bar is hidden too — so the pane
+built for floors no robot is reporting was reachable only through a floor a robot
+was reporting.
+
+**What the operator can see is the other half of it**, and the first build of
+this editor failed it in four ways an operator found in one sitting. **One
+`hitTest` answers what a press will take** — the drag reads it, the cursor reads
+it, and the hover highlight draws it — because three targets (vertex, pose, zone
+body) plus a fourth meaning "this drag pans the map" is unguessable from a
+static canvas, and three copies of that ordering would eventually disagree with
+each other. Its highlight ring is *ink*, not white: a canvas gets no cascade, and
+the surface under it is not the theme's background but the basemap, whose free
+space is white in both themes (measured: white moved 1.5% of the pixels around a
+handle, ink moves 12%). **A row is a list, not a form** — it carries what is
+compared *across* zones (name, kind, shape) and the rest of zone/v0
+(`display_name`, `aliases`, `navigable`, `parent`, `tags`, `description`) edits
+in a panel for the *selected* zone, so a new spec field costs no column, and a
+2560 px monitor no longer stretches a twelve-character zone name into a text box
+the size of a paragraph (rows cap at 640 px). **There is one list, not two**:
+one renderer draws a revision's zones read-only and editable alike, `edit zones`
+putting controls into the same cells — two renderers were two layouts that
+drifted, and the read-only one had stranded the kind half a screen from the
+name. Nothing in that column moves when editing opens (asserted in
+`browser_check.mjs`), the editing surface has no border of its own, and a zone
+is always selected: an empty panel needs a caption, and any caption for it
+("select a zone to name it") names one of the several things it is for. And a control exists only where dragging cannot
+reach — `⌖` (place a pose) appears **only** for a zone that has none, a
+`segment-map` room being an outline with no `x`/`y` and so no cross to drag; a
+row's name is a *button*, because in a list the name is what you select by and
+an input there put a caret where a click meant "this one" (renaming moved into
+the panel, beside the zone's other fields). Two controls were built and then cut
+for failing that test: a `+ area`/`− area` cell, and a paragraph of instructions
+standing in for the hover feedback before it existed. **A control sits at the
+level of the thing it acts on**, which three buttons in one row denied: `save as
+candidate` and `cancel` end the mode, so they take the place of `edit zones`
+above the list rather than standing beside a control that adds one zone, and
+`add zone` is the list's last line. The save's message moved with them, out
+of the column of fields for one zone and under the list it is about — with no
+height until there is something to say, since a strip reserved for the longest
+message (the refusal quoting both zones that answer one query) is a gap over the
+first zone that nothing explains. The room comes out of the list instead, the
+one thing in that box which scrolls, so nothing above the message moves. It
+carries what a save *did*, not that one is happening: the outcome used to be set
+on the pane's own line in the far column while this one was cleared, so the only
+thing appearing where the work was happening was `saving…`, lasting as long as
+the request. The mode's banner is gone with it — `save as candidate` says what
+saving does, and the one thing a banner was needed for, the shift modifier, is a
+`title` on the surface it applies to.
+
+**A place is named once.** While a zone's machine name is still one nobody
+chose (`zone_03`), typing its display name sets it through `slugify` — "The
+Kitchen" gives `the_kitchen`, "Café" gives `cafe` (the letter survives, not just
+the accent). It is a proposal in a visible field, and it never rewrites a name
+an operator has chosen, since `goto` takes that name and a fetch may be scripted
+against it; a spelling that cannot become a name at all ("3rd floor") proposes
+nothing rather than mangling one. The field also marks an invalid name *as it is
+typed*: the rule is the loader's and the save enforces it, but a field that looks
+like free text until a save fails does not look like a field with a rule. That
+leaves three naming fields doing two jobs — an identifier, a label, and the
+other spellings `zones.resolve` will also match.
+
+A zone is drawn under `map.zoneLabel` — `display_name` if it has one, else the
+machine name — by the operations map and the editor's own overlay alike, so a
+place cannot answer to one name in the list and another while it is being
+edited. `color-scheme` is declared per theme in the stylesheet for the same
+class of reason: a `select`'s dropdown, a checkbox and a scrollbar are the
+browser's to paint, and left to the *system* preference while the page follows
+its own, a dark page grows a white dropdown list.
+
+**Every coordinate an edit writes lands on a pixel centre** (`snapToPixel`;
+shift is the way off it, chosen over alt because a desktop's window manager
+takes alt-drag and a modifier the page never receives is no modifier at all).
+The map's resolution is the precision available, so a free-hand vertex is digits
+nothing can back — and two zones meant to share a wall land millimetres apart,
+differently every time. Three consequences: a *body* drag snaps its delta rather
+than each vertex (`snapDelta`), so a room traced onto its walls keeps its shape,
+and it is measured from the grab rather than accumulated per move, which would
+drift the zone behind the pointer by whatever each rounding threw away; the
+outline `withKind` invents starts on the grid, while the **pose stays where it
+was taught** — that number was measured by driving a robot there; and nothing
+re-snaps a coordinate the operator did not touch.
+
+**The kind decides whether a zone is a point or an area, and `withKind` makes
+the geometry follow** (`bundle.POINT_KINDS`: dock, charger, pickup, dropoff,
+home). Editing the two separately is what leaves a `dropoff` carrying an outline
+nothing reads and a `room` with no extent `zones.containing` can never match —
+so naming a bare pose an area gives it a square to drag onto the walls (which is
+how an area is drawn in the UI at all), and naming an outlined zone a point
+drops the outline and keeps the pose. Two things fall out. The classification is
+**guidance, not validation**: `bundle` does not refuse an outline on a charger,
+because that would refuse maps taught before the rule existed. And the
+point-ward move is **refused** when the outline's centroid lies outside it (a
+concave hallway) rather than putting the pose in a wall — `poseFor` returns null
+and the select reverts.
+
 ## Fleet: the zone vocabulary
 
 The API served the roster, the basemaps and dispatch, but not the one thing a
