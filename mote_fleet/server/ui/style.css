@@ -609,7 +609,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 180px;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -879,6 +879,11 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
   grid-column: 1;
 }
 
+.zones-panel > .zone-rows {
+  grid-row: 3;
+  height: 100%;
+}
+
 /* A pill in the page's own idiom, and the only one that is a warning: it says
    these coordinates were taught somewhere else. */
 .pill.warn {
@@ -1062,10 +1067,9 @@ button.promote:disabled {
     flex: 1 1 45%;
   }
 
-  /* A wrapped row is three lines tall, so the desk's 180 px box would show not
-     quite two of them. The pane scrolls on a phone anyway (above), so the list
-     can take a screenful. */
-  .zone-editor .zone-rows {
-    max-height: 46vh;
+  /* No reserved box here, so no height to fill: the list is as long as it is
+     and the pane scrolls, which is what a phone does with everything else. */
+  .zones-panel > .zone-rows {
+    height: auto;
   }
 }
