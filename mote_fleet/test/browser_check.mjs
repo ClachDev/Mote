@@ -283,6 +283,44 @@ try {
     `${candidateDrawn} painted pixels`,
   );
 
+  // The way out, which above 760 px is the pane's own control and nothing else:
+  // the tab bar the phone leaves by is hidden here, and review stands every
+  // other pane down, so a pane with no exit of its own is a trap that ends in a
+  // window resize or a reload (what shipped with the pane, 2026-08-11).
+  const exits = await session.evaluate(`(() => {
+    const active = () => [...document.querySelectorAll('.pane')]
+      .filter(pane => pane.classList.contains('active'))
+      .map(pane => pane.dataset.pane).join(',');
+    const out = { width: innerWidth, tabs: getComputedStyle(document.querySelector('.panes')).display };
+    document.getElementById('review-back').click();
+    out.button = active();
+    // The operations panes are only *displayed* again if the review mode rule
+    // has let go: the class is what that rule keys on, so both are read.
+    out.shown = getComputedStyle(document.querySelector('.map-pane')).display;
+    document.getElementById('review-jump').click();
+    out.reopened = active();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    out.escape = active();
+    return out;
+  })()`);
+  check(
+    'the review pane can be left at desk width, by its button and by Escape',
+    exits.tabs === 'none' &&
+      exits.button === 'map' &&
+      exits.shown !== 'none' &&
+      exits.reopened === 'review' &&
+      exits.escape === 'map',
+    JSON.stringify(exits),
+  );
+
+  // Back in, for the rest of the review checks.
+  await session.evaluate(`document.getElementById('review-jump').click()`);
+  await settle(
+    session,
+    `document.getElementById('review-map-label').textContent`,
+    (label) => /\d{8}T\d{6}/.test(label),
+  );
+
   // The fixture's candidate is the published map mirrored, so a review pane
   // that fetched the canonical image — the defect this replaces — would draw a
   // perfectly convincing map. The URL is what separates the two.
@@ -372,6 +410,24 @@ try {
       'the edit ends where it began, and `add zone` is part of the list',
       editing.ends && editing.adds,
       JSON.stringify({ ends: editing.ends, adds: editing.adds }),
+    );
+
+    // The way out is held with them. An edit has no autosave, so leaving would
+    // strand it on a canvas nobody can see; `cancel` is how an edit ends.
+    const held = await session.evaluate(`(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      document.getElementById('review-back').click();
+      return {
+        disabled: document.getElementById('review-back').disabled,
+        pane: [...document.querySelectorAll('.pane')]
+          .filter(pane => pane.classList.contains('active'))
+          .map(pane => pane.dataset.pane).join(','),
+      };
+    })()`);
+    check(
+      'an edit in progress holds the exit, by button and by Escape',
+      held.disabled && held.pane === 'review',
+      JSON.stringify(held),
     );
 
     // One list, one shape: the rows are the same rows, in the same place, the
@@ -605,6 +661,13 @@ try {
       (note) => /is on \d{8}T\d{6}/.test(note),
     );
     check('the first promotion on a floor goes through', /is on /.test(promoted), promoted);
+
+    // And the pane it was made in stands down: the decision it exists for has
+    // been made, and the operations map is what an operator wants next.
+    const landed = await session.evaluate(`[...document.querySelectorAll('.pane')]
+      .filter(pane => pane.classList.contains('active'))
+      .map(pane => pane.dataset.pane).join(',')`);
+    check('a promotion hands the screen back to the operations map', landed === 'map', landed);
   }
 
   // -- the phone ----------------------------------------------------------

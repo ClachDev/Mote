@@ -908,6 +908,14 @@ which appears whenever the floor on screen has something waiting. It shows:
 Everything except that button and the zone editor below is a read. Nothing you
 do here changes any floor until you promote.
 
+**Leaving it** is `back to map` in the pane head, or Escape. Review is a mode
+rather than a fourth column — it stands the operations panes down at every
+width — and the tab bar exists only below 760 px, so on a desk the pane's own
+head is the way out. Both are held off while a zone edit is up, as the revision
+list is: an edit has no autosave, so `cancel` (or `save as candidate`) ends it
+first. A promotion leaves for you, the decision it was opened for having been
+made.
+
 ### Naming the rooms on it, before you promote it
 
 `pixi run segment-map` finds the rooms of a map but cannot know what they are

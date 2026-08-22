@@ -288,11 +288,34 @@ function onReviewJump() {
   if (state.mapKey) review.open(state.mapKey);
 }
 
-// A promotion happened in the review pane: this pane's basemap is now a
-// different map, so re-resolve it rather than keep drawing the old one.
-function onPromoted() {
+// Out of it again. Review stands every other pane down at every width, and the
+// tab bar that would bring one back exists only below 760 px, so this is the
+// desk's only exit. An edit in progress owns the pane — the same rule that
+// disables the floor picker and the revision list — because leaving would put
+// an unsaved edit on a canvas nobody can see.
+function onReviewBack() {
+  if (!review.leavable()) return;
+  panes.show('map');
+}
+
+// Escape is the same exit. It is on the document rather than on the pane
+// because the pane holds no focus of its own: the last thing clicked was a
+// revision row, the canvas, or nothing at all.
+function onKey(event) {
+  if (event.key !== 'Escape') return;
+  if (panes.current() !== 'review') return;
+  onReviewBack();
+}
+
+// A promotion happened in the review pane: the floor's canonical revision has
+// changed, so re-resolve this pane's basemap rather than keep drawing the old
+// one — and the decision the review pane exists for has been made, so hand the
+// screen back to operations. Not when the announcement failed: the note saying
+// so is readable only in the pane that wrote it.
+function onPromoted(site, floor, revision, announced) {
   state.mapKey = null;
   scheduleRender();
+  if (announced) panes.show('map');
 }
 
 // -- rendering -----------------------------------------------------------
@@ -576,6 +599,7 @@ function bind() {
     reviewCanvas: 'review-canvas',
     reviewMapLabel: 'review-map-label',
     reviewPromote: 'review-promote',
+    reviewBack: 'review-back',
     reviewFit: 'review-fit',
     reviewNote: 'review-note',
     zonesEdit: 'zones-edit',
@@ -620,6 +644,7 @@ export async function boot() {
       zoneSource: dom.reviewZoneSource,
       mapLabel: dom.reviewMapLabel,
       promote: dom.reviewPromote,
+      back: dom.reviewBack,
       fit: dom.reviewFit,
       note: dom.reviewNote,
       // The zone editor's own controls. It lives in this pane because it edits
@@ -645,6 +670,8 @@ export async function boot() {
   });
   dom.zone.addEventListener('change', onZone);
   dom.reviewJump.addEventListener('click', onReviewJump);
+  dom.reviewBack.addEventListener('click', onReviewBack);
+  document.addEventListener('keydown', onKey);
   dom.fit.addEventListener('click', () => {
     mapView.follow(null);
     dom.follow.checked = false;

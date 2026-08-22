@@ -792,9 +792,10 @@ main {
 }
 
 /* Editing holds the selected revision still, so the controls that would swap it
-   are disabled — and have to *look* disabled, or the pane reads as ignoring
-   clicks. */
+   — or walk away from it, an edit having no autosave — are disabled, and have
+   to *look* disabled, or the pane reads as ignoring clicks. */
 .zones-head button:disabled,
+#review-back:disabled,
 .revision-row:disabled {
   opacity: 0.5;
   cursor: not-allowed;
