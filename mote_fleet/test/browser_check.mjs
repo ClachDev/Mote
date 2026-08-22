@@ -656,10 +656,71 @@ try {
     );
     check('the first promotion on a floor goes through', /is on /.test(promoted), promoted);
 
-    const landed = await session.evaluate(`[...document.querySelectorAll('.pane')]
-      .filter(pane => pane.classList.contains('active'))
-      .map(pane => pane.dataset.pane).join(',')`);
-    check('a promotion hands the screen back to the operations map', landed === 'map', landed);
+    // This floor is not the one the operations map is on — no robot is
+    // reporting it, which is why the pane exists. So the pane stays up, where
+    // the note saying what happened is readable: leaving would land the
+    // operator on an unrelated floor with no evidence of the promotion.
+    const stayed = await session.evaluate(`(() => ({
+      pane: [...document.querySelectorAll('.pane')]
+        .filter(pane => pane.classList.contains('active'))
+        .map(pane => pane.dataset.pane).join(','),
+      note: document.getElementById('review-note').textContent,
+      map: document.getElementById('map-label').textContent,
+    }))()`);
+    check(
+      'promoting a floor the map pane is not on leaves the note on screen',
+      stayed.pane === 'review' &&
+        /is on /.test(stayed.note) &&
+        stayed.map !== unpublished,
+      JSON.stringify(stayed),
+    );
+  }
+
+  // -- promoting the floor the map pane is on -----------------------------
+  //
+  // The other half of that rule. Here the promotion *is* visible on the
+  // operations map — it draws the floor whose canonical revision just changed
+  // — so the review pane, whose decision has been made, stands down.
+
+  if (token) {
+    const shown = await session.evaluate(`document.getElementById('map-label').textContent`);
+    const opened = await session.evaluate(`(() => {
+      const select = document.getElementById('review-floor');
+      const option = [...select.options].find(o => o.value === ${JSON.stringify(shown)});
+      if (!option) return '';
+      select.value = option.value;
+      select.dispatchEvent(new Event('change'));
+      return option.value;
+    })()`);
+    if (!opened) {
+      console.log(`skipped the same-floor promotion: the map pane is on "${shown}"`);
+    } else {
+      const ready = await settle(
+        session,
+        `(() => ({
+          label: document.getElementById('review-map-label').textContent,
+          promotable: !document.getElementById('review-promote').disabled,
+        }))()`,
+        (state) => state.label.startsWith(opened) && state.promotable,
+      );
+      const wanted = ready.label.split(' · ')[1];
+      await session.evaluate(`document.getElementById('review-promote').click()`);
+      const landed = await settle(
+        session,
+        `(() => ({
+          pane: [...document.querySelectorAll('.pane')]
+            .filter(pane => pane.classList.contains('active'))
+            .map(pane => pane.dataset.pane).join(','),
+          revision: document.getElementById('map-revision').textContent,
+        }))()`,
+        (state) => state.pane === 'map' && state.revision === wanted,
+      );
+      check(
+        'promoting the floor the map pane is on hands the screen back to it',
+        landed.pane === 'map' && landed.revision === wanted,
+        JSON.stringify({ floor: opened, wanted, ...landed }),
+      );
+    }
   }
 
   // -- the phone ----------------------------------------------------------

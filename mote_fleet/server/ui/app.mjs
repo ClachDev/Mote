@@ -302,13 +302,19 @@ function onKey(event) {
 }
 
 // A promotion happened in the review pane: this pane's basemap is now a
-// different map, so re-resolve it rather than keep drawing the old one. The
-// review is then over — except when the announcement failed, whose note is
-// readable only in the pane that wrote it.
+// different map, so re-resolve it rather than keep drawing the old one.
+//
+// The review is then over — but only stand the pane down when this pane is on
+// the floor that was promoted, which is the one case where the promotion is
+// visible here. `ensureMap` takes its floor from the *selected robot*, so any
+// other floor lands the operator on an unrelated map, having taken the note
+// that says what happened off screen with it. The floor with no robot on it is
+// exactly what the review pane is for.
 function onPromoted(site, floor, revision, announced) {
+  const showing = state.mapKey === `${site}/${floor}`;
   state.mapKey = null;
   scheduleRender();
-  if (announced) panes.show('map');
+  if (announced && showing) panes.show('map');
 }
 
 // -- rendering -----------------------------------------------------------

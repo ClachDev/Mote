@@ -957,6 +957,17 @@ test('the review pane has a way out, and it leads to the map', () => {
   assert.match(body, /onReviewBack\(\)/);
 });
 
+test('a promotion only stands the pane down for the floor on screen', () => {
+  // The operations map takes its floor from the selected robot, so promoting
+  // any other floor and leaving lands the operator on an unrelated map — with
+  // the note that says what happened hidden behind the switch.
+  const app = read('app.mjs');
+  const promoted = app.slice(app.indexOf('function onPromoted('));
+  const body = promoted.slice(0, promoted.indexOf('\n}'));
+  assert.match(body, /state\.mapKey === `\$\{site\}\/\$\{floor\}`/);
+  assert.match(body, /if \(announced && showing\) panes\.show\('map'\)/);
+});
+
 test('an edit in progress holds the exit, as it holds the revision list', () => {
   const source = read('review.mjs');
   const controls = source.slice(source.indexOf('renderEditControls()'));
