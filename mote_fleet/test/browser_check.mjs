@@ -332,9 +332,17 @@ try {
     // The map must not move when the editor opens: the editing surface is
     // taller than the list it replaces, and with the canvas taking whatever
     // height was left, clicking `edit zones` resized the thing being edited.
-    const mapBefore = await session.evaluate(
-      `Math.round(document.getElementById('review-canvas').getBoundingClientRect().height)`,
-    );
+    const shapeOf = `(() => {
+      const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
+      return JSON.stringify({
+        map: Math.round(document.getElementById('review-canvas').getBoundingClientRect().height),
+        rows: rows.map(row => Math.round(row.getBoundingClientRect().height)),
+        top: rows.length ? Math.round(rows[0].getBoundingClientRect().top) : 0,
+        cells: rows.length ? rows[0].children.length : 0,
+      });
+    })()`;
+    const shapeBefore = await session.evaluate(shapeOf);
+    const mapBefore = JSON.parse(shapeBefore).map;
     const editing = await session.evaluate(`(() => {
       document.getElementById('zones-edit').click();
       return {
@@ -355,13 +363,16 @@ try {
       JSON.stringify(editing),
     );
 
-    const mapDuring = await session.evaluate(
-      `Math.round(document.getElementById('review-canvas').getBoundingClientRect().height)`,
-    );
+    // One list, one shape: the rows are the same rows, in the same place, the
+    // same height, with the same cells — `edit zones` puts controls in them and
+    // changes nothing else. Every part of that has been wrong at least once: a
+    // second list with its own columns, a box drawn round the editing one, and
+    // a selection border that grew every row by two pixels.
+    const shapeDuring = await session.evaluate(shapeOf);
     check(
-      'opening the editor does not resize the map under it',
-      mapBefore > 0 && mapBefore === mapDuring,
-      `${mapBefore} px then ${mapDuring} px`,
+      'the list and the map are the same shape, edited or not',
+      shapeBefore === shapeDuring && JSON.parse(shapeBefore).map > 0,
+      `${shapeBefore} then ${shapeDuring}`,
     );
 
     // A row carries identity and shape; everything else is a form for the one
