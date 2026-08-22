@@ -893,13 +893,16 @@ test('a zone row says which of the three footprints it is', () => {
   assert.equal(zoneSummary({ name: 'pickup', x: 1, y: 2 }), 'waypoint 1.00, 2.00');
 });
 
-test('inherited zones are called inherited, because coordinates cannot say so', () => {
+test('inherited zones are called inherited, and the ordinary case is silent', () => {
   // A revision carrying no zones.yaml inherits the floor's, taught in another
   // SLAM session's frame. They draw perfectly and are wrong by however far the
-  // two map origins differ — invisible on the canvas, so it is said in words.
-  assert.match(zoneSource('floor', 3), /inherited from the floor/);
-  assert.match(zoneSource('revision', 3), /own frame/);
-  assert.match(zoneSource('revision', 0), /carries no zones/);
+  // two map origins differ — invisible on the canvas, so it is said.
+  assert.equal(zoneSource('floor', 3).tag, 'inherited');
+  assert.match(zoneSource('floor', 3).title, /taught on another map/);
+  assert.equal(zoneSource('revision', 0).tag, 'none');
+  // And zones that belong to the map they are drawn on are just zones: a label
+  // for the absence of a problem is a label nobody can act on.
+  assert.equal(zoneSource('revision', 3), null);
 });
 
 test('review is a mode: opening it stands the operations panes down', () => {

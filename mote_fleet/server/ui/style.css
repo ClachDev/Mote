@@ -872,9 +872,15 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
 }
 
 .zones-head,
-#review-zone-source,
 .zone-rows {
   grid-column: 1;
+}
+
+/* A pill in the page's own idiom, and the only one that is a warning: it says
+   these coordinates were taught somewhere else. */
+.pill.warn {
+  border-color: var(--degraded);
+  color: var(--degraded);
 }
 
 /* Beside the list rather than under it, and spanning the rows above so that

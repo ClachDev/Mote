@@ -188,17 +188,28 @@ export function provenanceRows(revision) {
   ];
 }
 
-// Where the zones on screen came from, which the coordinates cannot say. A
-// revision that carries none inherits the floor's — taught in a *previous* SLAM
-// session's frame, and so wrong for this map by however far the two origins
-// differ. That is a reason to look before promoting, which is what this pane is
-// for, so it is said out loud rather than left to the validator's warning list.
+// Where the zones on screen came from, which the coordinates cannot say — as a
+// state beside the heading, in the idiom the rest of the page uses, rather than
+// a sentence of prose under it.
+//
+// **The ordinary case says nothing.** Zones that belong to the revision they are
+// drawn on are what "zones" already means; a caption announcing it is a label
+// for the absence of a problem, in words ("taught in this revision's own
+// frame") that only mean anything to someone who knows the problem. What is
+// worth a word is the exception: a revision carrying no zones of its own is
+// drawn with the *floor's*, taught in a previous SLAM session's frame and so
+// out by however far the two origins differ. `null` is "nothing to say".
 export function zoneSource(source, count) {
-  if (!count) return 'this revision carries no zones';
+  if (!count) return { tag: 'none', title: 'this revision carries no zones' };
   if (source === 'floor') {
-    return 'inherited from the floor — this revision carries none, so these were taught on another map frame';
+    return {
+      tag: 'inherited',
+      title:
+        'this revision carries no zones, so the floor’s are drawn: they were ' +
+        'taught on another map and line up only as far as the two frames do',
+    };
   }
-  return 'taught in this revision’s own frame';
+  return null;
 }
 
 // -- the view -------------------------------------------------------------
@@ -517,7 +528,10 @@ export class ReviewView {
   // replacing them with a second list of its own.
   renderZones(zones, source = '') {
     this.zones = zones;
-    this.dom.zoneSource.textContent = zoneSource(source, zones.length);
+    const origin = zoneSource(source, zones.length);
+    this.dom.zoneSource.hidden = !origin;
+    this.dom.zoneSource.textContent = origin ? origin.tag : '';
+    this.dom.zoneSource.title = origin ? origin.title : '';
     this.editor.show(zones);
     this.renderEditControls();
   }

@@ -438,7 +438,9 @@ try {
       `(() => ({
         note: document.getElementById('review-note').textContent,
         label: document.getElementById('review-map-label').textContent,
-        source: document.getElementById('review-zone-source').textContent,
+        // Hidden means the zones belong to the revision they are drawn on,
+        // which is the ordinary case and says nothing.
+        inherited: !document.getElementById('review-zone-source').hidden,
         zones: [...document.querySelectorAll('#zone-rows .zone-row')]
           .map(row => row.textContent).join(' '),
         editorHidden: document.getElementById('zone-editor').hidden,
@@ -457,9 +459,7 @@ try {
     // and the geometry are one decision, made once.
     check(
       'the pane then shows the saved candidate’s own zones',
-      derived.editorHidden &&
-        derived.zones.includes('A Named Room') &&
-        /own frame/.test(derived.source),
+      derived.editorHidden && derived.zones.includes('A Named Room') && !derived.inherited,
       JSON.stringify(derived),
     );
     check(

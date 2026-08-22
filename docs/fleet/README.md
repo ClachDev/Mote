@@ -896,11 +896,12 @@ which appears whenever the floor on screen has something waiting. It shows:
   revision came from, when it was mapped, its size and resolution, the free/
   occupied/unknown split, whether it carries a posegraph (i.e. whether mapping
   can be continued in this frame), its bytes and digest.
-- **The zones in it**, and — the part that is easy to miss — whether they are
-  the revision's own or **inherited from the floor**. Inherited zones were
-  taught in a previous session's frame: they draw perfectly over the new map and
-  are wrong by however far the two origins differ. The pane says so in words,
-  because the canvas cannot.
+- **The zones in it**, and — the part that is easy to miss — an `inherited`
+  mark beside the heading when they are not the revision's own. A revision that
+  carries no zones is drawn with the floor's, taught in a previous session's
+  frame: they draw perfectly over the new map and are out by however far the two
+  origins differ, which the canvas cannot show. Zones that belong to the map
+  they are drawn on are marked nothing at all — that is what "zones" means.
 - **The promote button**, which is the same audited flip `fleetctl promote`
   makes.
 

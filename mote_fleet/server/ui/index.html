@@ -106,6 +106,11 @@
             <div class="zones-panel">
             <div class="zones-head">
               <h3>zones</h3>
+              <!-- Which map frame these coordinates were taught in, said only
+                   when it is not this one: a revision carrying no zones is
+                   drawn with the floor's, which were taught on a different map.
+                   The trap M4 named, as a state rather than a caption. -->
+              <span id="review-zone-source" class="pill warn" hidden></span>
               <!-- Editing is on the *selected revision*, which is why it is
                    here and not on the operations map: a zone is a coordinate
                    in one map frame, so the map under it has to be the map it
@@ -113,10 +118,6 @@
                    screen is never written. -->
               <button id="zones-edit" type="button" hidden>edit zones</button>
             </div>
-            <!-- Which map frame these coordinates were taught in. A revision
-                 that carries no zones.yaml inherits the floor's, which is a
-                 different SLAM session's frame — the trap M4 named. -->
-            <p id="review-zone-source" class="dim"></p>
             <!-- One list, whether or not it is being edited: the same rows with
                  text where the controls go. Two renderers were two layouts that
                  drifted, and the difference between looking and editing should
