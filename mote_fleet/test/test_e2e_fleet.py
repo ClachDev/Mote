@@ -5,9 +5,12 @@ and its SQLite registry, the ``enroll`` CLI, the agent with a genuine paho
 client, and the actual ``mote_tasks`` behaviour tree driving a mock
 ``navigate_to_pose``. What is being proved is that the seams line up: that a
 robot which has never heard of the fleet can be given an identity by the server,
-that a command published to ``mote/v1/<robot_id>/task/command`` from a process
-which shares no ROS graph with it turns into a Nav2 goal, and that the status
-transitions come back with the correlation id they went out with.
+that a mission published to ``mote/v2/<robot_id>/mission/command`` from a
+process which shares no ROS graph with it turns into a Nav2 goal, that the
+status transitions come back with the correlation id they went out with, and
+that the refusals come back *typed* — which is the half of mission/v0 a unit
+test cannot prove, because it is the seam between the executor's classification
+and the bridge's forwarding.
 
 The one thing it cannot prove is "off-LAN", which is a property of the tailnet
 (M0) rather than of this code: the same MQTT connection over a WireGuard
@@ -41,6 +44,8 @@ from fleet_harness import (
 import rclpy  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.parameter import Parameter  # noqa: E402
+
+from mote_bringup.spec import mission  # noqa: E402
 
 pytestmark = needs_broker
 
@@ -138,9 +143,19 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
         # rather than claiming the robot is fine.
         assert health["state"] == protocol.UNKNOWN
 
+        # ---- what the robot says it can be asked to do, before anyone asks ----
+        assert spin_until(
+            executor, lambda: operator.capabilities(robot_id) is not None
+        ), "the capability set never reached the broker"
+        offered = operator.capabilities(robot_id)
+        assert [item["key"] for item in offered["capabilities"]] == ["goto", "fetch"]
+        assert offered["platform_id"] == robot_id
+
         # ---- the milestone's acceptance: dispatch a fetch, off the robot's
         # ROS graph entirely, and watch the transitions come back ----
-        command_id = operator.dispatch(robot_id, "fetch lab kitchen")
+        command_id = operator.dispatch(
+            robot_id, "fetch", {"target": "lab", "destination": "kitchen"}
+        )
         assert spin_until(
             executor,
             lambda: any(s["terminal"] for s in operator.statuses(command_id)),
@@ -149,12 +164,14 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
 
         states = [s["state"] for s in operator.statuses(command_id)]
         assert states == [
-            protocol.DISPATCHED,
-            protocol.ACCEPTED,
-            protocol.SUCCEEDED,
+            mission.DISPATCHED,
+            mission.ACCEPTED,
+            mission.SUCCEEDED,
         ], states
+        # The task server publishes `local` — it cannot tell a fleet mission
+        # from a bench one — and the agent rewrites it for the ids it sent.
         assert all(
-            s["source"] == protocol.SOURCE_FLEET for s in operator.statuses(command_id)
+            s["source"] == mission.SOURCE_FLEET for s in operator.statuses(command_id)
         )
 
         # ...and it really ran the mission: drive to the object zone, then to
@@ -163,45 +180,67 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
         assert nav.goals[0].pose.position.x == pytest.approx(4.0)  # lab
         assert nav.goals[1].pose.position.x == pytest.approx(-1.5)  # kitchen
 
-        # ---- and a goto, the other half of the command grammar ----
-        goto_id = operator.dispatch(robot_id, "goto kitchen")
+        # ---- and a goto, the other capability ----
+        goto_id = operator.dispatch(robot_id, "goto", {"target": "kitchen"})
         assert spin_until(
             executor, lambda: any(s["terminal"] for s in operator.statuses(goto_id))
         ), operator.statuses(goto_id)
-        assert operator.statuses(goto_id)[-1]["state"] == protocol.SUCCEEDED
+        assert operator.statuses(goto_id)[-1]["state"] == mission.SUCCEEDED
         assert len(nav.goals) == 3
 
-        # ---- a rejected command reports why ----
-        bad_id = operator.dispatch(robot_id, "goto nowhere")
+        # ---- a rejection is typed: the class is what a dispatcher acts on ----
+        bad_id = operator.dispatch(robot_id, "goto", {"target": "nowhere"})
         assert spin_until(
             executor, lambda: any(s["terminal"] for s in operator.statuses(bad_id))
         ), operator.statuses(bad_id)
         rejection = operator.statuses(bad_id)[-1]
-        assert rejection["state"] == protocol.REJECTED
-        assert "nowhere" in rejection["detail"]
+        assert rejection["state"] == mission.REJECTED
+        assert rejection["failure"]["class"] == mission.UNRESOLVED_ZONE
+        assert rejection["failure"]["recoverable"] is False
+        assert "nowhere" in rejection["failure"]["detail"]
         assert len(nav.goals) == 3  # nothing was driven
 
-        # ---- health reports the task while it runs ----
-        slow_id = operator.dispatch(robot_id, "fetch red_box kitchen")
+        # ...and so is an input the capability's own schema refuses.
+        malformed_id = operator.dispatch(robot_id, "goto", {"where": "kitchen"})
+        assert spin_until(
+            executor,
+            lambda: any(s["terminal"] for s in operator.statuses(malformed_id)),
+        ), operator.statuses(malformed_id)
+        assert (
+            operator.statuses(malformed_id)[-1]["failure"]["class"]
+            == mission.INVALID_INPUT
+        )
+        assert len(nav.goals) == 3
+
+        # ---- health reports the mission while it runs ----
+        slow_id = operator.dispatch(
+            robot_id, "fetch", {"target": "red_box", "destination": "kitchen"}
+        )
         assert spin_until(
             executor,
             lambda: any(
-                s["state"] == protocol.ACCEPTED for s in operator.statuses(slow_id)
+                s["state"] == mission.ACCEPTED for s in operator.statuses(slow_id)
             ),
         ), operator.statuses(slow_id)
         assert spin_until(
             executor,
-            lambda: (operator.of("health")[-1].get("task") or {}).get("id") == slow_id,
+            lambda: (
+                (operator.of("health")[-1].get("mission") or {}).get("id") == slow_id
+            ),
         ), operator.of("health")[-1]
 
-        # ---- and a second command is refused while it is busy ----
-        busy_id = operator.dispatch(robot_id, "goto lab")
+        # ---- and a second mission is refused while the lane is held ----
+        busy_id = operator.dispatch(robot_id, "goto", {"target": "lab"})
         assert spin_until(executor, lambda: operator.statuses(busy_id)), (
-            "no answer to the second command"
+            "no answer to the second mission"
         )
         busy = operator.statuses(busy_id)[-1]
-        assert busy["state"] == protocol.REJECTED
-        assert "one command in flight" in busy["detail"]
+        assert busy["state"] == mission.REJECTED
+        assert busy["failure"]["class"] == mission.BUSY
+        assert busy["failure"]["recoverable"] is True
+        # It names the mission holding the lane, so a dispatcher knows what it
+        # is waiting for rather than only that it must wait.
+        assert slow_id in busy["failure"]["detail"]
     finally:
         agent.close()
         operator.close()
@@ -327,7 +366,7 @@ def test_dispatch_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api
 
     from mote_bringup import identity
 
-    from mote_fleet import enroll, protocol
+    from mote_fleet import enroll
 
     enroll.main(["--server", fleet_api.url, "--token", fleet_api.registry.new_token()])
     robot_id = identity.robot_id()
@@ -358,16 +397,24 @@ def test_dispatch_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api
 
         # ---- a request with no operator token reaches no robot ----
         code, body = api_post(
-            fleet_api.url, f"/v1/robots/{robot_id}/dispatch", {"command": "goto lab"}
+            fleet_api.url,
+            f"/v1/robots/{robot_id}/dispatch",
+            {"capability": "goto", "input": {"target": "lab"}},
         )
         assert code == 401, body
-        assert not any(topic.endswith("task/command") for topic, _ in operator.messages)
+        assert not any(
+            topic.endswith("mission/command") for topic, _ in operator.messages
+        )
 
         # ---- with one, it is audited and published ----
         code, answer = api_post(
             fleet_api.url,
             f"/v1/robots/{robot_id}/dispatch",
-            {"schema": protocol.SCHEMA, "command": "goto kitchen"},
+            {
+                "schema": mission.SCHEMA,
+                "capability": "goto",
+                "input": {"target": "kitchen"},
+            },
             token=operator_token,
         )
         assert code == 202, answer
@@ -383,9 +430,9 @@ def test_dispatch_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api
             timeout=60.0,
         ), operator.statuses(answer["id"])
         assert [s["state"] for s in operator.statuses(answer["id"])] == [
-            protocol.DISPATCHED,
-            protocol.ACCEPTED,
-            protocol.SUCCEEDED,
+            mission.DISPATCHED,
+            mission.ACCEPTED,
+            mission.SUCCEEDED,
         ]
         assert len(nav.goals) == 1
         assert nav.goals[0].pose.position.x == pytest.approx(-1.5)  # kitchen

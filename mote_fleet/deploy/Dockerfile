@@ -50,6 +50,10 @@ COPY mote_fleet/mote_fleet/__init__.py \
 COPY mote_bringup/mote_bringup/__init__.py \
      mote_bringup/mote_bringup/bundle.py \
      /app/mote_bringup/
+# The mission and capability contracts (spec v0). Stdlib-only, so they add
+# nothing to the image but three files — and they are what stops the dispatch
+# route from having a second, drifting copy of what a mission looks like.
+COPY mote_bringup/mote_bringup/spec/ /app/mote_bringup/spec/
 COPY mote_fleet/server/fleet_server.py \
      mote_fleet/server/registry.py \
      mote_fleet/server/bundle_store.py \

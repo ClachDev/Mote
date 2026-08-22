@@ -25,9 +25,11 @@ import pytest
 rclpy = pytest.importorskip("rclpy")
 mqtt = pytest.importorskip("paho.mqtt.client")
 
+from geometry_msgs.msg import TransformStamped  # noqa: E402
 from nav2_msgs.action import NavigateToPose  # noqa: E402
 from rclpy.action import ActionServer  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from tf2_ros import TransformBroadcaster  # noqa: E402
 
 #: Zones both tests drive to. Matches the sim world's coordinates closely
 #: enough to read, but nothing here touches a simulator.
@@ -116,7 +118,14 @@ class Broker:
 
 
 class MockNav(Node):
-    """Nav2's action server, minus Nav2."""
+    """Nav2's action server, minus Nav2 — and the robot's own pose.
+
+    The pose is not decoration: ``goto`` and ``fetch`` declare a blocking
+    ``localized`` precondition, so a task server with no ``map``->``base_link``
+    transform correctly refuses every mission. Broadcast on a timer, because a
+    static transform's stamp never advances and the precondition asks whether
+    the robot knows where it is *now*.
+    """
 
     def __init__(self):
         super().__init__("mock_nav")
@@ -124,6 +133,17 @@ class MockNav(Node):
         self.server = ActionServer(
             self, NavigateToPose, "navigate_to_pose", self.execute
         )
+        self._tf = TransformBroadcaster(self)
+        self.create_timer(0.1, self._localise)
+        self._localise()
+
+    def _localise(self):
+        tf = TransformStamped()
+        tf.header.stamp = self.get_clock().now().to_msg()
+        tf.header.frame_id = "map"
+        tf.child_frame_id = "base_link"
+        tf.transform.rotation.w = 1.0
+        self._tf.sendTransform(tf)
 
     def execute(self, goal_handle):
         self.goals.append(goal_handle.request.pose)
@@ -139,7 +159,7 @@ class Operator:
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
         self.client.on_message = self._on_message
         self.client.connect("127.0.0.1", port, keepalive=30)
-        self.client.subscribe("mote/v1/#", qos=1)
+        self.client.subscribe("mote/v2/#", qos=1)
         self.client.loop_start()
 
     def _on_message(self, _client, _userdata, message):
@@ -151,14 +171,25 @@ class Operator:
     def statuses(self, command_id):
         return [
             payload
-            for payload in self.of("task/status")
+            for payload in self.of("mission/status")
             if payload.get("id") == command_id
         ]
 
-    def dispatch(self, robot_id, text):
+    def capabilities(self, robot_id):
+        """What the robot says it can be asked to do, from the retained topic."""
+        for topic, payload in self.messages:
+            if topic.endswith(f"{robot_id}/capabilities"):
+                return payload
+        return None
+
+    def dispatch(self, robot_id, capability, payload_input=None, **kwargs):
+        from mote_bringup.spec import mission
+
         from mote_fleet import protocol
 
-        payload = protocol.command(text, issued_by="test")
+        payload = mission.command(
+            robot_id, capability, payload_input or {}, issued_by="test", **kwargs
+        )
         self.client.publish(
             protocol.topic(robot_id, protocol.COMMAND),
             protocol.encode(payload),

@@ -1,12 +1,12 @@
-"""The goto tree: wait for a task, drive to a named zone's pose.
+"""The goto tree: wait for a mission, drive to a named zone's pose.
 
-``goto <zone>`` is place-based language ("go to the kitchen"): the target is a
-named place (see mote_tasks.zones) — the same table fetch uses. The mission is
-a single DriveTo to the zone's pose, so success is exactly Nav2 reaching it.
-The task server writes the resolved pose to the ``goto_pose`` blackboard key
-and the human-readable task string to ``task``; the tree idles in WaitForTask
-until ``task`` is set and the server clears it when the root reports SUCCESS or
-FAILURE.
+``goto`` takes one input, ``target``, which names a place and never a
+coordinate (see mote_tasks.zones, and zone/v0's invariant: names are portable
+between robots and coordinates are not). The mission is a single DriveTo to the
+zone's pose, so success is exactly Nav2 reaching it. The task server writes the
+resolved pose to the ``goto_pose`` blackboard key and a human-readable summary
+to ``task``; the tree idles in WaitForTask until ``task`` is set and the server
+clears it when the root reports SUCCESS or FAILURE.
 """
 
 import py_trees
@@ -17,34 +17,18 @@ from mote_tasks.trees.common import WaitForTask
 
 GOTO_POSE_KEY = "goto_pose"
 
-COMMAND = "goto"
 
+def prepare(zones: dict, payload_input: dict):
+    """``(pose, zone)`` for a validated ``goto`` input.
 
-def parse_command(zones: dict, words: list):
-    """Parse a ``goto <zone>`` command against known zones.
-
-    Returns the zone's PoseStamped; raises ValueError with a user-facing
-    message when the command is malformed, the zone is unknown, or the zone is
-    not somewhere the robot may drive.
-
-    The target may be a zone's name or any of its aliases. The refusal still
-    lists the names it *would* have taken, because a dispatcher with no other
-    source has been reading that list — the vocabulary the fleet now serves at
-    ``/v1/zones`` is the supported way to ask, but breaking the accident while
-    something depends on it would be gratuitous.
+    The input has already been checked against the capability's own
+    ``input_schema``, so ``target`` is a well-formed zone name; what is left is
+    whether *this robot* knows the place, which is the question the schema
+    cannot ask. A target may be a zone's name, a display name or an alias —
+    the resolution is zone/v0's, case-insensitive and whitespace-normalised.
     """
-    if len(words) != 2 or words[0] != COMMAND:
-        raise ValueError(f"expected: {COMMAND} <zone>")
-    target = words[1]
-    zone = mote_zones.resolve(zones, target)
-    if zone is None:
-        known = sorted(name for name, z in zones.items() if z.navigable)
-        raise ValueError(f"unknown zone '{target}', have {known}")
-    if not zone.navigable:
-        # A keepout is in the vocabulary because it is a place an operator
-        # draws on a floor plan, not because it is a destination.
-        raise ValueError(f"zone '{zone.name}' is a {zone.kind} zone, not a destination")
-    return zone.pose
+    zone = mote_zones.destination(zones, payload_input["target"], where="target")
+    return zone.pose, zone
 
 
 def create_goto_tree() -> py_trees.trees.BehaviourTree:

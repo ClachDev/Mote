@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mote.clach.dev/schema/v1/presence.schema.json",
+  "$id": "https://mote.clach.dev/schema/v2/presence.schema.json",
   "title": "Robot Presence",
   "description": "The connection state of a robot agent, published with a last-will-and-testament so an offline event is instant.",
   "type": "object",

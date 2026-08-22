@@ -361,10 +361,10 @@ main {
   white-space: nowrap;
 }
 
-/* The task band's first line: the command, and what is happening to it. The
-   command is the accent colour because it is the one piece of text in this pane
-   an operator scans for. */
-.task-line {
+/* The mission band's first line: the capability, and what is happening to it.
+   The capability is the accent colour because it is the one piece of text in
+   this pane an operator scans for. */
+.mission-line {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
@@ -372,12 +372,12 @@ main {
   font-size: 12px;
 }
 
-.task-command {
+.mission-capability {
   color: var(--accent);
   overflow-wrap: anywhere;
 }
 
-.task-meta {
+.mission-meta {
   color: var(--dim);
 }
 
@@ -462,8 +462,37 @@ main {
   min-width: 160px;
 }
 
-.zone-picker {
+.capability-picker {
   flex: 1 1 100%;
+  min-width: 0;
+}
+
+/* One row per input property, generated from the capability's input_schema.
+   Wrapping rather than a fixed grid because the number of fields is the
+   robot's to decide, not this stylesheet's. */
+.mission-input {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mission-field {
+  display: flex;
+  flex: 1 1 160px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mission-field-name {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.mission-field input,
+.mission-field select {
   min-width: 0;
 }
 

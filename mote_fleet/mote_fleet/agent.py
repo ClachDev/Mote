@@ -21,10 +21,21 @@ the health monitor's own ``/diagnostics_agg`` roll-up, forwarded rather than
 recomputed, so the fleet sees exactly what the robot sees. Pose is the map-frame
 TF, carrying the site and floor it is meaningful in.
 
-*Down* — one task at a time. ``task/command`` is a bare string with no request
-id, so the agent enforces the single-in-flight rule that makes retries safe and
-keeps the correlation id upstream of the ROS seam
-(:mod:`mote_fleet.dispatch`).
+*Up* — what this robot can be asked to do. The task server publishes its
+capability/v0 set on a latched ROS topic and the agent forwards it, retained,
+so a dispatcher reads the input shapes instead of guessing them. Forwarded
+rather than authored, deliberately: the capabilities are a fact about the
+executor that is running, so a robot whose task server is down advertises
+nothing, which is true.
+
+*Down* — missions. A mission/v0 command carries a correlation id and a typed
+input, and is handed to ROS **byte for byte**: this bridge does not parse,
+rewrite or validate the input, because the executor is the thing that declared
+the schema and a second opinion here could only disagree with it. What the
+agent does keep is what is its own — deduplicating a redelivery, retaining
+terminal statuses for a dispatcher that restarts, failing a mission the
+executor never answered, and saying whether a status belongs to the fleet or
+to somebody at the robot's own keyboard (:mod:`mote_fleet.dispatch`).
 
 *Down* — the canonical map. The registry announces each floor's canonical map
 revision on a retained topic, so this agent learns about a new map the instant
@@ -43,6 +54,7 @@ a multi-megabyte transfer must not sit inside a timer callback.
     pixi run agent            # or: mote-agent.service (installed, not enabled)
 """
 
+import json
 import math
 import os
 import queue
@@ -54,13 +66,24 @@ import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 import tf2_ros
 
 from mote_bringup import identity, sites
+from mote_bringup.spec import SpecError
+from mote_bringup.spec import mission as spec_mission
 
 from mote_fleet import dispatch, fleet_config, mapsync, protocol
+
+#: Matches the task server's capability publisher: the set is state, not an
+#: event, so an agent that starts after the task server still learns it.
+LATCHED = QoSProfile(
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
 
 # diagnostic_msgs levels -> the contract's health states.
 LEVEL_STATE = {
@@ -154,6 +177,7 @@ class MoteAgent(Node):
         self.connected = False
         self.version = repo_version()
         self.tracker = dispatch.CommandTracker(accept_timeout=command_timeout)
+        self.capabilities = None
         self._inbound = queue.Queue()
         self._snapshot_due = False
         self._diagnostics = None
@@ -166,6 +190,9 @@ class MoteAgent(Node):
 
         self.command_pub = self.create_publisher(String, "task/command", 1)
         self.create_subscription(String, "task/status", self._on_ros_status, 10)
+        self.create_subscription(
+            String, "task/capabilities", self._on_capabilities, LATCHED
+        )
         self.create_subscription(
             DiagnosticArray, "diagnostics_agg", self._on_diagnostics, 10
         )
@@ -217,6 +244,7 @@ class MoteAgent(Node):
         if resolved is None:
             return
         self.robot_id, host, port = resolved
+        self.tracker.platform_id = self.robot_id
 
         client = self._client_factory(f"mote-agent-{self.robot_id}")
         client.on_connect = self._on_connect
@@ -295,6 +323,7 @@ class MoteAgent(Node):
             self._snapshot_due = False
             self.publish_health()
             self.publish_pose()
+            self.publish_capabilities()
         while True:
             try:
                 topic, raw = self._inbound.get_nowait()
@@ -307,56 +336,72 @@ class MoteAgent(Node):
 
     def _handle_command(self, topic: str, raw: bytes):
         try:
-            payload = protocol.decode(raw, protocol.COMMAND)
-        except protocol.ProtocolError as exc:
+            payload = spec_mission.check(json.loads(raw), "command")
+        except (ValueError, SpecError) as exc:
             self.get_logger().warning(f"ignoring {topic}: {exc}")
             return
-        text = (payload.get("command") or "").strip()
-        if not text:
-            self.get_logger().warning(f"ignoring {topic}: empty command")
+        if payload["platform_id"] != self.robot_id:
+            self.get_logger().warning(
+                f"ignoring a mission addressed to {payload['platform_id']!r}"
+            )
             return
 
         action, update = self.tracker.submit(
-            payload["id"], text, self.get_clock().now().nanoseconds / 1e9
+            payload, self.get_clock().now().nanoseconds / 1e9
         )
         if action == dispatch.FORWARD:
-            self.get_logger().info(f"dispatching '{text}' (id {payload['id']})")
-            self.command_pub.publish(String(data=text))
-        elif action == dispatch.BUSY:
-            self.get_logger().warning(
-                f"rejecting '{text}' (id {payload['id']}): {update.detail}"
+            self.get_logger().info(
+                f"dispatching {payload['capability']} (id {payload['id']})"
             )
+            # Byte for byte: the executor declared the input schema, so the
+            # bridge has nothing to add and everything to get wrong.
+            self.command_pub.publish(String(data=json.dumps(payload)))
         else:
             self.get_logger().info(
-                f"redelivery of {payload['id']}; re-publishing {update.state}"
+                f"redelivery of {payload['id']}; re-publishing {update['state']}"
             )
         self._publish_status(update)
 
     def _on_ros_status(self, msg: String):
-        update = self.tracker.on_ros_status(msg.data)
-        if update is None:
-            self.get_logger().debug(f"unparsed task status: {msg.data}")
+        try:
+            payload = spec_mission.check(json.loads(msg.data), "status")
+        except (ValueError, SpecError) as exc:
+            self.get_logger().warning(f"unreadable task status: {exc}")
             return
-        self._publish_status(update)
+        self._publish_status(
+            self.tracker.on_status(payload, self.get_clock().now().nanoseconds / 1e9)
+        )
+
+    def _on_capabilities(self, msg: String):
+        """Forward the task server's capability set, retained.
+
+        Kept so it can be re-published on reconnect: the set arrives once, on
+        a latched topic, and a broker that was down at that moment would
+        otherwise leave the fleet with no idea what this robot offers until the
+        task server restarted.
+        """
+        self.capabilities = msg.data
+        self.publish_capabilities()
+
+    def publish_capabilities(self):
+        if self.client is None or self.robot_id is None or self.capabilities is None:
+            return
+        self.client.publish(
+            protocol.topic(self.robot_id, protocol.CAPABILITIES),
+            self.capabilities.encode(),
+            qos=protocol.QOS,
+            retain=True,
+        )
 
     def _tick_tracker(self):
-        update = self.tracker.tick(self.get_clock().now().nanoseconds / 1e9)
-        if update is not None:
-            self.get_logger().warning(f"command {update.command_id}: {update.detail}")
+        for update in self.tracker.tick(self.get_clock().now().nanoseconds / 1e9):
+            self.get_logger().warning(
+                f"mission {update['id']}: {update['failure']['detail']}"
+            )
             self._publish_status(update)
 
-    def _publish_status(self, update: dispatch.Update):
-        self._publish(
-            protocol.STATUS,
-            protocol.status(
-                self.robot_id,
-                update.command_id,
-                update.command,
-                update.state,
-                detail=update.detail,
-                source=update.source,
-            ),
-        )
+    def _publish_status(self, payload: dict):
+        self._publish(protocol.STATUS, payload)
 
     # ---- the map registry -----------------------------------------------
 
@@ -475,19 +520,10 @@ class MoteAgent(Node):
             self._site_at = now
         return self._site
 
-    def _task_summary(self) -> dict | None:
-        if not self.tracker.in_flight:
-            return None
-        return {
-            "id": self.tracker.command_id,
-            "command": self.tracker.command,
-            "state": self.tracker.state,
-        }
-
     def health_payload(self) -> dict:
         site, floor = self._active_site()
         common = dict(
-            task=self._task_summary(),
+            mission=self.tracker.summary(),
             site=site,
             floor=floor,
             version=self.version,

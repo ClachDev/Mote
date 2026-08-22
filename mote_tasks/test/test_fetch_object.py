@@ -13,8 +13,6 @@ import time
 
 import pytest
 import rclpy
-import tf2_ros
-from geometry_msgs.msg import TransformStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionServer
 from rclpy.executors import SingleThreadedExecutor
@@ -22,6 +20,9 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from std_msgs.msg import String
 from vision_msgs.msg import Detection3D, Detection3DArray, ObjectHypothesisWithPose
+
+import mission_harness as harness
+from mote_bringup.spec import mission
 
 from mote_tasks.behaviours.perception import LABELS_QOS
 from mote_tasks.task_server import TaskServer
@@ -36,7 +37,7 @@ OBJECT_XY = (2.0, 0.0)
 
 
 class MockWorld(Node):
-    """Mock Nav2 + mock detector + a static map->base_footprint at the origin."""
+    """Mock Nav2 + mock detector + a live map->base at the origin."""
 
     def __init__(self):
         super().__init__("mock_world")
@@ -47,20 +48,17 @@ class MockWorld(Node):
             self, NavigateToPose, "navigate_to_pose", self.execute
         )
         self.command_pub = self.create_publisher(String, "task/command", 1)
-        self.create_subscription(
-            String, "task/status", lambda m: self.statuses.append(m.data), 10
-        )
+        harness.collect(self, self.statuses)
         self.create_subscription(String, "detect/labels", self._on_labels, LABELS_QOS)
         self.detections_pub = self.create_publisher(
             Detection3DArray, "detected_objects", 5
         )
         self.create_timer(0.05, self._tick_detector)
 
-        tf = TransformStamped()
-        tf.header.frame_id = "map"
-        tf.child_frame_id = "base_footprint"
-        tf.transform.rotation.w = 1.0
-        tf2_ros.StaticTransformBroadcaster(self).sendTransform(tf)
+        # base_footprint is what AcquireObject measures the standoff from;
+        # base_link is what the `localized` precondition looks for. Both are
+        # the robot at the origin, and the real robot publishes both.
+        self.localiser = harness.localise(self, ("base_footprint", "base_link"))
 
     def execute(self, goal_handle):
         self.goals.append(goal_handle.request.pose)
@@ -116,6 +114,7 @@ def test_fetch_by_label(ros, tmp_path):
     server = TaskServer(
         parameter_overrides=[
             Parameter("zones_file", value=str(zones_file)),
+            Parameter("platform_id", value=harness.PLATFORM),
             Parameter("pick_duration", value=0.1),
             Parameter("place_duration", value=0.1),
         ]
@@ -125,13 +124,13 @@ def test_fetch_by_label(ros, tmp_path):
     executor.add_node(server)
     executor.add_node(mock)
 
-    assert spin_until(
-        executor, lambda: mock.command_pub.get_subscription_count() > 0
-    ), "task_server never subscribed to task/command"
+    harness.ready(executor, server, mock.command_pub)
 
-    mock.command_pub.publish(String(data="fetch red_box dropoff"))
+    harness.send(
+        mock.command_pub, "fetch", {"target": "red_box", "destination": "dropoff"}
+    )
     assert spin_until(
-        executor, lambda: any(s.startswith("succeeded") for s in mock.statuses)
+        executor, lambda: mission.SUCCEEDED in harness.states(mock.statuses)
     ), mock.statuses
 
     # The detector was asked for the label (underscores as spaces) and then idled.

@@ -1,190 +1,222 @@
-"""The single-in-flight rule: how a correlation id survives the ROS seam.
+"""What the agent must remember about a mission, and for how long.
 
-``task/command`` is a bare ``std_msgs/String`` and ``task/status`` answers with
-bare strings too — the task layer has no notion of a request id, and giving it
-one would mean changing a working interface for the fleet's convenience. So the
-correlation id lives *upstream* of the ROS seam, in the agent, and this module
-is the whole of that bookkeeping. It is deliberately free of ROS and MQTT so the
-awkward cases can be tested as plain function calls.
+This module used to hold the single-in-flight rule *and* a parser for the
+sentences the task layer published, because ``task/command`` was a bare string
+with no correlation id: the agent could not tell which refusal belonged to
+which command, so it kept the robot from ever seeing two, and worked out
+attribution from the command text every status line echoed. Both halves are
+gone. A mission/v0 command carries an id, a status carries it back, and the
+lane belongs to the executor that actually holds it
+(:mod:`mote_tasks.task_server`).
 
-The rule (fleet.md Q1) is **one in-flight command per robot**:
+What is left is genuinely the agent's, and none of it is the executor's:
 
-* a command arrives, the agent forwards it and remembers its id;
-* a second command arriving before the first reaches a terminal state is
-  rejected by the agent itself, without touching ROS — the robot never sees two;
-* a *redelivery* of the same id (QoS 1 does that, and so does an operator
-  clicking twice) re-publishes the current status instead of re-dispatching;
-* the first terminal status releases the slot.
+**Deduplication.** MQTT QoS 1 is at-least-once, so the broker may redeliver a
+command; an operator may click twice; a dispatcher that timed out may resend
+deliberately, which the spec makes safe on purpose. A redelivered id must
+republish the status that mission already has and **must not** re-execute it.
 
-Attribution then has two independent handles rather than one. Position alone
-("the next verdict must be mine") would misfire the moment anything else
-publishes to ``task/command`` — a bench script, an operator's ``ros2 topic
-pub`` — so it is backed up by the fact that every status line **echoes the
-command text it is about**::
+**Retention.** A dispatcher that restarts must be able to learn the outcome of
+what it sent, so a terminal status is remembered — the spec says at least an
+hour, and at least as long as the longest ``max_duration_s`` offered. Within
+that window an id is not fresh: a redelivery of a *finished* mission's command
+returns the outcome rather than starting a second one, which is the difference
+between "retry is safe" and "retry is safe until it succeeds".
 
-    accepted: goto kitchen
-    rejected: 'goto nowhere' (unknown zone 'nowhere')
-    rejected: busy with 'fetch red_box dropoff'     <- names the RUNNING task
-    succeeded: goto kitchen
-    failed: goto kitchen (at DriveTo)
+**The unanswered command.** ``dispatched`` is not an acknowledgement — it means
+the payload reached the dispatch layer, and a robot whose task server is not
+running looks exactly like a robot that has not answered yet. So a mission with
+no verdict inside ``accept_timeout`` is failed with class ``timeout``, which
+frees the dispatcher rather than leaving it watching a mission nobody owns.
 
-A status whose subject is not our in-flight command is reported as a
-locally-issued task (``source: "local"``) rather than silently attributed to
-the fleet: an operator watching the fleet should see a robot that is busy,
-whoever asked it to be.
+**Attribution.** ``source`` is the fleet's view — did this mission come from a
+dispatched command — and only this module can answer it: on the robot, a
+command the agent forwarded and one a bench script published are the same
+message on the same topic. A status whose id is not one we dispatched is
+reported as ``local``, so an operator watching the fleet sees a robot that is
+busy whoever asked it to be.
+
+It is deliberately free of ROS and MQTT, so every awkward case is a plain
+function call in ``test_dispatch.py``.
 """
 
-import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from mote_fleet import protocol
+from mote_bringup.spec import mission
 
 # What the agent should do with an inbound command.
-FORWARD = "forward"  # new command: publish it to ROS
-DUPLICATE = "duplicate"  # same id again: re-publish the status it already has
-BUSY = "busy"  # another command is in flight: reject without touching ROS
+FORWARD = "forward"  # a mission we have not seen: publish it to ROS
+DUPLICATE = "duplicate"  # this id again: re-publish the status it already has
 
-_REJECT_BUSY_RE = re.compile(r"^busy with '(.*)'$")
-_REJECT_CMD_RE = re.compile(r"^'(.*)' \((.*)\)$", re.DOTALL)
-_FAILED_AT_RE = re.compile(r"^(.*) \(at (.*)\)$", re.DOTALL)
+#: How long a terminal status is remembered. The spec's floor is one hour and
+#: "at least the longest max_duration_s you offer"; Mote's longest is fetch's
+#: 900 s, so the hour governs.
+RETENTION_S = 3600.0
 
-
-@dataclass(frozen=True)
-class RosStatus:
-    """One parsed ``task/status`` line."""
-
-    kind: str  # a protocol task state
-    subject: str  # the command text the line is about
-    detail: str
-    #: True for ``rejected: busy with 'X'``, where the subject is the *running*
-    #: task and the rejected command is unnamed.
-    names_running: bool = False
+#: A ceiling on remembered missions, so a dispatcher looping on a fresh id
+#: every second cannot grow this without bound on a robot with 4 GB of RAM.
+#: Reached only by a caller that is already misbehaving, and the eviction is
+#: oldest-first, so the ids most likely to be redelivered are the last to go.
+MAX_REMEMBERED = 512
 
 
-@dataclass(frozen=True)
-class Update:
-    """A status transition the agent should publish."""
+@dataclass
+class Mission:
+    """One mission this agent forwarded, and where it got to."""
 
-    command_id: str | None
-    command: str
+    id: str
+    capability: str
+    lane: str
     state: str
-    detail: str
-    source: str
+    sent_at: float
+    status: dict = field(default_factory=dict)
+    finished_at: float | None = None
 
-
-def parse_status(text: str) -> RosStatus | None:
-    """Parse a ``task/status`` line, or None if it is not one we understand."""
-    kind, sep, rest = text.partition(":")
-    kind, rest = kind.strip(), rest.strip()
-    if not sep or kind not in protocol.TASK_STATES:
-        return None
-    if kind == protocol.REJECTED:
-        busy = _REJECT_BUSY_RE.match(rest)
-        if busy:
-            return RosStatus(kind, busy.group(1), "busy", names_running=True)
-        quoted = _REJECT_CMD_RE.match(rest)
-        if quoted:
-            return RosStatus(kind, quoted.group(1), quoted.group(2))
-        return RosStatus(kind, rest, rest)
-    if kind == protocol.FAILED:
-        at = _FAILED_AT_RE.match(rest)
-        if at:
-            return RosStatus(kind, at.group(1), f"at {at.group(2)}")
-    return RosStatus(kind, rest, "")
+    @property
+    def terminal(self) -> bool:
+        return self.state in mission.TERMINAL_STATES
 
 
 class CommandTracker:
-    """Holds at most one fleet command and attributes ROS statuses to it."""
+    """The agent's memory of the missions it has dispatched."""
 
-    def __init__(self, accept_timeout: float = 20.0):
+    def __init__(
+        self,
+        platform_id: str = "",
+        accept_timeout: float = 20.0,
+        retention_s: float = RETENTION_S,
+    ):
+        self.platform_id = platform_id
         #: How long a forwarded command may go unanswered before the agent
-        #: calls it failed and frees the slot. Only covers the *verdict* — an
-        #: accepted mission may then run for as long as it likes.
+        #: calls it failed. Only covers the *verdict* — an accepted mission may
+        #: then run for as long as its capability allows.
         self.accept_timeout = accept_timeout
-        self.command_id: str | None = None
-        self.command: str = ""
-        self.state: str | None = None
-        self.detail: str = ""
-        self.sent_at: float = 0.0
+        self.retention_s = retention_s
+        self.missions: dict[str, Mission] = {}
 
-    @property
-    def in_flight(self) -> bool:
-        return self.state is not None and self.state not in protocol.TERMINAL_STATES
+    # -- inbound ----------------------------------------------------------
 
-    def submit(self, command_id: str, text: str, now: float) -> tuple[str, Update]:
+    def submit(self, command: dict, now: float) -> tuple[str, dict]:
         """Decide what to do with an inbound command.
 
-        Returns ``(action, update)`` where action is FORWARD / DUPLICATE / BUSY
-        and update is the status the agent should publish either way — a
+        Returns ``(action, status)``. The status is published either way — a
         command that produces no status is a command an operator watches
-        disappear.
+        disappear — and for a duplicate it is the one that mission already has,
+        republished rather than recomputed.
         """
-        if command_id == self.command_id and self.state is not None:
-            return DUPLICATE, self._update(self.state, self.detail)
-        if self.in_flight:
-            busy = Update(
-                command_id=command_id,
-                command=text,
-                state=protocol.REJECTED,
-                detail=(
-                    f"busy with '{self.command}' (id {self.command_id}); "
-                    "one command in flight per robot"
-                ),
-                source=protocol.SOURCE_FLEET,
+        # Expire first, then look up: an id whose window has passed must read
+        # as fresh, and checking before evicting would keep answering with a
+        # status the retention rule says has been forgotten.
+        self._evict(now)
+        known = self.missions.get(command["id"])
+        if known is not None:
+            return DUPLICATE, known.status
+        entry = Mission(
+            id=command["id"],
+            capability=command["capability"],
+            lane=command.get("lane") or mission.DEFAULT_LANE,
+            state=mission.DISPATCHED,
+            sent_at=now,
+        )
+        entry.status = self._status(entry, mission.DISPATCHED)
+        self.missions[entry.id] = entry
+        return FORWARD, entry.status
+
+    def on_status(self, payload: dict, now: float) -> dict:
+        """Record a status the executor published, and attribute it.
+
+        The payload is passed through rather than rebuilt: the executor is the
+        author of everything in it except ``source``, and re-deriving a state
+        or a failure here would be a second opinion about a mission this
+        process is not running.
+        """
+        entry = self.missions.get(payload.get("id"))
+        if entry is None:
+            payload["source"] = mission.SOURCE_LOCAL
+            return payload
+        payload["source"] = mission.SOURCE_FLEET
+        entry.state = payload["state"]
+        entry.status = payload
+        if entry.terminal and entry.finished_at is None:
+            entry.finished_at = now
+        return payload
+
+    def tick(self, now: float) -> list[dict]:
+        """Fail every mission the executor never answered, and forget old ones."""
+        overdue = []
+        for entry in self.missions.values():
+            if entry.state != mission.DISPATCHED:
+                continue
+            if now - entry.sent_at < self.accept_timeout:
+                continue
+            failure = mission.failure(
+                mission.TIMEOUT,
+                f"no verdict from the task server within {self.accept_timeout:.0f}s",
+                # The task server may simply not be running yet; when it is,
+                # the identical mission has every prospect of being taken.
+                recoverable=True,
+                at=mission.DISPATCHED,
             )
-            return BUSY, busy
-        self.command_id, self.command = command_id, text
-        self.state, self.detail, self.sent_at = protocol.DISPATCHED, "", now
-        return FORWARD, self._update(protocol.DISPATCHED, "")
+            entry.state = mission.FAILED
+            entry.finished_at = now
+            entry.status = self._status(entry, mission.FAILED, failure=failure)
+            overdue.append(entry.status)
+        self._evict(now)
+        return overdue
 
-    def on_ros_status(self, text: str) -> Update | None:
-        """Turn a ``task/status`` line into the transition to publish."""
-        parsed = parse_status(text)
-        if parsed is None:
-            return None
-        if self._is_ours(parsed):
-            self.state, self.detail = parsed.kind, parsed.detail
-            return self._update(parsed.kind, parsed.detail)
-        # Not ours: a task someone started on the robot itself. Report it with a
-        # null correlation id so the fleet sees the robot is occupied.
-        return Update(
-            command_id=None,
-            command=parsed.subject,
-            state=parsed.kind,
-            detail=parsed.detail,
-            source=protocol.SOURCE_LOCAL,
+    # -- what health reports ----------------------------------------------
+
+    @property
+    def in_flight(self) -> list[Mission]:
+        return [entry for entry in self.missions.values() if not entry.terminal]
+
+    def summary(self) -> dict | None:
+        """The in-flight mission for the health payload, or None.
+
+        One lane, so at most one; the first is the answer rather than a list,
+        because a dashboard row showing "which mission is this robot on" has
+        room for one and a list would be a lie about the shape of the fleet.
+        """
+        for entry in self.in_flight:
+            return {
+                "id": entry.id,
+                "capability": entry.capability,
+                "state": entry.state,
+                "lane": entry.lane,
+            }
+        return None
+
+    # -- internals --------------------------------------------------------
+
+    def _status(self, entry: Mission, state: str, **kwargs) -> dict:
+        return mission.status(
+            self.platform_id,
+            entry.id,
+            entry.capability,
+            state,
+            lane=entry.lane,
+            source=mission.SOURCE_FLEET,
+            **kwargs,
         )
 
-    def tick(self, now: float) -> Update | None:
-        """Fail a command the task server never answered, freeing the slot."""
-        if self.state != protocol.DISPATCHED:
-            return None
-        if now - self.sent_at < self.accept_timeout:
-            return None
-        detail = f"no verdict from the task server within {self.accept_timeout:.0f}s"
-        self.state, self.detail = protocol.FAILED, detail
-        return self._update(protocol.FAILED, detail)
-
-    def _is_ours(self, parsed: RosStatus) -> bool:
-        if self.command_id is None or not self.in_flight:
-            return False
-        if parsed.kind in (protocol.ACCEPTED, protocol.REJECTED):
-            if self.state != protocol.DISPATCHED:
-                return False
-            if parsed.names_running:
-                # "busy with 'X'": ours is the command being rejected, unless X
-                # *is* ours — in which case a local command was rejected
-                # because our accepted mission is running.
-                return parsed.subject != self.command
-            return parsed.subject == self.command
-        # succeeded/failed name the task that finished.
-        return self.state == protocol.ACCEPTED and parsed.subject == self.command
-
-    def _update(self, state: str, detail: str) -> Update:
-        return Update(
-            command_id=self.command_id,
-            command=self.command,
-            state=state,
-            detail=detail,
-            source=protocol.SOURCE_FLEET,
-        )
+    def _evict(self, now: float):
+        expired = [
+            key
+            for key, entry in self.missions.items()
+            if entry.finished_at is not None
+            and now - entry.finished_at > self.retention_s
+        ]
+        for key in expired:
+            del self.missions[key]
+        # Only terminal missions are evictable under pressure: forgetting one
+        # that is still running would make its own status look local when it
+        # lands, and would free an id the executor still holds.
+        while len(self.missions) > MAX_REMEMBERED:
+            oldest = min(
+                (e for e in self.missions.values() if e.terminal),
+                key=lambda e: e.finished_at or 0.0,
+                default=None,
+            )
+            if oldest is None:
+                return
+            del self.missions[oldest.id]

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mote.clach.dev/schema/v1/current.schema.json",
+  "$id": "https://mote.clach.dev/schema/v2/current.schema.json",
   "title": "Canonical Map Revision",
-  "description": "The map revision a floor is canonically on, published retained by the registry at mote/v1/registry/site/<site>/floor/<floor>/current so an agent that reconnects learns it immediately.",
+  "description": "The map revision a floor is canonically on, published retained by the registry at mote/v2/registry/site/<site>/floor/<floor>/current so an agent that reconnects learns it immediately.",
   "type": "object",
   "required": ["schema", "site", "floor", "revision", "url", "stamp"],
   "additionalProperties": true,

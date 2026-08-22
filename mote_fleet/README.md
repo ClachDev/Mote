@@ -33,9 +33,9 @@ pixi run publish-map            # after save-map: offer the map to the registry
 
 | Module | |
 |---|---|
-| [`agent.py`](mote_fleet/agent.py) | the node: presence/health/pose up, one task at a time down |
-| [`dispatch.py`](mote_fleet/dispatch.py) | the single-in-flight rule; ROS-free and MQTT-free, so the awkward cases are plain function calls |
-| [`protocol.py`](mote_fleet/protocol.py) | the wire contract — topics, payloads, states. Stdlib only |
+| [`agent.py`](mote_fleet/agent.py) | the node: presence/health/pose/capabilities up, missions down |
+| [`dispatch.py`](mote_fleet/dispatch.py) | what the agent remembers about a mission — dedup, retention, the unanswered-mission timeout, and `source`. ROS-free and MQTT-free, so the awkward cases are plain function calls |
+| [`protocol.py`](mote_fleet/protocol.py) | the transport binding — topics, QoS, retain, and the telemetry payloads. Stdlib only |
 | [`enroll.py`](mote_fleet/enroll.py) | the `enroll` CLI |
 | [`facts.py`](mote_fleet/facts.py) | hardware facts and the fingerprint enrollment is idempotent on |
 | [`fleet_config.py`](mote_fleet/fleet_config.py) | `$MOTE_HOME/fleet.yaml` — where this robot's fleet lives |
@@ -54,7 +54,7 @@ a design (`fleet.md` Q1/Q3).
 ```bash
 pixi run fleet-broker                                      # mosquitto + WebSockets
 pixi run -e fleet fleet-server -- --broker-host fleet-box  # API + dashboard
-pixi run -e fleet fleetctl -- dispatch mote-01 goto kitchen
+pixi run -e fleet fleetctl -- dispatch mote-01 goto target=kitchen
 ```
 
 | Script | |
@@ -67,10 +67,20 @@ pixi run -e fleet fleetctl -- dispatch mote-01 goto kitchen
 | [`server/mosquitto.conf`](server/mosquitto.conf), [`broker.sh`](server/broker.sh) | the broker, its WebSocket listener, and where its state goes |
 | [`deploy/`](deploy/) | the deployed shape: an image for the API+UI, a compose file that runs it beside the broker, and `fleet-deploy.sh` (gated update, rollback, backup, restore) |
 
-The server imports `mote_fleet.protocol` and `mote_bringup.bundle` from the
-source tree by path (the `depth_server.py` pattern) and nothing else — no ROS,
-no framework, no ament. `protocol` is the wire the robot and the server agree
-on, and `bundle` is the *bundle format* they agree on, so the server validates
+**The payloads are a specification's, not Mote's.** A mission command, a
+mission status and the capability set are mission/v0 and capability/v0
+documents, built by [`mote_bringup/spec/`](../mote_bringup/mote_bringup/spec/)
+— which is why `protocol.py` describes the topic tree and stops there. Mote
+vendors no copy of those schemas: the authority is the specification, and
+`mote_bringup/test/test_spec_conformance.py` validates real payloads against it
+where a checkout is present. What Mote still defines, and still mirrors in
+`schema/`, is its own telemetry.
+
+The server imports `mote_fleet.protocol`, `mote_bringup.spec` and
+`mote_bringup.bundle` from the source tree by path (the `depth_server.py`
+pattern) and nothing else — no ROS, no framework, no ament. `protocol` is the
+wire the robot and the server agree on, and `bundle` is the *bundle format* they
+agree on, so the server validates
 an uploaded map revision with the same code that wrote it rather than a second
 implementation that agrees by convention (`fleet.md` Q4). `protocol` is
 stdlib-only; `bundle` additionally imports PyYAML and Pillow, which the image
@@ -89,9 +99,16 @@ a published wire format and a minified blob nobody can review is a worse
 dependency than 200 lines that are tested.
 
 **Dispatch is mediated by the server, and only by the server.** Every write to
-`task/command` — from the dashboard or from `fleetctl` — is a POST that
+`mission/command` — from the dashboard or from `fleetctl` — is a POST that
 authorizes an operator token and writes an audit row first. The read path is
 unchanged and goes straight to the broker.
+
+**What is dispatched is a capability and a typed input**, and the server
+validates neither: the capability that declared the `input_schema` runs on the
+robot, so a copy on the server would be a second contract to keep in step *and*
+would refuse missions a newer robot understands. What it buys instead is a typed
+refusal coming back — `invalid_input` naming the property, `busy` naming the
+mission that holds the lane — which a dispatcher acts on without reading prose.
 
 **Uploading a map is not publishing it.** A revision a robot uploads is a
 candidate that changes nothing; an operator promotes one, which flips the

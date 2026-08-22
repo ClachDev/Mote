@@ -39,8 +39,8 @@ pixi run sim-mapping
 pixi run tasks use_sim_time:=true
 
 # Terminal 3: give it a job, watch the status
-pixi run -- ros2 topic pub --once /task/command std_msgs/msg/String "{data: fetch pickup dropoff}"
-pixi run -- ros2 topic echo /task/status
+pixi run -- ros2 run mote_tasks mission --list      # what it will accept
+pixi run -- ros2 run mote_tasks mission fetch target=pickup destination=dropoff
 ```
 
 On the real robot, run `pixi run tasks` alongside `pixi run robot`. Zones
@@ -107,19 +107,43 @@ active.
 
 ## Interface
 
-- `task/command` (std_msgs/String):
-  - `fetch <target> <drop_zone>` — a `target` matching a zone name drives
-    straight there; anything else is an **open-vocabulary object label**
-    (underscores become spaces, so `fetch red_box dropoff` looks for "red box")
-    resolved by the perception stack's detector — run `pixi run perception`
-    (the node) and `pixi run inference` (its server) alongside the mission (see
-    mote_perception's README, L2).
-  - `goto <zone>` — drive to any named zone's pose.
-- `task/status` (std_msgs/String): `accepted:` / `rejected:` / `succeeded:` /
-  `failed:` plus the task text
-- A task in progress rejects new commands; a failure anywhere (Nav2 abort,
-  rejection, missing server, no detection within the timeout) clears the task
-  and returns the tree to idle.
+All three topics are `std_msgs/String` carrying JSON. A custom message would
+have bought type-checking inside the ROS graph and cost the property that
+matters more: the fleet agent forwards these payloads to MQTT byte for byte, so
+there is one definition of the wire and the bridge cannot reinterpret it.
+
+- `task/capabilities` — a **capability/v0 capability set**, published latched:
+  what this robot can be asked to do, with a JSON Schema per input.
+  `mote_tasks/capabilities.py` is the authority. Two keys, both from the
+  specification's standard registry:
+  - `goto` with `{"target": "<zone>"}` — drive to a named zone's pose.
+  - `fetch` with `{"target": "<zone or label>", "destination": "<zone>"}` — a
+    `target` matching a zone name drives straight there; anything else is an
+    **open-vocabulary object label** (underscores become spaces, so
+    `red_box` looks for "red box") resolved by the perception stack's detector
+    — run `pixi run perception` (the node) and `pixi run inference` (its
+    server) alongside the mission (see mote_perception's README, L2).
+- `task/command` — a **mission/v0 mission command**: a capability key, a typed
+  input, and a correlation id the dispatcher chose.
+- `task/status` — a **mission/v0 mission status** per transition:
+  `dispatched` (published by the agent) / `accepted` / `succeeded` / `failed` /
+  `rejected`, the last two carrying a typed `failure`.
+
+The failure is the point of the typing. `rejected` says `unknown_capability`,
+`invalid_input` (naming the property), `busy` (naming the mission holding the
+lane), `precondition` or `unresolved_zone` (carrying zone/v0's own reason);
+`failed` says `obstructed`, `unreachable`, `timeout` or `internal`, and the
+behaviour that failed is what decides which — see `trees/common.py`'s
+`report_failure`. Each carries `recoverable`, so a dispatcher retries or does
+not without reading prose.
+
+**This node owns the lane.** One mission at a time per lane; a second is
+rejected with `busy`. It also evaluates the capability's blocking preconditions
+before accepting — `localized` wants a `map`→`base_link` transform, `zone_known`
+wants the zone to resolve — and enforces `max_duration_s`, failing a mission that
+overran with `timeout`. An unmet *non-blocking* precondition is reported in
+`warnings` on the `accepted` status rather than refusing, so a mission that
+started degraded is visible.
 
 Label missions go through `behaviours/perception.py`'s `AcquireObject`: it
 publishes the label to `detect/labels`, waits for a matching detection on

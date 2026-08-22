@@ -1,7 +1,7 @@
 """End-to-end tick of the fetch tree against a mock navigate_to_pose server.
 
 No Gazebo or Nav2 required: the mock server accepts every goal and succeeds
-immediately, so the test exercises command parsing, blackboard wiring, both
+immediately, so the test exercises input validation, blackboard wiring, both
 DriveTo behaviours, the pick/place stubs, and outcome reporting.
 """
 
@@ -17,6 +17,9 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from std_msgs.msg import String
+
+import mission_harness as harness
+from mote_bringup.spec import mission
 
 from mote_tasks.task_server import TaskServer
 
@@ -37,9 +40,8 @@ class MockNav(Node):
             self, NavigateToPose, "navigate_to_pose", self.execute
         )
         self.command_pub = self.create_publisher(String, "task/command", 1)
-        self.create_subscription(
-            String, "task/status", lambda m: self.statuses.append(m.data), 10
-        )
+        harness.collect(self, self.statuses)
+        harness.localise(self)
 
     def execute(self, goal_handle):
         self.goals.append(goal_handle.request.pose)
@@ -74,6 +76,7 @@ def test_fetch_round_trip(ros, tmp_path):
     server = TaskServer(
         parameter_overrides=[
             Parameter("zones_file", value=str(zones_file)),
+            Parameter("platform_id", value=harness.PLATFORM),
             Parameter("pick_duration", value=0.1),
             Parameter("place_duration", value=0.1),
         ]
@@ -83,18 +86,22 @@ def test_fetch_round_trip(ros, tmp_path):
     executor.add_node(server)
     executor.add_node(mock)
 
-    assert spin_until(
-        executor, lambda: mock.command_pub.get_subscription_count() > 0
-    ), "task_server never subscribed to task/command"
+    harness.ready(executor, server, mock.command_pub)
 
-    mock.command_pub.publish(String(data="fetch pickup nowhere"))
-    assert spin_until(
-        executor, lambda: any(s.startswith("rejected") for s in mock.statuses)
-    ), mock.statuses
+    harness.send(
+        mock.command_pub, "fetch", {"target": "pickup", "destination": "nowhere"}
+    )
+    assert spin_until(executor, lambda: harness.failures(mock.statuses)), mock.statuses
+    assert harness.failures(mock.statuses)[-1] == (
+        mission.REJECTED,
+        mission.UNRESOLVED_ZONE,
+    )
 
-    mock.command_pub.publish(String(data="fetch pickup dropoff"))
+    harness.send(
+        mock.command_pub, "fetch", {"target": "pickup", "destination": "dropoff"}
+    )
     assert spin_until(
-        executor, lambda: any(s.startswith("succeeded") for s in mock.statuses)
+        executor, lambda: mission.SUCCEEDED in harness.states(mock.statuses)
     ), mock.statuses
 
     assert len(mock.goals) == 2, mock.goals

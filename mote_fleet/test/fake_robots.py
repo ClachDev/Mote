@@ -1,12 +1,16 @@
 """A fleet that exists only on the wire.
 
 The dashboard consumes the control-plane contract and nothing else: presence,
-health, pose and task status arriving over MQTT, and one command going back the
-other way. So the cheapest honest thing to point it at is a script that
-publishes exactly that contract — no ROS, no Nav2, no hardware — which is what
-this is. It is **not** a second robot implementation: every payload is built by
-``protocol.py``, the same module the real agent builds them with, so a change to
-the wire changes this fixture or fails it.
+health, pose, a capability set and mission status arriving over MQTT, and one
+mission going back the other way. So the cheapest honest thing to point it at
+is a script that publishes exactly that contract — no ROS, no Nav2, no hardware
+— which is what this is. It is **not** a second robot implementation: every
+payload is built by ``protocol.py`` and ``mote_bringup.spec``, the modules the
+real agent and task server build them with, so a change to the wire changes
+this fixture or fails it. The capability set in particular is
+``mote_tasks.capabilities``' own, imported rather than copied — the dispatch
+form is generated from it, and a hand-written one here would let the form drift
+from the robot it is meant to drive.
 
 What it does model, because the UI renders each of them differently:
 
@@ -17,11 +21,13 @@ What it does model, because the UI renders each of them differently:
   roll-up and the per-subsystem rows both have something to draw.
 * **a pose that moves** — retained, republished a few times a second, so the map
   is live rather than a single dot.
-* **task status transitions** — ``dispatched`` → ``accepted`` → ``succeeded``
-  for a command the robot's grammar knows, ``dispatched`` → ``rejected`` for one
-  it does not, and a redelivery re-publishes the last status rather than
-  re-running the task. That is the agent's single-in-flight rule (``dispatch.py``
-  owns it for real); here it is just enough of it to drive the status log.
+* **mission status transitions** — ``dispatched`` → ``accepted`` →
+  ``succeeded`` for a mission whose input validates, ``dispatched`` →
+  ``rejected`` with a typed failure for one that does not, and a redelivery
+  re-publishes the last status rather than re-running the mission. The
+  rejection paths are the point: ``busy``, ``invalid_input`` and
+  ``unresolved_zone`` all render differently, and a status log that has only
+  ever seen success is a status log nobody has read.
 
 Run it against a broker of your own while working on ``server/ui/``::
 
@@ -34,6 +40,7 @@ or let ``ui_check.py`` bring up a whole private stack around it
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import signal
 import sys
@@ -45,15 +52,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import paho.mqtt.client as mqtt  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "mote_bringup"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "mote_tasks"))
+
+from mote_bringup.spec import SpecError  # noqa: E402
+from mote_bringup.spec import capability as spec_capability  # noqa: E402
+from mote_bringup.spec import mission  # noqa: E402
 from mote_fleet import protocol  # noqa: E402
+from mote_tasks import capabilities  # noqa: E402
 
-#: Command words the robot's task layer knows (``mote_tasks/task_server.py``).
-#: Anything else is rejected, which is a case the status log should be able to
-#: show without an operator having to invent a broken robot.
-VERBS = ("fetch", "goto")
-
-#: Zone names the sim worlds' ``zones.yaml`` files all carry, so a `goto` typed
-#: into the dashboard against the shipped basemap succeeds.
+#: Zone names the sim worlds' ``zones.yaml`` files all carry, so a `goto` picked
+#: in the dashboard against the shipped basemap succeeds.
 ZONES = ("pickup", "dropoff", "home")
 
 PROFILES = ("ok", "degraded", "offline")
@@ -119,9 +128,11 @@ class FakeRobot:
         self.started = time.monotonic()
         self.dropped = False
 
+        self.capabilities = capabilities.capability_set(robot_id, max_speed_mps=0.218)
+
         self._lock = threading.Lock()
-        self._task = None  # the in-flight command, or None
-        self._last_status = {}  # command id -> the status last published for it
+        self._mission = None  # the in-flight mission, or None
+        self._last_status = {}  # mission id -> the status last published for it
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2, client_id=f"fake-{robot_id}"
@@ -157,6 +168,7 @@ class FakeRobot:
         self._publish(
             protocol.PRESENCE, protocol.presence(self.id, True, agent="fake_robots")
         )
+        self._publish(protocol.CAPABILITIES, self.capabilities)
         self.tick()
 
     def drop(self):
@@ -198,13 +210,13 @@ class FakeRobot:
             else "all subsystems nominal"
         )
         with self._lock:
-            task = dict(self._task["summary"]) if self._task else None
+            running = dict(self._mission["summary"]) if self._mission else None
         return protocol.health(
             self.id,
             state,
             summary,
             subsystems(state),
-            task=task,
+            mission=running,
             site=self.site,
             floor=self.floor,
             version="fake-robots",
@@ -245,77 +257,116 @@ class FakeRobot:
 
     def _on_message(self, _client, _userdata, message):
         try:
-            payload = protocol.decode(message.payload, protocol.COMMAND)
-        except protocol.ProtocolError as exc:
-            print(f"{self.id}: refusing a malformed command: {exc}")
+            payload = mission.check(json.loads(message.payload), "command")
+        except (ValueError, SpecError) as exc:
+            print(f"{self.id}: refusing a malformed mission: {exc}")
             return
         self._handle(payload)
 
     def _handle(self, payload: dict):
-        command_id, text = payload["id"], payload["command"]
+        mission_id, key = payload["id"], payload["capability"]
         with self._lock:
-            previous = self._last_status.get(command_id)
+            previous = self._last_status.get(mission_id)
             if previous is not None:
                 # A redelivery is recognised, never re-run: the broker may
                 # redeliver a QoS-1 command, and the correlation id is what
                 # tells the two apart.
                 self._publish(protocol.STATUS, previous)
                 return
-            busy = self._task
+            busy = self._mission
+
+        # `dispatched` first, always: the spec makes `rejected` reachable only
+        # from it, and on the real robot it is the agent that publishes it as
+        # it forwards — so every refusal below already has one in front of it.
+        self._reply(mission_id, key, mission.DISPATCHED)
+
+        declared = spec_capability.find(self.capabilities, key)
+        if declared is None:
+            self._reply(
+                mission_id,
+                key,
+                mission.REJECTED,
+                failure=mission.failure(
+                    mission.UNKNOWN_CAPABILITY,
+                    f"this platform offers {', '.join(capabilities.KEYS)}",
+                    at=mission.DISPATCHED,
+                ),
+            )
+            return
         if busy is not None:
             self._reply(
-                command_id, text, protocol.REJECTED, f"busy with {busy['text']!r}"
+                mission_id,
+                key,
+                mission.REJECTED,
+                failure=mission.failure(
+                    mission.BUSY,
+                    f"mission {busy['id']} ({busy['capability']}) holds the "
+                    f"{mission.DEFAULT_LANE} lane",
+                    at=mission.DISPATCHED,
+                ),
             )
             return
 
-        self._reply(command_id, text, protocol.DISPATCHED)
-        refusal = self._refuse(text)
-        if refusal:
-            self._reply(command_id, text, protocol.REJECTED, refusal)
+        refusal = self._refuse(declared, payload["input"])
+        if refusal is not None:
+            self._reply(mission_id, key, mission.REJECTED, failure=refusal)
             return
         with self._lock:
-            self._task = {
-                "id": command_id,
-                "text": text,
+            self._mission = {
+                "id": mission_id,
+                "capability": key,
                 "due": time.monotonic() + self.task_seconds,
                 "summary": {
-                    "id": command_id,
-                    "command": text,
-                    "state": protocol.ACCEPTED,
+                    "id": mission_id,
+                    "capability": key,
+                    "state": mission.ACCEPTED,
+                    "lane": mission.DEFAULT_LANE,
                 },
             }
-        self._reply(command_id, text, protocol.ACCEPTED, "running")
+        self._reply(mission_id, key, mission.ACCEPTED, detail="running")
 
-    def _refuse(self, text: str) -> str:
-        """The task layer's grammar, as far as a wire fake can honour it."""
-        words = text.split()
-        if not words:
-            return "empty command"
-        verb, rest = words[0], words[1:]
-        if verb not in VERBS:
-            return f"unknown command {verb!r}"
-        if verb == "goto":
-            if len(rest) != 1:
-                return "goto takes one zone"
-            if rest[0] not in self.zones:
-                return f"unknown zone {rest[0]!r}"
-        if verb == "fetch" and len(rest) != 2:
-            return "fetch takes a target and a drop zone"
-        return ""
+    def _refuse(self, declared: dict, payload_input: dict):
+        """The two refusals a wire fake can honour, typed as the robot types them.
 
-    def _reply(self, command_id, text, state, detail=""):
-        payload = protocol.status(self.id, command_id, text, state, detail=detail)
+        Input validation is the real validator against the real schema; the
+        zone check is this fixture's, because a fake robot has no map and the
+        zone names it knows are the ones the shipped basemap was taught.
+        """
+        try:
+            spec_capability.validate_input(declared["input_schema"], payload_input)
+        except spec_capability.InvalidInput as exc:
+            return mission.failure(
+                mission.INVALID_INPUT, str(exc), at=mission.DISPATCHED
+            )
+        for name in spec_capability.zone_inputs(declared["input_schema"]):
+            wanted = payload_input.get(name)
+            if wanted is not None and wanted not in self.zones:
+                return mission.failure(
+                    mission.UNRESOLVED_ZONE,
+                    f"unknown_name: {name} {wanted!r} is not a place here; "
+                    f"navigable zones are {', '.join(self.zones)}",
+                    recoverable=False,
+                    at=mission.DISPATCHED,
+                )
+        return None
+
+    def _reply(self, mission_id, key, state, detail="", failure=None):
+        payload = mission.status(
+            self.id, mission_id, key, state, detail=detail, failure=failure
+        )
         with self._lock:
-            self._last_status[command_id] = payload
+            self._last_status[mission_id] = payload
         self._publish(protocol.STATUS, payload)
 
     def _finish_due_task(self):
         with self._lock:
-            task = self._task
-            if task is None or time.monotonic() < task["due"]:
+            running = self._mission
+            if running is None or time.monotonic() < running["due"]:
                 return
-            self._task = None
-        self._reply(task["id"], task["text"], protocol.SUCCEEDED, "arrived")
+            self._mission = None
+        self._reply(
+            running["id"], running["capability"], mission.SUCCEEDED, detail="arrived"
+        )
         self._publish(protocol.HEALTH, self.health_payload())
 
 

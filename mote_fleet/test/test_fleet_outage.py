@@ -24,6 +24,7 @@ What it pins down:
    robot ran on its own while nobody was watching (``source: local``).
 """
 
+import json
 import os
 import random
 
@@ -46,6 +47,8 @@ from rclpy.node import Node  # noqa: E402
 from rclpy.parameter import Parameter  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 
+from mote_bringup.spec import mission  # noqa: E402
+
 pytestmark = needs_broker
 
 
@@ -62,14 +65,16 @@ class BenchOperator(Node):
         self.statuses = []
         self.create_subscription(String, "task/status", self._status, 10)
 
-    def send(self, text):
-        self.commands.publish(String(data=text))
+    def send(self, capability, payload_input):
+        payload = mission.command("mote-01", capability, payload_input)
+        self.commands.publish(String(data=json.dumps(payload)))
+        return payload["id"]
 
     def _status(self, message):
-        self.statuses.append(message.data)
+        self.statuses.append(json.loads(message.data))
 
     def terminal(self):
-        return [s for s in self.statuses if s.startswith(("succeeded", "failed"))]
+        return [s for s in self.statuses if s["terminal"]]
 
 
 def test_robot_keeps_working_while_the_fleet_server_is_down(tmp_path, monkeypatch):
@@ -80,7 +85,7 @@ def test_robot_keeps_working_while_the_fleet_server_is_down(tmp_path, monkeypatc
 
     from mote_bringup import identity
 
-    from mote_fleet import fleet_config, protocol
+    from mote_fleet import fleet_config
 
     broker = Broker(tmp_path).start()
     # An already-enrolled robot: this test is about the server going away
@@ -111,6 +116,7 @@ def test_robot_keeps_working_while_the_fleet_server_is_down(tmp_path, monkeypatc
     tasks = TaskServer(
         parameter_overrides=[
             Parameter("zones_file", value=str(zones_file)),
+            Parameter("platform_id", value="mote-01"),
             Parameter("tick_period", value=0.05),
             Parameter("pick_duration", value=0.2),
             Parameter("place_duration", value=0.2),
@@ -136,11 +142,11 @@ def test_robot_keeps_working_while_the_fleet_server_is_down(tmp_path, monkeypatc
 
         # ---- ...and the robot carries on. A task started on the robot runs to
         # completion with nothing to report it to. ----
-        bench.send("goto kitchen")
+        bench.send("goto", {"target": "kitchen"})
         assert spin_until(executor, lambda: bench.terminal(), timeout=30.0), (
             f"no terminal status offline; saw {bench.statuses}"
         )
-        assert bench.terminal()[0].startswith("succeeded"), bench.statuses
+        assert bench.terminal()[0]["state"] == mission.SUCCEEDED, bench.statuses
         assert len(nav.goals) == 1, nav.goals
         assert nav.goals[0].pose.position.x == pytest.approx(-1.5)  # kitchen
 
@@ -167,13 +173,13 @@ def test_robot_keeps_working_while_the_fleet_server_is_down(tmp_path, monkeypatc
         assert spin_until(executor, lambda: operator.of("health"), timeout=30.0)
 
         # ---- and dispatch works again, with no restart anywhere ----
-        command_id = operator.dispatch("mote-01", "goto lab")
+        command_id = operator.dispatch("mote-01", "goto", {"target": "lab"})
         assert spin_until(
             executor,
             lambda: any(s["terminal"] for s in operator.statuses(command_id)),
             timeout=60.0,
         ), operator.statuses(command_id)
-        assert operator.statuses(command_id)[-1]["state"] == protocol.SUCCEEDED
+        assert operator.statuses(command_id)[-1]["state"] == mission.SUCCEEDED
         assert len(nav.goals) == 2, nav.goals
     finally:
         operator.close()

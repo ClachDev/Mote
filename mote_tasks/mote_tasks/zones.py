@@ -314,6 +314,22 @@ def load_zones(path: str) -> dict[str, Zone]:
     return zones
 
 
+class ZoneUnresolved(ValueError):
+    """A name this robot cannot act on, with zone/v0's reason for it.
+
+    The reason is the point. "Not found" collapses two different faults an
+    operator does different things about: a name that is not in the vocabulary
+    at all is a mistake in the request, while one that is there and untaught
+    here is a gap in *this* robot's training on a floor where its neighbours may
+    know the place perfectly well. mission/v0 carries it out as
+    ``failure.class: "unresolved_zone"`` with the reason in ``detail``.
+    """
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
 def resolve(zones: dict[str, Zone], query: str) -> Zone | None:
     """The zone a human's words name, or None.
 
@@ -330,6 +346,43 @@ def resolve(zones: dict[str, Zone], query: str) -> Zone | None:
         if any(s and bundle.normalise_alias(s) == wanted for s in spellings):
             return zone
     return None
+
+
+def resolve_reason(zones: dict[str, Zone], query) -> tuple[Zone | None, str | None]:
+    """``(zone, reason)`` — the zone, and why it cannot be driven to.
+
+    A destination that resolves to a constraint zone answers ``not_navigable``
+    rather than nothing: the zone exists, an operator drew it on the floor plan
+    on purpose, and telling them it is unknown would send them looking for a
+    typo. ``unbound``, ``wrong_floor`` and ``stale_revision`` are in zone/v0's
+    table and not yet in this robot's answer set — they need the
+    vocabulary/binding split, which is where they become distinguishable from
+    ``unknown_name``.
+    """
+    zone = resolve(zones, query) if isinstance(query, str) else None
+    if zone is None:
+        return None, "unknown_name"
+    if not zone.navigable:
+        return zone, "not_navigable"
+    return zone, None
+
+
+def destination(zones: dict[str, Zone], query, where: str = "zone") -> Zone:
+    """The zone to navigate to, or raise :class:`ZoneUnresolved`."""
+    zone, reason = resolve_reason(zones, query)
+    if reason == "not_navigable":
+        raise ZoneUnresolved(
+            reason,
+            f"{where} {zone.name!r} is a {zone.kind} zone, not a destination",
+        )
+    if reason is not None:
+        known = sorted(name for name, z in zones.items() if z.navigable)
+        raise ZoneUnresolved(
+            reason,
+            f"{where} {query!r} is not a place here; "
+            f"navigable zones are {', '.join(known)}",
+        )
+    return zone
 
 
 def containing(zones: dict[str, Zone], x: float, y: float) -> list[str]:

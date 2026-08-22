@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mote.clach.dev/schema/v1/health.schema.json",
+  "$id": "https://mote.clach.dev/schema/v2/health.schema.json",
   "title": "Robot Health",
-  "description": "Rolled-up robot health snapshot including subsystem states and current task.",
+  "description": "Rolled-up robot health snapshot including subsystem states and the mission in flight.",
   "type": "object",
   "required": ["schema", "robot_id", "stamp", "state", "summary", "subsystems"],
   "properties": {
@@ -51,22 +51,35 @@
         }
       }
     },
-    "task": {
+    "mission": {
       "type": ["object", "null"],
-      "description": "Current task being executed, if any.",
+      "description": "The mission in flight, if any. A summary for a roster row, not a mission status: the authority on a mission is mission/v0's own payload on mission/status.",
       "properties": {
         "id": {
           "type": ["string", "null"],
-          "description": "Correlation id of the command."
+          "description": "The mission's correlation id."
         },
-        "command": {
+        "capability": {
           "type": "string",
-          "description": "The task command text."
+          "description": "The capability key being executed."
         },
         "state": {
           "type": "string",
-          "enum": ["dispatched", "accepted", "rejected", "succeeded", "failed"],
-          "description": "Current state of the task."
+          "enum": [
+            "dispatched",
+            "accepted",
+            "running",
+            "blocked",
+            "succeeded",
+            "failed",
+            "rejected",
+            "cancelled"
+          ],
+          "description": "Where the mission is, per mission/v0's lifecycle."
+        },
+        "lane": {
+          "type": "string",
+          "description": "The concurrency lane it holds."
         }
       }
     },

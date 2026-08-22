@@ -1,4 +1,4 @@
-"""The fleet control-plane wire contract, version 1.
+"""The fleet control-plane wire contract, version 2.
 
 Every message between a robot's agent and the fleet server crosses this module,
 and nothing else defines the wire: the topic tree, the payload shapes, and the
@@ -9,11 +9,27 @@ software) can import the same definitions instead of agreeing by convention.
 The mirror image is ``mote_perception/depth_wire.py``, which does the same job
 for the inference link.
 
+**v2 is the adoption of the open specifications.** The mission half of this
+tree — what a robot is told to do, and what it says came of it — is no longer
+Mote's own shape but ``mission/v0``'s, built by :mod:`mote_bringup.spec.mission`
+and advertised as ``capability/v0`` by :mod:`mote_tasks.capabilities`. A
+command carries a capability key and a typed input where it carried the string
+``fetch red_box dropoff``, and a failure carries a class and a recoverability
+where it carried a sentence. That is a change of meaning in an existing
+payload, which by the rule below is exactly what a new topic root is for; the
+telemetry half (presence, health, pose) and the map registry moved with it
+unchanged, because a tree has one version and not one per leaf.
+
+What did *not* move is where the definitions live. This module still owns the
+topic tree, the QoS and the retain discipline — the transport binding — and
+:mod:`mote_bringup.spec` owns the payloads, because the payloads are now a
+contract Mote implements rather than one it defines.
+
 The contract is versioned in two places, for two different kinds of change:
 
-* **The topic root carries the major version** — ``mote/v1/<robot_id>/...``. A
+* **The topic root carries the major version** — ``mote/v2/<robot_id>/...``. A
   breaking change to the tree (a topic moves, a payload field changes meaning)
-  ships as ``mote/v2/...`` so both trees can be published at once while
+  ships as the next root so both trees can be published at once while
   subscribers migrate. A subscriber never has to guess which contract a message
   came from.
 * **Every payload carries ``schema``** — an integer that tracks the payload
@@ -25,19 +41,21 @@ The prose contract, with the field tables and the compatibility rules, is
 ``mote_fleet/schema/*.schema.json``, and ``test_protocol.py`` fails if the three
 ever disagree.
 
-Topic tree (``mote/v1/<robot_id>/…``)::
+Topic tree (``mote/v2/<robot_id>/…``)::
 
-    presence      retained, LWT   is the agent connected
-    health        retained        rolled-up robot health + current task
-    pose          retained        last known pose in the map frame
-    task/command  not retained    fleet -> robot: one command, correlation id
-    task/status   retained        robot -> fleet: that command's transitions
+    presence         retained, LWT   is the agent connected
+    health           retained        rolled-up robot health + current mission
+    pose             retained        last known pose in the map frame
+    capabilities     retained        capability/v0: what this robot can be asked
+    mission/command  not retained    fleet -> robot: one mission, correlation id
+    mission/status   retained        robot -> fleet: that mission's transitions
 
-``task/command`` is the one topic that is **never retained**: a retained
+``mission/command`` is the one topic that is **never retained**: a retained
 command would be re-delivered to the robot every time it reconnects, which
 turns a link flap into a re-dispatch. Everything else is retained, so an
 operator UI that connects at any moment sees the current state of the fleet
-without waiting for the next heartbeat.
+without waiting for the next heartbeat — and, from v2, what each robot can be
+asked to do, without asking it.
 
 One subtree is about the fleet rather than about a robot (M4)::
 
@@ -51,21 +69,25 @@ reconnects, so map distribution needs no polling and has no missed-update case.
 
 import json
 import re
-import uuid
 from datetime import datetime, timezone
 
-# Payload shape version. Bumped only for a breaking change *within* the v1 tree;
+# Payload shape version. Bumped only for a breaking change *within* the v2 tree;
 # see the module docstring for the split between this and the topic version.
 SCHEMA = 1
 
 ROOT = "mote"
-VERSION = "v1"
+VERSION = "v2"
 
 PRESENCE = "presence"
 HEALTH = "health"
 POSE = "pose"
-COMMAND = "task/command"
-STATUS = "task/status"
+CAPABILITIES = "capabilities"
+COMMAND = "mission/command"
+STATUS = "mission/status"
+#: Specified and not yet published: the task layer has no cancel, so nothing
+#: would honour one. The leaf is named here rather than left to be invented,
+#: so the day it lands it lands where a reader already expects it.
+CANCEL = "mission/cancel"
 
 # The map registry's subtree (M4). It sits at the same level as a robot id
 # because it is fleet-wide state rather than one robot's, and the name is
@@ -82,23 +104,15 @@ RESERVED_IDS = frozenset({REGISTRY})
 # by its correlation id so a redelivery is recognised rather than re-run.
 QOS = 1
 
-# Task lifecycle. The agent owns this state machine; the robot's task_server has
-# no notion of a correlation id (task/command is a bare std_msgs/String), so
-# attribution comes from the agent's single-in-flight rule, not from ROS.
-DISPATCHED = "dispatched"  # agent has forwarded it to ROS, no verdict yet
-ACCEPTED = "accepted"  # the behaviour tree took it and is running
-REJECTED = "rejected"  # refused outright (busy, unknown command, bad zone)
-SUCCEEDED = "succeeded"
-FAILED = "failed"
-
-TASK_STATES = (DISPATCHED, ACCEPTED, REJECTED, SUCCEEDED, FAILED)
-TERMINAL_STATES = frozenset({REJECTED, SUCCEEDED, FAILED})
-
-# Where a status came from: a command this agent dispatched, or one issued
-# locally on the robot (a `ros2 topic pub`, a bench script). Local tasks are
-# reported too — the fleet should see a robot that is busy, whoever asked it.
-SOURCE_FLEET = "fleet"
-SOURCE_LOCAL = "local"
+# The mission lifecycle, the failure taxonomy and the payload shapes are
+# mission/v0's, in ``mote_bringup.spec.mission``. They are deliberately *not*
+# restated here: a second copy of a state machine is a second thing to keep in
+# step, and this module's job in v2 is the transport binding, not the payload.
+#
+# What *is* here is the one thing the transport decides: which leaves are
+# retained. ``mission/status`` is, so an operator UI connecting at any moment
+# has the whole fleet's mission state with no polling; ``mission/command`` is
+# not, so a reconnect is not a re-dispatch.
 
 # Health roll-up. Mirrors diagnostic_msgs levels, plus "unknown" for the state
 # before any diagnostics have arrived (the health monitor is a separate service
@@ -117,10 +131,14 @@ REQUIRED = {
     PRESENCE: ("schema", "robot_id", "online", "stamp"),
     HEALTH: ("schema", "robot_id", "stamp", "state", "summary", "subsystems"),
     POSE: ("schema", "robot_id", "stamp", "frame_id", "x", "y", "yaw"),
-    COMMAND: ("schema", "id", "command", "issued_at"),
-    STATUS: ("schema", "robot_id", "id", "command", "state", "stamp", "source"),
     CURRENT: ("schema", "site", "floor", "revision", "url", "stamp"),
 }
+
+#: Leaves whose payload is a specification's rather than Mote's, and which
+#: therefore have no row above: ``mote_bringup.spec.mission.check`` and
+#: ``spec.capability`` are the authority, and a copy of their required keys
+#: here would be a copy free to disagree.
+SPEC_PAYLOADS = frozenset({COMMAND, STATUS, CANCEL, CAPABILITIES})
 
 TOPIC_RE = re.compile(rf"^{ROOT}/{VERSION}/([^/+#]+)/(.+)$")
 REGISTRY_TOPIC_RE = re.compile(
@@ -207,6 +225,11 @@ def decode(raw: bytes | str, kind: str | None = None) -> dict:
 
 def check(payload: dict, kind: str) -> dict:
     """Reject a payload the rest of the code would only half-understand."""
+    if kind in SPEC_PAYLOADS:
+        raise ProtocolError(
+            f"{kind} is a specification payload; check it with "
+            "mote_bringup.spec, not with this module"
+        )
     missing = [key for key in REQUIRED[kind] if key not in payload]
     if missing:
         raise ProtocolError(f"{kind} payload missing {', '.join(missing)}")
@@ -237,7 +260,7 @@ def health(
     summary: str,
     subsystems: list[dict],
     *,
-    task: dict | None = None,
+    mission: dict | None = None,
     site: str | None = None,
     floor: str | None = None,
     version: str | None = None,
@@ -267,7 +290,7 @@ def health(
         "state": state,
         "summary": summary,
         "subsystems": subsystems,
-        "task": task,
+        "mission": mission,
         "site": site,
         "floor": floor,
         "version": version,
@@ -312,18 +335,6 @@ def pose(
     }
 
 
-def command(text: str, *, command_id: str | None = None, issued_by: str = "") -> dict:
-    """A task for one robot. ``id`` is the correlation id every status carries
-    back, and the key the agent deduplicates redeliveries by."""
-    return {
-        "schema": SCHEMA,
-        "id": command_id or uuid.uuid4().hex[:16],
-        "command": text,
-        "issued_at": now(),
-        "issued_by": issued_by,
-    }
-
-
 def current(
     site: str,
     floor: str,
@@ -357,30 +368,4 @@ def current(
         "bytes": int(bytes_),
         "promoted_by": promoted_by,
         "stamp": now(),
-    }
-
-
-def status(
-    robot_id: str,
-    command_id: str | None,
-    text: str,
-    state: str,
-    *,
-    detail: str = "",
-    source: str = SOURCE_FLEET,
-) -> dict:
-    """One transition of one task. ``id`` is null for a locally-issued task —
-    the fleet did not give it a correlation id, but should still see it run."""
-    if state not in TASK_STATES:
-        raise ProtocolError(f"unknown task state {state!r}")
-    return {
-        "schema": SCHEMA,
-        "robot_id": robot_id,
-        "id": command_id,
-        "command": text,
-        "state": state,
-        "detail": detail,
-        "source": source,
-        "stamp": now(),
-        "terminal": state in TERMINAL_STATES,
     }

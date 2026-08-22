@@ -1,183 +1,169 @@
-"""The single-in-flight rule, including the cases that make it necessary.
+"""What the agent must remember about a mission, and for how long.
 
-The interesting tests here are not the happy path — they are the ones where two
-things want the robot at once, or where a status line could plausibly belong to
-either of two commands. That ambiguity is inherent to bridging a correlation id
-onto a bare-String ROS topic, and these are the cases that pin down how it is
-resolved.
+Half of what this file used to test does not exist any more: the parser for the
+task layer's sentences, and the single-in-flight rule the agent enforced because
+it had no correlation id to enforce it with. Both were consequences of an
+untyped seam, and mission/v0 removed the seam. The lane now belongs to the
+executor (``mote_tasks.task_server``), which is the thing that actually holds
+it, and this module keeps the three properties that are genuinely the bridge's:
+a redelivery must not re-execute, an outcome must outlive the dispatcher that
+asked for it, and a mission nobody answered must not be watched forever.
 """
 
 import pytest
 
-from mote_fleet import dispatch, protocol
+from mote_bringup.spec import mission
+
+from mote_fleet import dispatch
 
 
 @pytest.fixture
 def tracker():
-    return dispatch.CommandTracker(accept_timeout=10.0)
+    return dispatch.CommandTracker(platform_id="mote-01", accept_timeout=10.0)
 
 
-# ---- parsing the task server's own status strings -----------------------
-
-
-def test_parse_accepted():
-    parsed = dispatch.parse_status("accepted: goto kitchen")
-    assert (parsed.kind, parsed.subject) == (protocol.ACCEPTED, "goto kitchen")
-
-
-def test_parse_rejected_names_the_command_it_refused():
-    parsed = dispatch.parse_status("rejected: 'goto nowhere' (unknown zone 'nowhere')")
-    assert parsed.kind == protocol.REJECTED
-    assert parsed.subject == "goto nowhere"
-    assert parsed.detail == "unknown zone 'nowhere'"
-    assert not parsed.names_running
-
-
-def test_parse_rejected_busy_names_the_running_task_instead():
-    parsed = dispatch.parse_status("rejected: busy with 'fetch red_box dropoff'")
-    assert parsed.subject == "fetch red_box dropoff"
-    assert parsed.names_running
-
-
-def test_parse_failed_strips_the_tree_tip():
-    parsed = dispatch.parse_status("failed: goto kitchen (at DriveTo)")
-    assert (parsed.kind, parsed.subject, parsed.detail) == (
-        protocol.FAILED,
-        "goto kitchen",
-        "at DriveTo",
+def a_command(mission_id="id-1", capability="goto", **kwargs):
+    return mission.command(
+        "mote-01", capability, {"target": "kitchen"}, mission_id=mission_id, **kwargs
     )
 
 
-def test_parse_ignores_anything_else():
-    assert dispatch.parse_status("tree: WaitForTask [RUNNING]") is None
-    assert dispatch.parse_status("Zones ['home'] from /tmp/z.yaml") is None
+def a_status(mission_id, state, capability="goto", **kwargs):
+    return mission.status("mote-01", mission_id, capability, state, **kwargs)
 
 
 # ---- the happy path ------------------------------------------------------
 
 
-def test_a_command_runs_to_success(tracker):
-    action, update = tracker.submit("id-1", "goto kitchen", now=0.0)
+def test_a_mission_runs_to_success(tracker):
+    action, update = tracker.submit(a_command(), now=0.0)
     assert action == dispatch.FORWARD
-    assert update.state == protocol.DISPATCHED
+    assert update["state"] == mission.DISPATCHED
+    assert update["source"] == mission.SOURCE_FLEET
 
-    accepted = tracker.on_ros_status("accepted: goto kitchen")
-    assert (accepted.state, accepted.command_id) == (protocol.ACCEPTED, "id-1")
-    assert tracker.in_flight
+    accepted = tracker.on_status(a_status("id-1", mission.ACCEPTED), now=1.0)
+    assert accepted["source"] == mission.SOURCE_FLEET
+    assert [entry.id for entry in tracker.in_flight] == ["id-1"]
 
-    done = tracker.on_ros_status("succeeded: goto kitchen")
-    assert (done.state, done.command_id) == (protocol.SUCCEEDED, "id-1")
-    assert not tracker.in_flight
-
-
-def test_the_slot_is_free_again_after_a_terminal_state(tracker):
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    tracker.on_ros_status("accepted: goto kitchen")
-    tracker.on_ros_status("failed: goto kitchen (at DriveTo)")
-    action, _ = tracker.submit("id-2", "goto lab", now=1.0)
-    assert action == dispatch.FORWARD
+    tracker.on_status(a_status("id-1", mission.SUCCEEDED), now=2.0)
+    assert tracker.in_flight == []
 
 
-# ---- the rules that make retries safe ------------------------------------
+def test_the_status_is_passed_through_not_rebuilt(tracker):
+    """Everything but ``source`` is the executor's word. A failure re-derived
+    here would be a second opinion about a mission this process is not
+    running."""
+    tracker.submit(a_command(), now=0.0)
+    failure = mission.failure(mission.OBSTRUCTED, "drive_to_zone: Nav2 aborted")
+    published = tracker.on_status(
+        a_status("id-1", mission.FAILED, failure=failure), now=1.0
+    )
+    assert published["failure"] == failure
+    assert published["terminal"] is True
 
 
-def test_a_second_command_is_rejected_without_reaching_ros(tracker):
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    tracker.on_ros_status("accepted: goto kitchen")
-
-    action, update = tracker.submit("id-2", "goto lab", now=1.0)
-    assert action == dispatch.BUSY
-    assert update.state == protocol.REJECTED
-    assert update.command_id == "id-2"  # the rejection is about the NEW command
-    assert "goto kitchen" in update.detail
-    # The in-flight command is untouched.
-    assert tracker.command_id == "id-1"
+# ---- deduplication and retention ----------------------------------------
 
 
 def test_a_redelivered_command_is_not_dispatched_twice(tracker):
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    tracker.on_ros_status("accepted: goto kitchen")
+    tracker.submit(a_command(), now=0.0)
+    tracker.on_status(a_status("id-1", mission.ACCEPTED), now=1.0)
 
-    action, update = tracker.submit("id-1", "goto kitchen", now=1.0)
+    action, update = tracker.submit(a_command(), now=2.0)
     assert action == dispatch.DUPLICATE
-    assert update.state == protocol.ACCEPTED  # re-states what it already knows
+    assert update["state"] == mission.ACCEPTED  # re-states what it already knows
 
 
 def test_a_redelivery_after_completion_replays_the_outcome(tracker):
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    tracker.on_ros_status("accepted: goto kitchen")
-    tracker.on_ros_status("succeeded: goto kitchen")
+    """Within the retention window an id is not fresh. This is the difference
+    between "a retry is safe" and "a retry is safe until it succeeds"."""
+    tracker.submit(a_command(), now=0.0)
+    tracker.on_status(a_status("id-1", mission.SUCCEEDED), now=1.0)
 
-    action, update = tracker.submit("id-1", "goto kitchen", now=2.0)
+    action, update = tracker.submit(a_command(), now=2.0)
     assert action == dispatch.DUPLICATE
-    assert update.state == protocol.SUCCEEDED
+    assert update["state"] == mission.SUCCEEDED
+
+
+def test_an_outcome_survives_an_hour_and_is_forgotten_after_the_window(tracker):
+    tracker.submit(a_command(), now=0.0)
+    tracker.on_status(a_status("id-1", mission.SUCCEEDED), now=1.0)
+
+    assert tracker.submit(a_command(), now=3600.0)[0] == dispatch.DUPLICATE
+    # Past the window the id is fresh again, which the spec permits explicitly:
+    # a dispatcher needing exactly-once across longer gaps keeps its own record.
+    assert tracker.submit(a_command(), now=7201.0)[0] == dispatch.FORWARD
+
+
+def test_a_running_mission_is_never_evicted_under_pressure(tracker):
+    """Forgetting one still in flight would make its own status look local when
+    it lands, and would free an id the executor still holds."""
+    tracker.submit(a_command(mission_id="running"), now=0.0)
+    tracker.on_status(a_status("running", mission.ACCEPTED), now=0.0)
+    for index in range(dispatch.MAX_REMEMBERED + 20):
+        key = f"done-{index}"
+        tracker.submit(a_command(mission_id=key), now=1.0)
+        tracker.on_status(a_status(key, mission.SUCCEEDED), now=1.0)
+    assert "running" in tracker.missions
+    assert len(tracker.missions) <= dispatch.MAX_REMEMBERED + 1
 
 
 # ---- attribution ---------------------------------------------------------
 
 
-def test_our_command_rejected_as_busy_is_attributed_to_us(tracker):
-    """A local task was already running when ours arrived."""
-    action, _ = tracker.submit("id-1", "goto kitchen", now=0.0)
-    assert action == dispatch.FORWARD
-    update = tracker.on_ros_status("rejected: busy with 'fetch red_box dropoff'")
-    assert (update.state, update.command_id) == (protocol.REJECTED, "id-1")
-    assert update.source == protocol.SOURCE_FLEET
-    assert not tracker.in_flight
+def test_a_locally_issued_mission_is_reported_but_not_owned(tracker):
+    """A bench script's mission and the fleet's look identical on the robot;
+    only this module knows which ids it dispatched."""
+    update = tracker.on_status(a_status("bench-7", mission.ACCEPTED), now=0.0)
+    assert update["source"] == mission.SOURCE_LOCAL
+    assert tracker.in_flight == []
 
 
-def test_someone_elses_command_rejected_because_ours_runs_is_reported_as_local(tracker):
-    """The mirror image: our mission is running and a local command bounced."""
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    tracker.on_ros_status("accepted: goto kitchen")
-
-    update = tracker.on_ros_status("rejected: busy with 'goto kitchen'")
-    assert update.source == protocol.SOURCE_LOCAL
-    assert update.command_id is None
-    # Ours is still running — a local rejection must not free the slot.
-    assert tracker.in_flight and tracker.state == protocol.ACCEPTED
+def test_a_status_with_no_id_at_all_is_local(tracker):
+    update = tracker.on_status(a_status(None, mission.ACCEPTED), now=0.0)
+    assert update["source"] == mission.SOURCE_LOCAL
 
 
-def test_a_locally_issued_task_is_reported_but_not_owned(tracker):
-    update = tracker.on_ros_status("accepted: goto lab")
-    assert update.source == protocol.SOURCE_LOCAL
-    assert update.command_id is None
-    assert not tracker.in_flight
+# ---- the unanswered mission ----------------------------------------------
 
 
-def test_a_status_for_a_different_command_is_not_taken_as_ours(tracker):
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    update = tracker.on_ros_status("accepted: fetch red_box dropoff")
-    assert update.source == protocol.SOURCE_LOCAL
-    # Ours is still waiting for its own verdict.
-    assert tracker.state == protocol.DISPATCHED
+def test_an_unanswered_mission_fails_with_class_timeout(tracker):
+    tracker.submit(a_command(), now=0.0)
+    assert tracker.tick(now=5.0) == []
 
+    (update,) = tracker.tick(now=11.0)
+    assert update["state"] == mission.FAILED
+    assert update["id"] == "id-1"
+    assert update["failure"]["class"] == mission.TIMEOUT
+    # The task server may simply not be up yet, so the identical mission has
+    # every prospect of being taken.
+    assert update["failure"]["recoverable"] is True
+    assert update["failure"]["at"] == mission.DISPATCHED
 
-def test_a_terminal_status_before_acceptance_is_not_ours(tracker):
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    update = tracker.on_ros_status("succeeded: goto kitchen")
-    assert update.source == protocol.SOURCE_LOCAL
-    assert tracker.state == protocol.DISPATCHED
-
-
-# ---- the timeout ---------------------------------------------------------
-
-
-def test_an_unanswered_command_fails_and_frees_the_slot(tracker):
-    tracker.submit("id-1", "goto kitchen", now=0.0)
-    assert tracker.tick(now=5.0) is None
-
-    update = tracker.tick(now=11.0)
-    assert (update.state, update.command_id) == (protocol.FAILED, "id-1")
-    assert "10s" in update.detail
-    assert not tracker.in_flight
-
-    assert tracker.tick(now=20.0) is None  # fires once, not every tick
+    assert tracker.tick(now=20.0) == []  # fires once, not every tick
 
 
 def test_an_accepted_mission_is_never_timed_out(tracker):
-    """Missions take minutes; only the verdict is on a clock."""
-    tracker.submit("id-1", "fetch red_box dropoff", now=0.0)
-    tracker.on_ros_status("accepted: fetch red_box dropoff")
-    assert tracker.tick(now=10_000.0) is None
-    assert tracker.in_flight
+    """Missions take minutes; only the verdict is on this clock. The mission's
+    own bound is its capability's max_duration_s, enforced by the executor."""
+    tracker.submit(a_command(capability="fetch"), now=0.0)
+    tracker.on_status(a_status("id-1", mission.ACCEPTED, capability="fetch"), now=1.0)
+    assert tracker.tick(now=10_000.0) == []
+    assert [entry.id for entry in tracker.in_flight] == ["id-1"]
+
+
+# ---- what health reports -------------------------------------------------
+
+
+def test_the_health_summary_names_the_mission_in_flight(tracker):
+    assert tracker.summary() is None
+    tracker.submit(a_command(), now=0.0)
+    tracker.on_status(a_status("id-1", mission.ACCEPTED), now=1.0)
+    assert tracker.summary() == {
+        "id": "id-1",
+        "capability": "goto",
+        "state": mission.ACCEPTED,
+        "lane": mission.DEFAULT_LANE,
+    }
+    tracker.on_status(a_status("id-1", mission.SUCCEEDED), now=2.0)
+    assert tracker.summary() is None
