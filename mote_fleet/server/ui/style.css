@@ -781,9 +781,14 @@ main {
   color: var(--accent);
 }
 
-.zone-actions {
-  display: flex;
-  gap: 6px;
+/* The last item in the list, and shaped like one: a full-width control at the
+   foot of what it adds to, dashed so it reads as a place for a zone rather
+   than a zone. */
+.zone-add {
+  flex: none;
+  border-style: dashed;
+  color: var(--dim);
+  text-align: left;
 }
 
 /* Editing holds the selected revision still, so the controls that would swap it
@@ -795,15 +800,30 @@ main {
   cursor: not-allowed;
 }
 
-/* The heading and its one control. `edit zones` sits with the zones rather than
-   in the pane head, because it acts on the list under it and not on the pane.
-   The details column carries the same head, so the two columns are announced
-   the same way and their headings line up. */
+/* The heading and the controls for the whole edit. They sit with the zones
+   rather than in the pane head, because they act on the list under them and not
+   on the pane — and `save as candidate`/`cancel` sit exactly where `edit zones`
+   was, so the mode begins and ends at one place. The details column carries the
+   same head, so the two columns are announced the same way and their headings
+   line up. */
 .zones-head {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-height: 28px;
+}
+
+/* Under the controls it belongs to, across the width of the list: what the save
+   is doing, or the rule it is refusing on. Two lines are reserved whether or not
+   there is anything in them, because the message that matters most is the
+   longest — the loader's rule, quoting both zones that broke it — and a line
+   that appears, or wraps, would push the list down as it arrived. */
+.zones-panel > .note {
+  grid-column: 1;
+  grid-row: 2;
+  margin: 0;
+  min-height: 36px;
+  overflow: hidden;
 }
 
 .zones-head h3 {
@@ -865,7 +885,7 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
    inside it rather than pushing the canvas about. */
 .zones-panel {
   flex: none;
-  height: 300px;
+  height: 336px;
   overflow: auto;
   display: grid;
   grid-template-columns: minmax(0, 640px) minmax(0, 26em);
@@ -1065,6 +1085,12 @@ button.promote:disabled {
   .zone-editor .zone-row input,
   .zone-editor .zone-row select {
     flex: 1 1 45%;
+  }
+
+  /* Nor anything to reserve: with the pane scrolling, a message that arrives
+     can have the height it needs. */
+  .zones-panel > .note {
+    min-height: 0;
   }
 
   /* No reserved box here, so no height to fill: the list is as long as it is

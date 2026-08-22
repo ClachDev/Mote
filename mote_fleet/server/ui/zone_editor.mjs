@@ -438,7 +438,7 @@ const HOVER_RING = 'rgba(13, 17, 23, 0.9)';
 export class ZoneEditor {
   constructor(mapView, dom, { onSave, onExit } = {}) {
     this.mapView = mapView;
-    this.dom = dom; // { panel, rows, add, save, cancel, note }
+    this.dom = dom; // { panel, rows, detail, note }
     this.onSave = onSave || (() => {});
     this.onExit = onExit || (() => {});
     this.active = false;
@@ -712,6 +712,9 @@ export class ZoneEditor {
 
   note(text, bad = false) {
     this.dom.note.textContent = text;
+    // One line, so the list under it never moves — the whole message is on the
+    // hover for the rare one that outruns the width.
+    this.dom.note.title = text;
     this.dom.note.className = `note ${bad ? 'error' : ''}`;
   }
 
@@ -854,6 +857,17 @@ export class ZoneEditor {
       row.append(name, kind, shape, pose, del);
       rows.append(row);
     }
+    // Adding a zone acts on the list, so it is the end of the list — not a
+    // third button beside the two that begin and end the whole edit, which is
+    // where it sat and read as one of them. Inside the scroll box, so a floor
+    // with twenty zones and one with two put the same geometry on screen.
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'zone-add';
+    add.textContent = '+ add zone';
+    add.title = 'add a zone at the middle of the view';
+    add.addEventListener('click', () => this.addZone());
+    rows.append(add);
   }
 
   // -- the selected zone --------------------------------------------------

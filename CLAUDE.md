@@ -255,7 +255,15 @@ row's name is a *button*, because in a list the name is what you select by and
 an input there put a caret where a click meant "this one" (renaming moved into
 the panel, beside the zone's other fields). Two controls were built and then cut
 for failing that test: a `+ area`/`− area` cell, and a paragraph of instructions
-standing in for the hover feedback before it existed.
+standing in for the hover feedback before it existed. **A control sits at the
+level of the thing it acts on**, which three buttons in one row denied: `save as
+candidate` and `cancel` end the mode, so they take the place of `edit zones`
+above the list rather than standing beside a control that adds one zone, and
+`add zone` is the list's last line. The save's message moved with them, onto a
+line under the buttons that is reserved whether or not there is anything in it —
+two lines' worth, because the longest message is the refusal that quotes both
+zones answering one query, and one that arrived or wrapped would push the list
+down as it appeared.
 
 **A place is named once.** While a zone's machine name is still one nobody
 chose (`zone_03`), typing its display name sets it through `slugify` — "The

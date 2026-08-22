@@ -258,7 +258,6 @@ export class ReviewView {
       this.map.draw();
     });
     dom.zonesEdit.addEventListener('click', () => this.beginEdit());
-    dom.zoneAdd.addEventListener('click', () => this.editor.addZone());
     dom.zoneSave.addEventListener('click', () => this.saveZones());
     dom.zoneCancel.addEventListener('click', () => this.endEdit());
   }
@@ -377,8 +376,12 @@ export class ReviewView {
   // racing it. There is no autosave: an unsaved edit is lost to `cancel`, and
   // nothing else can reach it.
   renderEditControls() {
-    this.dom.zonesEdit.disabled = this.editing || !this.editable();
-    this.dom.zonesEdit.hidden = !this.editable() && !this.editing;
+    // One control at a time in one place: `edit zones` is what is there to
+    // begin with, and while the edit is up its two endings stand in for it.
+    this.dom.zonesEdit.disabled = !this.editable();
+    this.dom.zonesEdit.hidden = this.editing || !this.editable();
+    this.dom.zoneSave.hidden = !this.editing;
+    this.dom.zoneCancel.hidden = !this.editing;
     this.dom.floor.disabled = this.editing;
     for (const row of this.dom.revisions.querySelectorAll('button')) {
       row.disabled = this.editing;

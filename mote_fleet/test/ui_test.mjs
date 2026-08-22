@@ -488,9 +488,29 @@ test('the zone editor panel hides when hidden, whatever its class sets', () => {
   // both on screen there would be two disagreeing accounts of the zones.
   assert.match(css, /\.zone-rows\[hidden\]\s*\{\s*display:\s*none/);
   const html = read('index.html');
-  for (const id of ['zone-editor', 'zone-rows', 'zone-add', 'zone-save', 'zone-cancel', 'zones-edit']) {
+  for (const id of ['zone-editor', 'zone-rows', 'zone-save', 'zone-cancel', 'zones-edit']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
   }
+});
+
+test('an action sits at the level of the thing it acts on', () => {
+  // Three buttons in one row said they were three of a kind. Two of them begin
+  // and end the whole edit, and belong where `edit zones` was; the third adds
+  // one item, and belongs at the end of the items.
+  const html = read('index.html');
+  const head = html.slice(html.indexOf('<div class="zones-head">'), html.indexOf('id="zone-rows"'));
+  for (const id of ['zones-edit', 'zone-save', 'zone-cancel']) {
+    assert.ok(head.includes(`id="${id}"`), `#${id} belongs with the zones heading`);
+  }
+  assert.ok(!html.includes('id="zone-add"'), 'adding a zone is rendered into the list');
+  // And what the save says is under the save, not in the column of fields for
+  // one zone — where it sat while reporting on all of them.
+  const panel = html.slice(html.indexOf('<div class="zones-panel">'), html.indexOf('id="zone-editor"'));
+  assert.ok(panel.includes('id="zone-note"'), 'the save\'s note belongs with the save');
+  const editor = read('zone_editor.mjs');
+  const rows = editor.slice(editor.indexOf('_renderRows() {'), editor.indexOf('_renderDetail() {'));
+  assert.match(rows, /className = 'zone-add'/);
+  assert.match(rows, /rows\.append\(add\)/);
 });
 
 test('a name the loader would refuse is marked while it is typed', () => {

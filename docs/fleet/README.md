@@ -941,8 +941,14 @@ The controls are the map and the list together:
 - **A row is a list you pick from**: the name selects that zone, beside it the
   **kind**, then the shape it has. `⌖` appears only for a zone with no pose at
   all (a segmented room is an outline, so there is no cross to drag) and arms
-  the next map click as its pose. `×` deletes the zone; **`add zone`** drops a
-  square at the view centre to be dragged into shape and named.
+  the next map click as its pose. `×` deletes the zone; **`add zone`**, the last
+  line of the list, drops a square at the view centre to be dragged into shape
+  and named.
+- **Where a control sits says what it acts on.** `save as candidate` and
+  `cancel` take the place of `edit zones` above the list, because they end the
+  edit that button began; `add zone` is in the list, because that is what it
+  adds to. What the save says — a refusal, or the candidate it wrote — appears
+  on the line under those two.
 - **Selecting a row** opens that zone's own fields beside the list — and a zone
   is always selected, so they are always showing something: its **name**
   (renaming is a deliberate act, not a side effect of clicking the list), the

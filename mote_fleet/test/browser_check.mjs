@@ -345,6 +345,8 @@ try {
     const mapBefore = JSON.parse(shapeBefore).map;
     const editing = await session.evaluate(`(() => {
       document.getElementById('zones-edit').click();
+      const rows = document.getElementById('zone-rows');
+      const shown = (id) => !document.getElementById(id).hidden;
       return {
         rows: document.querySelectorAll('#zone-rows .zone-row').length,
         // One list in both modes: the rows that were text now hold controls.
@@ -352,6 +354,10 @@ try {
         listLocked: [...document.querySelectorAll('#review-revisions button')]
           .every(button => button.disabled),
         promoteLocked: document.getElementById('review-promote').disabled,
+        // The edit ends where it began, and adding a zone is the end of the
+        // list rather than a third button beside the two that end the edit.
+        ends: !shown('zones-edit') && shown('zone-save') && shown('zone-cancel'),
+        adds: rows.lastElementChild && rows.lastElementChild.className === 'zone-add',
       };
     })()`);
     check(
@@ -361,6 +367,11 @@ try {
         editing.listLocked &&
         editing.promoteLocked,
       JSON.stringify(editing),
+    );
+    check(
+      'the edit ends where it began, and `add zone` is part of the list',
+      editing.ends && editing.adds,
+      JSON.stringify({ ends: editing.ends, adds: editing.adds }),
     );
 
     // One list, one shape: the rows are the same rows, in the same place, the
@@ -455,6 +466,8 @@ try {
         zones: [...document.querySelectorAll('#zone-rows .zone-row')]
           .map(row => row.textContent).join(' '),
         editorHidden: document.getElementById('zone-editor').hidden,
+        // And the head is back to the one control that starts an edit.
+        editVisible: !document.getElementById('zones-edit').hidden,
       }))()`,
       (state) => /saved from \d{8}T\d{6}/.test(state.note),
     );
@@ -470,7 +483,10 @@ try {
     // and the geometry are one decision, made once.
     check(
       'the pane then shows the saved candidate’s own zones',
-      derived.editorHidden && derived.zones.includes('A Named Room') && !derived.inherited,
+      derived.editorHidden &&
+        derived.editVisible &&
+        derived.zones.includes('A Named Room') &&
+        !derived.inherited,
       JSON.stringify(derived),
     );
     check(
