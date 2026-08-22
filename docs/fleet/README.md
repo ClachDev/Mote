@@ -1088,7 +1088,7 @@ flips its local `map` symlink. A half-transferred revision is never visible.
 
 **Zones travel with the map.** A revision from a different mapping session is a
 different map frame, so the zones taught in the old one are wrong the moment the
-new map is published — the bundle's `zones.yaml` therefore replaces the floor's,
+new map is published — the bundle's `binding.yaml` therefore replaces the floor's,
 and the one it replaces is kept beside it as `zones.<old-rev>.yaml`.
 
 **The running navigation stack keeps the map it loaded.** Nav2's `map_server`
@@ -1133,7 +1133,7 @@ overwriting a directory it did not create.
 Everything in §11 is about the *map*. This is about the **names**, which are a
 different kind of fact and travel differently.
 
-A zone in `zones.yaml` holds two things at once. Its pose is a coordinate in
+A zone is two documents. Its pose is a coordinate in
 one robot's map frame, and that frame's origin is wherever that robot's SLAM
 session happened to start — so `(2.0, 3.5)` on `mote-01` is a different
 physical point from `(2.0, 3.5)` on `mote-02`, and no fleet-level transform
@@ -1174,7 +1174,7 @@ nothing, so a zone taught without `--kind` is still perfectly valid. `keepout`
 and `slow` are **constraints, not destinations** — they come out `navigable:
 false`, and `goto sluice` is refused by the robot rather than driven to.
 
-`display_name` and `aliases` are edited into `zones.yaml` by hand, since only
+`display_name` and `aliases` are edited into `vocabulary.yaml` by hand, since only
 you know what people call the place:
 
 ```yaml

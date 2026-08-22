@@ -6,7 +6,7 @@ With no argument it segments the active site floor's current map (see
 :mod:`mote_bringup.sites`); pass a ``map.yaml`` to segment any saved revision.
 It always writes a ``<map>_rooms.yaml`` proposal plus a ``<map>_rooms.png``
 overlay to look at, and with ``--write`` merges the proposal into the floor's
-``zones.yaml``, where the generated ``room_NN`` names are meant to be renamed to
+the floor's zones, where the generated ``room_NN`` names are meant to be renamed to
 what the rooms are actually called.
 
 Merging never overwrites: a candidate covering the pose of a zone that already
@@ -18,13 +18,15 @@ running twice in a row a no-op.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 import yaml
+
+from mote_bringup import bundle
+from mote_bringup.spec import zone as zone_spec
 
 from .room_segmentation import (
     MapGeometry,
@@ -89,10 +91,14 @@ def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str
     (a ``pickup`` standing in the middle of a hall) do not suppress anything:
     they name a spot, not the room around it.
     """
-    data = yaml.safe_load(path.read_text()) if path.exists() else None
-    data = data or {"frame_id": "map"}
-    zones = data.setdefault("zones", {}) or {}
-    data["zones"] = zones
+    if path.suffix == ".yaml":
+        # A caller that named the old combined file means the floor it is in.
+        path = path.parent
+    try:
+        floor = bundle.read_floor(path)
+    except bundle.BundleError:
+        floor = {"frame_id": "map", "revision": 0, "zones": {}}
+    zones = floor["zones"]
 
     named = [
         (float(spec["x"]), float(spec["y"]))
@@ -109,13 +115,20 @@ def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str
         while name in zones:
             name = f"{room.name}_{suffix}"
             suffix += 1
-        zones[name] = zone_entry(room)
+        entry = zone_entry(room)
+        zones[name] = dict(
+            bundle.zone_term("segment-map", name, entry),
+            bound=True,
+            # Read off the map by an algorithm rather than driven to, which is
+            # what ``derived`` is for — and what tells an operator, later, that
+            # a re-map invalidates it without a human having done anything.
+            anchor=zone_spec.anchor(zone_spec.DERIVED, by="segment-map"),
+            **{k: entry[k] for k in ("x", "y", "yaw", "polygon") if k in entry},
+        )
         added.append(name)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}")
-    tmp.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=None))
-    os.replace(tmp, path)
+    if added:
+        floor["revision"] = int(floor.get("revision") or 0) + 1
+    bundle.write_floor(path, floor)
     return added, skipped
 
 
@@ -167,8 +180,8 @@ def _resolve_map(argument: str | None) -> tuple[Path, Path]:
     """The map to segment and where its proposal and overlay should land.
 
     A map revision is immutable once published, so the active floor's outputs go
-    beside its zones.yaml rather than inside ``maps/<rev>/``. An explicitly named
-    map is the caller's own business and gets its outputs beside it.
+    beside its zone documents rather than inside ``maps/<rev>/``. An explicitly
+    named map is the caller's own business and gets its outputs beside it.
     """
     if argument:
         explicit = Path(argument).expanduser()
@@ -185,6 +198,7 @@ def _resolve_map(argument: str | None) -> tuple[Path, Path]:
 
 
 def _resolve_zones(argument: str | None) -> Path:
+    """The floor directory the proposal is merged into."""
     if argument:
         return Path(argument).expanduser()
     from mote_bringup import sites
@@ -200,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write",
         action="store_true",
-        help="merge the candidates into the floor's zones.yaml",
+        help="merge the candidates into the floor's zones",
     )
     parser.add_argument("--zones", help="merge into this zones file instead")
     parser.add_argument("--prefix", default="room", help="generated name prefix")

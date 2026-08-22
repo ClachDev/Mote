@@ -22,8 +22,22 @@ import pytest
 
 from mote_bringup.spec import capability as cap
 from mote_bringup.spec import mission
+from mote_bringup.spec import zone
 
-jsonschema = pytest.importorskip("jsonschema", reason="no JSON Schema validator")
+# The skip is deliberately *not* a module-level ``pytest.importorskip``. That
+# raises ``Skipped``, which derives from ``BaseException``, and the
+# launch_testing plugin this workspace loads imports every test module itself
+# outside pytest's skip handling — so one module-level skip aborted collection
+# of the entire directory, silently, reporting "no tests collected" rather than
+# an error. Skipping per test keeps it a test-level outcome.
+
+
+def validator_library():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("no JSON Schema validator")
+    return jsonschema
 
 
 def spec_root() -> Path:
@@ -46,6 +60,7 @@ def validator_for():
     reached the network to check a payload would be a test that fails on a
     train.
     """
+    jsonschema = validator_library()
     from referencing import Registry, Resource
 
     root = spec_root() / "schema"
@@ -142,3 +157,83 @@ def test_a_local_mission_status_conforms(validator_for):
             "mote-01", None, "goto", mission.ACCEPTED, source=mission.SOURCE_LOCAL
         )
     )
+
+
+# -- zone/v0 ---------------------------------------------------------------
+
+
+def a_floor():
+    """One floor's zones, split — the migration a real ``zones.yaml`` takes."""
+    return zone.split(
+        {
+            "frame_id": "map",
+            "revision": 4,
+            "zones": {
+                "kitchen": {
+                    "x": 2.0,
+                    "y": 3.5,
+                    "yaw": 1.57,
+                    "radius": 1.5,
+                    "kind": "room",
+                    "display_name": "Kitchen",
+                    "aliases": ["the kitchen", "galley"],
+                },
+                "ward_a": {"polygon": [[4, 0], [9, 0], [9, 3], [4, 3]], "kind": "room"},
+                "server_room": {"x": 1.0, "y": 1.0, "kind": "keepout"},
+            },
+        },
+        site="acme_hq",
+        floor="ground",
+        platform_id="mote-01",
+        map_revision="2026-07-24T09-12-03",
+    )
+
+
+def test_a_vocabulary_conforms_and_carries_no_coordinates(validator_for):
+    document, _ = a_floor()
+    validator_for("zone/v0/zone-vocabulary.schema.json").validate(document)
+    # The invariant, checked over the whole payload rather than over the keys
+    # someone thought of: a geometry key here is the leak the split exists to
+    # prevent, and it would look like a plausible coordinate rather than a crash.
+    text = json.dumps(document)
+    for key in zone.GEOMETRY_KEYS + ("frame_id", "map_revision", "pose", "footprint"):
+        assert f'"{key}"' not in text, f"{key} leaked into the vocabulary"
+
+
+def test_a_binding_conforms(validator_for):
+    _, document = a_floor()
+    validator_for("zone/v0/zone-binding.schema.json").validate(document)
+    assert document["platform_id"] == "mote-01"
+    assert document["map_revision"] == "2026-07-24T09-12-03"
+
+
+def test_every_resolution_reason_conforms(validator_for):
+    validator = validator_for("zone/v0/zone-resolution.schema.json")
+    for reason in zone.REASONS:
+        validator.validate(
+            zone.resolution(
+                "mote-01", "kitchen", reason=reason, queried_as="the kitchen"
+            )
+        )
+    validator.validate(
+        zone.resolution(
+            "mote-01",
+            "kitchen",
+            resolved=True,
+            site="acme_hq",
+            floor="ground",
+            frame_id="map",
+            map_revision="2026-07-24T09-12-03",
+            pose={"x": 2.0, "y": 3.5, "yaw": 1.57},
+            kind="room",
+            navigable=True,
+            anchor_method="taught",
+        )
+    )
+
+
+def test_a_zone_name_conforms_to_the_reference_schema(validator_for):
+    validator = validator_for("zone/v0/zone-ref.schema.json")
+    validator.validate("kitchen")
+    with pytest.raises(validator_library().ValidationError):
+        validator.validate("The Kitchen")

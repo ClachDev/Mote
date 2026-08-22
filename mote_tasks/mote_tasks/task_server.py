@@ -125,8 +125,20 @@ class TaskServer(Node):
                 "config",
                 "zones.default.yaml",
             )
-        self.zones = zones.load_zones(zones_file)
-        self.get_logger().info(f"Zones {sorted(self.zones)} from {zones_file}")
+        # load_floor, not load_zones: a name in the floor's vocabulary that
+        # this robot has never been taught must reach the resolver, so a
+        # mission for it can be refused as `unbound` — "I know that place,
+        # nobody has driven me there" — rather than as an unknown name, which
+        # sends an operator hunting for a typo that is not there.
+        self.zones = zones.load_floor(zones_file)
+        taught = sorted(name for name, z in self.zones.items() if z.bound)
+        untaught = sorted(name for name, z in self.zones.items() if not z.bound)
+        self.get_logger().info(f"Zones {taught} from {zones_file}")
+        if untaught:
+            self.get_logger().warning(
+                f"named here but not taught on this robot: {', '.join(untaught)} "
+                "(drive there and run save-zone)"
+            )
 
         self.platform_id = platform_id or identity.robot_id() or UNENROLLED
         self.capabilities = capabilities.capability_set(

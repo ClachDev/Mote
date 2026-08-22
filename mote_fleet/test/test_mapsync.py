@@ -17,6 +17,7 @@ from api_harness import enroll, get, post, post_bytes, write_revision
 
 from mote_bringup import bundle, mote_home, sites
 from mote_fleet import mapsync, protocol
+from mote_tasks import zones as zones_lib
 
 SITE, FLOOR = "home", "ground"
 REVISION = "20260727T101500"
@@ -215,6 +216,40 @@ def test_publishing_packs_the_floors_zones_into_the_revision(
     _, floor = get(server, f"/v1/sites/{SITE}/floors/{FLOOR}")
     uploaded = next(r for r in floor["revisions"] if r["revision"] == REVISION)
     assert uploaded["zones"] == ["bay"]
+
+
+def test_publishing_a_split_floor_sends_the_binding_in_the_revision(
+    server, robot_home, tmp_path
+):
+    """The zone/v0 layout, end to end.
+
+    The coordinates go *inside* the revision, because they are only meaningful
+    in that revision's map frame. The names ride along too — but an upload is
+    inert, and that now covers names as well as coordinates: until an operator
+    promotes, ``/v1/zones`` still answers with the floor's published
+    vocabulary. Otherwise a robot could rename every room on a floor its
+    neighbours are driving, by uploading a map nobody accepted.
+    """
+    enroll(server, "serial:ddd", name="Scout")
+    floor_dir = sites.floor_dir(SITE, FLOOR)
+    write_revision(floor_dir / "maps" / REVISION, zones=False)
+    zones_lib.append_zone(
+        floor_dir, "bay", 1.5, -2.0, 0.0, kind="dock", site=SITE, floor=FLOOR
+    )
+    assert (floor_dir / "binding.yaml").is_file()
+    sites._publish_revision(floor_dir, REVISION)
+
+    mapsync.publish(server.url, SITE, FLOOR, REVISION, "mote-01")
+    _, floor = get(server, f"/v1/sites/{SITE}/floors/{FLOOR}")
+    uploaded = next(r for r in floor["revisions"] if r["revision"] == REVISION)
+    assert uploaded["zones"] == ["bay"]
+
+    _, vocabulary = get(server, f"/v1/zones/{SITE}/{FLOOR}")
+    assert "bay" not in [item["name"] for item in vocabulary["zones"]]
+    # ...and what it does serve is names and nothing else.
+    assert vocabulary["zones"]
+    for item in vocabulary["zones"]:
+        assert not {"x", "y", "yaw", "radius", "polygon"} & set(item)
 
 
 def test_publishing_a_revision_the_robot_does_not_have_is_refused(server, robot_home):

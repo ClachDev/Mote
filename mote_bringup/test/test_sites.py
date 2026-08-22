@@ -26,10 +26,12 @@ def test_create_seeds_floor_and_activates(mote_home):
     sites.create("home")
     assert sites.active() == ("home", "ground")
     fdir = sites.floor_dir("home", "ground")
-    assert yaml.safe_load((fdir / "zones.yaml").read_text()) == {
-        "frame_id": "map",
-        "zones": {},
-    }
+    # A new floor has no zone documents at all. Seeding empty ones would make a
+    # hand-written zones.yaml dropped in beside them ambiguous, and the empty
+    # pair would win silently.
+    assert fdir.is_dir()
+    assert sorted(path.name for path in fdir.iterdir()) == []
+    assert sites.has_zones(fdir) is False
     meta = yaml.safe_load((sites.site_dir("home") / "site.yaml").read_text())
     assert meta == {"schema": 1, "name": "home", "default_floor": "ground"}
 
@@ -100,9 +102,17 @@ def test_resolve_zones_and_write_target(mote_home):
     with pytest.raises(SystemExit):
         sites.zones_for_write()
     sites.create("home")
-    expected = sites.floor_dir("home", "ground") / "zones.yaml"
-    assert sites.resolve_zones() == str(expected)
+    expected = sites.floor_dir("home", "ground")
+    # Nothing to resolve until something is taught — but that is where it goes.
+    assert sites.resolve_zones() == ""
     assert sites.zones_for_write() == expected
+
+    from mote_tasks.zones import append_zone
+
+    append_zone(expected, "bench", 1.0, 2.0, 0.0, site="home", floor="ground")
+    # A floor, not a file: its zones are two documents, and which one a reader
+    # wants is the reader's business.
+    assert sites.resolve_zones() == str(expected)
 
 
 def test_dangling_active_is_ignored(mote_home):

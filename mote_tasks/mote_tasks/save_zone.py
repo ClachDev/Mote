@@ -24,6 +24,8 @@ from mote_bringup import bundle, sites
 from rclpy.node import Node
 from rclpy.time import Time
 
+from mote_bringup import identity
+
 from mote_tasks.zones import append_zone, yaw_from_quaternion
 
 LOOKUP_TIMEOUT = 10.0
@@ -81,7 +83,19 @@ def main():
     yaw = yaw_from_quaternion(q.x, q.y, q.z, q.w)
 
     path = sites.zones_for_write()
-    replaced = append_zone(path, name, t.x, t.y, yaw, radius, kind)
+    site, floor = sites.active() or ("", "")
+    replaced = append_zone(
+        path,
+        name,
+        t.x,
+        t.y,
+        yaw,
+        radius,
+        kind,
+        site=site,
+        floor=floor,
+        platform_id=identity.robot_id() or "",
+    )
     verb = "replaced" if replaced else "added"
     extra = f" radius={radius:.3f}" if radius is not None else ""
     extra += f" kind={kind}" if kind is not None else ""

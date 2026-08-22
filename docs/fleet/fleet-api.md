@@ -292,6 +292,17 @@ under `/v1/zones` is bound to nothing.
 A caller that must never be handed a map can be given `/v1/zones` and only
 `/v1/zones`.
 
+**The split is now also in the files.** A floor is two documents —
+`vocabulary.yaml` and `binding.yaml` — rather than one `zones.yaml` filtered two
+ways, so this route serves a document rather than a projection of one, and the
+kind of leak a filter permits (a geometry key added later that nobody remembers
+to strip) is not representable. A map revision carries the *binding*, because
+coordinates travel with the frame they mean something in; the vocabulary sits at
+floor level, which is why this route answers for a floor with no published map
+at all. A candidate produced by the zone editor carries **both** halves, and
+promotion is what lifts its vocabulary to the floor: uploading is not
+publishing, applied to names as well as to coordinates.
+
 ### `GET /v1/zones/<site>/<floor>`
 
 ```json

@@ -40,7 +40,6 @@ def test_segment_map_output_is_a_bundle_this_can_read(tmp_path):
     from mote_bringup.map_cleanup.room_segmentation import Room
     from mote_bringup.map_cleanup.rooms_cli import merge_into_zones
 
-    path = tmp_path / "zones.yaml"
     rooms = [
         Room(
             name="room_1",
@@ -50,12 +49,17 @@ def test_segment_map_output_is_a_bundle_this_can_read(tmp_path):
             clearance_m=1.2,
         )
     ]
-    added, _ = merge_into_zones(path, rooms)
+    added, _ = merge_into_zones(tmp_path, rooms)
     assert added == ["room_1"]
 
-    zones = bundle.read_zones(path)["zones"]
+    zones = bundle.read_floor(tmp_path)["zones"]
     assert zones["room_1"]["polygon"][2] == [4.0, 3.0]
-    assert bundle.load_yaml(path.read_text()) == yaml.safe_load(path.read_text())
+    # Read off the map by an algorithm, never driven to — which is what tells
+    # an operator later that a re-map invalidates it.
+    assert zones["room_1"]["anchor"]["method"] == "derived"
+    for name in ("vocabulary.yaml", "binding.yaml"):
+        text = (tmp_path / name).read_text()
+        assert bundle.load_yaml(text) == yaml.safe_load(text)
 
 
 @pytest.mark.parametrize(
@@ -350,9 +354,26 @@ def revision(directory, **kwargs) -> Path:
         (directory / "map.posegraph").write_bytes(b"graph")
         (directory / "map.data").write_bytes(b"data")
     if kwargs.get("zones", True):
-        (directory / "zones.yaml").write_text(
-            "frame_id: map\nzones:\n  a: {x: 0, y: 0}\n"
+        # A revision carries the *binding*, since coordinates are only
+        # meaningful in the map frame beside them.
+        bundle.write_floor(
+            directory,
+            {"frame_id": "map", "revision": 1, "zones": {}},
+            site="home",
+            floor="ground",
+            platform_id="mote-01",
         )
+        (directory / "vocabulary.yaml").unlink()
+        binding = yaml.safe_load((directory / "binding.yaml").read_text())
+        binding["bindings"] = [
+            {
+                "name": "a",
+                "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+                "footprint": None,
+                "anchor": {"method": "taught"},
+            }
+        ]
+        (directory / "binding.yaml").write_text(yaml.safe_dump(binding))
     return directory
 
 
@@ -429,7 +450,7 @@ def test_a_raw_map_of_a_different_size_is_refused(tmp_path):
 def test_a_floor_with_no_zones_validates_but_says_so(tmp_path):
     report = bundle.validate(revision(tmp_path / "rev", zones=False))
     assert report.ok
-    assert any("no zones.yaml" in warning for warning in report.warnings)
+    assert any("no binding.yaml" in warning for warning in report.warnings)
 
 
 # ---- the wire form ------------------------------------------------------
@@ -445,7 +466,7 @@ def test_pack_round_trips_through_unpack(tmp_path):
         "meta.yaml",
         "map.posegraph",
         "map.data",
-        "zones.yaml",
+        "binding.yaml",
     }
     assert bundle.validate(tmp_path / "landed").ok
     for name in written:
@@ -462,8 +483,8 @@ def test_packing_is_deterministic(tmp_path):
 
 def test_extra_files_travel_with_the_frame(tmp_path):
     source = revision(tmp_path / "rev", zones=False)
-    blob = bundle.pack(source, {"zones.yaml": b"frame_id: map\nzones: {}\n"})
-    assert "zones.yaml" in bundle.unpack(blob, tmp_path / "landed")
+    blob = bundle.pack(source, {"binding.yaml": b"schema: 1\nbindings: []\n"})
+    assert "binding.yaml" in bundle.unpack(blob, tmp_path / "landed")
 
 
 def test_a_file_that_is_not_part_of_a_bundle_cannot_be_packed(tmp_path):

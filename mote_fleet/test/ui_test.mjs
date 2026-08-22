@@ -940,11 +940,13 @@ test('the kind decides whether a zone is a point or an area', () => {
 });
 
 test('the kind list is the one the bundle validator will accept', () => {
-  // A kind outside `bundle.ZONE_KINDS` is refused at the parse, so a dropdown
+  // A kind outside zone/v0's list is refused at the parse, so a dropdown
   // offering one would be an option that fails on save. Read out of the python
   // rather than duplicated in a fixture, so adding a kind there fails here.
+  // The list moved from bundle.py to spec/zone.py when the vocabulary and the
+  // binding were split; bundle.py re-exports it, and this reads the original.
   const bundle = readFileSync(
-    new URL('../../mote_bringup/mote_bringup/bundle.py', import.meta.url),
+    new URL('../../mote_bringup/mote_bringup/spec/zone.py', import.meta.url),
     'utf8',
   );
   const kinds = (source, name) =>

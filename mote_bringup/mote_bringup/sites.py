@@ -5,7 +5,15 @@ place, managed as a single versioned unit.
     ~/.mote/sites/<site>/
         site.yaml                  -> {schema: 1, name, default_floor}
         floors/<floor>/
-            zones.yaml             named poses in this floor's map frame
+            vocabulary.yaml        what the places here are CALLED (zone/v0).
+                                   No coordinates: safe to share with every
+                                   robot at the site.
+            binding.yaml           where THIS robot believes they are, in this
+                                   floor's map frame. Never shared; travels
+                                   inside a map revision, since a coordinate
+                                   means nothing without the map beside it.
+            zones.yaml             the combined file both used to be. Still
+                                   read; migrated to the pair on first write.
             map -> maps/<rev>/     symlink to the current map revision
             maps/<rev>/            immutable once published:
                 map.yaml + map.png     nav2 map_server pair — the cleaned map,
@@ -124,29 +132,45 @@ def resolve_map() -> str:
 
 
 def resolve_zones() -> str:
-    """The active floor's zones yaml, or ''."""
+    """The active floor's zones, or ''.
+
+    A *directory* now, not a file: the floor's zones are two documents, and
+    which of them a reader wants is the reader's business. What comes back is
+    what ``bundle.read_floor`` takes, so a legacy combined file still works —
+    it is inside the same directory.
+    """
     act = active()
     if act:
-        candidate = floor_dir(*act) / "zones.yaml"
-        if candidate.exists():
-            return str(candidate)
+        fdir = floor_dir(*act)
+        if has_zones(fdir):
+            return str(fdir)
     return ""
 
 
+def has_zones(fdir: Path) -> bool:
+    return (fdir / bundle.VOCABULARY_YAML).exists() or (
+        fdir / bundle.ZONES_YAML
+    ).exists()
+
+
 def zones_for_write() -> Path:
-    """Where newly taught zones should be written."""
+    """The floor newly taught zones should be written into."""
     act = active()
     if not act:
         sys.exit("no active site (run: site create <name>)")
-    return floor_dir(*act) / "zones.yaml"
+    return floor_dir(*act)
 
 
 def _seed_floor(site: str, floor: str):
-    fdir = floor_dir(site, floor)
-    fdir.mkdir(parents=True, exist_ok=True)
-    zones = fdir / "zones.yaml"
-    if not zones.exists():
-        zones.write_text("frame_id: map\nzones: {}\n")
+    """The directory, and nothing in it.
+
+    A new floor deliberately has **no** zone documents. Seeding empty ones
+    would make a hand-written ``zones.yaml`` dropped in beside them ambiguous —
+    two layouts on one floor, with a precedence rule to remember — and the
+    empty pair would win silently. A floor with no zones is a floor with no
+    zone files; the first ``save-zone`` writes the pair.
+    """
+    floor_dir(site, floor).mkdir(parents=True, exist_ok=True)
 
 
 def create(site: str, floor: str = "ground"):
@@ -218,14 +242,27 @@ def cmd_info():
         return
     fdir = floor_dir(*act)
     print(f"active: {act[0]}/{act[1]}  ({fdir})")
-    zones_yaml = fdir / "zones.yaml"
-    if zones_yaml.exists():
-        zones = (yaml.safe_load(zones_yaml.read_text()) or {}).get("zones") or {}
-        with_fp = sum(1 for z in zones.values() if "radius" in z or "polygon" in z)
-        fp_note = f", {with_fp} with a footprint" if with_fp else ""
-        print(f"  zones.yaml   ok ({len(zones)} zones{fp_note})")
+    if has_zones(fdir):
+        try:
+            zones = bundle.read_floor(fdir, *act)["zones"]
+        except bundle.BundleError as exc:
+            print(f"  zones        UNREADABLE ({exc})")
+        else:
+            with_fp = sum(1 for z in zones.values() if "radius" in z or "polygon" in z)
+            unbound = sum(1 for z in zones.values() if not z.get("bound"))
+            notes = [f"{len(zones)} zones"]
+            if with_fp:
+                notes.append(f"{with_fp} with a footprint")
+            # A name this robot has never been taught is worth saying: it is
+            # the difference between a floor it can work on and one it has only
+            # been told about.
+            if unbound:
+                notes.append(f"{unbound} not taught here")
+            legacy = " (combined zones.yaml — migrates on next write)"
+            split = (fdir / bundle.VOCABULARY_YAML).exists()
+            print(f"  zones        ok ({', '.join(notes)}){'' if split else legacy}")
     else:
-        print("  zones.yaml   missing")
+        print("  zones        missing")
     current = current_revision(fdir)
     if not current:
         print("  map          none (run: pixi run save-map during mapping)")
@@ -455,12 +492,15 @@ def install_revision(site: str, floor: str, revision: str, blob: bytes) -> str:
     and nothing has to be undone if the transfer dies. Returns what it did:
     ``current`` (nothing to do), ``flipped`` (already had it) or ``installed``.
 
-    **Zones travel with the map.** A revision from a different mapping session
-    is a different map frame, so the zones taught in the old one are wrong the
-    instant the new map is published. The bundle's ``zones.yaml`` therefore
-    replaces the floor's, and the one it replaces is kept beside it as
-    ``zones.<old-rev>.yaml`` — losing a map is recoverable, losing every taught
-    place silently is not.
+    **Coordinates travel with the map; names do not.** A revision from a
+    different mapping session is a different map frame, so the poses taught in
+    the old one are wrong the instant the new map is published — the bundle's
+    ``binding.yaml`` therefore replaces the floor's, and the one it replaces is
+    kept beside it as ``binding.<old-rev>.yaml``, because losing a map is
+    recoverable and losing every taught place silently is not. The
+    ``vocabulary.yaml`` is left alone: the rooms did not change their names
+    when the robot re-mapped them, which is the practical dividend of the
+    zone/v0 split.
     """
     fdir = floor_dir(site, floor)
     if not fdir.is_dir():
@@ -502,15 +542,25 @@ def install_revision(site: str, floor: str, revision: str, blob: bytes) -> str:
 
 
 def _adopt_zones(fdir: Path, rev_dir: Path, previous: str | None):
-    source = rev_dir / "zones.yaml"
-    if not source.is_file():
+    """Install a revision's **binding** as the floor's.
+
+    Only the binding: it is the half that is bound to this revision's map
+    frame, and it is the half a different SLAM session makes wrong. The
+    vocabulary stays where it is, because the names of the rooms did not change
+    when the robot re-mapped the floor — which is the practical dividend of the
+    split, and the reason re-mapping no longer costs an operator their aliases.
+    """
+    for name in (bundle.BINDING_YAML, bundle.ZONES_YAML):
+        source = rev_dir / name
+        if not source.is_file():
+            continue
+        target = fdir / name
+        if target.is_file():
+            if target.read_bytes() == source.read_bytes():
+                return
+            target.rename(fdir / f"{Path(name).stem}.{previous or 'previous'}.yaml")
+        shutil.copyfile(source, target)
         return
-    target = fdir / "zones.yaml"
-    if target.is_file():
-        if target.read_bytes() == source.read_bytes():
-            return
-        target.rename(fdir / f"zones.{previous or 'previous'}.yaml")
-    shutil.copyfile(source, target)
 
 
 def use_map(rev: str):

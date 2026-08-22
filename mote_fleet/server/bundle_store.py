@@ -298,7 +298,7 @@ class BundleStore:
         path = self._zones_file(site, floor, revision=self._live(site, floor))
         if path is None:
             raise StoreError(f"no zones for {site}/{floor}", 404)
-        zones = bundle.read_zones(path)
+        zones = self._read(path, site, floor)
         return {
             "site": site,
             "floor": floor,
@@ -323,7 +323,7 @@ class BundleStore:
         path = self._zones_file(site, floor, revision=revision)
         if path is None:
             raise StoreError(f"no zones for {site}/{floor}/{revision}", 404)
-        zones = bundle.read_zones(path)
+        zones = self._read(path, site, floor)
         return {
             "site": site,
             "floor": floor,
@@ -333,7 +333,7 @@ class BundleStore:
             # M4 named: a revision carrying no zones inherits the floor's, which
             # were taught in a *previous* SLAM session's frame and are therefore
             # wrong for this map by exactly however far the two origins differ.
-            "source": "revision" if path.parent == directory else "floor",
+            "source": "revision" if path == directory else "floor",
             "frame_id": zones["frame_id"],
             "zones": list(zones["zones"].values()),
         }
@@ -349,10 +349,21 @@ class BundleStore:
         driven a metre. That is the portability the split buys, and gating this
         on a promoted revision would have quietly given it back.
         """
+        # The floor's own directory first, because the vocabulary lives there
+        # and *only* there: a revision carries the binding. A floor with no
+        # published map still answers, which is the portability the split buys.
+        for directory in (
+            self.floor_dir(site, floor),
+            self._zones_file(site, floor, revision=self.canonical(site, floor)),
+        ):
+            if directory is not None and (directory / bundle.VOCABULARY_YAML).is_file():
+                return bundle.vocabulary(
+                    self._read(directory, site, floor), site, floor
+                )
         path = self._zones_file(site, floor, revision=self.canonical(site, floor))
         if path is None:
             raise StoreError(f"no zones for {site}/{floor}", 404)
-        return bundle.vocabulary(bundle.read_zones(path), site, floor)
+        return bundle.vocabulary(self._read(path, site, floor), site, floor)
 
     def derive_zones(
         self, site: str, floor: str, zones: dict, *, by: str, source: str = ""
@@ -393,7 +404,7 @@ class BundleStore:
         zones_file = self._zones_file(site, floor, revision=source)
         if zones_file is not None:
             try:
-                previous = bundle.read_zones(zones_file)
+                previous = self._read(zones_file, site, floor)
             except bundle.BundleError:
                 previous = {}
         # The submitted entries may echo their key as a `name` field (the
@@ -452,16 +463,28 @@ class BundleStore:
                     yield site_dir.name, floor_dir.name
 
     def _zones_file(self, site: str, floor: str, revision: str = ""):
-        """``zones.yaml`` from the given revision, else the floor-level one."""
+        """The directory holding the zones of the given revision, else the
+        floor's own.
+
+        A directory rather than a file since the split: a revision carries the
+        binding and the floor carries the vocabulary, and which of the two a
+        caller wants is what ``read_zones`` and ``read_vocabulary`` differ by.
+        """
         candidates = []
         if revision:
             candidates.append(self.revision_dir(site, floor, revision))
         candidates.append(self.floor_dir(site, floor))
         for directory in candidates:
-            path = directory / bundle.ZONES_YAML
-            if path.is_file():
-                return path
+            if any(
+                (directory / name).is_file()
+                for name in (bundle.BINDING_YAML, bundle.ZONES_YAML)
+            ):
+                return directory
         return None
+
+    def _read(self, directory, site: str, floor: str) -> dict:
+        """One floor directory's zones, whichever layout is on disk."""
+        return bundle.read_floor(directory, site, floor)
 
     def _live(self, site: str, floor: str) -> str:
         canonical = self.canonical(site, floor)
