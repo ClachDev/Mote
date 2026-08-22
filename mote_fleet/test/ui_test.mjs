@@ -938,10 +938,6 @@ test('review is a mode: opening it stands the operations panes down', () => {
 });
 
 test('the review pane has a way out, and it leads to the map', () => {
-  // Review stands every other pane down at every width, and the tab bar that
-  // would bring one back exists only below 760 px. So above it the pane's own
-  // control is the only exit there is: without one, an operator who opened
-  // review on a desk escaped by resizing the window or reloading the page.
   const html = read('index.html');
   const review = html.slice(
     html.indexOf('class="pane review-pane"'),
@@ -949,14 +945,12 @@ test('the review pane has a way out, and it leads to the map', () => {
   );
   assert.ok(review.includes('id="review-back"'), 'the review pane has no exit control');
 
-  // A control that leaves is only an exit if it names a pane that is *not*
-  // this one — `show('review')` on a button labelled `back` would look right
-  // in the markup and change nothing on screen.
+  // An exit only if it names a pane that is *not* this one: `show('review')`
+  // on a button labelled `back` looks right in the markup and does nothing.
   const app = read('app.mjs');
   const leave = app.slice(app.indexOf('function onReviewBack('));
   assert.match(leave.slice(0, leave.indexOf('\n}')), /panes\.show\('map'\)/);
   assert.match(app, /dom\.reviewBack\.addEventListener\('click', onReviewBack\)/);
-  // And Escape is the same exit, not a second one with its own rules.
   const key = app.slice(app.indexOf('function onKey('));
   const body = key.slice(0, key.indexOf('\n}'));
   assert.match(body, /event\.key !== 'Escape'/);
@@ -964,8 +958,6 @@ test('the review pane has a way out, and it leads to the map', () => {
 });
 
 test('an edit in progress holds the exit, as it holds the revision list', () => {
-  // There is no autosave: leaving mid-edit would strand it on a canvas nobody
-  // can see. `cancel` is how an edit ends.
   const source = read('review.mjs');
   const controls = source.slice(source.indexOf('renderEditControls()'));
   assert.match(controls.slice(0, controls.indexOf('\n  }')), /this\.dom\.back\.disabled = this\.editing/);

@@ -372,10 +372,6 @@ export class ReviewView {
     return Boolean(this.selected && this.map.map);
   }
 
-  // Whether the pane may be left. An edit is a mode on the selected revision
-  // with no autosave, so it holds the exit for the same reason it holds the
-  // floor picker and the revision list: leaving would strand it on a canvas
-  // nobody can see. `cancel` is how an edit ends.
   leavable() {
     return !this.editing;
   }

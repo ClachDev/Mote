@@ -283,10 +283,8 @@ try {
     `${candidateDrawn} painted pixels`,
   );
 
-  // The way out, which above 760 px is the pane's own control and nothing else:
-  // the tab bar the phone leaves by is hidden here, and review stands every
-  // other pane down, so a pane with no exit of its own is a trap that ends in a
-  // window resize or a reload (what shipped with the pane, 2026-08-11).
+  // The pane shipped with no exit above 760 px, where the tab bar is hidden: an
+  // operator who opened it left by resizing the window or reloading the page.
   const exits = await session.evaluate(`(() => {
     const active = () => [...document.querySelectorAll('.pane')]
       .filter(pane => pane.classList.contains('active'))
@@ -294,8 +292,6 @@ try {
     const out = { width: innerWidth, tabs: getComputedStyle(document.querySelector('.panes')).display };
     document.getElementById('review-back').click();
     out.button = active();
-    // The operations panes are only *displayed* again if the review mode rule
-    // has let go: the class is what that rule keys on, so both are read.
     out.shown = getComputedStyle(document.querySelector('.map-pane')).display;
     document.getElementById('review-jump').click();
     out.reopened = active();
@@ -412,8 +408,6 @@ try {
       JSON.stringify({ ends: editing.ends, adds: editing.adds }),
     );
 
-    // The way out is held with them. An edit has no autosave, so leaving would
-    // strand it on a canvas nobody can see; `cancel` is how an edit ends.
     const held = await session.evaluate(`(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       document.getElementById('review-back').click();
@@ -662,8 +656,6 @@ try {
     );
     check('the first promotion on a floor goes through', /is on /.test(promoted), promoted);
 
-    // And the pane it was made in stands down: the decision it exists for has
-    // been made, and the operations map is what an operator wants next.
     const landed = await session.evaluate(`[...document.querySelectorAll('.pane')]
       .filter(pane => pane.classList.contains('active'))
       .map(pane => pane.dataset.pane).join(',')`);
