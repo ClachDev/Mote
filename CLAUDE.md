@@ -259,11 +259,12 @@ standing in for the hover feedback before it existed. **A control sits at the
 level of the thing it acts on**, which three buttons in one row denied: `save as
 candidate` and `cancel` end the mode, so they take the place of `edit zones`
 above the list rather than standing beside a control that adds one zone, and
-`add zone` is the list's last line. The save's message moved with them, onto a
-line under the buttons that is reserved whether or not there is anything in it —
-two lines' worth, because the longest message is the refusal that quotes both
-zones answering one query, and one that arrived or wrapped would push the list
-down as it appeared.
+`add zone` is the list's last line. The save's message moved with them, out
+of the column of fields for one zone and under the list it is about — with no
+height until there is something to say, since a strip reserved for the longest
+message (the refusal quoting both zones that answer one query) is a gap over the
+first zone that nothing explains. The room comes out of the list instead, the
+one thing in that box which scrolls, so nothing above the message moves.
 
 **A place is named once.** While a zone's machine name is still one nobody
 chose (`zone_03`), typing its display name sets it through `slugify` — "The

@@ -124,15 +124,15 @@
               <button id="zone-save" type="button" hidden>save as candidate</button>
               <button id="zone-cancel" type="button" hidden>cancel</button>
             </div>
-            <!-- What the save says, under the button that says it: a line of
-                 its own, always there and usually empty, so a refusal is
-                 readable in full and its arrival moves nothing. -->
-            <p id="zone-note" class="note"></p>
             <!-- One list, whether or not it is being edited: the same rows with
                  text where the controls go. Two renderers were two layouts that
                  drifted, and the difference between looking and editing should
                  be the controls rather than the page. -->
             <div id="zone-rows" class="zone-rows"></div>
+            <!-- What the save says, under the list it is about. It has no
+                 height until there is something to say, so the room comes out
+                 of the one thing here that scrolls. -->
+            <p id="zone-note" class="note"></p>
             <div id="zone-editor" class="zone-editor" hidden>
               <div class="zones-head"><h3>details</h3></div>
               <!-- The selected zone's vocabulary. A row per zone carries what

@@ -422,13 +422,33 @@ try {
       const aliases = field.querySelector('input');
       aliases.value = first.toUpperCase();
       aliases.dispatchEvent(new Event('change'));
+      const note = document.getElementById('zone-note');
+      const top = () => Math.round(document.querySelector('#zone-rows .zone-row').getBoundingClientRect().top);
+      const before = { top: top(), note: Math.round(note.getBoundingClientRect().height) };
       document.getElementById('zone-save').click();
-      return { note: document.getElementById('zone-note').textContent, field: !!field };
+      return {
+        note: note.textContent,
+        field: !!field,
+        before,
+        // The message takes its room from the list, which is the one thing in
+        // the box that scrolls — so nothing above it moves, and an empty one
+        // leaves no gap over the first zone.
+        after: { top: top(), note: Math.round(note.getBoundingClientRect().height) },
+        whole: note.scrollHeight <= note.clientHeight,
+      };
     })()`);
     check(
       'an ambiguous vocabulary is refused in the browser, not stored',
       /both answer to/.test(refused.note),
       refused.note,
+    );
+    check(
+      'the refusal is readable in full and moves nothing above it',
+      refused.before.note === 0 &&
+        refused.after.note > 0 &&
+        refused.before.top === refused.after.top &&
+        refused.whole,
+      JSON.stringify({ ...refused.before, ...refused.after, whole: refused.whole }),
     );
 
     await session.evaluate(`(() => {

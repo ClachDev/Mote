@@ -813,17 +813,15 @@ main {
   min-height: 28px;
 }
 
-/* Under the controls it belongs to, across the width of the list: what the save
-   is doing, or the rule it is refusing on. Two lines are reserved whether or not
-   there is anything in them, because the message that matters most is the
-   longest — the loader's rule, quoting both zones that broke it — and a line
-   that appears, or wraps, would push the list down as it arrived. */
+/* What the save is doing, or the rule it is refusing on. Under the list rather
+   than above it, and no height of its own: an empty message reserving two lines
+   is a gap over the first zone that nothing explains, while here the list — the
+   one thing in the box that scrolls — gives up the room as the message arrives
+   and nothing above it moves. */
 .zones-panel > .note {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 3;
   margin: 0;
-  min-height: 36px;
-  overflow: hidden;
 }
 
 .zones-head h3 {
@@ -885,11 +883,11 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
    inside it rather than pushing the canvas about. */
 .zones-panel {
   flex: none;
-  height: 336px;
+  height: 300px;
   overflow: auto;
   display: grid;
   grid-template-columns: minmax(0, 640px) minmax(0, 26em);
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr auto;
   align-content: start;
   gap: 6px 24px;
 }
@@ -900,7 +898,7 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
 }
 
 .zones-panel > .zone-rows {
-  grid-row: 3;
+  grid-row: 2;
   height: 100%;
 }
 
