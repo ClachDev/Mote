@@ -264,7 +264,13 @@ of the column of fields for one zone and under the list it is about — with no
 height until there is something to say, since a strip reserved for the longest
 message (the refusal quoting both zones that answer one query) is a gap over the
 first zone that nothing explains. The room comes out of the list instead, the
-one thing in that box which scrolls, so nothing above the message moves.
+one thing in that box which scrolls, so nothing above the message moves. It
+carries what a save *did*, not that one is happening: the outcome used to be set
+on the pane's own line in the far column while this one was cleared, so the only
+thing appearing where the work was happening was `saving…`, lasting as long as
+the request. The mode's banner is gone with it — `save as candidate` says what
+saving does, and the one thing a banner was needed for, the shift modifier, is a
+`title` on the surface it applies to.
 
 **A place is named once.** While a zone's machine name is still one nobody
 chose (`zone_03`), typing its display name sets it through `slugify` — "The

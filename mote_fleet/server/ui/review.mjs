@@ -298,6 +298,7 @@ export class ReviewView {
     this.key = key;
     this.dom.floor.value = key;
     this.note('');
+    this.editor.note('');
     try {
       this.detail = await this.api(floorPath(parsed.site, parsed.floor));
     } catch (error) {
@@ -397,14 +398,18 @@ export class ReviewView {
     this.map.setZones([]);
     this.editor.begin(this.zones);
     this.renderEditControls();
-    const source = this.selected.canonical
-      ? 'editing the published map’s zones — saving derives a new candidate'
-      : `editing candidate ${this.selected.revision} — saving derives a new one`;
-    this.note(`${source}. drags snap to the map's pixels; hold shift for free`);
+    // Not on the note line: that line is for what the operator has to read —
+    // a refusal, or what a save did — and a banner sitting in it for the whole
+    // edit would take its room from the list and say what `save as candidate`
+    // already says. The modifier has nowhere to be discovered but the surface
+    // it applies to.
+    this.dom.canvas.title =
+      'drag a vertex, a pose or a zone; edits land on the map’s pixels — hold shift to move freely';
   }
 
   endEdit() {
     this.editing = false;
+    this.dom.canvas.title = '';
     this.editor.note('');
     this.editor.end();
     this.map.setZones(this.zones);
@@ -443,7 +448,9 @@ export class ReviewView {
     this.endEdit();
     await this.loadFloors();
     await this.open(this.key, body.revision);
-    this.note(`candidate ${body.revision} saved from ${from}; promote it when it looks right`);
+    this.editor.note(
+      `candidate ${body.revision} saved from ${from}; promote it when it looks right`,
+    );
   }
 
   // -- rendering --------------------------------------------------------

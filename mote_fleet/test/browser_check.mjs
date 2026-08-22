@@ -478,7 +478,10 @@ try {
     const derived = await settle(
       session,
       `(() => ({
-        note: document.getElementById('review-note').textContent,
+        // The line under the zones, which is where the work was: what the save
+        // did outlives the save, rather than a flash of 'saving...' here with
+        // the result reported in the far column.
+        note: document.getElementById('zone-note').textContent,
         label: document.getElementById('review-map-label').textContent,
         // Hidden means the zones belong to the revision they are drawn on,
         // which is the ordinary case and says nothing.
