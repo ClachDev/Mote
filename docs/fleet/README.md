@@ -949,7 +949,7 @@ The controls are the map and the list together:
   edit that button began; `add zone` is in the list, because that is what it
   adds to. What the save says — a refusal, or the candidate it wrote — appears
   under the list, in room the list gives up as the message arrives, and stays
-  there: the candidate a save produced is worth reading after the save.
+  until another revision is opened.
 - **Selecting a row** opens that zone's own fields beside the list — and a zone
   is always selected, so they are always showing something: its **name**
   (renaming is a deliberate act, not a side effect of clicking the list), the

@@ -730,8 +730,8 @@ export class ZoneEditor {
       seen.add(zone.name);
     }
     const ambiguous = ambiguities(this.zones);
-    if (ambiguous.length) return `${ambiguous[0]} — a query matching both cannot be answered`;
-    if (!this.zones.length) return 'no zones — cancel to leave this revision’s zones as they are';
+    if (ambiguous.length) return ambiguous[0];
+    if (!this.zones.length) return 'no zones to save';
     return null;
   }
 
@@ -778,7 +778,6 @@ export class ZoneEditor {
       // grow a field without costing every row a column (and the operator a
       // text box they will not fill).
       const kind = document.createElement('select');
-      kind.title = 'what kind of place this is (zone/v0)';
       for (const option of ZONE_KINDS) {
         const node = document.createElement('option');
         node.value = option;
@@ -786,26 +785,18 @@ export class ZoneEditor {
         kind.append(node);
       }
       kind.value = zone.kind || 'area';
-      kind.title =
-        'what kind of place this is — a point (charger, pickup…) or an area ' +
-        '(room, corridor, keepout…), which is what decides whether it has an ' +
-        'outline';
+      kind.title = 'zone/v0 kind: a point (charger, dock, pickup, dropoff, home) or an area';
       kind.addEventListener('change', () => {
         const reshaped = withKind(zone, kind.value, this.mapView.map);
         if (!reshaped) {
           kind.value = zone.kind || 'area';
-          this.note(
-            `${zone.name} is an outline with no pose inside it — place one with ⌖ first`,
-            true,
-          );
+          this.note(`${zone.name} has no pose inside its outline; place one with ⌖`, true);
           return;
         }
         const lost = Boolean((zone.polygon || zone.radius) && !reshaped.polygon && !reshaped.radius);
         this._update(zone.name, () => reshaped);
         this.selected = zone.name;
-        this.note(
-          lost ? `${zone.name} is a ${kind.value}: a pose, so its outline is gone` : '',
-        );
+        this.note(lost ? `${zone.name} is a ${kind.value}: outline dropped` : '');
         this._render();
         this.mapView.draw();
       });
@@ -821,7 +812,7 @@ export class ZoneEditor {
         pose.type = 'button';
         pose.textContent = '⌖';
         if (this._placing === zone.name) pose.classList.add('armed');
-        pose.title = 'this zone has no pose — click here, then click the map';
+        pose.title = 'no pose: click here, then click the map';
         pose.addEventListener('click', (event) => {
           event.stopPropagation();
           this.placePose(zone.name);

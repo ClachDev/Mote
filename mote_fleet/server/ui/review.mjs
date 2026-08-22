@@ -403,8 +403,7 @@ export class ReviewView {
     // edit would take its room from the list and say what `save as candidate`
     // already says. The modifier has nowhere to be discovered but the surface
     // it applies to.
-    this.dom.canvas.title =
-      'drag a vertex, a pose or a zone; edits land on the map’s pixels — hold shift to move freely';
+    this.dom.canvas.title = 'edits snap to the map’s pixels; hold shift to move freely';
   }
 
   endEdit() {
@@ -448,9 +447,7 @@ export class ReviewView {
     this.endEdit();
     await this.loadFloors();
     await this.open(this.key, body.revision);
-    this.editor.note(
-      `candidate ${body.revision} saved from ${from}; promote it when it looks right`,
-    );
+    this.editor.note(`candidate ${body.revision} saved from ${from}`);
   }
 
   // -- rendering --------------------------------------------------------
@@ -576,7 +573,7 @@ export class ReviewView {
       await this.open(this.key, revision);
       this.note(
         body.announced
-          ? `${site}/${floor} is on ${body.revision}; robots will pull it`
+          ? `${site}/${floor} is on ${body.revision}`
           : `promoted, but not announced: ${body.detail}`,
         !body.announced,
       );
