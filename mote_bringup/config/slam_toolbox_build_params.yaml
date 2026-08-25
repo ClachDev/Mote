@@ -1,0 +1,129 @@
+# slam_toolbox parameters for an offline map build. Not for the robot.
+#
+# `slam_toolbox_params.yaml` runs on the Pi while a space is being captured,
+# where a bad scan match cannot be taken back: it carries best-known-good
+# values and nothing else. This file re-solves the recorded bag on the fleet
+# box, where a bad solve costs one inspected, discarded candidate — so it may
+# spend compute the robot has not, and take risks the robot cannot. Stage 2 of
+# `docs/design/mapping-pipeline.md`.
+#
+# Every key here holds the same *value* as the live file except those carrying
+# a `DIVERGENCE:` note, and `mote_bringup/test/test_slam_build_params.py` fails
+# when that stops being true in either direction — an undeclared divergence, a
+# declared one that no longer diverges, or a key in one file and not the other.
+# Comments are free to differ; values are not.
+#
+# A divergence needs a measurement on a real bag, not a mechanism argued from
+# the parameter's name. Most of what a build gains over a live session is a
+# step rather than a setting anyway — a second solve with a measured yaw
+# injected (`bag-replay --frame`), then declutter and segmentation — so this
+# file is expected to stay close to the live one. Today it is one key away.
+# What was measured and *not* adopted is recorded at the foot of the file.
+#
+# Nothing chains those steps yet: until the `map-build` orchestrator lands,
+# this file is what a hand-run `bag-replay --params` should point at.
+
+slam_toolbox:
+  ros__parameters:
+
+    # Frames
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan_filtered
+    mode: mapping
+
+    # Solver
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # Map
+    resolution: 0.05
+    map_update_interval: 5.0
+
+    # Laser — RPLIDAR C1: 12 m range, 10 Hz
+    max_laser_range: 16.0
+    minimum_time_interval: 0.5
+
+    # TF
+    transform_publish_period: 0.02
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+
+    # Scan matching
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.3
+    minimum_travel_heading: 0.3
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+
+    # Loop closure — the response gates (0.55/0.65) hold at the live values.
+    # The flat's rooms are self-similar enough that the stock thresholds
+    # accepted false closures, and a false closure is no more welcome in a
+    # build than on the robot: it is cheaper to discard, not cheaper to make.
+    do_loop_closing: true
+    loop_search_maximum_distance: 2.0
+    # DIVERGENCE: live 15 cannot be met at radius 2.0 — a straight pass through
+    # the disc gives a 4.0 m chord and `minimum_travel_distance` spaces nodes
+    # 0.3 m apart, so a chain reaches ~13 and no candidate ever forms. Measured
+    # on the 2026-08-02 flat bag: 1.365 m of start-to-end drift and a torn map
+    # at 15, 0.087 m and a coherent one at 10. Task 335 moves the live file to
+    # 10 as well; delete this note when it lands, and the test will say so.
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.55
+    loop_match_minimum_response_fine: 0.65
+
+    # Correlation
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    # Loop search space
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # Penalties
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: false
+
+    debug_logging: false
+    throttle_scans: 1
+    stack_size_to_use: 40000000
+    enable_interactive_mode: true
+
+# ---------------------------------------------------------------------------
+# Measured and not adopted, so the same sweep is not run twice. Numbers and
+# maps: docs/tuning/2026-08-25-slam-build-params.md. All on the 2026-08-02 flat
+# bag, the only one whose robot returned to its start and so the only one where
+# loop drift means anything; lockstep replay proved deterministic, so a 0.01 m
+# difference between sets is real and not spread.
+#
+# `coarse_angle_resolution` at 1.0 deg (0.0175, or 0.01745 for an integral
+#   sample count). Rejected: worse drift than the live 2.0 deg in both
+#   alignment conditions (0.098/0.108 against 0.099 birth-aligned; 0.097/0.109
+#   against 0.087 unaligned) and no better map. The 2026-08-02 map shipped at
+#   0.0175 on the reasoning that a 2 deg sweep snaps the solution to a 2 deg
+#   orientation lattice. It does not: `ScanMatcher::MatchScan` follows the
+#   coarse sweep with a fine pass over +/- half this value in steps of
+#   `fine_search_angle_offset`, covering the coarse cell exactly, so the
+#   reachable angles are a contiguous 0.2 deg grid at any coarse value.
+#
+# `loop_search_maximum_distance` above 2.0. Rejected: widening does not beat
+#   radius 2.0 with chain 10 (0.087 m) — 3.5 gives 0.094, and 5.0 and 8.0 give
+#   0.531 and 1.561 at the chain sizes they were tried with.
+# ---------------------------------------------------------------------------

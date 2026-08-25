@@ -33,6 +33,10 @@ pixi run bag-replay -- \
   set (slam mode). Default: the committed `slam_toolbox_params.yaml` as a single
   baseline. Compare it against `examples/sparse_no_loop.yaml` (a variant with
   aggressive scan decimation + loop closure off) for a ready two-set example.
+  To *build a map* from the bag rather than score a tuning, use
+  `mote_bringup/config/slam_toolbox_build_params.yaml` — the same parameters
+  with the divergences an offline solve has earned, and a record of what was
+  tried and rejected.
 - `--mode slam|icp` — `slam` (default) scores the map + map-frame trajectory;
   `icp` scores kinematic_icp's odometry self-consistency (no map). ICP params
   are inline in the launch, so in icp mode `--params` are just repeat labels.
