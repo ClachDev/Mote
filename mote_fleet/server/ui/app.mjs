@@ -240,11 +240,33 @@ function onReviewJump() {
   if (state.mapKey) review.open(state.mapKey);
 }
 
+// Out of it again, by the pane's own control or by Escape: above 760 px the tab
+// bar is hidden, so these are the only exits.
+function onReviewBack() {
+  if (!review.leavable()) return;
+  panes.show('map');
+}
+
+function onKey(event) {
+  if (event.key !== 'Escape') return;
+  if (panes.current() !== 'review') return;
+  onReviewBack();
+}
+
 // A promotion happened in the review pane: this pane's basemap is now a
 // different map, so re-resolve it rather than keep drawing the old one.
-function onPromoted() {
+//
+// The review is then over — but only stand the pane down when this pane is on
+// the floor that was promoted, which is the one case where the promotion is
+// visible here. `ensureMap` takes its floor from the *selected robot*, so any
+// other floor lands the operator on an unrelated map, having taken the note
+// that says what happened off screen with it. The floor with no robot on it is
+// exactly what the review pane is for.
+function onPromoted(site, floor, revision, announced) {
+  const showing = state.mapKey === `${site}/${floor}`;
   state.mapKey = null;
   scheduleRender();
+  if (announced && showing) panes.show('map');
 }
 
 // -- rendering -----------------------------------------------------------
@@ -512,6 +534,7 @@ function bind() {
     reviewCanvas: 'review-canvas',
     reviewMapLabel: 'review-map-label',
     reviewPromote: 'review-promote',
+    reviewBack: 'review-back',
     reviewFit: 'review-fit',
     reviewNote: 'review-note',
     zonesEdit: 'zones-edit',
@@ -556,6 +579,7 @@ export async function boot() {
       zoneSource: dom.reviewZoneSource,
       mapLabel: dom.reviewMapLabel,
       promote: dom.reviewPromote,
+      back: dom.reviewBack,
       fit: dom.reviewFit,
       note: dom.reviewNote,
       // The zone editor's own controls. It lives in this pane because it edits
@@ -581,6 +605,8 @@ export async function boot() {
   });
   dom.zone.addEventListener('change', onZone);
   dom.reviewJump.addEventListener('click', onReviewJump);
+  dom.reviewBack.addEventListener('click', onReviewBack);
+  document.addEventListener('keydown', onKey);
   dom.fit.addEventListener('click', () => {
     mapView.follow(null);
     dom.follow.checked = false;

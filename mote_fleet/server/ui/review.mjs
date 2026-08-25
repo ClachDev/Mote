@@ -372,6 +372,10 @@ export class ReviewView {
     return Boolean(this.selected && this.map.map);
   }
 
+  leavable() {
+    return !this.editing;
+  }
+
   // Editing is a mode on the selected revision, so while it is on, the things
   // that would swap that revision out from under it are disabled rather than
   // racing it. There is no autosave: an unsaved edit is lost to `cancel`, and
@@ -384,6 +388,7 @@ export class ReviewView {
     this.dom.zoneSave.hidden = !this.editing;
     this.dom.zoneCancel.hidden = !this.editing;
     this.dom.floor.disabled = this.editing;
+    this.dom.back.disabled = this.editing;
     for (const row of this.dom.revisions.querySelectorAll('button')) {
       row.disabled = this.editing;
     }
@@ -577,7 +582,7 @@ export class ReviewView {
           : `promoted, but not announced: ${body.detail}`,
         !body.announced,
       );
-      this.onPromoted(site, floor, revision);
+      this.onPromoted(site, floor, revision, Boolean(body.announced));
     } catch (error) {
       this.note(error.message, true);
     }

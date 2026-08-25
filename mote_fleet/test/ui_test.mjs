@@ -1077,6 +1077,44 @@ test('review is a mode: opening it stands the operations panes down', () => {
   assert.match(css, /\.review-pane\.active\s*\{\s*display:\s*flex/);
 });
 
+test('the review pane has a way out, and it leads to the map', () => {
+  const html = read('index.html');
+  const review = html.slice(
+    html.indexOf('class="pane review-pane"'),
+    html.indexOf('class="pane detail-pane"'),
+  );
+  assert.ok(review.includes('id="review-back"'), 'the review pane has no exit control');
+
+  // An exit only if it names a pane that is *not* this one: `show('review')`
+  // on a button labelled `back` looks right in the markup and does nothing.
+  const app = read('app.mjs');
+  const leave = app.slice(app.indexOf('function onReviewBack('));
+  assert.match(leave.slice(0, leave.indexOf('\n}')), /panes\.show\('map'\)/);
+  assert.match(app, /dom\.reviewBack\.addEventListener\('click', onReviewBack\)/);
+  const key = app.slice(app.indexOf('function onKey('));
+  const body = key.slice(0, key.indexOf('\n}'));
+  assert.match(body, /event\.key !== 'Escape'/);
+  assert.match(body, /onReviewBack\(\)/);
+});
+
+test('a promotion only stands the pane down for the floor on screen', () => {
+  // The operations map takes its floor from the selected robot, so promoting
+  // any other floor and leaving lands the operator on an unrelated map — with
+  // the note that says what happened hidden behind the switch.
+  const app = read('app.mjs');
+  const promoted = app.slice(app.indexOf('function onPromoted('));
+  const body = promoted.slice(0, promoted.indexOf('\n}'));
+  assert.match(body, /state\.mapKey === `\$\{site\}\/\$\{floor\}`/);
+  assert.match(body, /if \(announced && showing\) panes\.show\('map'\)/);
+});
+
+test('an edit in progress holds the exit, as it holds the revision list', () => {
+  const source = read('review.mjs');
+  const controls = source.slice(source.indexOf('renderEditControls()'));
+  assert.match(controls.slice(0, controls.indexOf('\n  }')), /this\.dom\.back\.disabled = this\.editing/);
+  assert.match(source, /leavable\(\) \{\s*return !this\.editing;/);
+});
+
 test('the review pane has every element app.mjs binds to it', () => {
   const html = read('index.html');
   for (const id of [
@@ -1093,6 +1131,7 @@ test('the review pane has every element app.mjs binds to it', () => {
     'review-canvas',
     'review-map-label',
     'review-promote',
+    'review-back',
     'review-fit',
     'review-note',
   ]) {
