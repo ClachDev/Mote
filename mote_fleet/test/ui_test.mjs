@@ -14,7 +14,7 @@
 //     node --test mote_fleet/test/ui_test.mjs
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 
 import {
@@ -37,6 +37,7 @@ import {
   zoneOutline,
 } from '../server/ui/map.mjs';
 import { NARROW_MAX_PX } from '../server/ui/layout.mjs';
+import { FALLBACK, TOKENS, readTokens, stateColour } from '../server/ui/theme.mjs';
 import {
   detailFooter,
   detailHeadline,
@@ -227,6 +228,81 @@ test('the browser is told which theme to draw its own controls in', () => {
   assert.match(light.slice(0, light.indexOf('}')), /color-scheme:\s*light/);
   // And the element itself, which the shared control rule used to miss.
   assert.match(css, /input,\s*select,\s*button,\s*\.button \{/);
+});
+
+// -- the palette ---------------------------------------------------------
+//
+// A canvas gets no cascade, so `theme.mjs` is the seam between the stylesheet
+// and the two modules that draw on one. Both sides of that seam fail silently:
+// a colour written as a literal beside the drawing code simply stops following
+// the theme, and a token the reader asks for that the stylesheet does not
+// define falls back to the dark value with nothing on screen to say so.
+
+const UI_DIR = new URL('../server/ui/', import.meta.url);
+
+// A hex colour, or an `rgb(`/`rgba(` call. Not `#map-canvas`: an id is only a
+// colour if the characters after the hash are hex and there are enough of them.
+const COLOUR = /#[0-9a-fA-F]{3,8}\b|\brgba?\(/g;
+
+const colourLiterals = (source) => source.match(COLOUR) || [];
+
+test('the scan for colour literals catches one, and leaves an id alone', () => {
+  // A clean tree proves nothing about a scan that matches nothing, so the
+  // matcher is held against the two literals this change removed.
+  assert.deepEqual(colourLiterals("ctx.fillStyle = '#e6edf3';"), ['#e6edf3']);
+  assert.deepEqual(colourLiterals("ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';"), ['rgba(']);
+  assert.deepEqual(colourLiterals("const id = '#map-canvas';"), []);
+  assert.deepEqual(colourLiterals("document.getElementById('detail-name')"), []);
+});
+
+test('no module but theme.mjs names a colour', () => {
+  const offenders = [];
+  for (const name of readdirSync(UI_DIR).filter((file) => file.endsWith('.mjs'))) {
+    // theme.mjs holds the documented fallbacks — the values a draw uses when
+    // the stylesheet has not loaded — and is the one exception.
+    if (name === 'theme.mjs') continue;
+    read(name)
+      .split('\n')
+      .forEach((line, index) => {
+        for (const literal of colourLiterals(line)) {
+          offenders.push(`${name}:${index + 1}  ${literal}`);
+        }
+      });
+  }
+  assert.deepEqual(offenders, [], `colour literals outside theme.mjs:\n${offenders.join('\n')}`);
+});
+
+test('every token the palette reads is defined in both themes', () => {
+  const css = read('style.css');
+  const block = (from) => {
+    const start = css.indexOf(':root {', css.indexOf(from));
+    return css.slice(start, css.indexOf('}', start));
+  };
+  const dark = block(':root {');
+  const light = block('@media (prefers-color-scheme: light)');
+  for (const token of Object.values(TOKENS)) {
+    assert.ok(dark.includes(`${token}:`), `style.css :root does not define ${token}`);
+    assert.ok(light.includes(`${token}:`), `the light theme does not define ${token}`);
+  }
+  // And the reader answers for every token it asks about, so a fallback cannot
+  // outlive the token it stands in for.
+  assert.deepEqual(Object.keys(FALLBACK).sort(), Object.keys(TOKENS).sort());
+});
+
+test('a token the stylesheet has not answered for falls back, and only then', () => {
+  const stub = (values) => ({ getPropertyValue: (name) => values[name] ?? '' });
+  const palette = readTokens(stub({ '--label-ink': ' #1f2328 ' }));
+  assert.equal(palette.labelInk, '#1f2328'); // trimmed, as getComputedStyle pads
+  assert.equal(palette.labelHalo, FALLBACK.labelHalo);
+});
+
+test('a robot state can only ever name a state colour', () => {
+  // `palette[robot.state]` would let a payload draw a robot in the editor's
+  // orange, or in the selection ring, by naming the token.
+  const palette = { ...FALLBACK };
+  assert.equal(stateColour(palette, 'degraded'), palette.degraded);
+  assert.equal(stateColour(palette, 'accent'), palette.unknown);
+  assert.equal(stateColour(palette, undefined), palette.unknown);
 });
 
 test('a bare waypoint has no outline to draw', () => {

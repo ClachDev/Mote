@@ -14,6 +14,8 @@
 // an accident of where SLAM started, so metres from one floor mean nothing on
 // another. The second hop is pan/zoom and belongs to the viewer alone.
 
+import { onThemeChange, stateColour, theme } from './theme.mjs';
+
 // What to call a zone on a map. `display_name` is the half meant for reading —
 // "The Kitchen" — and the machine name is the half meant for typing, so a zone
 // that has been given one is drawn with it. The editor draws its own overlay
@@ -101,21 +103,6 @@ export function fitView(map, width, height, margin = 16) {
   };
 }
 
-// Taught places are context, not the subject: drawn under the robots, in one
-// muted colour, so a `goto <zone>` target can be read off the map without
-// competing with where anything actually is.
-const ZONE_STROKE = 'rgba(88, 166, 255, 0.75)';
-const ZONE_FILL = 'rgba(88, 166, 255, 0.10)';
-
-const STATE_COLOURS = {
-  ok: '#3fb950',
-  degraded: '#d29922',
-  fault: '#f85149',
-  stale: '#8b949e',
-  unknown: '#8b949e',
-  offline: '#484f58',
-};
-
 export class MapView {
   constructor(canvas, { onSelect } = {}) {
     this.canvas = canvas;
@@ -139,6 +126,9 @@ export class MapView {
     // screen has ever actually been fitted, so `shown()` can finish the job.
     this._fitted = false;
     this._bind();
+    // Nothing in the DOM changes when the theme does, so a canvas that is not
+    // told simply keeps the palette it was drawn with.
+    onThemeChange(() => this.draw());
   }
 
   // -- data -------------------------------------------------------------
@@ -389,16 +379,20 @@ export class MapView {
       );
     }
 
-    for (const zone of this.zones) this._drawZone(ctx, zone);
+    // Read once and handed down, rather than looked up per zone and per robot:
+    // this is where the stylesheet's colours enter a canvas, and there is one
+    // of these per pointer move.
+    const palette = theme();
+    for (const zone of this.zones) this._drawZone(ctx, zone, palette);
     for (const robot of this.robots) {
       if (robot.x === null || robot.x === undefined) continue;
-      this._drawRobot(ctx, robot);
+      this._drawRobot(ctx, robot, palette);
     }
-    this._drawScaleBar(ctx, height);
+    this._drawScaleBar(ctx, height, palette);
     if (this.overlay) this.overlay(ctx);
   }
 
-  _drawZone(ctx, zone) {
+  _drawZone(ctx, zone, palette) {
     const outline = zoneOutline(this.map, zone);
     const label =
       zone.x === undefined || zone.y === undefined
@@ -408,8 +402,11 @@ export class MapView {
         : worldToPixel(this.map, zone.x, zone.y);
 
     ctx.save();
-    ctx.strokeStyle = ZONE_STROKE;
-    ctx.fillStyle = ZONE_FILL;
+    // Taught places are context, not the subject: drawn under the robots, in
+    // one muted colour, so a `goto <zone>` target can be read off the map
+    // without competing with where anything actually is.
+    ctx.strokeStyle = palette.zoneStroke;
+    ctx.fillStyle = palette.zoneFill;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 4]);
     if (outline && outline.kind === 'polygon') {
@@ -445,7 +442,7 @@ export class MapView {
     const point = this._screenOf(label);
     ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = ZONE_STROKE;
+    ctx.fillStyle = palette.zoneStroke;
     // display_name is what an operator calls the place; the machine name is
     // what they would type. Prefer the former on the map, where this is a
     // label rather than a thing to copy.
@@ -459,9 +456,9 @@ export class MapView {
     };
   }
 
-  _drawRobot(ctx, robot) {
+  _drawRobot(ctx, robot, palette) {
     const point = this._toScreen(robot.x, robot.y);
-    const colour = STATE_COLOURS[robot.state] || STATE_COLOURS.unknown;
+    const colour = stateColour(palette, robot.state);
     const radius = 7;
 
     // Heading first, so the marker sits on top of its own wedge.
@@ -487,7 +484,7 @@ export class MapView {
     if (robot.id === this.selectedId) {
       ctx.beginPath();
       ctx.arc(point.x, point.y, radius + 5, 0, Math.PI * 2);
-      ctx.strokeStyle = '#58a6ff';
+      ctx.strokeStyle = palette.accent;
       ctx.lineWidth = 2;
       ctx.stroke();
     }
@@ -495,13 +492,13 @@ export class MapView {
     ctx.font = '12px ui-monospace, monospace';
     ctx.textAlign = 'center';
     ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
+    ctx.strokeStyle = palette.labelHalo;
     ctx.strokeText(robot.label, point.x, point.y - radius - 8);
-    ctx.fillStyle = '#e6edf3';
+    ctx.fillStyle = palette.labelInk;
     ctx.fillText(robot.label, point.x, point.y - radius - 8);
   }
 
-  _drawScaleBar(ctx, height) {
+  _drawScaleBar(ctx, height, palette) {
     // Pick the roundest number of metres that fits in ~120 px at this zoom.
     const pixelsPerMetre = this.view.scale / this.map.resolution;
     const candidates = [0.5, 1, 2, 5, 10, 20, 50];
@@ -511,11 +508,9 @@ export class MapView {
     const length = metres * pixelsPerMetre;
     const x = 16;
     const y = height - 18;
-    // A canvas gets no cascade, so the stylesheet's light theme cannot reach in
-    // here: drawn in the dark theme's near-white this is invisible on a phone
-    // that has asked for light, over a map whose free space is white. `--dim`
-    // is chosen for legibility against either background.
-    const ink = getComputedStyle(this.canvas).getPropertyValue('--dim').trim() || '#8b949e';
+    // `--dim` is chosen for legibility against either background: the bar sits
+    // over the basemap's white free space as often as over the void.
+    const ink = palette.dim;
     ctx.strokeStyle = ink;
     ctx.lineWidth = 2;
     ctx.beginPath();

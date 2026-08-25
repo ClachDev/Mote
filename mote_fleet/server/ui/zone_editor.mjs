@@ -20,6 +20,7 @@
 // and no DOM.
 
 import { pixelToWorld, worldToPixel, zoneLabel } from './map.mjs';
+import { theme } from './theme.mjs';
 
 // Ray-cast membership over [[x, y], ...]. Concave polygons are fine, which
 // matters because the hallway is one.
@@ -419,21 +420,6 @@ function field(name, control) {
   row.append(el('span', { class: 'zone-field-name', text: name }), control);
   return row;
 }
-
-const HANDLE = 'rgba(240, 130, 34, 1)';
-const EDIT_STROKE = 'rgba(240, 130, 34, 0.9)';
-const EDIT_FILL = 'rgba(240, 130, 34, 0.08)';
-const SELECTED_FILL = 'rgba(240, 130, 34, 0.18)';
-// Hover is deliberately louder than selection: selection says which row you are
-// looking at, hover says what the next press will move — and only one of those
-// is about to change the map.
-const HOVER_FILL = 'rgba(240, 130, 34, 0.3)';
-// Ink, not white. A canvas gets no cascade, so the theme cannot supply this —
-// and the surface under it is not the theme's background but the *basemap*,
-// whose free space is white in both themes. A white ring was invisible on
-// exactly the floor an operator is editing over (measured: it moved 1.5% of the
-// pixels around the handle; this moves 12%).
-const HOVER_RING = 'rgba(13, 17, 23, 0.9)';
 
 export class ZoneEditor {
   constructor(mapView, dom, { onSave, onExit } = {}) {
@@ -997,13 +983,17 @@ export class ZoneEditor {
       return { x: pixel.x * view.scale + view.tx, y: pixel.y * view.scale + view.ty };
     };
     const hover = this._hover;
+    const palette = theme();
     for (const zone of this.zones) {
       const selected = zone.name === this.selected;
       const over = hover && hover.zone === zone.name ? hover.kind : '';
       ctx.save();
-      ctx.strokeStyle = EDIT_STROKE;
+      ctx.strokeStyle = palette.editStroke;
+      // `--edit-hover` is louder than `--edit-selected` deliberately: selection
+      // says which row you are looking at, hover says what the next press will
+      // move — and only one of those is about to change the map.
       ctx.fillStyle =
-        over === 'zone' ? HOVER_FILL : selected ? SELECTED_FILL : EDIT_FILL;
+        over === 'zone' ? palette.editHover : selected ? palette.editSelected : palette.editFill;
       ctx.lineWidth = selected || over === 'zone' ? 2.5 : 1.5;
       if (zone.polygon) {
         ctx.beginPath();
@@ -1019,22 +1009,22 @@ export class ZoneEditor {
           const point = toScreen(x, y);
           const grabbed = over === 'vertex' && hover.index === index;
           const half = grabbed ? 6 : 4;
-          ctx.fillStyle = HANDLE;
+          ctx.fillStyle = palette.edit;
           ctx.fillRect(point.x - half, point.y - half, half * 2, half * 2);
           if (grabbed) {
             // A ring rather than only a bigger square: on a dark basemap the
             // square alone grows into the wall it is sitting on.
-            ctx.strokeStyle = HOVER_RING;
+            ctx.strokeStyle = palette.editRing;
             ctx.lineWidth = 2;
             ctx.strokeRect(point.x - half, point.y - half, half * 2, half * 2);
-            ctx.strokeStyle = EDIT_STROKE;
+            ctx.strokeStyle = palette.editStroke;
           }
         });
       }
       if (typeof zone.x === 'number') {
         const point = toScreen(zone.x, zone.y);
         const grabbed = over === 'pose';
-        ctx.strokeStyle = HANDLE;
+        ctx.strokeStyle = palette.edit;
         ctx.lineWidth = grabbed ? 3 : 2;
         ctx.beginPath();
         ctx.moveTo(point.x - 7, point.y);
@@ -1043,16 +1033,16 @@ export class ZoneEditor {
         ctx.lineTo(point.x, point.y + 7);
         ctx.stroke();
         if (grabbed) {
-          ctx.strokeStyle = HOVER_RING;
+          ctx.strokeStyle = palette.editRing;
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.arc(point.x, point.y, 9, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.strokeStyle = HANDLE;
+          ctx.strokeStyle = palette.edit;
         }
         ctx.font = '11px ui-monospace, monospace';
         ctx.textAlign = 'center';
-        ctx.fillStyle = HANDLE;
+        ctx.fillStyle = palette.edit;
         ctx.fillText(zoneLabel(zone), point.x, point.y - 10);
       }
       ctx.restore();

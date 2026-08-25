@@ -22,6 +22,30 @@
   --unknown: #8b949e;
   --offline: #484f58;
   --void: #010409;
+
+  /* Below here are the colours only a canvas uses. A canvas gets no cascade,
+     so `theme.mjs` reads these off `:root` and hands them to the two modules
+     that draw — which is why every one of them is defined in the light block
+     too, even where the value does not change. */
+  --zone-stroke: rgba(88, 166, 255, 0.75);
+  --zone-fill: rgba(88, 166, 255, 0.10);
+  /* The zone editor's orange, which nothing else on the page wears: an edit in
+     progress is not the map. */
+  --edit: rgba(240, 130, 34, 1);
+  --edit-stroke: rgba(240, 130, 34, 0.9);
+  --edit-fill: rgba(240, 130, 34, 0.08);
+  --edit-selected: rgba(240, 130, 34, 0.18);
+  --edit-hover: rgba(240, 130, 34, 0.3);
+  /* The ring around the handle under the pointer. Ink in *both* themes: what
+     is under it is not the page's background but the basemap, whose free space
+     is white whichever theme is on. A white ring was invisible on exactly the
+     floor an operator is editing over (measured: it moved 1.5% of the pixels
+     around the handle; this moves 12%). */
+  --edit-ring: rgba(13, 17, 23, 0.9);
+  /* A robot's id over the map. The halo does the work where the ink cannot —
+     over a wall, over the void — so the two swap together, never one alone. */
+  --label-ink: #e6edf3;
+  --label-halo: rgba(0, 0, 0, 0.65);
 }
 
 @media (prefers-color-scheme: light) {
@@ -33,8 +57,30 @@
     --text: #1f2328;
     --dim: #656d76;
     --accent: #0969da;
+    /* The state colours are read by the canvas as well as worn by the roster
+       dots, and the surface under both is white here. The dark theme's are
+       tuned against #0d1117 and go muddy on paper. */
+    --ok: #1a7f37;
+    --degraded: #9a6700;
+    --fault: #cf222e;
+    --stale: #656d76;
+    --unknown: #656d76;
     --offline: #afb8c1;
     --void: #eaeef2;
+
+    --zone-stroke: rgba(9, 105, 218, 0.85);
+    --zone-fill: rgba(9, 105, 218, 0.10);
+    --edit: rgba(188, 76, 0, 1);
+    --edit-stroke: rgba(188, 76, 0, 0.9);
+    --edit-fill: rgba(188, 76, 0, 0.10);
+    --edit-selected: rgba(188, 76, 0, 0.20);
+    --edit-hover: rgba(188, 76, 0, 0.3);
+    --edit-ring: rgba(13, 17, 23, 0.9);
+    /* Dark ink, light halo: the basemap is the same white image in both
+       themes, and near-white ink on it was legible only as its own outline
+       (measured: 1.17:1 against the free space, against 15.7:1 for this). */
+    --label-ink: #1f2328;
+    --label-halo: rgba(255, 255, 255, 0.75);
   }
 }
 
