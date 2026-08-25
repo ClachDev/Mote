@@ -21,13 +21,15 @@ import { setupPanes } from './layout.mjs';
 import {
   POSE_STALE_S,
   ageSeconds,
-  detailFacts,
+  detailFooter,
+  detailHeadline,
   detailSections,
+  healthBanner,
   healthIsCurrent,
-  robotLabel,
   robotState,
   rosterSubline,
   staleReason,
+  taskLine,
 } from './robot.mjs';
 
 const TOKEN_KEY = 'mote.operator.token';
@@ -366,15 +368,26 @@ function renderDetail(record) {
   // selection is visible at all.
   dom.tabDetail.textContent = record ? record.id : 'robot';
   renderSections(record);
+
+  // The headline. It is written for a missing robot too: the dot and the name
+  // are the pane's title, not one of its facts.
+  const headline = detailHeadline(record);
+  dom.detailDot.className = `dot ${headline.state}`;
+  dom.detailName.textContent = headline.label;
+  dom.detailReported.textContent = headline.reported;
+
   if (!record) {
-    dom.detailName.textContent = 'no robot selected';
-    dom.detailMeta.replaceChildren();
+    dom.detailStale.hidden = true;
+    dom.detailHealth.hidden = true;
+    dom.taskLine.replaceChildren();
     dom.subsystems.replaceChildren();
     dom.statusLog.replaceChildren();
-    dom.detailStale.hidden = true;
+    dom.detailFooter.textContent = '';
+    // Without this the link keeps the last robot's id, so `open in Foxglove`
+    // on an empty pane opens somebody else's robot.
+    dom.foxglove.hidden = true;
     return;
   }
-  dom.detailName.textContent = robotLabel(record);
 
   const health = record.health || {};
   const current = healthIsCurrent(record);
@@ -384,13 +397,19 @@ function renderDetail(record) {
   dom.detailStale.textContent = current ? '' : `NOT CURRENT — ${staleReason(record)}`;
   dom.detailStale.hidden = current;
   dom.subsystems.className = `subsystems ${current ? '' : 'stale'}`;
-  dom.detailMeta.replaceChildren(
-    ...detailFacts(record, state.floor && state.floor.canonical).map(([key, value]) =>
-      el('div', { class: 'fact' }, [
-        el('span', { class: 'fact-key', text: key }),
-        el('span', { class: 'fact-value', text: value }),
-      ]),
-    ),
+  // And the health state itself, when it is current and not `ok`. It is a
+  // banner rather than a row because a fault is not a thing to go looking for.
+  const banner = healthBanner(record);
+  dom.detailHealth.textContent = banner || '';
+  dom.detailHealth.className = `stale-banner health-banner ${banner ? health.state : ''}`;
+  dom.detailHealth.hidden = !banner;
+
+  const task = taskLine(record);
+  dom.taskLine.replaceChildren(
+    ...[
+      task.command && el('span', { class: 'task-command', text: task.command }),
+      el('span', { class: 'task-meta', text: task.meta }),
+    ].filter(Boolean),
   );
 
   dom.subsystems.replaceChildren(
@@ -419,6 +438,8 @@ function renderDetail(record) {
       ),
   );
 
+  dom.detailFooter.textContent = detailFooter(record);
+
   if (state.config.foxglove_url) {
     dom.foxglove.href = state.config.foxglove_url.replace('{robot_id}', record.id);
     dom.foxglove.hidden = false;
@@ -426,16 +447,17 @@ function renderDetail(record) {
 }
 
 // A heading over an empty div reserves space for a fact the robot does not
-// have — `task status` on a robot that has never been given one. Each heading
-// is hidden with its content, the way the dispatch form already was.
+// have — `subsystems` on a robot whose health monitor is not running. Each
+// heading is hidden with its content, the way the dispatch form already was.
 function renderSections(record) {
   const sections = detailSections(record);
-  dom.subsystemsHead.hidden = !sections.subsystems;
-  dom.subsystems.hidden = !sections.subsystems;
+  dom.taskHead.hidden = !sections.task;
+  dom.taskLine.hidden = !sections.task;
+  dom.statusLog.hidden = !sections.statuses;
   dom.dispatchHead.hidden = !sections.dispatch;
   dom.dispatch.hidden = !sections.dispatch;
-  dom.statusHead.hidden = !sections.statuses;
-  dom.statusLog.hidden = !sections.statuses;
+  dom.subsystemsHead.hidden = !sections.subsystems;
+  dom.subsystems.hidden = !sections.subsystems;
 }
 
 // -- dispatch ------------------------------------------------------------
@@ -500,12 +522,16 @@ function bind() {
   for (const [key, id] of Object.entries({
     roster: 'roster',
     detailName: 'detail-name',
-    detailMeta: 'detail-meta',
+    detailDot: 'detail-dot',
+    detailReported: 'detail-reported',
     detailStale: 'detail-stale',
+    detailHealth: 'detail-health',
+    detailFooter: 'detail-footer',
+    taskHead: 'task-head',
+    taskLine: 'task-line',
     subsystems: 'subsystems',
     subsystemsHead: 'subsystems-head',
     statusLog: 'status-log',
-    statusHead: 'status-head',
     dispatch: 'dispatch',
     dispatchHead: 'dispatch-head',
     command: 'command',

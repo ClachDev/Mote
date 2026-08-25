@@ -152,9 +152,19 @@
         </div>
       </section>
 
+      <!-- Ranked by what an operator needs first, not laid out as a table:
+           who this is and whether it is still current, what it is doing, how to
+           change that, what is wrong with it — and, in one line at the foot,
+           the numbers nobody reads until something else has already gone
+           wrong. -->
       <section class="pane detail-pane" data-pane="detail">
-        <div class="pane-head">
+        <!-- The headline. The dot and the age carry what `presence` and
+             `health` rows used to spell out, and the age is read here, before
+             the state it is the age of, rather than in the last row. -->
+        <div class="pane-head detail-head">
+          <span id="detail-dot" class="dot unknown"></span>
           <h2 id="detail-name">no robot selected</h2>
+          <span id="detail-reported" class="detail-reported dim"></span>
           <!-- Foxglove owns the single-robot deep view: 3D, sensors, teleop.
                This dashboard owns the fleet-wide 2D picture and links out. -->
           <a
@@ -170,14 +180,20 @@
              being a claim about now, this says so before the reader trusts a
              green dot. -->
         <p id="detail-stale" class="stale-banner" hidden></p>
-
-        <div id="detail-meta" class="facts"></div>
+        <!-- And when it *is* a claim about now but not a good one, the state
+             says why here rather than in a row: `ok` is the dot's to say, and
+             a fault is not something to go looking for in a table. -->
+        <p id="detail-health" class="stale-banner health-banner" hidden></p>
 
         <!-- Each heading is hidden with the thing under it (app.mjs
              `renderSections`): a heading over an empty div reserves space for a
              fact the robot does not have. -->
-        <h3 id="subsystems-head">subsystems</h3>
-        <div id="subsystems" class="subsystems"></div>
+        <h3 id="task-head">task</h3>
+        <div id="task-line" class="task-line"></div>
+        <!-- The log is what happened to the line above it, so it sits under it
+             with no heading of its own: `task` and `task status` were two
+             headings over one subject. -->
+        <div id="status-log" class="status-log"></div>
 
         <h3 id="dispatch-head">dispatch</h3>
         <form id="dispatch" class="dispatch" hidden>
@@ -200,8 +216,13 @@
           <p id="dispatch-note" class="note"></p>
         </form>
 
-        <h3 id="status-head">task status</h3>
-        <div id="status-log" class="status-log"></div>
+        <h3 id="subsystems-head">subsystems</h3>
+        <div id="subsystems" class="subsystems"></div>
+
+        <!-- One line, pinned to the bottom. Both facts are worth having on
+             screen and neither is worth a row: uptime is read once a week, and
+             battery is a constant nothing measures. -->
+        <p id="detail-footer" class="detail-footer"></p>
       </section>
     </main>
 
