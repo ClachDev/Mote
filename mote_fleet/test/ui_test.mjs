@@ -37,7 +37,14 @@ import {
   zoneOutline,
 } from '../server/ui/map.mjs';
 import { NARROW_MAX_PX } from '../server/ui/layout.mjs';
-import { detailFacts, detailSections, rosterSubline } from '../server/ui/robot.mjs';
+import {
+  detailFooter,
+  detailHeadline,
+  detailSections,
+  healthBanner,
+  rosterSubline,
+  taskLine,
+} from '../server/ui/robot.mjs';
 
 const read = (name) => readFileSync(new URL(`../server/ui/${name}`, import.meta.url), 'utf8');
 
@@ -321,45 +328,123 @@ test('a robot running a task says so — the dot cannot', () => {
   assert.equal(rosterSubline(record, NOW), 'running: goto kitchen');
 });
 
-const factOf = (record, key, canonical = null) =>
-  Object.fromEntries(detailFacts(record, canonical, NOW))[key];
+// -- the detail pane ------------------------------------------------------
+//
+// The pane is ranked rather than tabulated: a headline that says who this is
+// and how old everything under it is, then what the robot is doing, then how to
+// change that, then what is wrong with it, then one dim line of numbers. Each
+// band is a pure function here, and the order they appear in is read out of the
+// markup below.
 
-test('the detail health row is the state alone while the state is ok', () => {
-  assert.equal(factOf(idle(), 'health'), 'ok');
+test('the headline is who, in what state, and how old that claim is', () => {
+  const headline = detailHeadline(idle(), NOW);
+  assert.equal(headline.state, 'ok'); // drives the dot beside the name
+  assert.equal(headline.label, 'mote-01');
+  assert.equal(headline.reported, 'reported 2s ago');
 });
 
-test('a degraded state keeps its message, which is the whole point of it', () => {
+test('the headline reports the age of health that is no longer current', () => {
+  // The row that used to say this was the last one in the pane, under eight
+  // green dots. It is the first thing read now because it is what decides
+  // whether any of them mean anything.
+  const record = idle();
+  record.presence = { online: false, reason: 'stopped', stamp: stamp(90) };
+  record.health.stamp = stamp(90);
+  const headline = detailHeadline(record, NOW);
+  assert.equal(headline.state, 'offline');
+  assert.equal(headline.reported, 'reported 2m ago');
+});
+
+test('a robot nobody has heard from says so rather than showing a dash', () => {
+  assert.deepEqual(detailHeadline({ id: 'mote-09', statuses: [] }, NOW), {
+    state: 'unknown',
+    label: 'mote-09',
+    reported: 'never reported',
+  });
+});
+
+test('with no robot selected the headline is the pane title', () => {
+  assert.equal(detailHeadline(null, NOW).label, 'no robot selected');
+});
+
+test('a health state gets a banner only when it says something the dot cannot', () => {
+  // `ok` is exactly what the green dot already said, and the old `health` row
+  // spent a line of the pane repeating it on every robot, every time.
+  assert.equal(healthBanner(idle(), NOW), null);
   const record = idle();
   record.health.state = 'fault';
   record.health.summary = 'lidar stopped';
-  assert.equal(factOf(record, 'health'), 'fault — lidar stopped');
+  assert.equal(healthBanner(record, NOW), 'FAULT — lidar stopped');
 });
 
-test('health from before the robot went quiet is marked as such', () => {
+test('health from before the robot went quiet is the stale banner, not this one', () => {
+  // Two banners disagreeing about one robot is worse than one: the stale
+  // banner already says the state is not a claim about now, so a second one
+  // repeating that state in alarming red would be arguing with it.
   const record = idle();
+  record.health.state = 'fault';
   record.presence = { online: false, reason: 'stopped', stamp: stamp(90) };
-  assert.equal(factOf(record, 'health'), 'ok  (last known)');
+  assert.equal(healthBanner(record, NOW), null);
 });
 
-test('battery is n/a: nothing on this robot measures it', () => {
-  // The power bank exposes no telemetry. A sentence saying so costs a row of
-  // the pane every time anyone looks at any robot.
-  assert.equal(factOf(idle(), 'battery'), 'n/a');
+test('an idle robot says one dim word, and still gets the section', () => {
+  // "Is it busy" is the question the pane is opened with. An absent section is
+  // not an answer to it.
+  assert.deepEqual(taskLine(idle(), NOW), { command: '', meta: 'idle' });
 });
 
-test('the map row names the fleet canonical only when it differs', () => {
+test('a running task is the command, with the state and its age beside it', () => {
   const record = idle();
-  record.health.map = { site: 'depot', floor: 'ground', revision: 'r1' };
-  assert.equal(factOf(record, 'map', 'r1'), 'r1');
-  assert.match(factOf(record, 'map', 'r2'), /r1 {2}\(fleet canonical: r2\)/);
+  record.health.task = { id: 'c1', state: 'running', command: 'goto kitchen' };
+  record.statuses = [
+    { id: 'c1', state: 'dispatched', command: 'goto kitchen', stamp: stamp(90) },
+    { id: 'c1', state: 'accepted', command: 'goto kitchen', stamp: stamp(88) },
+  ];
+  assert.deepEqual(taskLine(record, NOW), {
+    command: 'goto kitchen',
+    meta: 'running · 2m',
+  });
+});
+
+test('the task age is the run that is still going, not the one before it', () => {
+  // `health.task` carries no stamp (protocol.py), so the age comes from the
+  // status that started the run — and a command sent twice must be aged from
+  // the second time. The scan stops at the terminal status between them.
+  const record = idle();
+  record.health.task = { id: null, state: 'accepted', command: 'goto kitchen' };
+  record.statuses = [
+    { id: null, state: 'accepted', command: 'goto kitchen', stamp: stamp(3600) },
+    { id: null, state: 'succeeded', command: 'goto kitchen', stamp: stamp(3000), terminal: true },
+    { id: null, state: 'accepted', command: 'goto kitchen', stamp: stamp(120) },
+  ];
+  assert.equal(taskLine(record, NOW).meta, 'accepted · 2m');
+});
+
+test('a task with no status to age it from still names its state', () => {
+  // Only the *last* status is retained, so a page loaded mid-task may have
+  // nothing belonging to the run. Saying `running` with no age beats inventing
+  // one from the health stamp, which is the age of the report, not the run.
+  const record = idle();
+  record.health.task = { id: 'c9', state: 'accepted', command: 'fetch box home' };
+  assert.deepEqual(taskLine(record, NOW), { command: 'fetch box home', meta: 'accepted' });
+});
+
+test('the footer is the two numbers not worth a row each', () => {
+  const record = idle();
+  record.health.uptime_s = 3600 * 26;
+  // The power bank exposes no telemetry, so nothing on this robot measures the
+  // battery. A row of prose saying so cost the pane a line on every robot.
+  assert.equal(detailFooter(record), 'uptime 26 h · battery n/a');
+  assert.equal(detailFooter(idle()), 'uptime — · battery n/a');
 });
 
 test('a section with nothing under it is not a section', () => {
   const record = idle();
   assert.deepEqual(detailSections(record), {
-    subsystems: true,
+    task: true, // always: an idle robot is an answer, not an absence
     dispatch: true,
-    statuses: false, // never given a task: `task status` has nothing to show
+    subsystems: true,
+    statuses: false, // never given a task: the log has nothing to show
   });
   record.statuses = [{ state: 'accepted', command: 'goto kitchen', stamp: stamp(3) }];
   assert.equal(detailSections(record).statuses, true);
@@ -369,10 +454,102 @@ test('a section with nothing under it is not a section', () => {
 
 test('with no robot selected the detail pane has no sections at all', () => {
   assert.deepEqual(detailSections(null), {
-    subsystems: false,
+    task: false,
     dispatch: false,
+    subsystems: false,
     statuses: false,
   });
+});
+
+test('the detail pane is ordered by what an operator needs first', () => {
+  // Rank is the whole point of the pane, and it lives in the markup: the panes
+  // are flex columns, so document order *is* reading order at every width —
+  // which is what keeps the phone's single column in the same order as the
+  // desk's.
+  const html = read('index.html');
+  const pane = html.slice(html.indexOf('data-pane="detail"'), html.indexOf('</main>'));
+  const headings = [...pane.matchAll(/<h3[^>]*>([^<]+)<\/h3>/g)].map((match) => match[1].trim());
+  assert.deepEqual(headings, ['task', 'dispatch', 'subsystems']);
+
+  const at = (needle) => {
+    const index = pane.indexOf(needle);
+    assert.ok(index >= 0, `${needle} is not in the detail pane`);
+    return index;
+  };
+  // Headline, then the banner about it, then the sections, then the footer.
+  assert.ok(at('id="detail-dot"') < at('id="detail-name"'));
+  assert.ok(at('id="detail-name"') < at('id="detail-reported"'));
+  assert.ok(at('id="detail-reported"') < at('id="foxglove"'));
+  assert.ok(at('id="foxglove"') < at('id="detail-stale"'));
+  assert.ok(at('id="detail-stale"') < at('id="task-head"'));
+  // The log is what happened to the task line, so it sits under it — with no
+  // heading of its own, which is what `task status` used to be.
+  assert.ok(at('id="task-line"') < at('id="status-log"'));
+  assert.ok(at('id="status-log"') < at('id="dispatch-head"'));
+  assert.ok(at('id="subsystems"') < at('id="detail-footer"'));
+
+  // Nothing may reorder it out of markup order at any width — which is what
+  // holds the phone's one column to the same rank as the desk's.
+  const css = read('style.css');
+  assert.match(css, /\.pane \{[^}]*flex-direction:\s*column/);
+  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    if (!/detail|task-line|task-command|task-meta|status-log|subsystems/.test(selector)) continue;
+    assert.ok(!/(^|;)\s*order\s*:/.test(body), `${selector.trim()} reorders the pane`);
+  }
+});
+
+test('the flat facts table is gone, and every fact in it has a home', () => {
+  // presence/health -> the dot and the banners; task -> its own section;
+  // reported -> the headline; uptime/battery -> the footer; pose -> the map,
+  // which is the pose display and does not ask anyone to read yaw in radians;
+  // site/map/version -> mismatch banners, which is a task of their own.
+  const html = read('index.html');
+  const app = read('app.mjs');
+  const robot = read('robot.mjs');
+  assert.ok(!html.includes('id="detail-meta"'), 'the facts table is still in the pane');
+  assert.ok(!html.includes('id="status-head"'), '`task status` is still its own section');
+  assert.ok(!app.includes('detailFacts'), 'renderDetail still builds the facts table');
+  for (const gone of ['detailFacts', 'mapValue', 'healthValue']) {
+    assert.ok(!robot.includes(`function ${gone}`), `${gone} outlived the facts table`);
+  }
+  // The two facts that survived did so as one line, not as two rows.
+  assert.match(robot, /export function detailFooter/);
+});
+
+test('the footer is a line at the foot, and reads as one', () => {
+  const css = read('style.css');
+  const footer = css.slice(css.indexOf('.detail-footer {'));
+  const body = footer.slice(0, footer.indexOf('}'));
+  assert.match(body, /margin:\s*auto 0 0/); // pinned to the bottom of the flex column
+  assert.match(body, /border-top:\s*1px solid var\(--line\)/);
+  assert.match(body, /font-size:\s*11px/);
+  assert.match(body, /color:\s*var\(--dim\)/);
+});
+
+test('the headline reads as a robot, not as a section label', () => {
+  // Every other pane's h2 is a dim uppercase word. This one is a name, and it
+  // is never truncated to make room: which robot this is, and how old what it
+  // said is, are the two things the rest of the pane is read against.
+  const css = read('style.css');
+  const head = css.slice(css.indexOf('.detail-head h2 {'));
+  const body = head.slice(0, head.indexOf('}'));
+  assert.match(body, /font-size:\s*15px/);
+  assert.match(body, /font-weight:\s*600/);
+  assert.match(body, /margin-right:\s*0/);
+  // The row wraps, so the button is right-aligned by an auto margin of its own:
+  // one on the age would only absorb the free space of the age's line, and the
+  // button is on the next one whenever the name is long enough to push it off.
+  const button = css.slice(css.indexOf('.detail-head .button {'));
+  assert.match(button.slice(0, button.indexOf('}')), /margin-left:\s*auto/);
+  assert.match(css, /\.detail-head \{[^}]*flex-wrap:\s*wrap/);
+});
+
+test('the running command is the one thing in the pane worth the accent', () => {
+  const css = read('style.css');
+  const command = css.slice(css.indexOf('.task-command {'));
+  assert.match(command.slice(0, command.indexOf('}')), /color:\s*var\(--accent\)/);
+  const meta = css.slice(css.indexOf('.task-meta {'));
+  assert.match(meta.slice(0, meta.indexOf('}')), /color:\s*var\(--dim\)/);
 });
 
 test('every heading in the detail pane can be hidden with its content', () => {

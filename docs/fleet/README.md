@@ -648,11 +648,22 @@ packet at all.
 row's dot and its state column already read `ok`, so the line under them speaks
 only on exception — what is wrong (`slip detected while turning`) or why the
 robot stopped answering (`offline (connection lost)`). The detail pane follows:
-the health row is `ok` on its own and keeps a message only for `degraded` and
-`fault`, `battery` reads `n/a` because nothing on this robot measures it
-([`control-plane.md`](control-plane.md)), and a heading with nothing under it —
-`task status` on a robot that has never been given one — is hidden rather than
-left standing over an empty box.
+`ok` is the dot's to say and gets no row of its own, `degraded` and `fault` get
+a banner carrying the message, and a heading with nothing under it —
+`subsystems` on a robot whose health monitor is not running — is hidden rather
+than left standing over an empty box.
+
+**The detail pane is ranked, not tabulated.** Top to bottom: a **headline** —
+state dot, robot id, `reported <age> ago`, and the link into Foxglove — with the
+`NOT CURRENT` banner directly under it; then **task**, the running command with
+its state and how long it has been in it (or the word `idle`), and that task's
+status log under the line it is about; then **dispatch**; then **subsystems**.
+Uptime and the battery are one dim line at the foot of the pane: neither is read
+until something else has already gone wrong, and `battery` reads `n/a` because
+nothing on this robot measures it ([`control-plane.md`](control-plane.md)). The
+pose is not a row at all — the map is the pose display, and nobody reads yaw in
+radians. The order is the same in the phone's single column, which is what
+makes the age of the state the first thing read and the numbers the last.
 
 **The map.** A floor's PNG basemap with live robot markers on it: pan by
 dragging, zoom with the wheel or by pinching, click a robot to select it,

@@ -817,6 +817,52 @@ try {
     `${backing.w}x${backing.h} for ${backing.want.join('x')}`,
   );
 
+  // The rank *is* the pane on a phone: one column, nothing beside it, so the
+  // order the sections are read in is the order they were written in. A rule
+  // that reordered them for the narrow layout would be invisible in the markup
+  // and would only ever be seen here.
+  const ranked = await session.evaluate(`(() => {
+    document.querySelector('.panes [data-pane="detail"]').click();
+    const top = (selector) => {
+      const node = document.querySelector(selector);
+      return node && !node.hidden ? node.getBoundingClientRect().top : null;
+    };
+    return {
+      order: [
+        ['headline', top('.detail-head')],
+        ['task', top('#task-head')],
+        ['task line', top('#task-line')],
+        ['status log', top('#status-log')],
+        ['dispatch', top('#dispatch-head')],
+        ['subsystems', top('#subsystems-head')],
+        ['footer', top('#detail-footer')],
+      ].filter(([, y]) => y !== null),
+      dot: document.getElementById('detail-dot').className,
+      reported: document.getElementById('detail-reported').textContent,
+      footer: document.getElementById('detail-footer').textContent,
+      facts: document.querySelectorAll('#detail-meta .fact').length,
+    };
+  })()`);
+  const misordered = ranked.order.filter(
+    ([, y], index) => index > 0 && y <= ranked.order[index - 1][1],
+  );
+  check(
+    'the detail pane keeps its rank in one column',
+    misordered.length === 0 && ranked.order.length >= 5,
+    ranked.order.map(([name, y]) => `${name} ${Math.round(y)}`).join(' < '),
+  );
+  check(
+    'the headline carries the state and the age of everything under it',
+    /\bdot (ok|degraded|fault|stale|offline|unknown)\b/.test(ranked.dot) &&
+      /^reported /.test(ranked.reported),
+    `${ranked.dot} · ${ranked.reported}`,
+  );
+  check(
+    'uptime and battery are one line at the foot, not two rows of a table',
+    ranked.facts === 0 && /^uptime .+ · battery n\/a$/.test(ranked.footer),
+    ranked.footer,
+  );
+
   const jumped = await session.evaluate(`(() => {
     document.querySelector('.panes [data-pane="roster"]').click();
     document.querySelector('.robot').click();
