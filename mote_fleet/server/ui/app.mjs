@@ -494,14 +494,7 @@ function renderDetail(record) {
         el('div', { class: `status ${status.state}` }, [
           el('span', { class: 'status-time', text: status.stamp.slice(11, 19) }),
           el('span', { class: 'status-state', text: status.state }),
-          el('span', {
-            class: 'status-command',
-            // The failure class leads, because it is the part an operator acts
-            // on: `busy` means wait, `invalid_input` means fix the mission,
-            // `obstructed` means look at the corridor. The sentence after it
-            // is the detail, not the verdict.
-            text: statusText(status),
-          }),
+          el('span', { class: 'status-command', text: statusText(status) }),
           el('span', { class: 'status-source', text: status.source }),
         ]),
       ),
