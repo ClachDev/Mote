@@ -16,18 +16,21 @@ import { BrokerReader, parseTopic } from './mqtt.mjs';
 import { MapView } from './map.mjs';
 import { ReviewView } from './review.mjs';
 import { setupPanes } from './layout.mjs';
+// Every decision about *what* to say about a robot lives there, pure, so that
+// `ui_test.mjs` can hold it under node. This file only puts the answer in a div.
+import {
+  POSE_STALE_S,
+  ageSeconds,
+  detailFacts,
+  detailSections,
+  healthIsCurrent,
+  robotLabel,
+  robotState,
+  rosterSubline,
+  staleReason,
+} from './robot.mjs';
 
 const TOKEN_KEY = 'mote.operator.token';
-
-// A pose older than this is drawn hollow: retained state is the *last known*
-// position, which is not the same claim as "the robot is there now".
-const POSE_STALE_S = 20;
-
-// The same rule for health, and it matters more: an offline robot's retained
-// health is whatever it last claimed, and eight green subsystems next to a robot
-// that is not there is the one lie this view must not tell. The agent publishes
-// every 5 s by default, so this is several missed heartbeats rather than a blip.
-const HEALTH_STALE_S = 30;
 
 const state = {
   config: null,
@@ -61,62 +64,11 @@ function el(tag, attributes = {}, children = []) {
   return node;
 }
 
-function ageSeconds(stamp) {
-  if (!stamp) return null;
-  const parsed = Date.parse(stamp);
-  return Number.isNaN(parsed) ? null : (Date.now() - parsed) / 1000;
-}
-
-function ageText(stamp) {
-  const age = ageSeconds(stamp);
-  if (age === null) return '—';
-  if (age < 60) return `${Math.max(0, Math.round(age))}s ago`;
-  if (age < 3600) return `${Math.round(age / 60)}m ago`;
-  return `${Math.round(age / 3600)}h ago`;
-}
-
 function robotRecord(robotId) {
   if (!state.robots.has(robotId)) {
     state.robots.set(robotId, { id: robotId, statuses: [] });
   }
   return state.robots.get(robotId);
-}
-
-// A robot's single roll-up state: offline beats whatever health it last
-// claimed, because that health is by definition from before it dropped.
-function robotState(record) {
-  if (record.presence && record.presence.online === false) return 'offline';
-  if (!record.health) return 'unknown';
-  // Health that has stopped arriving is reported as stale rather than as the
-  // last thing it said — the contract has a state for exactly this.
-  if (!healthIsCurrent(record)) return 'stale';
-  return record.health.state || 'unknown';
-}
-
-function robotLabel(record) {
-  const name = record.registry && record.registry.name;
-  return name && name !== record.id ? `${record.id} · ${name}` : record.id;
-}
-
-// Is what we know about this robot's health still a claim about *now*? Offline
-// robots and silent ones both fail this, and the answer drives every green dot
-// on the page.
-function healthIsCurrent(record) {
-  if (!record.health) return false;
-  if (record.presence && record.presence.online === false) return false;
-  const age = ageSeconds(record.health.stamp);
-  return age === null || age <= HEALTH_STALE_S;
-}
-
-// What to say instead of a health summary when it is not current.
-function staleReason(record) {
-  if (record.presence && record.presence.online === false) {
-    return `offline (${record.presence.reason || 'no reason given'}) — last seen ${ageText(
-      record.presence.stamp,
-    )}`;
-  }
-  if (!record.health) return 'never reported';
-  return `no health for ${ageText(record.health.stamp).replace(' ago', '')}`;
 }
 
 // -- data in -------------------------------------------------------------
@@ -343,8 +295,8 @@ function onDisplayedFloor(record) {
 function renderRoster(records) {
   dom.roster.replaceChildren(
     ...records.map((record) => {
-      const health = record.health || {};
-      const task = health.task;
+      // Said only when there is something to say: the dot carries the state.
+      const subline = rosterSubline(record);
       return el(
         'button',
         {
@@ -371,14 +323,11 @@ function renderRoster(records) {
             class: 'robot-sub',
             text: record.registry ? record.registry.name : 'not enrolled here',
           }),
-          el('div', {
-            class: `robot-sub ${healthIsCurrent(record) ? '' : 'stale'}`,
-            text: healthIsCurrent(record)
-              ? task
-                ? `${task.state}: ${task.command}`
-                : health.summary || '—'
-              : staleReason(record),
-          }),
+          subline &&
+            el('div', {
+              class: `robot-sub ${healthIsCurrent(record) ? '' : 'stale'}`,
+              text: subline,
+            }),
         ],
       );
     }),
@@ -394,20 +343,18 @@ function renderDetail(record) {
   // On a phone the detail pane is behind a tab, so the tab is where the
   // selection is visible at all.
   dom.tabDetail.textContent = record ? record.id : 'robot';
+  renderSections(record);
   if (!record) {
     dom.detailName.textContent = 'no robot selected';
     dom.detailMeta.replaceChildren();
     dom.subsystems.replaceChildren();
     dom.statusLog.replaceChildren();
-    dom.dispatch.hidden = true;
     dom.detailStale.hidden = true;
     return;
   }
-  dom.dispatch.hidden = false;
   dom.detailName.textContent = robotLabel(record);
 
   const health = record.health || {};
-  const pose = record.pose;
   const current = healthIsCurrent(record);
   // Everything below is retained state, i.e. the last thing the robot said. When
   // that is no longer a claim about now, say so once, loudly, at the top —
@@ -415,35 +362,8 @@ function renderDetail(record) {
   dom.detailStale.textContent = current ? '' : `NOT CURRENT — ${staleReason(record)}`;
   dom.detailStale.hidden = current;
   dom.subsystems.className = `subsystems ${current ? '' : 'stale'}`;
-  const facts = [
-    ['presence', record.presence ? (record.presence.online ? 'online' : `offline (${record.presence.reason || '—'})`) : 'never seen'],
-    [
-      'health',
-      health.state
-        ? `${health.state} — ${health.summary}${current ? '' : '  (last known)'}`
-        : '—',
-    ],
-    ['task', health.task ? `${health.task.state}: ${health.task.command}` : 'idle'],
-    ['site', health.site || (pose && pose.site) ? `${health.site || pose.site}/${health.floor || pose.floor}` : '—'],
-    ['pose', pose ? `x ${pose.x.toFixed(2)}  y ${pose.y.toFixed(2)}  yaw ${pose.yaw.toFixed(2)}  (${ageText(pose.stamp)})` : 'not localised'],
-    [
-      'map',
-      health.map && health.map.revision
-        ? `${health.map.revision}${
-            state.floor && state.floor.canonical &&
-            state.floor.canonical !== health.map.revision
-              ? '  (fleet canonical: ' + state.floor.canonical + ')'
-              : ''
-          }`
-        : '—',
-    ],
-    ['version', health.version || '—'],
-    ['uptime', health.uptime_s ? `${Math.round(health.uptime_s / 3600)}h` : '—'],
-    ['battery', 'unmeasurable on this hardware'],
-    ['reported', ageText(health.stamp)],
-  ];
   dom.detailMeta.replaceChildren(
-    ...facts.map(([key, value]) =>
+    ...detailFacts(record, state.floor && state.floor.canonical).map(([key, value]) =>
       el('div', { class: 'fact' }, [
         el('span', { class: 'fact-key', text: key }),
         el('span', { class: 'fact-value', text: value }),
@@ -481,6 +401,19 @@ function renderDetail(record) {
     dom.foxglove.href = state.config.foxglove_url.replace('{robot_id}', record.id);
     dom.foxglove.hidden = false;
   }
+}
+
+// A heading over an empty div reserves space for a fact the robot does not
+// have — `task status` on a robot that has never been given one. Each heading
+// is hidden with its content, the way the dispatch form already was.
+function renderSections(record) {
+  const sections = detailSections(record);
+  dom.subsystemsHead.hidden = !sections.subsystems;
+  dom.subsystems.hidden = !sections.subsystems;
+  dom.dispatchHead.hidden = !sections.dispatch;
+  dom.dispatch.hidden = !sections.dispatch;
+  dom.statusHead.hidden = !sections.statuses;
+  dom.statusLog.hidden = !sections.statuses;
 }
 
 // -- dispatch ------------------------------------------------------------
@@ -548,8 +481,11 @@ function bind() {
     detailMeta: 'detail-meta',
     detailStale: 'detail-stale',
     subsystems: 'subsystems',
+    subsystemsHead: 'subsystems-head',
     statusLog: 'status-log',
+    statusHead: 'status-head',
     dispatch: 'dispatch',
+    dispatchHead: 'dispatch-head',
     command: 'command',
     zone: 'zone',
     tabDetail: 'tab-detail',

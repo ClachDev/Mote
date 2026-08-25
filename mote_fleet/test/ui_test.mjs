@@ -37,6 +37,7 @@ import {
   zoneOutline,
 } from '../server/ui/map.mjs';
 import { NARROW_MAX_PX } from '../server/ui/layout.mjs';
+import { detailFacts, detailSections, rosterSubline } from '../server/ui/robot.mjs';
 
 const read = (name) => readFileSync(new URL(`../server/ui/${name}`, import.meta.url), 'utf8');
 
@@ -259,6 +260,145 @@ test('two pointers reported at one place leave the scale alone', () => {
   const together = pinchSpan({ x: 5, y: 5 }, { x: 5, y: 5 });
   assert.equal(together.distance, 0);
   assert.equal(pinchUpdate(together, pinchSpan({ x: 0, y: 0 }, { x: 40, y: 0 })).factor, 1);
+});
+
+// -- what the page says about a robot ------------------------------------
+
+// Each state is meant to be said once, by the strongest idiom the page has: the
+// roster's dot carries "ok", so its sub-line must not, and a heading over an
+// empty div claims a fact the robot does not have. Neither rule fails loudly —
+// the page just repeats itself, or reserves a row for nothing — so the
+// decisions are pure functions and are held here.
+
+const NOW = Date.parse('2026-08-22T12:00:00Z');
+const stamp = (secondsAgo) => new Date(NOW - secondsAgo * 1000).toISOString();
+
+// A robot doing nothing, in perfect health, reporting now. The common case.
+const idle = () => ({
+  id: 'mote-01',
+  registry: { robot_id: 'mote-01', name: 'mote-01' },
+  presence: { online: true, stamp: stamp(1) },
+  health: {
+    state: 'ok',
+    summary: 'all subsystems nominal',
+    subsystems: [{ name: 'lidar', state: 'ok', message: '10.0 Hz' }],
+    stamp: stamp(2),
+    site: 'depot',
+    floor: 'ground',
+    version: '0.5.0',
+  },
+  statuses: [],
+});
+
+test('a healthy idle robot gets no roster sub-line at all', () => {
+  // The dot is green and the state column reads `ok`; "all subsystems nominal"
+  // under them is the same fact a third time.
+  assert.equal(rosterSubline(idle(), NOW), '');
+});
+
+test('a degraded robot says what is wrong', () => {
+  const record = idle();
+  record.health.state = 'degraded';
+  record.health.summary = 'slip detected while turning';
+  assert.equal(rosterSubline(record, NOW), 'slip detected while turning');
+});
+
+test('a robot that dropped off says why, not what it last claimed', () => {
+  const record = idle();
+  record.presence = { online: false, reason: 'connection lost', stamp: stamp(90) };
+  assert.match(rosterSubline(record, NOW), /^offline \(connection lost\)/);
+});
+
+test('health that has stopped arriving is an exception too', () => {
+  const record = idle();
+  record.health.stamp = stamp(300);
+  assert.match(rosterSubline(record, NOW), /^no health for/);
+});
+
+test('a robot running a task says so — the dot cannot', () => {
+  const record = idle();
+  record.health.task = { state: 'running', command: 'goto kitchen' };
+  assert.equal(rosterSubline(record, NOW), 'running: goto kitchen');
+});
+
+const factOf = (record, key, canonical = null) =>
+  Object.fromEntries(detailFacts(record, canonical, NOW))[key];
+
+test('the detail health row is the state alone while the state is ok', () => {
+  assert.equal(factOf(idle(), 'health'), 'ok');
+});
+
+test('a degraded state keeps its message, which is the whole point of it', () => {
+  const record = idle();
+  record.health.state = 'fault';
+  record.health.summary = 'lidar stopped';
+  assert.equal(factOf(record, 'health'), 'fault — lidar stopped');
+});
+
+test('health from before the robot went quiet is marked as such', () => {
+  const record = idle();
+  record.presence = { online: false, reason: 'stopped', stamp: stamp(90) };
+  assert.equal(factOf(record, 'health'), 'ok  (last known)');
+});
+
+test('battery is n/a: nothing on this robot measures it', () => {
+  // The power bank exposes no telemetry. A sentence saying so costs a row of
+  // the pane every time anyone looks at any robot.
+  assert.equal(factOf(idle(), 'battery'), 'n/a');
+});
+
+test('the map row names the fleet canonical only when it differs', () => {
+  const record = idle();
+  record.health.map = { site: 'depot', floor: 'ground', revision: 'r1' };
+  assert.equal(factOf(record, 'map', 'r1'), 'r1');
+  assert.match(factOf(record, 'map', 'r2'), /r1 {2}\(fleet canonical: r2\)/);
+});
+
+test('a section with nothing under it is not a section', () => {
+  const record = idle();
+  assert.deepEqual(detailSections(record), {
+    subsystems: true,
+    dispatch: true,
+    statuses: false, // never given a task: `task status` has nothing to show
+  });
+  record.statuses = [{ state: 'accepted', command: 'goto kitchen', stamp: stamp(3) }];
+  assert.equal(detailSections(record).statuses, true);
+  record.health.subsystems = [];
+  assert.equal(detailSections(record).subsystems, false);
+});
+
+test('with no robot selected the detail pane has no sections at all', () => {
+  assert.deepEqual(detailSections(null), {
+    subsystems: false,
+    dispatch: false,
+    statuses: false,
+  });
+});
+
+test('every heading in the detail pane can be hidden with its content', () => {
+  // `renderSections` hides a heading by id. One added without an id is a
+  // heading that stays on screen over an empty div, and nothing says so.
+  const html = read('index.html');
+  const pane = html.slice(html.indexOf('data-pane="detail"'), html.indexOf('</main>'));
+  const headings = [...pane.matchAll(/<h3([^>]*)>/g)].map((match) => match[1]);
+  assert.ok(headings.length >= 3, `found ${headings.length} headings in the detail pane`);
+  for (const attributes of headings) {
+    assert.match(attributes, /id="[^"]+"/, `<h3${attributes}> has no id to hide it by`);
+  }
+  const app = read('app.mjs');
+  for (const [, id] of pane.matchAll(/<h3[^>]*id="([^"]+)"/g)) {
+    assert.ok(app.includes(`'${id}'`), `app.mjs never binds #${id}`);
+  }
+});
+
+test('the dispatch box does not teach the grammar', () => {
+  // The zone picker beside it already writes a valid command and the grammar
+  // reference is in the docs, so a placeholder spelling it out is a third copy
+  // — one that goes stale the first time the task layer learns a word.
+  const html = read('index.html');
+  const input = html.slice(html.indexOf('id="command"'));
+  const placeholder = /placeholder="([^"]*)"/.exec(input.slice(0, input.indexOf('/>')))[1];
+  assert.equal(placeholder, 'send this robot somewhere');
 });
 
 // -- the narrow layout ---------------------------------------------------

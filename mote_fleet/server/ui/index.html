@@ -167,10 +167,13 @@
 
         <div id="detail-meta" class="facts"></div>
 
-        <h3>subsystems</h3>
+        <!-- Each heading is hidden with the thing under it (app.mjs
+             `renderSections`): a heading over an empty div reserves space for a
+             fact the robot does not have. -->
+        <h3 id="subsystems-head">subsystems</h3>
         <div id="subsystems" class="subsystems"></div>
 
-        <h3>dispatch</h3>
+        <h3 id="dispatch-head">dispatch</h3>
         <form id="dispatch" class="dispatch" hidden>
           <!-- The grammar is still the robot's, parsed only by its task layer.
                This picker types for you — it writes `goto <zone>` into the same
@@ -182,7 +185,7 @@
           <input
             id="command"
             type="text"
-            placeholder="goto kitchen — or: fetch red_box dropoff"
+            placeholder="send this robot somewhere"
             autocomplete="off"
             autocapitalize="off"
             spellcheck="false"
@@ -191,7 +194,7 @@
           <p id="dispatch-note" class="note"></p>
         </form>
 
-        <h3>task status</h3>
+        <h3 id="status-head">task status</h3>
         <div id="status-log" class="status-log"></div>
       </section>
     </main>

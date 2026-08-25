@@ -644,6 +644,16 @@ storage and sent to the fleet API as a bearer credential; the page holds **no
 broker credential that can publish**, and its MQTT client implements no PUBLISH
 packet at all.
 
+**Each state is said once**, by the strongest idiom the page has. The roster
+row's dot and its state column already read `ok`, so the line under them speaks
+only on exception — what is wrong (`slip detected while turning`) or why the
+robot stopped answering (`offline (connection lost)`). The detail pane follows:
+the health row is `ok` on its own and keeps a message only for `degraded` and
+`fault`, `battery` reads `n/a` because nothing on this robot measures it
+([`control-plane.md`](control-plane.md)), and a heading with nothing under it —
+`task status` on a robot that has never been given one — is hidden rather than
+left standing over an empty box.
+
 **The map.** A floor's PNG basemap with live robot markers on it: pan by
 dragging, zoom with the wheel or by pinching, click a robot to select it,
 `follow` to keep the selected one centred, `fit` to see the whole floor. The
