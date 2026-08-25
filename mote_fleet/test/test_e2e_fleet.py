@@ -231,9 +231,15 @@ def test_enroll_then_dispatch_over_mqtt(tmp_path, monkeypatch, broker, fleet_api
 
         # ---- and a second mission is refused while the lane is held ----
         busy_id = operator.dispatch(robot_id, "goto", {"target": "lab"})
-        assert spin_until(executor, lambda: operator.statuses(busy_id)), (
-            "no answer to the second mission"
-        )
+        # For a *terminal* status, not merely any: the agent publishes
+        # `dispatched` as it forwards, and the executor's refusal follows it
+        # milliseconds later. Waiting on the first status arriving catches the
+        # `dispatched` most of the time and the `rejected` sometimes, which is
+        # a test that passes on how fast the machine is.
+        assert spin_until(
+            executor,
+            lambda: any(s["terminal"] for s in operator.statuses(busy_id)),
+        ), "no verdict on the second mission"
         busy = operator.statuses(busy_id)[-1]
         assert busy["state"] == mission.REJECTED
         assert busy["failure"]["class"] == mission.BUSY

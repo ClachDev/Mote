@@ -17,7 +17,6 @@ from api_harness import enroll, get, post, post_bytes, write_revision
 
 from mote_bringup import bundle, mote_home, sites
 from mote_fleet import mapsync, protocol
-from mote_tasks import zones as zones_lib
 
 SITE, FLOOR = "home", "ground"
 REVISION = "20260727T101500"
@@ -233,8 +232,35 @@ def test_publishing_a_split_floor_sends_the_binding_in_the_revision(
     enroll(server, "serial:ddd", name="Scout")
     floor_dir = sites.floor_dir(SITE, FLOOR)
     write_revision(floor_dir / "maps" / REVISION, zones=False)
-    zones_lib.append_zone(
-        floor_dir, "bay", 1.5, -2.0, 0.0, kind="dock", site=SITE, floor=FLOOR
+    # Written with `bundle`, not with `mote_tasks.zones`: these tests run in the
+    # ROS-free `fleet` environment, and reaching for the task layer's writer
+    # here would be the seam the split exists to keep — the robot's half needs
+    # ROS, the fleet's half must never.
+    bundle.write_floor(
+        floor_dir,
+        {
+            "frame_id": "map",
+            "revision": 1,
+            "zones": {
+                "bay": {
+                    "name": "bay",
+                    "kind": "dock",
+                    "display_name": "",
+                    "aliases": [],
+                    "navigable": True,
+                    "parent": None,
+                    "tags": [],
+                    "description": "",
+                    "bound": True,
+                    "x": 1.5,
+                    "y": -2.0,
+                    "yaw": 0.0,
+                }
+            },
+        },
+        site=SITE,
+        floor=FLOOR,
+        platform_id="mote-01",
     )
     assert (floor_dir / "binding.yaml").is_file()
     sites._publish_revision(floor_dir, REVISION)
