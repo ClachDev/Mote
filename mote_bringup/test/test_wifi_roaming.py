@@ -188,6 +188,19 @@ def test_the_log_records_what_else_was_in_range():
     # while the link reads perfectly: the 2026-09-01 walk lost 54 s at -35 dBm
     # that way, and needed the DHCP journal to explain it.
     assert "ipv4" in header.group(1)
+    # And what actually got through, which is what separates a link that slowed
+    # from one that stalled -- the driver's negotiated bitrate says neither.
+    assert "rx_kbps" in header.group(1)
+    assert "tx_kbps" in header.group(1)
+
+
+def test_the_throughput_counters_are_read_before_the_first_row():
+    # `counters` is called once to prime the deltas. Bash resolves a function at
+    # call time, so defining it after that call is not an ordering nicety: the
+    # first read fails and every row's throughput is then wrong by whatever the
+    # unset baseline was.
+    roamlog = ROAMLOG.read_text()
+    assert roamlog.index("counters() {") < roamlog.index("read -r last_rx last_tx")
 
 
 def test_the_log_only_scans_when_a_roam_is_due():

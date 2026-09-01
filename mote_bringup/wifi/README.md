@@ -227,11 +227,44 @@ the robot's address is a roam that breaks everything above IP while the link
 reads perfectly, so the address is logged and a change is called out on stderr
 like a roam.
 
-Do the walk twice: once idle, once under load with Foxglove connected and the
-camera streaming, since roaming under traffic is what failed before. What the
-log should show is the BSSID changing within a few seconds of the signal
-crossing -75 dBm, no run of empty `ping_ms` longer than a second or two, and the
-ssh session surviving.
+Do the walk twice: once idle, once under load, since roaming under traffic is
+what failed before. What the log should show is the BSSID changing within a few
+seconds of the signal crossing -75 dBm, one address throughout, and no run of
+empty `ping_ms` longer than a second or two.
+
+### The loaded walk
+
+The load stands in for a camera stream rather than being one. Foxglove plus the
+camera is the real thing, but it produces no number — you cannot tell from it
+whether the stream slowed or stalled, and it cannot be repeated at the same rate
+twice. `iperf3` can, and `roamlog`'s `rx_kbps`/`tx_kbps` measure whatever it
+sends. It is a test dependency, not the robot's: install it by hand rather than
+adding it to `pixi.toml`, which would put it on every robot.
+
+```bash
+sudo apt install -y iperf3      # on the robot and on the machine it streams to
+
+iperf3 -s                       # on that machine
+
+# on the robot, in one tmux pane, against that machine's LAN address:
+while :; do iperf3 -c <host> -t 120 -i 1 -b 8M; sleep 2; done
+
+# and in another:
+pixi run wifi-roamlog
+```
+
+`-b 8M` rate-limits the stream instead of letting it take the whole link. That
+is the point: an unlimited `iperf3` measures capacity, which is a different
+experiment and a misleading one here, because saturating the radio changes the
+roaming behaviour being measured. 8 Mbit/s of TCP is a generous stand-in for a
+compressed camera stream, and TCP is the right transport because the real stream
+is TCP too — it backs off and retransmits, so a stall shows up as `tx_kbps`
+going to nothing while the connection stays open.
+
+The retry loop is there because `iperf3` exits when its connection dies. A roam
+should not kill it — the address no longer changes, so the connection stalls and
+retransmits rather than resetting — and if it does die, the loop keeps the load
+running for the rest of the walk instead of leaving it silently idle.
 
 ## What the walk measured
 
