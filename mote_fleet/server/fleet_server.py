@@ -76,9 +76,9 @@ validate with the *same* ROS-free module the robot writes with
 the answer to the question a dispatcher actually asks — *what places can I
 name?* — and until now the only ways to get it were an out-of-band document or
 scraping the list a robot prints when it refuses an unknown zone. ``/v1/zones``
-answers it directly, and answers it with a **vocabulary**: names, kinds and
-aliases, no coordinates, no frame. That restraint is what makes publishing it
-safe. A zone's pose is a coordinate in one robot's map frame, whose origin is an
+answers it directly, and answers it with a **vocabulary**: the name of each
+place and a note about it, no coordinates, no frame. That restraint is what
+makes publishing it safe. A zone's pose is a coordinate in one robot's map frame, whose origin is an
 accident of where its SLAM session started, so it is true for that robot and
 false for the one beside it; the name is true for both. The binding stays where
 it was, under ``/v1/maps``, served to the client that also has the basemap.

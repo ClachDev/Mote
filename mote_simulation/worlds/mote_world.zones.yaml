@@ -5,11 +5,11 @@
 # mission mode is up, so `fetch pickup dropoff` runs anywhere on the ladder.
 frame_id: map
 zones:
-  pickup: {x: 1.8, y: -1.5, yaw: 0.0, kind: pickup}
-  dropoff: {x: -1.8, y: 1.5, yaw: 3.14, kind: dropoff}
-  home: {x: 0.0, y: 0.0, yaw: 0.0, kind: home}
+  pickup: {x: 1.8, y: -1.5, yaw: 0.0}
+  dropoff: {x: -1.8, y: 1.5, yaw: 3.14}
+  home: {x: 0.0, y: 0.0, yaw: 0.0}
   # Room-like zones reachable by `goto <name>`; the radius gives them an area
   # footprint. This single 6x6 room has no real rooms, so these are token areas
   # clear of the two obstacles.
-  kitchen: {x: 2.0, y: 2.0, yaw: 0.0, radius: 1.0, kind: room}
-  lounge: {x: -2.0, y: 2.0, yaw: 3.14, radius: 1.0, kind: room}
+  kitchen: {x: 2.0, y: 2.0, yaw: 0.0, radius: 1.0}
+  lounge: {x: -2.0, y: 2.0, yaw: 3.14, radius: 1.0}

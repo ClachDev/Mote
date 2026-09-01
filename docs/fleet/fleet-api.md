@@ -260,8 +260,8 @@ below.
 
 ```json
 {"schema":1,"site":"home","floor":"ground","frame_id":"map","zones":[
- {"name":"kitchen","x":1.0,"y":2.0,"yaw":0.0,"radius":1.5,"kind":"room",
-  "display_name":"The Kitchen","aliases":["galley"],"navigable":true},
+ {"name":"the kitchen","x":1.0,"y":2.0,"yaw":0.0,"radius":1.5,
+  "note":"the good kettle is in the store room","navigable":true},
  {"name":"ward","x":4.0,"y":1.0,"polygon":[[3,0],[5,0],[5,2],[3,2]]}]}
 ```
 
@@ -307,23 +307,31 @@ publishing, applied to names as well as to coordinates.
 
 ```json
 {"schema":1,"site":"home","floor":"ground","revision":4,"zones":[
- {"name":"kitchen","display_name":"The Kitchen","aliases":["galley"],
-  "kind":"room","navigable":true,"parent":null,"tags":[],"description":""},
- {"name":"sluice","display_name":"","aliases":[],
-  "kind":"keepout","navigable":false,"parent":null,"tags":[],"description":""}],
+ {"name":"the kitchen","note":"the good kettle is in the store room",
+  "navigable":true},
+ {"name":"sluice","note":"","navigable":false}],
  "problems":[]}
 ```
 
+**A zone is a place-name**: a human name bound to geometry. The record carries
+only what a prior cannot guess — the mission layer's resolver already knows what
+a store room is, and what it cannot know is that *this* building's store room is
+where the stationery lives.
+
 | field | |
 |---|---|
-| `name` | The shared token. `^[a-z][a-z0-9_]*$`, unique within a **floor**, not within a site — two floors may each have a `reception`. |
-| `display_name` | What an operator sees. Free text. Empty means "use the name". |
-| `aliases` | The other things people call it, for natural-language dispatch. Matched case-insensitively and whitespace-normalised. |
-| `kind` | One of `area room corridor doorway threshold elevator stair dock charger pickup dropoff staging home keepout slow`. `area` is the default and claims nothing. |
-| `navigable` | Whether it is a legal destination. Always `false` for `keepout` and `slow`. |
-| `parent` | An enclosing zone on the same floor, or `null`. |
+| `name` | What the place is called, which is also what a dispatcher types. Printable text with no leading or trailing space; unique within a **floor**, not within a site — two floors may each have a `reception`. Matched exactly, then case-insensitively and whitespace-normalised. |
+| `note` | Free text for where reality diverges from what the name implies. The other names a place answers to belong here: a resolver reads the sentence, and there is no alias list to keep in step by hand. |
+| `navigable` | Whether it is a legal destination. Not vocabulary — it is the planner's contract — but it travels with the names because it is not a coordinate. |
 | `revision` | Bumped every time a zone is taught, so a binding can record which vocabulary it was built against. |
 | `problems` | Empty when the vocabulary is well-formed; see below. |
+
+`kind`, `display_name`, `aliases`, `parent` and `tags` were part of this
+document and are **retired**. A floor written before that still loads — its
+`description` is read as the `note` it was, and its `kind: keepout` still means
+`navigable: false`, which is what carries a barrier across the change rather
+than turning it into somewhere to drive to — and none of them are written or
+served.
 
 There are **no coordinates, no `frame_id` and no map reference**, by
 construction: the payload is built from the fields a vocabulary may carry
@@ -347,23 +355,26 @@ no zones yet are omitted rather than listed empty.
 
 Reported, not enforced. Two things can be wrong with a vocabulary while the map
 around it is perfectly good, so the server says so and still serves it — a
-floor's basemap must not stop being served over a duplicated alias:
+floor's basemap must not stop being served over two rooms called the same
+thing:
 
-- **an ambiguous query** — two zones answering to one name or alias. A resolver
-  must not pick between them, so the name is simply unusable until an operator
-  fixes it. The robot's own loader *does* refuse such a file, because it would
-  otherwise resolve `goto` by dictionary order.
-- **a name a dispatcher cannot type** — e.g. a zone taught as `Café`. It is
-  served verbatim rather than silently slugified to `cafe`: inventing a name is
-  a rename nobody asked for. The fix is an operator's, and is to move the label
-  into `display_name`.
+- **an ambiguous query** — two zones answering to one name. A resolver must not
+  pick between them, so the name is simply unusable until an operator fixes it.
+  The robot's own loader *does* refuse such a file, because it would otherwise
+  resolve `goto` by dictionary order.
+- **a name nobody could have meant** — a stray space at either end, which makes
+  two names look identical on screen and resolve differently. `Café` and `store
+  room` are not problems: they are what the places are called, and refusing them
+  would be refusing the building's own vocabulary.
 
-A file that has no coherent reading at all — an unknown `kind`, a `keepout`
-marked `navigable: true`, `aliases` that are not a list — is refused at the
-parse instead, by the same shared validator (`mote_bringup/bundle.py`) that
+A file that has no coherent reading at all — a legacy `keepout` marked
+`navigable: true`, a `navigable` that is neither true nor false — is refused at
+the parse instead, by the same shared validator (`mote_bringup/bundle.py`) that
 `save-map` runs locally. Those are not ambiguities to report; they are
 contradictions, and honouring the last one written would make the flag mean
-whatever was typed most recently.
+whatever was typed most recently. A retired field is **not** in that set,
+whatever it contains: refusing a floor over a field nothing reads would be the
+wrong price.
 
 ---
 
@@ -539,8 +550,8 @@ against:
 
 ```json
 {"schema": 1, "revision": "20260802T145731",
- "zones": {"kitchen": {"x": 1.0, "y": -3.0, "yaw": 0.0, "kind": "room",
-                       "display_name": "The Kitchen", "aliases": ["galley"],
+ "zones": {"the kitchen": {"x": 1.0, "y": -3.0, "yaw": 0.0,
+                       "note": "the good kettle is in the store room",
                        "polygon": [[0.0,-4.0],[2.0,-4.0],[2.0,-2.0],[0.0,-2.0]]}}}
 ```
 

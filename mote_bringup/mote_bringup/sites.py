@@ -548,7 +548,8 @@ def _adopt_zones(fdir: Path, rev_dir: Path, previous: str | None):
     frame, and it is the half a different SLAM session makes wrong. The
     vocabulary stays where it is, because the names of the rooms did not change
     when the robot re-mapped the floor — which is the practical dividend of the
-    split, and the reason re-mapping no longer costs an operator their aliases.
+    split, and the reason re-mapping no longer costs an operator the names
+    they typed.
     """
     for name in (bundle.BINDING_YAML, bundle.ZONES_YAML):
         source = rev_dir / name

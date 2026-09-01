@@ -339,8 +339,8 @@ class BundleStore:
         }
 
     def read_vocabulary(self, site: str, floor: str) -> dict:
-        """The floor's zone **vocabulary** — names, kinds and aliases, no
-        coordinates and no frame.
+        """The floor's zone **vocabulary** — the name of each place and a note
+        about it, no coordinates and no frame.
 
         Deliberately *not* gated on a published map, where
         :meth:`read_zones` is. A vocabulary is a fact about the building, so a

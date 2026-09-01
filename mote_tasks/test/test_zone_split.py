@@ -54,7 +54,7 @@ def test_a_named_but_untaught_zone_resolves_unbound(tmp_path):
     """The distinction the split exists to make representable."""
     floor = a_floor(
         tmp_path,
-        vocabulary=[("kitchen", {"kind": "room"}), ("ward_a", {"kind": "room"})],
+        vocabulary=[("kitchen", {}), ("ward_a", {})],
         bindings=[zone_spec.bound("kitchen", 2.0, 3.5)],
     )
     zones = mote_zones.load_floor(floor)
@@ -75,7 +75,7 @@ def test_a_named_but_untaught_zone_resolves_unbound(tmp_path):
 def test_only_bound_zones_are_drivable_and_containable(tmp_path):
     floor = a_floor(
         tmp_path,
-        vocabulary=[("kitchen", {"kind": "room"}), ("ward_a", {"kind": "room"})],
+        vocabulary=[("kitchen", {}), ("ward_a", {})],
         bindings=[
             zone_spec.bound(
                 "kitchen", 2.0, 3.5, footprint={"type": "circle", "radius": 1.5}
@@ -97,7 +97,7 @@ def test_a_binding_the_vocabulary_does_not_name_is_a_local_extension(tmp_path):
     """
     floor = a_floor(
         tmp_path,
-        vocabulary=[("kitchen", {"kind": "room"})],
+        vocabulary=[("kitchen", {})],
         bindings=[
             zone_spec.bound("kitchen", 2.0, 3.5),
             zone_spec.bound("my_bench", 1.0, 1.0),
@@ -114,7 +114,7 @@ def test_a_binding_the_vocabulary_does_not_name_is_a_local_extension(tmp_path):
 def test_the_shared_document_carries_no_coordinates(tmp_path):
     floor = a_floor(
         tmp_path,
-        vocabulary=[("kitchen", {"kind": "room", "aliases": ["galley"]})],
+        vocabulary=[("kitchen", {"note": "the good kettle"})],
         bindings=[
             zone_spec.bound(
                 "kitchen", 2.0, 3.5, 1.57, footprint={"type": "circle", "radius": 1.5}
@@ -122,7 +122,7 @@ def test_the_shared_document_carries_no_coordinates(tmp_path):
         ],
     )
     shared = (floor / "vocabulary.yaml").read_text()
-    assert "galley" in shared
+    assert "the good kettle" in shared
     for leak in zone_spec.GEOMETRY_KEYS + ("frame_id", "map_revision", "pose"):
         assert f"{leak}:" not in shared, f"{leak} leaked into the vocabulary"
 
@@ -135,12 +135,17 @@ def test_the_shared_document_carries_no_coordinates(tmp_path):
 
 
 def test_a_legacy_combined_file_still_loads(tmp_path):
-    """A robot that has been mapping a building for a year is not re-taught."""
+    """A robot that has been mapping a building for a year is not re-taught.
+
+    Its retired fields load and are dropped: the zone keeps its name, its
+    coordinate and its footprint, and `galley` no longer reaches anything.
+    """
     (tmp_path / "zones.yaml").write_text(
         "frame_id: map\nzones:\n"
         "  kitchen: {x: 2.0, y: 3.5, radius: 1.5, kind: room, aliases: [galley]}\n"
     )
     zones = mote_zones.load_floor(tmp_path)
     assert zones["kitchen"].bound is True
-    assert zones["kitchen"].aliases == ("galley",)
-    assert mote_zones.resolve(zones, "galley").name == "kitchen"
+    assert zones["kitchen"].footprint is not None
+    assert mote_zones.resolve(zones, "kitchen").name == "kitchen"
+    assert mote_zones.resolve(zones, "galley") is None

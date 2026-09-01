@@ -213,15 +213,14 @@ basemap, so an editor there could only ever edit the published revision, and
 "which map are these coordinates against" must have one answer. That also
 retires the MVP's frozen-overlay workaround: after a save the pane selects the
 new candidate and re-reads its zones, so what is on screen is the saved set from
-the server rather than a held-over copy of what was typed. **`navigable` is
-written only when it deviates from the kind**, because every zone arrives from
-the server with the field filled in (`bundle.zone_term` defaults it) and writing
-it back verbatim would carry a `keepout`'s `false` onto a zone just changed to
-`room` — a room nothing can be dispatched to, with nothing on screen to say why.
-And the editor **refuses client-side exactly what the robot's loader refuses**:
-a non-dispatchable name, and two zones answering one query (`ambiguities`
-mirrors `bundle.ambiguities` — names and aliases, not display names), since a
-stored candidate no robot will load is worse than a rejected save. Editing is a
+the server rather than a held-over copy of what was typed. **`navigable` travels
+verbatim**: it used to be dropped when it agreed with the zone's kind, so that a
+kind the operator had just changed did not carry the old kind's default with it,
+and with the kind retired there is nothing for it to agree with. And the editor
+**refuses client-side exactly what the robot's loader refuses**: a name nobody
+could have meant, and two zones answering one query (`ambiguities` mirrors
+`bundle.ambiguities`), since a stored candidate no robot will load is worse than
+a rejected save. Editing is a
 *mode*: the floor picker, the revision list and promote are disabled while it is
 up, there is no autosave, and `cancel` discards. One pre-existing defect fell
 out and is fixed: the map pane's review button was hidden unless the floor on
@@ -239,15 +238,13 @@ each other. Its highlight ring is *ink*, not white: a canvas gets no cascade, an
 the surface under it is not the theme's background but the basemap, whose free
 space is white in both themes (measured: white moved 1.5% of the pixels around a
 handle, ink moves 12%). **A row is a list, not a form** — it carries what is
-compared *across* zones (name, kind, shape) and the rest of zone/v0
-(`display_name`, `aliases`, `navigable`, `parent`, `tags`, `description`) edits
-in a panel for the *selected* zone, so a new spec field costs no column, and a
-2560 px monitor no longer stretches a twelve-character zone name into a text box
-the size of a paragraph (rows cap at 640 px). **There is one list, not two**:
-one renderer draws a revision's zones read-only and editable alike, `edit zones`
-putting controls into the same cells — two renderers were two layouts that
-drifted, and the read-only one had stranded the kind half a screen from the
-name. Nothing in that column moves when editing opens (asserted in
+compared *across* zones (the name, and whether it is a point or an area) and the
+rest of the record edits in a panel for the *selected* zone, so a new field costs
+no column, and a 2560 px monitor no longer stretches a twelve-character zone name
+into a text box the size of a paragraph (rows cap at 640 px). **There is one
+list, not two**: one renderer draws a revision's zones read-only and editable
+alike, `edit zones` putting controls into cells that were already there and
+standing empty — two renderers were two layouts that drifted. Nothing in that column moves when editing opens (asserted in
 `browser_check.mjs`), the editing surface has no border of its own, and a zone
 is always selected: an empty panel needs a caption, and any caption for it
 ("select a zone to name it") names one of the several things it is for. And a control exists only where dragging cannot
@@ -274,25 +271,22 @@ the request. The mode's banner is gone with it — `save as candidate` says what
 saving does, and the one thing a banner was needed for, the shift modifier, is a
 `title` on the surface it applies to.
 
-**A place is named once.** While a zone's machine name is still one nobody
-chose (`zone_03`), typing its display name sets it through `slugify` — "The
-Kitchen" gives `the_kitchen`, "Café" gives `cafe` (the letter survives, not just
-the accent). It is a proposal in a visible field, and it never rewrites a name
-an operator has chosen, since `goto` takes that name and a fetch may be scripted
-against it; a spelling that cannot become a name at all ("3rd floor") proposes
-nothing rather than mangling one. The field also marks an invalid name *as it is
-typed*: the rule is the loader's and the save enforces it, but a field that looks
-like free text until a save fails does not look like a field with a rule. That
-leaves three naming fields doing two jobs — an identifier, a label, and the
-other spellings `zones.resolve` will also match.
+**A place is named once**, and the name is the human one — `store room`,
+`Café`, spaces and accents and all (see "Fleet: zones are place-names"). The
+field marks an unusable name *as it is typed*: the rule is the loader's and the
+save enforces it, but a field that looks like free text until a save fails does
+not look like a field with a rule. What it refuses is now only what nobody could
+have meant — a stray space at either end, which looks identical on screen to the
+same name without and resolves differently — so `slugify`, `isGeneratedName` and
+the display-name field that fed them are gone with the split they existed to
+bridge.
 
-A zone is drawn under `map.zoneLabel` — `display_name` if it has one, else the
-machine name — by the operations map and the editor's own overlay alike, so a
-place cannot answer to one name in the list and another while it is being
-edited. `color-scheme` is declared per theme in the stylesheet for the same
-class of reason: a `select`'s dropdown, a checkbox and a scrollbar are the
-browser's to paint, and left to the *system* preference while the page follows
-its own, a dark page grows a white dropdown list.
+A zone is drawn under `map.zoneLabel` — its name — by the operations map and the
+editor's own overlay alike, so a place cannot answer to one name in the list and
+another while it is being edited. `color-scheme` is declared per theme in the
+stylesheet for a related class of reason: a `select`'s dropdown, a checkbox and a
+scrollbar are the browser's to paint, and left to the *system* preference while
+the page follows its own, a dark page grows a white dropdown list.
 
 **Every coordinate an edit writes lands on a pixel centre** (`snapToPixel`;
 shift is the way off it, chosen over alt because a desktop's window manager
@@ -303,22 +297,19 @@ differently every time. Three consequences: a *body* drag snaps its delta rather
 than each vertex (`snapDelta`), so a room traced onto its walls keeps its shape,
 and it is measured from the grab rather than accumulated per move, which would
 drift the zone behind the pointer by whatever each rounding threw away; the
-outline `withKind` invents starts on the grid, while the **pose stays where it
+outline `add zone` invents starts on the grid, while the **pose stays where it
 was taught** — that number was measured by driving a robot there; and nothing
-re-snaps a coordinate the operator did not touch.
+re-snaps a coordinate the operator did not touch. A pose **typed** into the
+details column is not snapped either, for the same reason shift-drag is not: a
+number somebody wrote is already the number they meant, and the grid exists to
+stop a *drag* claiming precision the map does not have.
 
-**The kind decides whether a zone is a point or an area, and `withKind` makes
-the geometry follow** (`bundle.POINT_KINDS`: dock, charger, pickup, dropoff,
-home). Editing the two separately is what leaves a `dropoff` carrying an outline
-nothing reads and a `room` with no extent `zones.containing` can never match —
-so naming a bare pose an area gives it a square to drag onto the walls (which is
-how an area is drawn in the UI at all), and naming an outlined zone a point
-drops the outline and keeps the pose. Two things fall out. The classification is
-**guidance, not validation**: `bundle` does not refuse an outline on a charger,
-because that would refuse maps taught before the rule existed. And the
-point-ward move is **refused** when the outline's centroid lies outside it (a
-concave hallway) rather than putting the pose in a wall — `poseFor` returns null
-and the select reverts.
+**Geometry is a property, not a type**, so the row says `point <x>, <y>` or
+`area · <n> corners` and there is no kind to declare. `add zone` makes an area
+(a square at the view centre, to drag onto the walls) and `⌖` gives an outline a
+pose; converting an existing zone between the two — what `withKind` and
+`POINT_KINDS` did while a kind decided it — has no control in this revision, and
+is the one thing the pane lost with the taxonomy.
 
 ## Fleet: adopting spec v0 (capability set, typed failure)
 
@@ -400,7 +391,7 @@ translating shim would be a third definition of the wire.
 and the split is what the whole spec is for: **names are shared, coordinates
 are not, maps are never shared.** A floor is now two documents —
 `floors/<floor>/vocabulary.yaml` (site, floor, and what the places are
-*called*: `kind`, `display_name`, `aliases`, `navigable`, `parent`, `tags`) and
+*called*: `name`, `note`, `navigable` — see "Fleet: zones are place-names") and
 `floors/<floor>/binding.yaml` (this robot's poses, footprints and `anchor`,
 stamped with `platform_id`, `frame_id` and `map_revision`). Both are built by
 **`mote_bringup/spec/zone.py`**, which also holds the containment geometry, so
@@ -433,7 +424,7 @@ shape for a fixture with one robot in it — and are migrated on read.
 **Which half travels where.** A map revision carries the **binding**, because a
 coordinate means nothing without the frame beside it; installing a pulled
 revision replaces the floor's binding and leaves the vocabulary alone, so
-re-mapping a floor no longer costs an operator the aliases they typed. The
+re-mapping a floor no longer costs an operator the names they typed. The
 **vocabulary** is floor-level and is what `/v1/zones` serves — and, from the
 dashboard's zone editor, a candidate carries *both* halves and promotion is
 what lifts its vocabulary to floor level: uploading is not publishing, applied
@@ -462,8 +453,8 @@ coordinates do not.** A zone's pose is a coordinate in one robot's map frame,
 whose origin is an accident of where its SLAM session started, so `(2.0, 3.5)`
 is a different physical point on the robot beside it and no fleet-level
 transform fixes that; the *name* is true for both. So the **vocabulary** —
-`name`, `kind`, `display_name`, `aliases`, `navigable`, `parent`, `tags` — is
-published and the **binding** is not. The split is expressed by the route rather
+the `name` of each place, a free-text `note`, and `navigable` — is published and
+the **binding** is not. The split is expressed by the route rather
 than by a rule someone has to remember: everything under `/v1/maps` is bound to
 a basemap and served to the client that already has one, everything under
 `/v1/zones` is bound to nothing. Four things are load-bearing. The payload is
@@ -475,19 +466,72 @@ walks the whole payload for geometry-shaped keys rather than checking the ones
 it thought of). The vocabulary is deliberately **not gated on a published map**
 where the binding rightly is: names are a fact about the building, so a floor
 someone has named but no robot has mapped still answers, which is the
-portability the split buys. `problems` is **reported, not enforced** — an
-ambiguous alias or a name a dispatcher cannot type (`Café`) leaves the map
+portability the split buys. `problems` is **reported, not enforced** — two places
+called the same thing, or a name with a stray space at one end, leave the map
 perfectly good, and refusing to serve a floor's basemap over it would be the
-wrong price; the name is served verbatim rather than slugified to `cafe`,
-because inventing one is a rename nobody asked for. But the *robot* refuses an
-ambiguous vocabulary at `load_zones`, since it could not honour `goto`
-unambiguously. Contradictions with no reading at all — an unknown `kind`, a
-`keepout` marked `navigable: true`, `aliases` that are not a list — are refused
-at the parse by the shared `mote_bringup/bundle.py`, so `save-map` catches them
-locally and the server catches them on upload. `save-zone --kind` teaches the
-one field it can know; `segment-map` emits `kind: room` because what it segments
-*are* rooms. Related: mote #249 (the rest of spec v0 — capability set and typed
-failures).
+wrong price; the name is served verbatim, because inventing one is a rename
+nobody asked for. But the *robot* refuses an ambiguous vocabulary at
+`load_zones`, since it could not honour `goto` unambiguously. Contradictions
+with no reading at all — a legacy `keepout` marked `navigable: true`, a
+`navigable` that is neither true nor false — are refused at the parse by the
+shared `mote_bringup/bundle.py`, so `save-map` catches them locally and the
+server catches them on upload. `save-zone` teaches the name and `--note`;
+`segment-map` emits geometry and nothing else, because an enclosure with walls
+round it is all it found. Related: mote #249 (the rest of spec v0 — capability
+set and typed failures).
+
+## Fleet: zones are place-names
+
+A zone's vocabulary was seven fields: `kind` from a fifteen-value taxonomy,
+`display_name` beside a machine `name`, `aliases`, `parent`, `tags`,
+`description`, `navigable`. It is now **one human name and a `note`**, and the
+principle is that a zone is a place-name: a name bound to geometry, carrying
+only what a prior cannot guess. The mission layer's LLM resolver already knows
+what a store room is; what it cannot know is that *this* building's store room is
+where the stationery lives — which is exactly what the note says, and the whole
+of what the record adds. `navigable` stays, unchanged, because it is not
+vocabulary at all: it is the planner's contract, and it travels with the names
+only because it is not a coordinate.
+
+**The name is the human one.** `store room`, `Café`, `Ward 3B` — printable text
+with no leading or trailing space (`zone.ZONE_NAME_RE`), matched exactly and
+then case-insensitively and whitespace-normalised. A machine name beside a
+display name was two fields for one fact, and it took `slugify`, a
+proposal-on-typing rule and a third naming field to keep them in step; the
+resolver reads the human spelling either way. Other names a place answers to go
+in the note, since free text is what an LLM resolver reads and a hand-maintained
+alias list was the part nobody maintained. Two consequences: `resolve` no longer
+matches aliases or display names (`goto galley` stops reaching `kitchen`), and
+an ambiguity can now only be two places called the same thing.
+
+**Retirement is on the write, not the read.** `zone.term` still accepts every
+retired field, so a floor taught before this loads without being re-taught, and
+`LEGACY_KEYS` names them. Two are read for meaning rather than merely tolerated:
+`description` is `note`'s former spelling and is read into it, and `kind:
+keepout`/`slow` still seeds `navigable: false` — dropping *that* would have
+turned every barrier on every already-taught floor into a destination, silently,
+on the first load after the upgrade, and writing `navigable` back is the
+migration. An unknown `kind` is now ignored where it used to be refused: there is
+no list to be outside of, and refusing a floor over a field nothing reads would
+be the wrong price. Nothing retired is ever written or served — `VOCABULARY_KEYS`
+is `("note", "navigable")` and the payload is *built* from it, so this cannot
+regress by someone forgetting to strip a field.
+
+**Writers stopped writing it.** `save-zone` takes `--note TEXT` and
+`--no-navigable` where it took `--kind K` (the flag named a taxonomy in order to
+set one flag); `segment-map` emits geometry and no vocabulary at all, because an
+enclosure with walls round it is all it found; the dashboard's editor has no kind
+select. The sim worlds' committed `<world>.zones.yaml` and
+`mote_tasks/config/zones.default.yaml` were re-emitted without `kind`, and
+`gen_hospital.py` with them.
+
+Files: `mote_bringup/spec/zone.py` (the record and its rules), `bundle.py`
+(re-exports; `ZONE_KINDS`/`POINT_KINDS` are gone, `CONSTRAINT_KINDS` survives as
+the legacy `navigable` seed), `mote_tasks/zones.py` (`Zone`, `resolve`,
+`append_zone`), `mote_fleet/server/ui/` (the review pane, per the "Zone
+Gazetteer" design), `docs/fleet/fleet-api.md` §the zone vocabulary. **The
+specification's own `spec/zone/v0/README.md` is not in this repo** and still
+describes the seven-field vocabulary; a successor revision there is outstanding.
 
 ## Fleet: the server pipelines (Ms)
 
@@ -495,7 +539,7 @@ Milestone Ms of `docs/design/fleet.md`: how the two **non-robot** machines are b
 
 ## Sites (maps & zones)
 
-Everything that is only meaningful relative to one mapped place — the Nav2 map pair, the slam_toolbox posegraph, and named zones — lives together as a **site bundle** under `~/.mote/sites/<site>/floors/<floor>/`, managed by `mote_bringup/sites.py` (CLI: `pixi run site`, docs in the module docstring). A floor is one SLAM session (one map frame); a site groups floors sharing a location. `~/.mote/active.yaml` selects the active site/floor per robot; launch files resolve the map (`nav2_launch.py`, `robot_launch.py`) and zones (`tasks_launch.py`) from it at launch time (zones fall back to the committed default). `MOTE_HOME` overrides `~/.mote` for tests/experiments. What a revision must *contain* — and how it validates, packs and travels — is `mote_bringup/bundle.py` (ROS-free, shared with the fleet server; see the map registry section above). Map artifacts are immutable **revisions** under `floors/<floor>/maps/<rev>/`, published by atomically flipping the `floors/<floor>/map` symlink once the revision is complete — a half-written save or interrupted transfer is never visible, and `site use-map <rev>` rolls back. `save-map` stores the posegraph alongside the map so mapping can be *continued* in the same frame later (extend, don't remap — remapping breaks zone coordinates). Mapping runs also record the `mapping` rosbag stream by default (`mapping_launch.py record:=true`; the sim passes false), and `save-map` stamps the session's bag into the revision's `meta.yaml` for provenance (`site info` shows it). Zones are taught by driving there and running `pixi run save-zone <name>`, not by editing YAML; a zone is a named pose (a fetch waypoint or a `goto <zone>` target) that may optionally carry an area **footprint** — a taught `--radius` circle, or a `polygon` outline that follows the actual room walls — so it reads as a room and answers "am I in it"; `site info` shows the zone/footprint counts and how many names this robot has *not* been taught. A floor's zones are **two files, not one** (zone/v0): `vocabulary.yaml` holds what the places are called and `binding.yaml` holds where this robot believes they are — taught together, stored apart, because only the names are portable off this robot. A legacy combined `zones.yaml` is still read and is migrated the first time anything writes. See "Fleet: the zone vocabulary/binding split". Maps are saved as PNG (map_server reads it natively; browsers can render it directly). `save-map` automatically runs an FFT structure-extraction **cleaning pass** (`mote_bringup/map_cleanup`, `sites._promote_cleaned`): it keeps the untouched map_saver output as `map_raw.png` and promotes the decluttered image to the served `map.png` (plus a `diagnostics.png`), so navigation always consumes the cleaned map while the raw is retained for provenance/audit. The `map.yaml` frame is identical for both, so zones/localization are unaffected; a cleaning failure falls back to serving the raw. The posegraph belongs to the raw map — mapping continuation extends from raw, never the cleaned image. **Zones no longer have to be taught one at a time**: `pixi run segment-map` (`map_cleanup/room_segmentation.py`, the ROSE² second stage the declutter pass left open) carves a saved map's free space into rooms and proposes one polygon zone per room, `--write` merging them into the floor's zones for the operator to rename — additive over hand-taught zones (a candidate covering an already-footprinted zone is dropped as named, so re-running is a byte-identical no-op) and written at floor level, never into the immutable map revision. A proposed room is anchored `derived`, not `taught`: it was read off a map by an algorithm, which is what tells an operator later that a re-map invalidates it. The method is one physical assumption — a doorway is narrow — applied to a grid the wall lines cut into faces: faces merge wherever their shared boundary has a clear span wider than a door, so it is indifferent to room size where a distance-transform threshold is not. Two consequences: a **corridor network is not proposed at all** (a footprint is a single outline, so a region encircling a block of rooms would claim them; those are dropped, taking with them any room wrongly absorbed into the corridor), and the geometry is **Manhattan after rotation** — an arbitrarily rotated map frame is fine, a building with wings at 30° to each other is not. Scored against ground-truth room rectangles on the sim ladder by `pixi run segment-eval` (30/33 mapped hospital rooms, 10/10 office, 1/1 mote, **zero merges**, unchanged with the map turned 17° or -31°); results in `docs/tuning/2026-07-27-room-segmentation.md`.
+Everything that is only meaningful relative to one mapped place — the Nav2 map pair, the slam_toolbox posegraph, and named zones — lives together as a **site bundle** under `~/.mote/sites/<site>/floors/<floor>/`, managed by `mote_bringup/sites.py` (CLI: `pixi run site`, docs in the module docstring). A floor is one SLAM session (one map frame); a site groups floors sharing a location. `~/.mote/active.yaml` selects the active site/floor per robot; launch files resolve the map (`nav2_launch.py`, `robot_launch.py`) and zones (`tasks_launch.py`) from it at launch time (zones fall back to the committed default). `MOTE_HOME` overrides `~/.mote` for tests/experiments. What a revision must *contain* — and how it validates, packs and travels — is `mote_bringup/bundle.py` (ROS-free, shared with the fleet server; see the map registry section above). Map artifacts are immutable **revisions** under `floors/<floor>/maps/<rev>/`, published by atomically flipping the `floors/<floor>/map` symlink once the revision is complete — a half-written save or interrupted transfer is never visible, and `site use-map <rev>` rolls back. `save-map` stores the posegraph alongside the map so mapping can be *continued* in the same frame later (extend, don't remap — remapping breaks zone coordinates). Mapping runs also record the `mapping` rosbag stream by default (`mapping_launch.py record:=true`; the sim passes false), and `save-map` stamps the session's bag into the revision's `meta.yaml` for provenance (`site info` shows it). Zones are taught by driving there and running `pixi run save-zone <name> [--note TEXT]`, not by editing YAML; a zone is a named pose (a fetch waypoint or a `goto <zone>` target) that may optionally carry an area **footprint** — a taught `--radius` circle, or a `polygon` outline that follows the actual room walls — so it reads as a room and answers "am I in it"; `site info` shows the zone/footprint counts and how many names this robot has *not* been taught. A floor's zones are **two files, not one** (zone/v0): `vocabulary.yaml` holds what the places are called and `binding.yaml` holds where this robot believes they are — taught together, stored apart, because only the names are portable off this robot. A legacy combined `zones.yaml` is still read and is migrated the first time anything writes. See "Fleet: the zone vocabulary/binding split" and "Fleet: zones are place-names". Maps are saved as PNG (map_server reads it natively; browsers can render it directly). `save-map` automatically runs an FFT structure-extraction **cleaning pass** (`mote_bringup/map_cleanup`, `sites._promote_cleaned`): it keeps the untouched map_saver output as `map_raw.png` and promotes the decluttered image to the served `map.png` (plus a `diagnostics.png`), so navigation always consumes the cleaned map while the raw is retained for provenance/audit. The `map.yaml` frame is identical for both, so zones/localization are unaffected; a cleaning failure falls back to serving the raw. The posegraph belongs to the raw map — mapping continuation extends from raw, never the cleaned image. **Zones no longer have to be taught one at a time**: `pixi run segment-map` (`map_cleanup/room_segmentation.py`, the ROSE² second stage the declutter pass left open) carves a saved map's free space into rooms and proposes one polygon zone per room, `--write` merging them into the floor's zones for the operator to rename — additive over hand-taught zones (a candidate covering an already-footprinted zone is dropped as named, so re-running is a byte-identical no-op) and written at floor level, never into the immutable map revision. A proposed room is anchored `derived`, not `taught`: it was read off a map by an algorithm, which is what tells an operator later that a re-map invalidates it. The method is one physical assumption — a doorway is narrow — applied to a grid the wall lines cut into faces: faces merge wherever their shared boundary has a clear span wider than a door, so it is indifferent to room size where a distance-transform threshold is not. Two consequences: a **corridor network is not proposed at all** (a footprint is a single outline, so a region encircling a block of rooms would claim them; those are dropped, taking with them any room wrongly absorbed into the corridor), and the geometry is **Manhattan after rotation** — an arbitrarily rotated map frame is fine, a building with wings at 30° to each other is not. Scored against ground-truth room rectangles on the sim ladder by `pixi run segment-eval` (30/33 mapped hospital rooms, 10/10 office, 1/1 mote, **zero merges**, unchanged with the map turned 17° or -31°); results in `docs/tuning/2026-07-27-room-segmentation.md`.
 
 ## Drive path (who gets the wheels)
 
@@ -577,7 +621,7 @@ Home for camera-derived perception. Runs on the robot (feeds Nav2), so unlike `m
 The task layer: py_trees behaviour trees on top of Nav2 (synced to the Pi). py_trees is a pixi *PyPI* dependency (not packaged on robostack/conda-forge); the ROS glue is first-party and small — no py_trees_ros. Contains:
 - `capabilities.py` — what this robot can be asked to do, as a capability/v0 document: `goto` with `{target}` and `fetch` with `{target, destination}`, both standard-registry keys with the registry's own property names. See "Fleet: adopting spec v0" above.
 - `task_server.py` — node hosting the mission trees. Three `std_msgs/String` topics carrying JSON: it publishes its capability set on `task/capabilities` (latched), takes mission/v0 commands on `task/command` and answers with mission/v0 statuses on `task/status`. A command names a capability key and carries a typed `input` validated against that capability's `input_schema`; the failures it publishes are typed (`unknown_capability`, `invalid_input`, `busy`, `precondition`, `unresolved_zone`, and on the way out `obstructed`/`unreachable`/`timeout`/`internal`). **It owns the lane** — one mission at a time, rejected with `busy` naming the holder — and evaluates the blocking preconditions before accepting. Zone names → map poses come from a zones YAML resolved via Sites (active floor, then legacy `~/.mote/zones.yaml`, then the committed `config/zones.default.yaml` whose poses match `mote_world.sdf`; in the sim, `sim_launch.py` passes the loaded world's own zones file instead). `save_zone` (`pixi run save-zone <name> [--radius R]`) teaches zones from the live robot pose; `mission.py` (`ros2 run mote_tasks mission`) dispatches one from a terminal, which is what a JSON seam took away from `ros2 topic pub`.
-- `zones.py` — the one named-place concept: `load_zones` returns `{name: Zone(name, pose, footprint)}` from the `zones:` section. A **zone** is a pose the robot navigates to (both fetch waypoints *and* goto targets resolve against this single table); it *optionally* carries an area **footprint** — a `radius` circle or a `polygon` of explicit vertices — that's just optional metadata, not a second type. `zones.containing(zones, x, y)` is the "which zone am I in" membership query (nearest-pose first) over zones that have a footprint; `goto` itself only needs the pose. A polygon may be concave (ray-cast membership, so an L-shaped ward or a corridor stretch works where a circle can only under- or over-cover: the hospital wards are 4.7x5.6 m, of which a `radius: 1.5` circle claimed 7.1 m² of 26.5 m²), wins over a `radius` if a zone carries both, and — since polygons come from post-processing a map rather than from driving — may omit `x`/`y`, in which case the loader derives a pose guaranteed to lie inside the outline. `save-zone` therefore preserves an existing footprint when it re-teaches a pose; `--radius` is the explicit way to replace one. Polygon zones no longer have to be hand-written either: `pixi run segment-map` proposes one per room of a saved map (see Sites). A `Zone` also carries the **vocabulary** half — `kind`, `display_name`, `aliases`, `navigable`, `parent`, `tags` (zone/v0; see Fleet: the zone vocabulary) — every field optional, so no existing `zones.yaml` needed rewriting and an untouched zone is a navigable `area`. Three consequences here. `resolve(zones, query)` is what `goto`/`fetch` match on, so an alias or display name reaches the zone (case-insensitive, whitespace-normalised); both then refuse a **non-navigable** zone rather than driving to it — `fetch` explicitly, because falling through to its label branch would send the detector hunting for an object called "keepout". `load_zones` **refuses a vocabulary with a collision** (two zones answering one query), because loading it would resolve `goto` by dict order — silently, once per boot, differently after an edit; the rules live once in `mote_bringup.bundle` (`zone_term`, `ambiguities`, `check_vocabulary`) so the robot, `save-map` and the fleet server cannot disagree about what a vocabulary means. And `append_zone` carries the vocabulary through a re-teach and bumps `vocabulary_revision`: a better coordinate is not a rename.
+- `zones.py` — the one named-place concept: `load_zones` returns `{name: Zone(name, pose, footprint)}` from the `zones:` section. A **zone** is a pose the robot navigates to (both fetch waypoints *and* goto targets resolve against this single table); it *optionally* carries an area **footprint** — a `radius` circle or a `polygon` of explicit vertices — that's just optional metadata, not a second type. `zones.containing(zones, x, y)` is the "which zone am I in" membership query (nearest-pose first) over zones that have a footprint; `goto` itself only needs the pose. A polygon may be concave (ray-cast membership, so an L-shaped ward or a corridor stretch works where a circle can only under- or over-cover: the hospital wards are 4.7x5.6 m, of which a `radius: 1.5` circle claimed 7.1 m² of 26.5 m²), wins over a `radius` if a zone carries both, and — since polygons come from post-processing a map rather than from driving — may omit `x`/`y`, in which case the loader derives a pose guaranteed to lie inside the outline. `save-zone` therefore preserves an existing footprint when it re-teaches a pose; `--radius` is the explicit way to replace one. Polygon zones no longer have to be hand-written either: `pixi run segment-map` proposes one per room of a saved map (see Sites). A `Zone` also carries the **vocabulary** half — `note` and `navigable` (zone/v0; see "Fleet: zones are place-names") — both optional, so no existing `zones.yaml` needed rewriting and a zone that says nothing but its name is somewhere a robot may drive to. Three consequences here. `resolve(zones, query)` is what `goto`/`fetch` match on: the name exactly, then case-insensitively and whitespace-normalised, which is what makes `store room` typeable; both then refuse a **non-navigable** zone rather than driving to it — `fetch` explicitly, because falling through to its label branch would send the detector hunting for an object called "server room". `load_zones` **refuses a vocabulary with a collision** (two zones answering one query), because loading it would resolve `goto` by dict order — silently, once per boot, differently after an edit; the rules live once in `mote_bringup.bundle` (`zone_term`, `ambiguities`, `check_vocabulary`) so the robot, `save-map` and the fleet server cannot disagree about what a vocabulary means. And `append_zone` carries the vocabulary through a re-teach and bumps `vocabulary_revision`: a better coordinate is not a rename.
 - `behaviours/` — `DriveTo` (Nav2 NavigateToPose action client as a behaviour; cancels in-flight goals on preemption), `AcquireObject` (label missions: publishes the label to `detect/labels`, waits for a matching `detected_objects` detection, writes a standoff goal — 0.4 m short of the object, facing it — to `object_pose`; zone missions pass through), and `TimedStub` (placeholder pick/place until the SO-101 arm is actuated).
 - `trees/` — `common.py` (shared `WaitForTask` + the `task` blackboard key), `fetch.py` (wait → acquire object → drive to object → pick stub → drive to drop → place stub; blackboard keys `task`/`object_pose`/`object_label`/`drop_pose` are the seam between the command grammar and perception), and `goto.py` (wait → drive to the zone's pose; success == Nav2 success).
 - `test/` — mock-`navigate_to_pose` tree ticks (`test_fetch_tree.py`, `test_fetch_object.py` against a mock detector, `test_goto_tree.py`) plus pure parser/loader tests (`test_parse_command.py`, `test_goto_command.py`, `test_zones.py` — which covers zone footprints and `containing`), no Gazebo/Nav2 needed, run by `pixi run test`.

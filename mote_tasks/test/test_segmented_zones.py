@@ -101,15 +101,18 @@ def test_running_it_twice_adds_nothing(tmp_path, rooms):
     assert {name: (path / name).read_text() for name in documents} == before
 
 
-def test_a_proposed_room_declares_itself_a_room(tmp_path, rooms):
-    """The one piece of vocabulary segmentation can honestly fill in.
+def test_a_proposed_room_says_nothing_it_cannot_know(tmp_path, rooms):
+    """Geometry only.
 
-    What it carves out of free space *are* rooms, so `kind: room` is known
-    rather than guessed — and it is what the fleet serves to a dispatcher. The
-    name it invents is a placeholder; the kind is not.
+    What segmentation carves out of free space is an enclosure with walls round
+    it. What the place is *called*, and what a name cannot say about it, are the
+    two things it has no way to know — and the name it mints is a placeholder
+    for the operator to replace. Writing a guess into either would put a fact
+    into the vocabulary that nothing measured.
     """
     path = tmp_path
     merge_into_zones(path, rooms)
     loaded = zones_lib.load_zones(path)
-    assert {zone.kind for zone in loaded.values()} == {"room"}
+    assert {zone.note for zone in loaded.values()} == {""}
     assert all(zone.navigable for zone in loaded.values())
+    assert all(zone.footprint is not None for zone in loaded.values())

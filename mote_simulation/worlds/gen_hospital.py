@@ -66,7 +66,7 @@ ZONE_CLEAR = 0.4  # minimum distance (m) from a zone to any wall/furniture box
 
 _walls = []  # list of (cx, cy, sx, sy)
 _furniture = []  # list of (cx, cy, sx, sy)
-_zones = {}  # name -> (x, y, yaw, polygon|None, kind)
+_zones = {}  # name -> (x, y, yaw, polygon|None)
 _rooms = []  # walkable rectangles (x0, y0, x1, y1) -- room-segmentation truth
 
 
@@ -92,24 +92,19 @@ def _room_rect(x0, x1, y0, y1):
     _rooms.append((xa + inset, ya + inset, xb - inset, yb - inset))
 
 
-def zone(name, x, y, yaw=0.0, polygon=None, kind=None):
+def zone(name, x, y, yaw=0.0, polygon=None):
     """A named place for the task layer (mote_tasks): a pose to navigate to
     (fetch waypoint or ``goto <name>``), plus an optional ``polygon`` giving it
     an area footprint (rooms carry one; bare waypoints don't).
-
-    ``kind`` is the zone/v0 semantic role, and defaults to what the footprint
-    already says: a zone outlined by walls is a ``room``, one without is an
-    unopinionated ``area``. Worth emitting because the fleet serves kinds to a
-    dispatcher (``/v1/zones``), and this ladder is where that gets exercised.
     """
-    _zones[name] = (x, y, yaw, polygon, kind or ("room" if polygon else "area"))
+    _zones[name] = (x, y, yaw, polygon)
 
 
 def _check_zone_clearance():
     """Every zone pose must clear every box and lie inside its own footprint,
     so a layout edit cannot silently strand a zone inside geometry or outside
     the room it names."""
-    for name, (zx, zy, _yaw, polygon, _kind) in _zones.items():
+    for name, (zx, zy, _yaw, polygon) in _zones.items():
         for cx, cy, sx, sy in _walls + _furniture:
             dx = max(abs(zx - cx) - sx / 2, 0.0)
             dy = max(abs(zy - cy) - sy / 2, 0.0)
@@ -283,12 +278,9 @@ def build_world():
         (b0 + b1) / 2,
         (spine_n + acc_n_in) / 2 - 1.5,
         math.pi / 2,
-        kind="pickup",
     )
-    zone(
-        "dropoff", c0 + (c1 - c0) * 7 / 8, acc_n_out + 1.55, math.pi / 2, kind="dropoff"
-    )
-    zone("home", 0.0, 0.0, kind="home")
+    zone("dropoff", c0 + (c1 - c0) * 7 / 8, acc_n_out + 1.55, math.pi / 2)
+    zone("home", 0.0, 0.0)
 
     # --- Room zones (goto <name>; see mote_tasks.zones) ----------------------
     # Named rooms in the deep shallow-ward rows (5.75 m deep, so plenty of
@@ -445,14 +437,12 @@ def render_zones():
         "# the layout changes. Zones with a polygon are room footprints (goto\n"
         "# targets, outlined by the room walls); the rest are bare fetch\n"
         "# waypoints. The pose is the doorway approach, not the room centre --\n"
-        "# a bed sits in the middle of each ward. `kind` is the zone/v0\n"
-        "# semantic role the fleet serves to a dispatcher at /v1/zones.\n"
+        "# a bed sits in the middle of each ward.\n"
         "frame_id: map\n"
         "zones:\n"
     ]
-    for name, (x, y, yaw, polygon, kind) in _zones.items():
+    for name, (x, y, yaw, polygon) in _zones.items():
         pose = f"x: {round(x, 3):g}, y: {round(y, 3):g}, yaw: {round(yaw, 3):g}"
-        pose += f", kind: {kind}"
         if polygon is None:
             lines.append(f"  {name}: {{{pose}}}\n")
             continue

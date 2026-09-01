@@ -397,8 +397,8 @@ try {
       const shown = (id) => !document.getElementById(id).hidden;
       return {
         rows: document.querySelectorAll('#zone-rows .zone-row').length,
-        // One list in both modes: the rows that were text now hold controls.
-        controls: document.querySelectorAll('#zone-rows select').length,
+        // One list in both modes: the cells that were empty now hold controls.
+        controls: document.querySelectorAll('#zone-rows button.zone-del').length,
         listLocked: [...document.querySelectorAll('#review-revisions button')]
           .every(button => button.disabled),
         promoteLocked: document.getElementById('review-promote').disabled,
@@ -465,34 +465,33 @@ try {
       };
     })()`);
     check(
-      'picking a zone by name marks the row and opens its fields',
-      selected.cells === 5 &&
+      'picking a zone by name marks the row and opens its record',
+      selected.cells === 4 &&
         selected.marked &&
         selected.inputsInRow === 0 &&
-        selected.fields.startsWith('name,'),
+        selected.fields === 'name,note,pose',
       JSON.stringify(selected),
     );
 
     // A vocabulary the robot's loader would *refuse* — two zones answering one
     // query — must not leave the browser: it would be stored as a candidate
-    // that looks fine and cannot be loaded. The alias is set through the panel
-    // the row selects, which is where every field but identity and shape lives.
+    // that looks fine and cannot be loaded. With one name per zone the only
+    // way to make one is to call two places the same thing, and the name is
+    // set through the panel the row selects.
     const refused = await session.evaluate(`(() => {
       const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
       const first = rows[0].querySelector('.zone-name').textContent;
       rows[1].querySelector('.zone-name').click();
-      const field = [...document.querySelectorAll('#zone-detail .zone-field')]
-        .find(row => row.textContent.startsWith('also called'));
-      const aliases = field.querySelector('input');
-      aliases.value = first.toUpperCase();
-      aliases.dispatchEvent(new Event('change'));
+      const name = document.querySelector('.zone-rename');
+      name.value = first.toUpperCase();
+      name.dispatchEvent(new Event('change'));
       const note = document.getElementById('zone-note');
       const top = () => Math.round(document.querySelector('#zone-rows .zone-row').getBoundingClientRect().top);
       const before = { top: top(), note: Math.round(note.getBoundingClientRect().height) };
       document.getElementById('zone-save').click();
       return {
         note: note.textContent,
-        field: !!field,
+        clashed: first,
         before,
         // The message takes its room from the list, which is the one thing in
         // the box that scrolls — so nothing above it moves, and an empty one
@@ -515,29 +514,31 @@ try {
       JSON.stringify({ ...refused.before, ...refused.after, whole: refused.whole }),
     );
 
+    // Then the edit that is meant to land: a place-name with a space in it —
+    // which is what a room is called — a note saying what the name cannot, and
+    // a new zone, whose outline the next check follows all the way to the map's
+    // pixel grid on the server.
+    const PLACE = 'the store room';
+    const NOTE = 'stationery lives here, not in the office';
     await session.evaluate(`(() => {
-      const detailField = (label) =>
+      const field = (label) =>
         [...document.querySelectorAll('#zone-detail .zone-field')]
           .find(row => row.textContent.startsWith(label))
-          .querySelector('input, select');
-      const set = (label, value) => {
-        const control = detailField(label);
+          .querySelector('input, textarea');
+      const rename = (value) => {
+        const control = document.querySelector('.zone-rename');
         control.value = value;
         control.dispatchEvent(new Event('change'));
       };
-      set('also called', '');                       // undo the clash above
-      const rows = [...document.querySelectorAll('#zone-rows .zone-row')];
-      rows[0].querySelector('.zone-name').click();  // the row is a list, so pick
-      const name = document.querySelector('.zone-rename');
-      const renamed = name.value + '_named';
-      name.value = renamed;                         // and rename in the panel
-      name.dispatchEvent(new Event('change'));
-      const fresh = [...document.querySelectorAll('#zone-rows .zone-row')][0];
-      fresh.querySelector('select').value = 'room';
-      fresh.querySelector('select').dispatchEvent(new Event('change'));
-      set('display name', 'A Named Room');
+      const rows = () => [...document.querySelectorAll('#zone-rows .zone-row')];
+      rename(rows()[1].querySelector('.zone-name').textContent + ' 2'); // undo the clash
+      rows()[0].querySelector('.zone-name').click();  // the row is a list, so pick
+      rename(${JSON.stringify(PLACE)});               // and rename in the panel
+      const note = field('note');
+      note.value = ${JSON.stringify(NOTE)};
+      note.dispatchEvent(new Event('change'));
+      document.querySelector('#zone-rows .zone-add').click();
       document.getElementById('zone-save').click();
-      return renamed;
     })()`);
     const derived = await settle(
       session,
@@ -552,7 +553,11 @@ try {
         inherited: !document.getElementById('review-zone-source').hidden,
         zones: [...document.querySelectorAll('#zone-rows .zone-row')]
           .map(row => row.textContent).join(' '),
-        editorHidden: document.getElementById('zone-editor').hidden,
+        // The record beside the list is a zone's whether or not it is being
+        // edited: the note is the field an operator reads before deciding
+        // whether to edit anything at all.
+        record: [...document.querySelectorAll('#zone-detail .zone-field')]
+          .map(row => row.textContent).join(' | '),
         // And the head is back to the one control that starts an edit.
         editVisible: !document.getElementById('zones-edit').hidden,
       }))()`,
@@ -564,22 +569,19 @@ try {
       derived.note,
     );
     // The edited set is on screen afterwards because it was *read back* from the
-    // new candidate — not held over as an overlay of what was typed. And the
-    // zone renamed above went in as a bare waypoint and comes back as a
-    // polygon, because calling it a `room` is what gave it an outline: the kind
-    // and the geometry are one decision, made once.
+    // new candidate — not held over as an overlay of what was typed.
     check(
       'the pane then shows the saved candidate’s own zones',
-      derived.editorHidden &&
-        derived.editVisible &&
-        derived.zones.includes('A Named Room') &&
-        !derived.inherited,
+      derived.editVisible && derived.zones.includes(PLACE) && !derived.inherited,
       JSON.stringify(derived),
     );
+    // A place-name with a space in it survived the round trip, and so did the
+    // note — which is the whole of what the record carries beyond the name and
+    // the geometry, and the one field a prior could never supply.
     check(
-      'calling a bare pose a room gave it an outline, all the way to the server',
-      /A Named Roomroom\s*polygon/.test(derived.zones),
-      derived.zones,
+      'the name and the note came back from the server, in the read-only record',
+      derived.record.includes(PLACE) && derived.record.includes(NOTE),
+      derived.record,
     );
 
     // And that outline is on the map's own pixel grid. A vertex anywhere inside

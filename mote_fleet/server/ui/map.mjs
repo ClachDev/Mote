@@ -16,13 +16,13 @@
 
 import { onThemeChange, stateColour, theme } from './theme.mjs';
 
-// What to call a zone on a map. `display_name` is the half meant for reading —
-// "The Kitchen" — and the machine name is the half meant for typing, so a zone
-// that has been given one is drawn with it. The editor draws its own overlay
-// and reads this too: a zone should not answer to one name in the list and
-// another the moment it is being edited.
+// What to call a zone on a map, which is its name: a zone is a place-name and
+// has exactly one. Kept as a function because the editor draws its own overlay
+// and reads this too — a zone must not answer to one name in the list and
+// another the moment it is being edited — and because a display name beside a
+// machine name is the split this replaced.
 export function zoneLabel(zone) {
-  return (zone && (zone.display_name || zone.name)) || '';
+  return (zone && zone.name) || '';
 }
 
 // A zone as pixels on the basemap: a polygon's vertices, or a circle. Pure, so
@@ -443,9 +443,6 @@ export class MapView {
     ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = palette.zoneStroke;
-    // display_name is what an operator calls the place; the machine name is
-    // what they would type. Prefer the former on the map, where this is a
-    // label rather than a thing to copy.
     ctx.fillText(zoneLabel(zone), point.x, point.y + 14);
   }
 

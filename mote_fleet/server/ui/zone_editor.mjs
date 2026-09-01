@@ -1,6 +1,13 @@
 // Zone editing on a map revision: drag a vertex, drag a zone, place a pose,
-// rename, name the kind, add aliases, add, delete — then save the lot as a
-// *candidate* revision.
+// rename, write a note, add, delete — then save the lot as a *candidate*
+// revision.
+//
+// **A zone is a place-name**: a human name bound to geometry. The record is the
+// name, a free-text note for what the name cannot say, and where it is — so
+// that is what the list and the details column carry, and there is nothing else
+// to fill in. The semantics come from the mission layer's resolver, which
+// already knows what a store room is; what it cannot know is that this
+// building's store room is where the stationery lives.
 //
 // The editor never writes to the revision it is looking at. Saving POSTs the
 // edited set to the server, which derives a new candidate from that revision
@@ -148,7 +155,6 @@ export function freshZone(existing, cx, cy, half = 1.0) {
   while (names.has(`zone_${String(n).padStart(2, '0')}`)) n += 1;
   return {
     name: `zone_${String(n).padStart(2, '0')}`,
-    kind: 'room',
     x: round(cx),
     y: round(cy),
     yaw: 0.0,
@@ -159,68 +165,6 @@ export function freshZone(existing, cx, cy, half = 1.0) {
       [round(cx - half), round(cy + half)],
     ],
   };
-}
-
-// A default outline, one metre either side of the pose, for a zone that has
-// just been called a room and has no extent yet. It is a starting shape to drag
-// onto the walls, not a guess at the room.
-function squareAround(zone, map, half = 1.0) {
-  // On the grid, like every other coordinate this editor writes. The *pose* is
-  // left where it is — it was measured by driving a robot there, and moving it
-  // two centimetres to tidy a number would be inventing data — but the outline
-  // is this editor's own, so it starts where the next drag would put it.
-  const corner = (x, y) => {
-    const point = snapToPixel(map, x, y);
-    return [point.x, point.y];
-  };
-  return [
-    corner(zone.x - half, zone.y - half),
-    corner(zone.x + half, zone.y - half),
-    corner(zone.x + half, zone.y + half),
-    corner(zone.x - half, zone.y + half),
-  ];
-}
-
-// A pose for a zone that has only an outline. The robot's loader derives one
-// the same way when it loads a polygon-only zone; here it is needed when an
-// outline is about to be dropped, so that the zone is left with a position at
-// all. Concave outlines whose centroid falls outside them get `null`, and the
-// caller refuses the change rather than inventing a pose in a wall.
-export function poseFor(zone) {
-  if (typeof zone.x === 'number' && typeof zone.y === 'number') {
-    return { x: zone.x, y: zone.y };
-  }
-  if (!zone.polygon || !zone.polygon.length) return null;
-  const sum = zone.polygon.reduce((acc, [x, y]) => [acc[0] + x, acc[1] + y], [0, 0]);
-  const centre = { x: round(sum[0] / zone.polygon.length), y: round(sum[1] / zone.polygon.length) };
-  return pointInPolygon(zone.polygon, centre.x, centre.y) ? centre : null;
-}
-
-// **The kind decides whether a zone is a point or an area, and the geometry
-// follows it.** A `charger` is a pose to dock at; a `room` is a place with
-// walls, and "am I in it" is the question it exists to answer. Editing them as
-// two independent things — a kind here, an outline toggled over there — is what
-// leaves a `dropoff` carrying a seven-vertex outline nothing reads, and a room
-// with no extent that `zones.containing` can never match.
-//
-// So: naming a bare pose an area gives it a starting outline to drag onto the
-// walls, and naming an outlined zone a point drops the outline and keeps the
-// pose. Returns `null` if that second move would leave the zone with no
-// position at all, which is a zone the robot's loader refuses.
-export function withKind(zone, kind, map = null) {
-  const next = { ...zone, kind };
-  if (isAreaKind(kind)) {
-    if (!next.polygon && typeof next.radius !== 'number' && typeof next.x === 'number') {
-      next.polygon = squareAround(next, map);
-    }
-    return next;
-  }
-  if (!next.polygon && typeof next.radius !== 'number') return next;
-  const pose = poseFor(next);
-  if (!pose) return null;
-  delete next.polygon;
-  delete next.radius;
-  return { ...next, x: pose.x, y: pose.y };
 }
 
 // The map's own pixel grid, in world metres. A vertex dropped anywhere inside a
@@ -247,129 +191,51 @@ export function snapDelta(map, delta) {
 // One zone's geometry in a phrase: the binding half, which is the half that is
 // only true against the map beside it. Shown in the list whether or not the
 // list is being edited — the shape is a fact about the zone, not a control.
+//
+// A zone is a *point* or an *area*, and that is geometry rather than a type it
+// was declared to be: a zone has a pose, and it may also have an extent. The
+// two words are the operator's, not the file format's — `polygon` and
+// `waypoint` named the representation, which is the one thing about a place
+// nobody standing in it needs to know.
 export function zoneSummary(zone) {
   if (zone.polygon && zone.polygon.length >= 3) {
-    return `polygon, ${zone.polygon.length} vertices`;
+    return `area · ${zone.polygon.length} corners`;
   }
-  if (typeof zone.radius === 'number') return `circle, r ${zone.radius} m`;
-  if (zone.x !== undefined && zone.y !== undefined) {
-    return `waypoint ${zone.x.toFixed(2)}, ${zone.y.toFixed(2)}`;
+  if (typeof zone.radius === 'number') return `area · r ${zone.radius.toFixed(2)} m`;
+  if (typeof zone.x === 'number' && typeof zone.y === 'number') {
+    return `point ${zone.x.toFixed(2)}, ${zone.y.toFixed(2)}`;
   }
-  return 'no footprint';
+  return 'no position';
 }
 
-// A machine name a dispatcher can type — the same rule the robot's loader and
-// the bundle validator enforce, applied here so a bad rename fails in the
-// input rather than at save.
-export const NAME_RE = /^[a-z][a-z0-9_]*$/;
-
-// The machine name a display name implies: "The Kitchen" -> `the_kitchen`,
-// "Café" -> `cafe`. Two fields for one place is a chore, and the operator is
-// naming a room, not authoring an identifier — so the identifier follows.
-//
-// It is a *proposal*, not a rule: the result is put in the name field where it
-// can be seen and changed, and it is only ever offered while the name is still
-// one nobody chose (see `isGeneratedName`). Renaming a zone an operator has
-// already named would break the `goto` that names it, which is the opposite of
-// a convenience. A spelling that cannot become a name at all (`3rd floor`)
-// yields '' and nothing is proposed.
-export function slugify(text) {
-  const slug = String(text || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // é -> e, rather than dropping the letter
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return NAME_RE.test(slug) ? slug : '';
-}
-
-// A name nobody has chosen: what `segment-map` mints for a room it found and
-// what `add zone` mints for a new one. These are the names the editor exists to
-// replace, so they are the ones it may replace on its own.
-export function isGeneratedName(name) {
-  return /^zone_\d+$/.test(String(name || ''));
-}
-
-// zone/v0's kinds, in the spec's order. Mirrored from `bundle.ZONE_KINDS`
-// rather than fetched, because this is a `<select>`'s options and a dropdown
-// that cannot be drawn until a request comes back is a worse thing than a list
-// held in step by a test (`ui_test.mjs` reads bundle.py and compares).
-export const ZONE_KINDS = [
-  'area',
-  'room',
-  'corridor',
-  'doorway',
-  'threshold',
-  'elevator',
-  'stair',
-  'dock',
-  'charger',
-  'pickup',
-  'dropoff',
-  'staging',
-  'home',
-  'keepout',
-  'slow',
-];
-
-// Kinds that say where a robot may not go, and so are not destinations.
-export const CONSTRAINT_KINDS = new Set(['keepout', 'slow']);
-
-// Kinds that name a *pose* rather than a region — a charger is where the robot
-// docks, not somewhere it may be anywhere inside of. Mirrors
-// `bundle.POINT_KINDS`, which carries the reasoning.
-export const POINT_KINDS = new Set(['dock', 'charger', 'pickup', 'dropoff', 'home']);
-
-export const isAreaKind = (kind) => !POINT_KINDS.has(kind || 'area');
-
-// Whether a zone of this kind may be dispatched to, absent an explicit say-so.
-export const navigableByDefault = (kind) => !CONSTRAINT_KINDS.has(kind || 'area');
-
-// A comma-separated field, which is how an operator writes a short list
-// without a list widget — aliases and tags are both this. Blank entries are
-// dropped and a spelling repeated in one field is kept once: a duplicate inside
-// a single zone is a typo, not the collision `ambiguities` is about.
-export function parseList(text) {
-  const seen = new Set();
-  const aliases = [];
-  for (const raw of String(text || '').split(',')) {
-    const alias = raw.trim();
-    if (!alias) continue;
-    const key = normaliseAlias(alias);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    aliases.push(alias);
-  }
-  return aliases;
-}
-
-export function formatList(items) {
-  return (items || []).join(', ');
-}
+// A name anyone can type, which is the only rule a place-name has: printable
+// text, and no leading or trailing space to make two names look identical and
+// resolve differently. It mirrors `zone.ZONE_NAME_RE`, so a bad rename fails in
+// the input rather than at save.
+export const NAME_RE = /^(?!\s)[^\x00-\x1f\x7f]+(?<!\s)$/;
 
 // The comparison zone/v0's resolver uses, and therefore the only one collision
 // detection may use: case-insensitive and whitespace-normalised, matching
-// `bundle.normalise_alias`.
-export function normaliseAlias(text) {
+// `bundle.normalise_name`.
+export function normaliseName(text) {
   return String(text).split(/\s+/).filter(Boolean).join(' ').toLowerCase();
 }
 
 // Two zones answering one query, which the robot's loader *refuses* to load —
 // so an editor that can produce one produces a map no robot will take. Mirrors
-// `bundle.ambiguities`: names and aliases, never display names.
+// `bundle.ambiguities`. With one name per zone and no aliases, the only way to
+// make one is to call two places the same thing.
 export function ambiguities(zones) {
   const claimed = new Map();
   const problems = [];
   for (const zone of zones) {
-    for (const spelling of [zone.name, ...(zone.aliases || [])]) {
-      const key = normaliseAlias(spelling);
-      if (!key) continue;
-      const owner = claimed.get(key);
-      if (owner !== undefined && owner !== zone.name) {
-        problems.push(`"${owner}" and "${zone.name}" both answer to "${key}"`);
-      } else {
-        claimed.set(key, zone.name);
-      }
+    const key = normaliseName(zone.name);
+    if (!key) continue;
+    const owner = claimed.get(key);
+    if (owner !== undefined && owner !== zone.name) {
+      problems.push(`"${owner}" and "${zone.name}" both answer to "${key}"`);
+    } else {
+      claimed.set(key, zone.name);
     }
   }
   return problems;
@@ -377,13 +243,11 @@ export function ambiguities(zones) {
 
 // The wire shape: keyed by name, no echoed `name` field, no empty extras.
 //
-// `navigable` is dropped when it is what the kind already implies, which is
-// what makes the kind editable at all: every zone arrives from the server with
-// the field filled in (`bundle.zone_term` defaults it), so writing it back
-// verbatim would carry a `keepout`'s `navigable: false` onto a zone just
-// changed to `room` and quietly leave a room nothing can be dispatched to. A
-// value that genuinely deviates from its kind is kept, because that one was
-// meant.
+// `navigable` now travels verbatim. It used to be dropped when it agreed with
+// the zone's kind, because a kind the operator had just changed would otherwise
+// have carried the old kind's default with it; with no kind there is nothing
+// for it to disagree with, and a flag that says a robot must not be sent here
+// is not one to infer.
 export function zonesPayload(zones) {
   const payload = {};
   for (const zone of zones) {
@@ -391,7 +255,6 @@ export function zonesPayload(zones) {
     for (const [key, value] of Object.entries(zone)) {
       if (key === 'name' || value === null || value === undefined || value === '') continue;
       if (Array.isArray(value) && value.length === 0) continue;
-      if (key === 'navigable' && value === navigableByDefault(zone.kind)) continue;
       entry[key] = value;
     }
     payload[zone.name] = entry;
@@ -421,10 +284,27 @@ function field(name, control) {
   return row;
 }
 
+// The same row with nothing to click into: a `<div>`, because a `<label>` with
+// no control in it is a label for whatever the browser finds next.
+function value(name, shown) {
+  return el('div', { class: 'zone-field' }, [
+    el('span', { class: 'zone-field-name', text: name }),
+    shown,
+  ]);
+}
+
+// Where the zone is, for reading. An area drawn by `segment-map` has no pose of
+// its own until somebody places one, and saying so beats printing a coordinate
+// derived from the outline as though a robot had been driven there.
+export function poseText(zone) {
+  if (typeof zone.x !== 'number' || typeof zone.y !== 'number') return 'not placed';
+  return `${zone.x.toFixed(2)}, ${zone.y.toFixed(2)} m`;
+}
+
 export class ZoneEditor {
   constructor(mapView, dom, { onSave, onExit } = {}) {
     this.mapView = mapView;
-    this.dom = dom; // { panel, rows, detail, note }
+    this.dom = dom; // { rows, detail, note }
     this.onSave = onSave || (() => {});
     this.onExit = onExit || (() => {});
     this.active = false;
@@ -441,10 +321,15 @@ export class ZoneEditor {
   // its controls are. One renderer, because two of them are two layouts that
   // drift apart — and because the difference between looking and editing should
   // be the controls, not the page.
+  //
+  // A zone is selected here too, and its record shows beside the list. A place
+  // has a note as well as a name, and a details column that appeared only once
+  // an edit had begun would have hidden the one field an operator reads before
+  // deciding whether to edit at all.
   show(zones) {
     if (this.active) return;
     this.zones = zones || [];
-    this.selected = null;
+    this.selected = this.zones.length ? this.zones[0].name : null;
     this._render();
   }
 
@@ -458,7 +343,6 @@ export class ZoneEditor {
     this._drag = null;
     this._placing = null;
     this._hover = null;
-    this.dom.panel.hidden = false;
     this.dom.note.textContent = '';
     this.mapView.overlay = (ctx) => this._draw(ctx);
     this._render();
@@ -470,9 +354,7 @@ export class ZoneEditor {
     this._drag = null;
     this._placing = null;
     this._hover = null;
-    this.selected = null;
     this._cursor('');
-    this.dom.panel.hidden = true;
     this.mapView.overlay = null;
     this._render();
     this.mapView.draw();
@@ -711,7 +593,7 @@ export class ZoneEditor {
   problems() {
     const seen = new Set();
     for (const zone of this.zones) {
-      if (!NAME_RE.test(zone.name)) return `"${zone.name}" is not a machine name (lowercase, a-z0-9_)`;
+      if (!NAME_RE.test(zone.name)) return `"${zone.name}" is not a name anyone can type`;
       if (seen.has(zone.name)) return `two zones named "${zone.name}"`;
       seen.add(zone.name);
     }
@@ -726,114 +608,46 @@ export class ZoneEditor {
     this._renderDetail();
   }
 
+  // One renderer, one row shape, edited or not: the place-name and what shape
+  // it is, and — while editing — the two controls that act on that one zone.
+  // The cells do not move when the controls arrive in them.
+  //
+  // The row carries only what is compared *across* zones. The note is a
+  // sentence and belongs to one zone at a time, so it edits in the details
+  // column beside the list rather than as a column nobody could read.
   _renderRows() {
     const rows = this.dom.rows;
     rows.replaceChildren();
     rows.classList.toggle('editing', this.active);
-    if (!this.active) {
-      for (const zone of this.zones) {
-        rows.append(
-          el('div', { class: 'zone-row' }, [
-            el('span', { class: 'zone-name-text', text: zoneLabel(zone) }),
-            el('span', { class: 'zone-kind', text: zone.kind || 'area' }),
-            el('span', { class: 'dim zone-shape', text: zoneSummary(zone) }),
-            el('span', { class: 'place' }),
-            el('span', { class: 'zone-del' }),
-          ]),
-        );
-      }
-      return;
-    }
     for (const zone of this.zones) {
       const row = document.createElement('div');
       const chosen = zone.name === this.selected;
       row.className = 'zone-row' + (chosen ? ' selected' : '');
       // The name is what you *pick* the zone by, so it is a button and looks
-      // like one being pressed. It was a text input, which put a caret where a
-      // click was meant to select — the row is a list, and renaming is a
-      // deliberate act that belongs with the zone's other fields.
+      // like one being pressed — in both states, because in both states the
+      // details column is showing one zone's record and this is how you say
+      // which.
       const name = document.createElement('button');
       name.type = 'button';
       name.className = 'zone-name';
       name.textContent = zone.name;
       name.setAttribute('aria-pressed', String(chosen));
       name.title = `select ${zone.name}`;
-      // The row carries what you scan *across* zones — which place, what sort of
-      // place, what shape — and nothing else. Every other field belongs to one
-      // zone at a time and edits in the panel below, which is what lets zone/v0
-      // grow a field without costing every row a column (and the operator a
-      // text box they will not fill).
-      const kind = document.createElement('select');
-      for (const option of ZONE_KINDS) {
-        const node = document.createElement('option');
-        node.value = option;
-        node.textContent = option;
-        kind.append(node);
-      }
-      kind.value = zone.kind || 'area';
-      kind.title = 'zone/v0 kind: a point (charger, dock, pickup, dropoff, home) or an area';
-      kind.addEventListener('change', () => {
-        const reshaped = withKind(zone, kind.value, this.mapView.map);
-        if (!reshaped) {
-          kind.value = zone.kind || 'area';
-          this.note(`${zone.name} has no pose inside its outline; place one with ⌖`, true);
-          return;
-        }
-        const lost = Boolean((zone.polygon || zone.radius) && !reshaped.polygon && !reshaped.radius);
-        this._update(zone.name, () => reshaped);
-        this.selected = zone.name;
-        this.note(lost ? `${zone.name} is a ${kind.value}: outline dropped` : '');
-        this._render();
-        this.mapView.draw();
-      });
-      const placed = typeof zone.x === 'number';
-      // Only for a zone with no pose to drag. Everything else on the map is
-      // moved by dragging it, and a button that duplicates a drag is a second
-      // way to do one thing; this is the case dragging cannot reach, because
-      // a `segment-map` room is an outline with no `x`/`y` and so draws no
-      // cross to take hold of. Once placed, the cross is the control.
-      const pose = document.createElement(placed ? 'span' : 'button');
-      pose.className = 'place';
-      if (!placed) {
-        pose.type = 'button';
-        pose.textContent = '⌖';
-        if (this._placing === zone.name) pose.classList.add('armed');
-        pose.title = 'no pose: click here, then click the map';
-        pose.addEventListener('click', (event) => {
-          event.stopPropagation();
-          this.placePose(zone.name);
-        });
-      }
       const shape = el('span', { class: 'dim zone-shape', text: zoneSummary(zone) });
-      const del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'zone-del';
-      del.textContent = '×';
-      del.title = 'delete zone';
-      del.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const index = this.zones.findIndex((z) => z.name === zone.name);
-        this.zones = this.zones.filter((z) => z.name !== zone.name);
-        if (this.selected === zone.name) {
-          // The neighbour, so the panel stays occupied and the operator stays
-          // where they were in the list.
-          const next = this.zones[Math.min(index, this.zones.length - 1)];
-          this.selected = next ? next.name : null;
-        }
-        if (this._placing === zone.name) this._placing = null;
-        this._render();
-        this.mapView.draw();
-      });
-      row.addEventListener('click', () => {
-        if (this.selected !== zone.name) {
-          this.selected = zone.name;
-          this._render();
-          this.mapView.draw();
-        }
-      });
-      row.append(name, kind, shape, pose, del);
+      row.addEventListener('click', () => this.select(zone.name));
+      // The two control cells are rendered empty while looking rather than
+      // left out, so the row is literally the same row: `edit zones` puts
+      // controls into cells that were already there, and nothing to the left
+      // of them moves.
+      row.append(
+        name,
+        shape,
+        this.active ? this._placeCell(zone) : el('span', { class: 'place' }),
+        this.active ? this._deleteCell(zone) : el('span', { class: 'zone-del' }),
+      );
       rows.append(row);
     }
+    if (!this.active) return;
     // Adding a zone acts on the list, so it is the end of the list — not a
     // third button beside the two that begin and end the whole edit, which is
     // where it sat and read as one of them. Inside the scroll box, so a floor
@@ -841,19 +655,69 @@ export class ZoneEditor {
     const add = document.createElement('button');
     add.type = 'button';
     add.className = 'zone-add';
-    add.textContent = '+ add zone';
+    add.textContent = 'add zone';
     add.title = 'add a zone at the middle of the view';
     add.addEventListener('click', () => this.addZone());
     rows.append(add);
   }
 
+  select(name) {
+    if (this.selected === name) return;
+    this.selected = name;
+    this._render();
+    this.mapView.draw();
+  }
+
+  // Only for a zone with no pose to drag. Everything else on the map is moved
+  // by dragging it, and a button that duplicates a drag is a second way to do
+  // one thing; this is the case dragging cannot reach, because a `segment-map`
+  // room is an outline with no `x`/`y` and so draws no cross to take hold of.
+  // Once placed, the cross is the control. The cell is held even when empty, or
+  // the delete buttons would step in and out down the list.
+  _placeCell(zone) {
+    if (typeof zone.x === 'number') return el('span', { class: 'place' });
+    const pose = document.createElement('button');
+    pose.type = 'button';
+    pose.className = 'place';
+    pose.textContent = '⌖';
+    if (this._placing === zone.name) pose.classList.add('armed');
+    pose.title = 'no pose: click here, then click the map';
+    pose.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.placePose(zone.name);
+    });
+    return pose;
+  }
+
+  _deleteCell(zone) {
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'zone-del';
+    del.textContent = '×';
+    del.title = 'delete zone';
+    del.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const index = this.zones.findIndex((z) => z.name === zone.name);
+      this.zones = this.zones.filter((z) => z.name !== zone.name);
+      if (this.selected === zone.name) {
+        // The neighbour, so the panel stays occupied and the operator stays
+        // where they were in the list.
+        const next = this.zones[Math.min(index, this.zones.length - 1)];
+        this.selected = next ? next.name : null;
+      }
+      if (this._placing === zone.name) this._placing = null;
+      this._render();
+      this.mapView.draw();
+    });
+    return del;
+  }
+
   // -- the selected zone --------------------------------------------------
 
-  // Everything a zone carries that is not its identity or its shape: one zone
-  // at a time, as a form. zone/v0 already has seven vocabulary fields and will
-  // have more; a column each would make the list unreadable long before the
-  // spec ran out, and would put a paragraph-wide text box on every row for a
-  // field most zones leave empty.
+  // The selected zone's whole record: its name, the note, and where it is.
+  // Three fields, because a place-name is three facts — what it is called, what
+  // the name cannot say, and where. Text when looking, inputs when editing, in
+  // the same rows either way, so entering the mode does not relay the column.
   _renderDetail() {
     const panel = this.dom.detail;
     if (!panel) return;
@@ -863,14 +727,26 @@ export class ZoneEditor {
       panel.append(el('p', { class: 'dim', text: 'no zones on this revision yet' }));
       return;
     }
-    // Renaming is here rather than in the row for the same reason the row
-    // stopped being a form: in the list, the name is what you select by. A
-    // rename is a deliberate act on the zone you have selected, and this is
-    // where that zone's fields are.
+    if (!this.active) {
+      panel.append(
+        value('name', el('span', { class: 'zone-name-value', text: zone.name })),
+        value('note', el('span', { text: zone.note || '—' })),
+        value('pose', el('span', { text: poseText(zone) })),
+      );
+      return;
+    }
+    panel.append(
+      field('name', this._nameInput(zone)),
+      field('note', this._noteInput(zone)),
+      field('pose', this._poseInput(zone)),
+    );
+  }
+
+  _nameInput(zone) {
     const rename = document.createElement('input');
     rename.className = 'zone-rename';
     rename.value = zone.name;
-    rename.title = 'what goto takes: lowercase letters, digits and _';
+    rename.title = 'what an operator calls this place, and what goto takes';
     // Said while it is being typed, not at save. The rule is real — the robot's
     // loader refuses a name it cannot be told to drive to — but a field that
     // looks like free text until a save fails is a field that does not look
@@ -880,101 +756,70 @@ export class ZoneEditor {
     });
     rename.addEventListener('change', () => {
       const renamed = rename.value.trim();
+      if (!renamed || renamed === zone.name) return;
       this._update(zone.name, (z) => ({ ...z, name: renamed }));
       this.selected = renamed;
       this._render();
       this.mapView.draw();
     });
+    return rename;
+  }
 
-    const text = (key, placeholder, title) => {
+  // A paragraph, not a line: the note is where an operator writes what the name
+  // cannot say, and a single-line box says "a word or two" to everyone who
+  // sees it.
+  _noteInput(zone) {
+    const note = document.createElement('textarea');
+    note.className = 'zone-note';
+    note.rows = 3;
+    note.value = zone.note || '';
+    note.title = 'what the name cannot say: where the stationery really lives';
+    note.addEventListener('change', () => {
+      this._update(zone.name, (z) => ({ ...z, note: note.value.trim() }));
+    });
+    return note;
+  }
+
+  // The numeric way to the same coordinate the cross on the map drags. Typed
+  // values are **not** snapped to the pixel grid, where a drag is: a drag lands
+  // wherever the pointer happened to be and the grid is what makes "the same
+  // place" the same number, while a number somebody typed is already the number
+  // they meant.
+  _poseInput(zone) {
+    const box = el('div', { class: 'zone-pose' });
+    const axis = (key) => {
       const input = document.createElement('input');
-      input.value = zone[key] || '';
-      input.placeholder = placeholder;
-      input.title = title;
+      input.className = 'zone-coord';
+      input.inputMode = 'decimal';
+      input.value = typeof zone[key] === 'number' ? zone[key].toFixed(2) : '';
+      input.setAttribute('aria-label', key);
       input.addEventListener('change', () => {
-        const value = input.value.trim();
-        this._update(zone.name, (z) => ({ ...z, [key]: value }));
-        // Naming a room is one act, so the identifier follows the label while
-        // the identifier is still one nobody chose. `zone_03` becoming
-        // `the_kitchen` when the operator types "The Kitchen" is the whole
-        // point of the pane; a name they have already set is theirs.
-        if (key === 'display_name' && isGeneratedName(this.selected)) {
-          const derived = slugify(value);
-          if (derived && !this.zones.some((other) => other.name === derived)) {
-            this._update(this.selected, (z) => ({ ...z, name: derived }));
-            this.selected = derived;
-            this._render();
-          }
+        const next = { ...zone, [key]: Number(input.value) };
+        if (!Number.isFinite(next.x) || !Number.isFinite(next.y)) {
+          input.value = typeof zone[key] === 'number' ? zone[key].toFixed(2) : '';
+          return;
         }
+        this._update(zone.name, (z) => withPose(z, next.x, next.y));
+        this._render();
         this.mapView.draw();
       });
       return input;
     };
-
-    const list = (key, placeholder, title) => {
-      const input = document.createElement('input');
-      input.value = formatList(zone[key]);
-      input.placeholder = placeholder;
-      input.title = title;
-      input.addEventListener('change', () => {
-        const parsed = parseList(input.value);
-        input.value = formatList(parsed);
-        this._update(zone.name, (z) => ({ ...z, [key]: parsed }));
-        this.mapView.draw();
-      });
-      return input;
-    };
-
-    // The box shows what the robot will do, which for a zone that has never
-    // said is what its kind implies. Ticking it back to that is not a decision
-    // that needs storing — `zonesPayload` drops it — so a `keepout` changed to
-    // `room` becomes navigable rather than staying silently undispatchable.
-    const navigable = document.createElement('input');
-    navigable.type = 'checkbox';
-    navigable.checked =
-      typeof zone.navigable === 'boolean'
-        ? zone.navigable
-        : navigableByDefault(zone.kind);
-    navigable.title = 'whether a robot may be dispatched here';
-    navigable.addEventListener('change', () => {
-      this._update(zone.name, (z) => ({ ...z, navigable: navigable.checked }));
-      this._render();
-    });
-
-    // A picker rather than a text box: a parent must name a zone on this floor,
-    // and typing one is the only way to name one that is not.
-    const parent = document.createElement('select');
-    parent.title = 'the zone this one is inside';
-    parent.append(el('option', { value: '', text: '—' }));
-    for (const other of this.zones) {
-      if (other.name === zone.name) continue;
-      parent.append(el('option', { value: other.name, text: other.name }));
-    }
-    parent.value = zone.parent || '';
-    parent.addEventListener('change', () => {
-      this._update(zone.name, (z) => ({ ...z, parent: parent.value }));
-    });
-
-    // No example placeholders. A grey "The Kitchen" in the display-name box of a
-    // zone called `pickup` reads as a value that is already there, and the
-    // label beside it already says what the field is; the only hint worth
-    // giving is the one about punctuation.
-    panel.append(
-      field('name', rename),
-      field('display name', text('display_name', '', 'what an operator reads')),
-      field(
-        'also called',
-        list('aliases', 'comma separated', 'other spellings goto should accept'),
-      ),
-      field('navigable', navigable),
-      field('inside', parent),
-      field('tags', list('tags', 'comma separated', 'free labels for whatever needs them')),
-      field('description', text('description', '', 'a note for whoever reads this next')),
-    );
+    box.append(axis('x'), axis('y'), el('span', { class: 'dim', text: 'm' }));
+    return box;
   }
 
   // -- drawing ------------------------------------------------------------
 
+  // Edit mode has to say which zone the record beside the list belongs to, so
+  // **the selected zone alone is drawn in full** — filled, with its vertex
+  // handles out — and the rest fall back to markers at half weight. Without
+  // that the canvas looked identical whichever row was picked, and the only
+  // sign of a selection was a border in a list somewhere else on the page.
+  //
+  // Hover overrides the dimming, because it answers a different question: not
+  // "which one am I editing" but "what will this press take", and that is true
+  // of a zone whether or not it is the selected one.
   _draw(ctx) {
     if (!this.active || !this.mapView.map) return;
     const view = this.mapView.view;
@@ -987,14 +832,16 @@ export class ZoneEditor {
     for (const zone of this.zones) {
       const selected = zone.name === this.selected;
       const over = hover && hover.zone === zone.name ? hover.kind : '';
+      const lit = selected || Boolean(over);
       ctx.save();
+      ctx.globalAlpha = lit ? 1 : 0.45;
       ctx.strokeStyle = palette.editStroke;
       // `--edit-hover` is louder than `--edit-selected` deliberately: selection
       // says which row you are looking at, hover says what the next press will
       // move — and only one of those is about to change the map.
       ctx.fillStyle =
         over === 'zone' ? palette.editHover : selected ? palette.editSelected : palette.editFill;
-      ctx.lineWidth = selected || over === 'zone' ? 2.5 : 1.5;
+      ctx.lineWidth = lit ? 2.5 : 1.5;
       if (zone.polygon) {
         ctx.beginPath();
         zone.polygon.forEach(([x, y], index) => {
@@ -1003,34 +850,39 @@ export class ZoneEditor {
           else ctx.lineTo(point.x, point.y);
         });
         ctx.closePath();
-        ctx.fill();
+        if (lit) ctx.fill();
         ctx.stroke();
-        zone.polygon.forEach(([x, y], index) => {
-          const point = toScreen(x, y);
-          const grabbed = over === 'vertex' && hover.index === index;
-          const half = grabbed ? 6 : 4;
-          ctx.fillStyle = palette.edit;
-          ctx.fillRect(point.x - half, point.y - half, half * 2, half * 2);
-          if (grabbed) {
-            // A ring rather than only a bigger square: on a dark basemap the
-            // square alone grows into the wall it is sitting on.
-            ctx.strokeStyle = palette.editRing;
-            ctx.lineWidth = 2;
-            ctx.strokeRect(point.x - half, point.y - half, half * 2, half * 2);
-            ctx.strokeStyle = palette.editStroke;
-          }
-        });
+        // Handles are what you drag, and they belong to the zone being edited:
+        // every outline wearing them made a dozen rooms one field of squares.
+        if (lit) {
+          zone.polygon.forEach(([x, y], index) => {
+            const point = toScreen(x, y);
+            const grabbed = over === 'vertex' && hover.index === index;
+            const half = grabbed ? 6 : 4;
+            ctx.fillStyle = palette.edit;
+            ctx.fillRect(point.x - half, point.y - half, half * 2, half * 2);
+            if (grabbed) {
+              // A ring rather than only a bigger square: on a dark basemap the
+              // square alone grows into the wall it is sitting on.
+              ctx.strokeStyle = palette.editRing;
+              ctx.lineWidth = 2;
+              ctx.strokeRect(point.x - half, point.y - half, half * 2, half * 2);
+              ctx.strokeStyle = palette.editStroke;
+            }
+          });
+        }
       }
       if (typeof zone.x === 'number') {
         const point = toScreen(zone.x, zone.y);
         const grabbed = over === 'pose';
+        const arm = lit ? 7 : 4;
         ctx.strokeStyle = palette.edit;
-        ctx.lineWidth = grabbed ? 3 : 2;
+        ctx.lineWidth = grabbed ? 3 : lit ? 2 : 1.5;
         ctx.beginPath();
-        ctx.moveTo(point.x - 7, point.y);
-        ctx.lineTo(point.x + 7, point.y);
-        ctx.moveTo(point.x, point.y - 7);
-        ctx.lineTo(point.x, point.y + 7);
+        ctx.moveTo(point.x - arm, point.y);
+        ctx.lineTo(point.x + arm, point.y);
+        ctx.moveTo(point.x, point.y - arm);
+        ctx.lineTo(point.x, point.y + arm);
         ctx.stroke();
         if (grabbed) {
           ctx.strokeStyle = palette.editRing;
@@ -1043,7 +895,7 @@ export class ZoneEditor {
         ctx.font = '11px ui-monospace, monospace';
         ctx.textAlign = 'center';
         ctx.fillStyle = palette.edit;
-        ctx.fillText(zoneLabel(zone), point.x, point.y - 10);
+        ctx.fillText(zoneLabel(zone), point.x, point.y - arm - 3);
       }
       ctx.restore();
     }

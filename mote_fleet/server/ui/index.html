@@ -139,12 +139,13 @@
                  height until there is something to say, so the room comes out
                  of the one thing here that scrolls. -->
             <p id="zone-note" class="note"></p>
-            <div id="zone-editor" class="zone-editor" hidden>
+            <!-- Standing in both states, because a place-name's record is
+                 its name, a note about it and where it is — and the note is the
+                 field an operator reads *before* deciding whether to edit
+                 anything. Text when looking, inputs when editing, in the same
+                 rows either way. -->
+            <div id="zone-editor" class="zone-editor">
               <div class="zones-head"><h3>details</h3></div>
-              <!-- The selected zone's vocabulary. A row per zone carries what
-                   you compare across zones; this carries what belongs to one
-                   of them, and is where a new zone/v0 field lands without
-                   costing every row a column. -->
               <div id="zone-detail" class="zone-detail"></div>
             </div>
             </div>
