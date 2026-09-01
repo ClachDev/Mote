@@ -48,9 +48,9 @@ echo "=== mapping $WORLD -> site '$STEM' (budget ${BUDGET}s, MOTE_HOME=$MOTE_HOM
 # Ensure the site + floor exist and seed zones from the world's zones file, so
 # the bundle is self-contained and the fetch task has targets during mapping.
 python3 - "$STEM" "$SIM_DIR" <<'PY' || fail "site setup failed"
-import shutil, sys
+import sys
 from pathlib import Path
-from mote_bringup import sites
+from mote_bringup import bundle, sites
 
 stem, sim_dir = sys.argv[1], Path(sys.argv[2])
 if stem not in sites.list_sites():
@@ -59,7 +59,13 @@ sites._seed_floor(stem, "ground")
 sites.set_active(stem, "ground")
 src = sim_dir / "worlds" / f"{stem}.zones.yaml"
 if src.exists():
-    shutil.copyfile(src, sites.floor_dir(stem, "ground") / "zones.yaml")
+    # The world file is a combined zones.yaml — one file is the right shape for
+    # a fixture with exactly one robot in it. Read it through the migration and
+    # write the split pair, so the sim site is the same shape as a real floor.
+    floor = sites.floor_dir(stem, "ground")
+    bundle.write_floor(
+        floor, bundle.read_floor(src, stem, "ground"), site=stem, floor="ground"
+    )
     print(f"seeded zones from {src.name}")
 else:
     print(f"WARNING: no zones file {src}", file=sys.stderr)

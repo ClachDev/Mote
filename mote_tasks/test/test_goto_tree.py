@@ -1,9 +1,10 @@
 """End-to-end tick of the goto tree against a mock navigate_to_pose server.
 
 No Gazebo or Nav2 required: the mock server accepts every goal and succeeds
-immediately, so the test exercises command parsing, zone lookup, the DriveTo
-behaviour, and outcome reporting. It shares a task_server with the fetch tree,
-so it also checks the command dispatch (goto vs fetch vs unknown).
+immediately, so the test exercises input validation, zone resolution, the
+DriveTo behaviour, and the typed statuses that come back. It shares a
+task_server with the fetch tree, so it also covers what the executor does with
+a capability it does not offer.
 """
 
 import os
@@ -18,6 +19,9 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from std_msgs.msg import String
+
+import mission_harness as harness
+from mote_bringup.spec import mission
 
 from mote_tasks.task_server import TaskServer
 
@@ -39,9 +43,8 @@ class MockNav(Node):
             self, NavigateToPose, "navigate_to_pose", self.execute
         )
         self.command_pub = self.create_publisher(String, "task/command", 1)
-        self.create_subscription(
-            String, "task/status", lambda m: self.statuses.append(m.data), 10
-        )
+        harness.collect(self, self.statuses)
+        harness.localise(self)
 
     def execute(self, goal_handle):
         self.goals.append(goal_handle.request.pose)
@@ -74,32 +77,59 @@ def test_goto_round_trip(ros, tmp_path):
     zones_file = tmp_path / "zones.yaml"
     zones_file.write_text(ZONES)
     server = TaskServer(
-        parameter_overrides=[Parameter("zones_file", value=str(zones_file))]
+        parameter_overrides=[
+            Parameter("zones_file", value=str(zones_file)),
+            Parameter("platform_id", value=harness.PLATFORM),
+        ]
     )
     mock = MockNav()
     executor = SingleThreadedExecutor()
     executor.add_node(server)
     executor.add_node(mock)
 
-    assert spin_until(
-        executor, lambda: mock.command_pub.get_subscription_count() > 0
-    ), "task_server never subscribed to task/command"
+    harness.ready(executor, server, mock.command_pub)
 
-    mock.command_pub.publish(String(data="goto nowhere"))
-    assert spin_until(
-        executor, lambda: any(s.startswith("rejected") for s in mock.statuses)
-    ), mock.statuses
+    # A zone this robot does not know: unresolved_zone, and not recoverable —
+    # the same name will not resolve on the next try either.
+    harness.send(mock.command_pub, "goto", {"target": "nowhere"})
+    assert spin_until(executor, lambda: harness.failures(mock.statuses)), mock.statuses
+    assert harness.failures(mock.statuses)[-1] == (
+        mission.REJECTED,
+        mission.UNRESOLVED_ZONE,
+    )
+    assert mock.statuses[-1]["failure"]["recoverable"] is False
 
-    mock.command_pub.publish(String(data="wander kitchen"))
-    assert spin_until(
-        executor,
-        lambda: sum(s.startswith("rejected") for s in mock.statuses) >= 2,
-    ), mock.statuses
+    # A capability this platform does not offer is a different failure, and a
+    # dispatcher does a different thing about it.
+    harness.send(mock.command_pub, "wander", {"target": "kitchen"})
+    assert spin_until(executor, lambda: len(harness.failures(mock.statuses)) >= 2), (
+        mock.statuses
+    )
+    assert harness.failures(mock.statuses)[-1] == (
+        mission.REJECTED,
+        mission.UNKNOWN_CAPABILITY,
+    )
 
-    mock.command_pub.publish(String(data="goto kitchen"))
+    # So is an input that does not match the schema the capability advertised.
+    harness.send(mock.command_pub, "goto", {"destination": "kitchen"})
+    assert spin_until(executor, lambda: len(harness.failures(mock.statuses)) >= 3), (
+        mock.statuses
+    )
+    assert harness.failures(mock.statuses)[-1] == (
+        mission.REJECTED,
+        mission.INVALID_INPUT,
+    )
+
+    accepted = harness.send(mock.command_pub, "goto", {"target": "kitchen"})
     assert spin_until(
-        executor, lambda: any(s.startswith("succeeded") for s in mock.statuses)
+        executor, lambda: mission.SUCCEEDED in harness.states(mock.statuses)
     ), mock.statuses
+    done = mock.statuses[-1]
+    assert (done["id"], done["capability"], done["terminal"]) == (
+        accepted["id"],
+        "goto",
+        True,
+    )
 
     assert len(mock.goals) == 1, mock.goals
     assert mock.goals[0].pose.position.x == pytest.approx(-1.5)
@@ -127,6 +157,7 @@ def test_idle_tick_rate_does_not_delay_the_mission(ros, tmp_path):
     server = TaskServer(
         parameter_overrides=[
             Parameter("zones_file", value=str(zones_file)),
+            Parameter("platform_id", value=harness.PLATFORM),
             Parameter("tick_period", value=0.05),
             Parameter("idle_tick_period", value=2.0),
         ]
@@ -144,26 +175,24 @@ def test_idle_tick_rate_does_not_delay_the_mission(ros, tmp_path):
 
     assert period_s() == pytest.approx(2.0), "an idle tree is ticking at mission rate"
 
-    assert spin_until(
-        executor, lambda: mock.command_pub.get_subscription_count() > 0
-    ), "task_server never subscribed to task/command"
+    harness.ready(executor, server, mock.command_pub)
 
     # An idle tick has just fired, so a full idle period is pending.
     assert spin_until(executor, lambda: next_call_s() > 1.5), "no idle tick fired"
 
-    mock.command_pub.publish(String(data="goto kitchen"))
+    harness.send(mock.command_pub, "goto", {"target": "kitchen"})
     assert spin_until(
-        executor, lambda: any(s.startswith("accepted") for s in mock.statuses)
+        executor, lambda: mission.ACCEPTED in harness.states(mock.statuses)
     ), mock.statuses
     accepted_at = time.monotonic()
-    assert period_s() == pytest.approx(0.05), "an accepted task is ticking at idle rate"
+    assert period_s() == pytest.approx(0.05), "an accepted mission ticks at idle rate"
     assert next_call_s() <= 0.1, (
         f"the accepted tree waits {next_call_s():.2f}s for its first tick — "
         "the period changed but the pending idle expiry did not"
     )
 
     assert spin_until(
-        executor, lambda: any(s.startswith("succeeded") for s in mock.statuses)
+        executor, lambda: mission.SUCCEEDED in harness.states(mock.statuses)
     ), mock.statuses
     elapsed = time.monotonic() - accepted_at
     assert elapsed < 1.5, f"the mission took {elapsed:.2f}s at the mission rate"
@@ -182,6 +211,7 @@ def test_idle_rate_is_floored_at_the_mission_rate(ros, tmp_path):
     server = TaskServer(
         parameter_overrides=[
             Parameter("zones_file", value=str(zones_file)),
+            Parameter("platform_id", value=harness.PLATFORM),
             Parameter("tick_period", value=0.5),
             Parameter("idle_tick_period", value=0.1),
         ]

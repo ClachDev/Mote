@@ -76,7 +76,7 @@ export function rosterSubline(record, now = Date.now()) {
   if (!healthIsCurrent(record, now)) return staleReason(record, now);
   const health = record.health;
   if (health.state && health.state !== 'ok') return health.summary || health.state;
-  if (health.task) return `${health.task.state}: ${health.task.command}`;
+  if (health.mission) return `${health.mission.state}: ${health.mission.capability}`;
   return '';
 }
 
@@ -111,38 +111,44 @@ export function healthBanner(record, now = Date.now()) {
   return summary ? `${state.toUpperCase()} — ${summary}` : state.toUpperCase();
 }
 
-// When the in-flight task started. `health.task` carries no stamp of its own
-// (protocol.py: id, command, state), so the age comes from the status that
-// began the run — the oldest one still belonging to it. The scan stops at the
-// last terminal status, so a command issued twice is not aged from the first
-// time it ran.
-export function taskStartStamp(record) {
-  const task = record && record.health && record.health.task;
-  if (!task) return null;
+// When the in-flight mission started. `health.mission` carries no stamp of its
+// own (protocol.py: id, capability, state, lane), so the age comes from the
+// status that began the run — the oldest one still belonging to it. The scan
+// stops at the last terminal status, so a mission issued twice is not aged from
+// the first time it ran.
+export function missionStartStamp(record) {
+  const mission = record && record.health && record.health.mission;
+  if (!mission) return null;
   const statuses = (record && record.statuses) || [];
   let stamp = null;
   for (let i = statuses.length - 1; i >= 0; i -= 1) {
     const status = statuses[i];
     if (status.terminal) break;
-    const belongs = task.id ? status.id === task.id : status.command === task.command;
+    // A mission the robot started itself has no correlation id (mission/v0
+    // reports it with `id: null`), so the capability is all there is to match
+    // on. Two *consecutive* local missions of the same capability would age
+    // from the earlier one; the terminal-status stop bounds it to that.
+    const belongs = mission.id
+      ? status.id === mission.id
+      : status.capability === mission.capability;
     if (!belongs) break;
     stamp = status.stamp;
   }
   return stamp;
 }
 
-// The task band's first line: the command itself, and beside it the state and
-// how long it has been in it. An idle robot says one dim word — the section
+// The mission band's first line: the capability itself, and beside it the state
+// and how long it has been in it. An idle robot says one dim word — the section
 // exists either way, because "is it busy" is the question the pane is opened
 // with and an absent section is not an answer to it.
-export function taskLine(record, now = Date.now()) {
-  const task = record && record.health && record.health.task;
-  if (!task) return { command: '', meta: 'idle' };
-  const started = taskStartStamp(record);
+export function missionLine(record, now = Date.now()) {
+  const mission = record && record.health && record.health.mission;
+  if (!mission) return { capability: '', meta: 'idle' };
+  const started = missionStartStamp(record);
   const age = started === null ? null : ageText(started, now).replace(' ago', '');
   return {
-    command: task.command || '—',
-    meta: age ? `${task.state} · ${age}` : task.state,
+    capability: mission.capability || '—',
+    meta: age ? `${mission.state} · ${age}` : mission.state,
   };
 }
 
@@ -163,7 +169,7 @@ export function detailFooter(record) {
 export function detailSections(record) {
   const health = (record && record.health) || {};
   return {
-    task: !!record,
+    mission: !!record,
     dispatch: !!record,
     subsystems: (health.subsystems || []).length > 0,
     statuses: !!(record && record.statuses && record.statuses.length),

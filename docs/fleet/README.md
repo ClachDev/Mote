@@ -555,61 +555,74 @@ export MOTE_FLEET_TOKEN=<that token>
 
 pixi run fleetctl -- robots                             # the registry roster
 pixi run fleetctl -- watch                              # live: presence, health, pose, status
-pixi run fleetctl -- dispatch mote-01 fetch lab kitchen # send a task, follow it
-pixi run fleetctl -- dispatch mote-01 goto kitchen
+pixi run fleetctl -- dispatch mote-01 goto target=kitchen   # send a mission
+pixi run fleetctl -- dispatch mote-01 fetch target=lab destination=kitchen
 pixi run fleetctl -- audit                              # who dispatched what
 ```
 
 **Dispatch goes through the fleet API, not to the broker.** Since M3 the API is
 the single write path: it authorizes the operator token, writes an audit row,
-and only then publishes to `task/command`. The topic tree did not change — only
-who may publish to it — so `watch`, and the status half of `dispatch`, still
-read straight from the broker with nothing in the middle. A token is minted
-against the registry file while you are sitting on the fleet box, never over the
-network; the **name on it is what the audit log records**, which is why an
-unnamed one is refused. `fleetctl operator list|revoke` are the other two verbs,
-and the route contract is [`fleet-api.md`](fleet-api.md).
+and only then publishes to `mission/command`. The topic tree did not change —
+only who may publish to it — so `watch`, and the status half of `dispatch`,
+still read straight from the broker with nothing in the middle. A token is
+minted against the registry file while you are sitting on the fleet box, never
+over the network; the **name on it is what the audit log records**, which is why
+an unnamed one is refused. `fleetctl operator list|revoke` are the other two
+verbs, and the route contract is [`fleet-api.md`](fleet-api.md).
 
-`dispatch` exits 0 only if the task **succeeded**, so it composes into scripts.
-The command grammar is the task layer's own, unchanged (`fetch <target>
-<drop_zone>`, `goto <zone>` — see `mote_tasks`); the fleet adds no second
-grammar.
+**A mission is a capability and a typed input**, not a sentence: the first
+argument is a capability key and the rest are `key=value` pairs (or one `{...}`
+JSON object when a value is not a string). What keys a robot offers, and what
+each takes, is the capability set it publishes retained — `fleetctl watch` shows
+it, and the dashboard's dispatch form is generated from it.
 
-What comes back is the task's transitions, tagged with the correlation id the
+`dispatch` exits 0 only if the mission **succeeded**, so it composes into
+scripts. What comes back is its transitions, tagged with the correlation id the
 command went out with:
 
 ```console
--> mote-01: fetch lab kitchen  (id 3e99cf44d1294ab5)
+-> mote-01: fetch {'target': 'lab', 'destination': 'kitchen'}  (id 3e99cf44d1294ab5)
 2026-07-26T16:15:35.961Z  dispatched
 2026-07-26T16:15:35.963Z  accepted
 2026-07-26T16:15:38.305Z  succeeded
 ```
 
+**A refusal is typed.** The class is what you act on and the sentence after it
+is only the detail:
+
+```console
+2026-07-26T16:16:02.114Z  rejected  [unresolved_zone, not retryable] unknown_name: target 'ktichen' is not a place here; navigable zones are dropoff, home, kitchen
+2026-07-26T16:16:44.870Z  rejected  [busy, retryable] mission 3e99cf44d1294ab5 (fetch) holds the default lane
+```
+
 **Dispatch needs the task layer running on the robot**, and `pixi run tasks` is
 deliberately not part of `pixi run robot` — so a robot happily navigating, in
 the roster, reporting `ok`, can still have nothing subscribed to
-`task/command`. What that looks like is a 20-second wait and then:
+`task/command`. Two things say so. Its retained capability set is **empty**,
+because the agent forwards that set rather than authoring it; and a mission sent
+anyway waits 20 seconds and then:
 
 ```
-failed  goto office  — no verdict from the task server within 20s
+failed  [timeout, retryable] no verdict from the task server within 20s
 ```
 
 That is the state machine working, not a fault: the agent forwarded the command,
-nothing answered, and it freed the slot rather than wedging. The fix is `pixi run
-tasks` on the robot alongside the mission; `ros2 topic info -v /task/command`
-confirms it — a healthy robot has the task server among its subscribers, not
-just the bag recorder.
+nothing answered, and it freed the dispatcher rather than leaving it watching.
+The fix is `pixi run tasks` on the robot alongside the mission; `ros2 topic info
+-v /task/command` confirms it — a healthy robot has the task server among its
+subscribers, not just the bag recorder.
 
-**One command at a time, per robot.** A second command sent while one is in
-flight is rejected by the agent with the running command named — the robot never
-sees two. Re-sending the *same* command id is safe and re-states its current
-status rather than running it again. The full state machine, and why the agent
-rather than the task layer enforces it, is in
-[`control-plane.md`](control-plane.md#task-state-machine).
+**One mission at a time, per robot and lane.** A second mission sent while one
+is in flight is rejected with `failure.class: "busy"`, naming the mission that
+holds the lane. Re-sending the *same* mission id is safe and re-states its
+current status rather than running it again — for an hour after it finished, so
+a dispatcher that restarted still learns the outcome. The full lifecycle, and
+which half of it the robot enforces and which the agent, is in
+[`control-plane.md`](control-plane.md#mission-lifecycle).
 
-A task started **on the robot** (a `ros2 topic pub`, a bench script) appears in
-`watch` too, tagged `source: local` with a null id — the fleet should see a
-robot that is busy, whoever asked it to be.
+A mission started **on the robot** (a bench script publishing to
+`task/command`) appears in `watch` too, tagged `source: local` — the fleet
+should see a robot that is busy, whoever asked it to be.
 
 Everything except commands is **retained**, so `watch` shows you the current
 state of the fleet the instant it connects, with no polling and nothing replayed
@@ -631,7 +644,8 @@ row deep-links to.
 ![The fleet dashboard](../images/fleet-ui.webp)
 
 **Nothing on the page is polled.** The browser subscribes to
-`mote/v1/+/{presence,health,pose,task/status}` over MQTT-over-WebSockets, and
+`mote/v2/+/{presence,health,pose,capabilities,mission/status}` over
+MQTT-over-WebSockets, and
 because every one of those is retained, the whole fleet's current state is on
 screen within a second of the page loading — no "wait for the next heartbeat",
 no request/response loop, and no service between the broker and the browser.
@@ -655,9 +669,10 @@ than left standing over an empty box.
 
 **The detail pane is ranked, not tabulated.** Top to bottom: a **headline** —
 state dot, robot id, `reported <age> ago`, and the link into Foxglove — with the
-`NOT CURRENT` banner directly under it; then **task**, the running command with
-its state and how long it has been in it (or the word `idle`), and that task's
-status log under the line it is about; then **dispatch**; then **subsystems**.
+`NOT CURRENT` banner directly under it; then **mission**, the running
+capability with its state and how long it has been in it (or the word `idle`),
+and that mission's status log under the line it is about; then **dispatch**;
+then **subsystems**.
 Uptime and the battery are one dim line at the foot of the pane: neither is read
 until something else has already gone wrong, and `battery` reads `n/a` because
 nothing on this robot measures it ([`control-plane.md`](control-plane.md)). The
@@ -676,7 +691,7 @@ robot somewhere it is not.
 The server reads basemaps from `--maps-dir` (default `$MOTE_FLEET_HOME/sites`),
 which is the **site bundle layout `sites.py` already writes** — and which, from
 M4, robots publish into rather than an operator rsyncing (§11). A robot with no
-basemap on the server still appears in the roster with its health and its task;
+basemap on the server still appears in the roster with its health and its mission;
 the map pane says so rather than drawing an empty grid.
 
 **Taught zones are drawn on the basemap**: a circle for a `radius` footprint, an
@@ -712,11 +727,19 @@ and the detail pane. Two things follow from losing the side-by-side view:
   markers get a larger hit target when the pointer is a fingertip rather than
   a cursor.
 
-**Dispatch has a zone picker** beside the command box, listing the taught zones
-of the floor on screen. It *writes* `goto <zone>` into the box rather than
-sending it — the grammar is still the robot's, parsed only by its task layer —
-which on a touchscreen removes the keyboard from the common case without adding
-a second command language for the fleet server to keep in step.
+**The dispatch form is generated from the robot's own capability set.** It
+arrives retained on the broker, so the page knows the keys and the input shapes
+without asking; a select lists what this robot offers, and one field appears per
+input property. A field becomes a **zone picker** — the taught zones of the
+floor on screen — exactly when its schema `$ref`s zone/v0's zone reference,
+which is what that `$ref` is for. So the page contains no list of capabilities
+and no list of which inputs are places, a robot that grows a capability grows
+this form, and a keyboard is needed only where the schema really does want free
+text.
+
+A robot whose capability set is empty says so in the form rather than offering a
+box that would go nowhere: retained and empty means the task server is not
+running.
 
 Between 760 and 1100 px the panes stack and scroll, as before.
 
@@ -1065,7 +1088,7 @@ flips its local `map` symlink. A half-transferred revision is never visible.
 
 **Zones travel with the map.** A revision from a different mapping session is a
 different map frame, so the zones taught in the old one are wrong the moment the
-new map is published — the bundle's `zones.yaml` therefore replaces the floor's,
+new map is published — the bundle's `binding.yaml` therefore replaces the floor's,
 and the one it replaces is kept beside it as `zones.<old-rev>.yaml`.
 
 **The running navigation stack keeps the map it loaded.** Nav2's `map_server`
@@ -1110,7 +1133,7 @@ overwriting a directory it did not create.
 Everything in §11 is about the *map*. This is about the **names**, which are a
 different kind of fact and travel differently.
 
-A zone in `zones.yaml` holds two things at once. Its pose is a coordinate in
+A zone is two documents. Its pose is a coordinate in
 one robot's map frame, and that frame's origin is wherever that robot's SLAM
 session happened to start — so `(2.0, 3.5)` on `mote-01` is a different
 physical point from `(2.0, 3.5)` on `mote-02`, and no fleet-level transform
@@ -1151,7 +1174,7 @@ nothing, so a zone taught without `--kind` is still perfectly valid. `keepout`
 and `slow` are **constraints, not destinations** — they come out `navigable:
 false`, and `goto sluice` is refused by the robot rather than driven to.
 
-`display_name` and `aliases` are edited into `zones.yaml` by hand, since only
+`display_name` and `aliases` are edited into `vocabulary.yaml` by hand, since only
 you know what people call the place:
 
 ```yaml

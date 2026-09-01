@@ -21,7 +21,8 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET  /v1/robots                          the roster
     GET  /v1/robots/<id>                     one row
     POST /v1/enroll                          allocate (or return) a robot id
-    POST /v1/robots/<id>/dispatch            authorize, audit, then publish
+    POST /v1/robots/<id>/dispatch            authorize, audit, then publish a
+                                             mission (capability + typed input)
     GET  /v1/audit                           what was dispatched, by whom
     GET  /v1/maps                            basemaps this server can serve
     GET  /v1/maps/<site>/<floor>/map.json    resolution + origin (the Q5 transform)
@@ -44,12 +45,22 @@ The contract is ``docs/fleet/fleet-api.md``::
     pixi run fleet-server -- --db ~/fleet/registry.db --broker-host fleet-box
 
 **Dispatch is mediated here, and only here.** M1's ``fleetctl`` published
-straight to the broker; from M3 every write to ``task/command`` goes through
+straight to the broker; from M3 every write to ``mission/command`` goes through
 ``POST /v1/robots/<id>/dispatch``, which authorizes an operator token, writes an
 audit row, and only then publishes (fleet.md Q5/Q7). The topic tree does not
 change — only who may publish to it. The browser therefore never holds a broker
 credential that can publish, and the UI's MQTT client cannot publish at all
 (``ui/mqtt.mjs`` implements no PUBLISH packet).
+
+**What is dispatched is a capability, not a sentence.** The body names a
+``capability`` key and carries a typed ``input``, per mission/v0, and this route
+still declines to understand either: the capability set is the robot's, its
+``input_schema`` is enforced where the executor runs, and a copy of it here
+would be a second contract to keep in step *and* would refuse missions a newer
+robot understands. What the route gained by the change is that the refusal
+coming back is typed — ``invalid_input`` naming the property, ``busy`` naming
+the mission that holds the lane — so a dispatcher decides what to do without
+reading prose.
 
 **The registry is the source of truth for maps (M4).** A robot uploads a saved
 revision as a *candidate*, which changes nothing; an operator promotes one, which
@@ -98,6 +109,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bundle_store import BundleStore, MAX_UPLOAD, StoreError  # noqa: E402
 from mote_bringup import bundle  # noqa: E402  (put on the path by bundle_store)
+from mote_bringup.spec import SpecError  # noqa: E402
+from mote_bringup.spec import mission  # noqa: E402
 from mote_fleet import protocol  # noqa: E402
 from registry import (  # noqa: E402
     ID_PREFIX,
@@ -116,9 +129,9 @@ MAX_BODY = 64 * 1024
 #: of that answer; running from a checkout it is simply unset.
 VERSION = os.environ.get("MOTE_VERSION", "unknown")
 
-#: Longest task string the API will forward. The grammar itself belongs to the
-#: robot's task layer (fleet.md: "the fleet adds no second grammar"), so this is
-#: a bound on the wire, not a parser.
+#: Longest mission description the audit log records, and the bound this route
+#: puts on a dispatch. The *meaning* of a mission belongs to the capability the
+#: robot declared, so this is a bound on the wire, not a parser.
 MAX_COMMAND = 200
 
 #: Site and floor names are directory names in a site bundle; a name outside
@@ -212,6 +225,19 @@ class BrokerLink:
                 client.loop_stop()
             except Exception:
                 pass
+
+
+def _describe(capability: str, payload_input) -> str:
+    """One line naming a mission, for the audit row and the operator's log.
+
+    The audit column is prose for a human; the machine-readable record of what
+    was dispatched is the mission id beside it, which the robot's statuses
+    carry back. So this may be lossy and the id may not.
+    """
+    if not isinstance(payload_input, dict) or not payload_input:
+        return capability
+    arguments = " ".join(f"{key}={value!r}" for key, value in payload_input.items())
+    return f"{capability} {arguments}"
 
 
 class Unauthorized(Exception):
@@ -420,10 +446,22 @@ class FleetHandler(BaseHTTPRequestHandler):
         and closed with the outcome after, so a command that reached the broker
         can never be missing from the log. A log with an extra "we tried" line
         is the failure mode to prefer.
+
+        The body is a capability key and a typed input, not a sentence. What
+        this route still does *not* do is validate that input: the capability
+        that declared the schema runs on the robot, and a copy of the schema
+        here would be a second contract to keep in step and would refuse
+        missions a newer robot understands. The robot rejects with
+        ``invalid_input`` and says which property, which is an answer an
+        operator can act on and a parser here could not improve.
         """
         registry = self.server.registry
         remote = self.address_string()
-        command = " ".join(str(body.get("command") or "").split())
+        capability = str(body.get("capability") or "").strip()
+        payload_input = body.get("input")
+        if payload_input is None:
+            payload_input = {}
+        described = _describe(capability, payload_input)
         try:
             operator = self._operator()
         except Unauthorized as exc:
@@ -431,7 +469,7 @@ class FleetHandler(BaseHTTPRequestHandler):
                 actor="anonymous",
                 action="dispatch",
                 robot_id=robot_id,
-                command=command[:MAX_COMMAND],
+                command=described[:MAX_COMMAND],
                 result="unauthorized",
                 detail=str(exc),
                 remote=remote,
@@ -440,11 +478,14 @@ class FleetHandler(BaseHTTPRequestHandler):
             return
 
         actor = operator["name"]
-        if not command:
-            self._error(400, "a command is required")
+        if not capability:
+            self._error(400, "a capability is required")
             return
-        if len(command) > MAX_COMMAND:
-            self._error(400, f"command longer than {MAX_COMMAND} characters")
+        if not isinstance(payload_input, dict):
+            self._error(400, "input must be an object")
+            return
+        if len(described) > MAX_COMMAND:
+            self._error(400, f"capability and input exceed {MAX_COMMAND} characters")
             return
         if not protocol.valid_id(robot_id):
             self._error(400, f"invalid robot id {robot_id!r}")
@@ -454,7 +495,7 @@ class FleetHandler(BaseHTTPRequestHandler):
                 actor=actor,
                 action="dispatch",
                 robot_id=robot_id,
-                command=command,
+                command=described,
                 result="rejected",
                 detail="no such robot",
                 remote=remote,
@@ -462,19 +503,25 @@ class FleetHandler(BaseHTTPRequestHandler):
             self._error(404, "no such robot")
             return
 
-        # The grammar stays the task layer's: `fetch <target> <drop_zone>` and
-        # `goto <zone>` are validated by the robot, which answers `rejected:`
-        # with a reason the operator can act on. A parser here would be a second
-        # grammar to keep in step (fleet.md Q5), and it would reject commands a
-        # newer robot understands.
-        payload = protocol.command(
-            command, issued_by=str(body.get("issued_by") or "").strip() or f"ui:{actor}"
-        )
+        try:
+            payload = mission.command(
+                robot_id,
+                capability,
+                payload_input,
+                mission_id=body.get("id") or None,
+                lane=body.get("lane") or mission.DEFAULT_LANE,
+                capability_version=body.get("capability_version") or None,
+                deadline=body.get("deadline") or None,
+                issued_by=str(body.get("issued_by") or "").strip() or f"ui:{actor}",
+            )
+        except SpecError as exc:
+            self._error(400, str(exc))
+            return
         entry = registry.record(
             actor=actor,
             action="dispatch",
             robot_id=robot_id,
-            command=command,
+            command=described,
             command_id=payload["id"],
             result="publishing",
             remote=remote,
@@ -484,7 +531,7 @@ class FleetHandler(BaseHTTPRequestHandler):
         )
         registry.finish(entry["id"], "published" if published else "error", detail)
         print(
-            f"dispatch {robot_id} '{command}' by {actor} "
+            f"dispatch {robot_id} '{described}' by {actor} "
             f"({'published' if published else detail})",
             file=sys.stderr,
         )
@@ -494,10 +541,12 @@ class FleetHandler(BaseHTTPRequestHandler):
         self._send(
             202,
             {
-                "schema": protocol.SCHEMA,
+                "schema": mission.SCHEMA,
                 "robot_id": robot_id,
                 "id": payload["id"],
-                "command": payload["command"],
+                "capability": payload["capability"],
+                "input": payload["input"],
+                "lane": payload["lane"],
                 "issued_at": payload["issued_at"],
                 "issued_by": payload["issued_by"],
                 "audit_id": entry["id"],
@@ -976,6 +1025,7 @@ class FleetServer(ThreadingHTTPServer):
                 "health": protocol.HEALTH,
                 "pose": protocol.POSE,
                 "status": protocol.STATUS,
+                "capabilities": protocol.CAPABILITIES,
             },
             "broker": {
                 "ws_host": self.broker_ws_host,

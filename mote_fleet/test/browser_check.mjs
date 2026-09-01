@@ -220,8 +220,22 @@ try {
   check('the health roll-up lists subsystems', subsystems > 0, `${subsystems} rows`);
 
   if (token) {
+    // The form is generated from the robot's own capability set, so this
+    // drives it the way an operator does — pick the capability, fill the
+    // fields it grew — rather than typing into a box the page no longer has.
+    // If the capability set never arrived, the fields are absent and this
+    // fails here, which is the point.
+    const offered = await settle(
+      session,
+      `[...document.querySelectorAll('#capability option')].map(o => o.value).join(',')`,
+      (keys) => keys.includes('goto'),
+    );
+    check('the capability set reached the form', offered.includes('goto'), offered);
     await session.evaluate(`(() => {
-      document.getElementById('command').value = 'goto dropoff';
+      const capability = document.getElementById('capability');
+      capability.value = 'goto';
+      capability.dispatchEvent(new Event('change'));
+      document.querySelector('#mission-input [data-input="target"]').value = 'dropoff';
       document.getElementById('dispatch').requestSubmit();
     })()`);
     const dispatched = await settle(
@@ -236,11 +250,11 @@ try {
       `[...document.querySelectorAll('#status-log .status-state')].map(n => n.textContent).join(',')`,
       (states) => /succeeded|failed|rejected/.test(states),
       // The assertion is `accepted`; this shorter deadline only buys the rest
-      // of the lifecycle when it is cheap (a fake robot's task takes seconds).
+      // of the lifecycle when it is cheap (a fake robot's mission takes seconds).
       // A real robot's goto takes minutes and must not hold the run open.
       5000,
     );
-    check('the robot answered on task/status', statuses.includes('accepted'), statuses);
+    check('the robot answered on mission/status', statuses.includes('accepted'), statuses);
   }
 
   const screenshot = await session.send('Page.captureScreenshot', { format: 'png' });
@@ -830,8 +844,8 @@ try {
     return {
       order: [
         ['headline', top('.detail-head')],
-        ['task', top('#task-head')],
-        ['task line', top('#task-line')],
+        ['mission', top('#mission-head')],
+        ['mission line', top('#mission-line')],
         ['status log', top('#status-log')],
         ['dispatch', top('#dispatch-head')],
         ['subsystems', top('#subsystems-head')],

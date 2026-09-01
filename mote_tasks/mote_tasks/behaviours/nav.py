@@ -6,6 +6,8 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 
+from mote_tasks.trees.common import FAILURE_KEY, report_failure
+
 
 class DriveTo(py_trees.behaviour.Behaviour):
     """Send the blackboard pose under ``pose_key`` to Nav2 and await the result.
@@ -14,6 +16,14 @@ class DriveTo(py_trees.behaviour.Behaviour):
     succeeded, FAILURE on rejection, abortion, or if the action server never
     appears within ``server_timeout`` seconds. A goal still in flight is
     cancelled when the behaviour is preempted.
+
+    Each of those three failures leaves a *typed* reason for the task server
+    (``trees.common.report_failure``), because they are three different things
+    to a dispatcher. Nav2 refusing the goal means no route exists to it and
+    resending will be refused identically; Nav2 aborting means it tried,
+    exhausted its recoveries and stopped, which is what a blocked corridor
+    looks like and is worth retrying; no action server at all is this
+    software not running, and is neither.
     """
 
     def __init__(self, name: str, pose_key: str, server_timeout: float = 10.0):
@@ -22,6 +32,7 @@ class DriveTo(py_trees.behaviour.Behaviour):
         self.server_timeout = server_timeout
         self.blackboard = self.attach_blackboard_client(name=name)
         self.blackboard.register_key(pose_key, access=py_trees.common.Access.READ)
+        self.blackboard.register_key(FAILURE_KEY, access=py_trees.common.Access.WRITE)
 
     def setup(self, **kwargs):
         self.node = kwargs["node"]
@@ -39,9 +50,12 @@ class DriveTo(py_trees.behaviour.Behaviour):
         if self.send_future is None:
             if not self.client.server_is_ready():
                 if self.node.get_clock().now() > self.server_deadline:
-                    self.node.get_logger().error(
-                        f"{self.name}: navigate_to_pose server not available"
+                    detail = (
+                        f"{self.name}: no navigate_to_pose action server within "
+                        f"{self.server_timeout:.0f}s"
                     )
+                    self.node.get_logger().error(detail)
+                    report_failure(self.blackboard, "internal", detail)
                     return py_trees.common.Status.FAILURE
                 return py_trees.common.Status.RUNNING
             goal = NavigateToPose.Goal()
@@ -57,7 +71,9 @@ class DriveTo(py_trees.behaviour.Behaviour):
                 return py_trees.common.Status.RUNNING
             self.goal_handle = self.send_future.result()
             if not self.goal_handle.accepted:
-                self.node.get_logger().error(f"{self.name}: goal rejected by Nav2")
+                detail = f"{self.name}: Nav2 rejected the goal"
+                self.node.get_logger().error(detail)
+                report_failure(self.blackboard, "unreachable", detail)
                 return py_trees.common.Status.FAILURE
             self.result_future = self.goal_handle.get_result_async()
             return py_trees.common.Status.RUNNING
@@ -67,7 +83,11 @@ class DriveTo(py_trees.behaviour.Behaviour):
         status = self.result_future.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
             return py_trees.common.Status.SUCCESS
-        self.node.get_logger().error(f"{self.name}: goal ended with status {status}")
+        detail = f"{self.name}: Nav2 ended the goal with status {status}"
+        self.node.get_logger().error(detail)
+        # Aborted after Nav2 exhausted its own recoveries: the route existed
+        # when it was planned. Recoverable, because corridors clear.
+        report_failure(self.blackboard, "obstructed", detail)
         return py_trees.common.Status.FAILURE
 
     def terminate(self, new_status):

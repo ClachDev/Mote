@@ -263,8 +263,8 @@ export class BrokerReader {
   }
 }
 
-// `mote/v1/<robot_id>/<leaf>` -> `{robotId, leaf}`; null for anything else.
-export function parseTopic(topic, root = 'mote/v1') {
+// `mote/v2/<robot_id>/<leaf>` -> `{robotId, leaf}`; null for anything else.
+export function parseTopic(topic, root = 'mote/v2') {
   const prefix = `${root}/`;
   if (!topic.startsWith(prefix)) return null;
   const rest = topic.slice(prefix.length);

@@ -7,6 +7,13 @@ These tests are what stops it: the schema files are checked against
 ``protocol.REQUIRED`` and against what the builders actually emit, so adding a
 field to a payload without describing it fails here rather than in someone's
 dashboard six months later.
+
+From v2 this covers the *telemetry* half only. The mission payloads are
+mission/v0's, built and checked by ``mote_bringup.spec.mission``, and Mote
+publishes no schema mirror of them at all — the specification's own schemas are
+the authority, and a copy here would be a copy to keep in step. What this file
+still asserts about them is the one thing that *is* Mote's: that they travel on
+the right topics, and that this module refuses to pretend it owns them.
 """
 
 import json
@@ -22,8 +29,6 @@ KIND_FILES = {
     protocol.PRESENCE: "presence.schema.json",
     protocol.HEALTH: "health.schema.json",
     protocol.POSE: "pose.schema.json",
-    protocol.COMMAND: "command.schema.json",
-    protocol.STATUS: "status.schema.json",
     protocol.CURRENT: "current.schema.json",
 }
 
@@ -38,7 +43,12 @@ def sample(kind: str) -> dict:
             protocol.OK,
             "OK",
             [protocol.subsystem("lidar", protocol.OK, "ok")],
-            task={"id": "abc", "command": "goto kitchen", "state": "accepted"},
+            mission={
+                "id": "abc",
+                "capability": "goto",
+                "state": "accepted",
+                "lane": "default",
+            },
             site="home",
             floor="ground",
             version="v0",
@@ -47,8 +57,6 @@ def sample(kind: str) -> dict:
         )
     if kind == protocol.POSE:
         return protocol.pose("mote-01", 1.0, 2.0, 0.5, site="home", floor="ground")
-    if kind == protocol.COMMAND:
-        return protocol.command("goto kitchen", issued_by="tester")
     if kind == protocol.CURRENT:
         return protocol.current(
             "home",
@@ -59,16 +67,15 @@ def sample(kind: str) -> dict:
             bytes_=4096,
             promoted_by="michael",
         )
-    return protocol.status("mote-01", "abc", "goto kitchen", protocol.ACCEPTED)
+    raise AssertionError(f"no sample for {kind!r}")
 
 
 # ---- topic tree ---------------------------------------------------------
 
 
 def test_topic_carries_the_contract_version():
-    assert protocol.topic("mote-01", protocol.HEALTH) == "mote/v1/mote-01/health"
-    assert protocol.topic("mote-01", protocol.COMMAND) == "mote/v1/mote-01/task/command"
-    assert protocol.any_robot(protocol.POSE) == "mote/v1/+/pose"
+    assert protocol.topic("mote-01", protocol.HEALTH) == "mote/v2/mote-01/health"
+    assert protocol.any_robot(protocol.POSE) == "mote/v2/+/pose"
 
 
 def test_parse_topic_round_trips_every_leaf():
@@ -80,9 +87,9 @@ def test_parse_topic_round_trips_every_leaf():
 
 
 def test_parse_topic_rejects_a_foreign_tree():
-    assert protocol.parse_topic("mote/v2/mote-01/health") is None
-    assert protocol.parse_topic("other/v1/mote-01/health") is None
-    assert protocol.parse_topic("mote/v1/mote-01") is None
+    assert protocol.parse_topic("mote/v1/mote-01/health") is None
+    assert protocol.parse_topic("other/v2/mote-01/health") is None
+    assert protocol.parse_topic("mote/v2/mote-01") is None
 
 
 # ---- the map registry's subtree -----------------------------------------
@@ -90,9 +97,9 @@ def test_parse_topic_rejects_a_foreign_tree():
 
 def test_the_registry_topic_round_trips():
     topic = protocol.registry_topic("home", "ground")
-    assert topic == "mote/v1/registry/site/home/floor/ground/current"
+    assert topic == "mote/v2/registry/site/home/floor/ground/current"
     assert protocol.parse_registry_topic(topic) == ("home", "ground")
-    assert protocol.any_floor() == "mote/v1/registry/site/+/floor/+/current"
+    assert protocol.any_floor() == "mote/v2/registry/site/+/floor/+/current"
 
 
 def test_the_registry_subtree_is_not_a_robot():
@@ -101,7 +108,7 @@ def test_the_registry_subtree_is_not_a_robot():
     publish its health into the registry's subtree."""
     assert protocol.parse_topic(protocol.registry_topic("home", "ground")) is None
     assert not protocol.valid_id("registry")
-    assert protocol.parse_registry_topic("mote/v1/mote-01/health") is None
+    assert protocol.parse_registry_topic("mote/v2/mote-01/health") is None
 
 
 def test_robot_id_shape_matches_identity():
@@ -142,10 +149,33 @@ def test_check_rejects_a_missing_field():
 
 
 def test_check_rejects_a_foreign_schema_version():
-    payload = sample(protocol.STATUS)
+    payload = sample(protocol.HEALTH)
     payload["schema"] = 99
     with pytest.raises(protocol.ProtocolError, match="expected 1"):
-        protocol.check(payload, protocol.STATUS)
+        protocol.check(payload, protocol.HEALTH)
+
+
+def test_a_specification_payload_is_not_this_modules_to_check():
+    """Two checkers for one payload is two contracts, and the one that is not
+    the specification's would be the one that drifted."""
+    for leaf in protocol.SPEC_PAYLOADS:
+        with pytest.raises(protocol.ProtocolError, match="mote_bringup.spec"):
+            protocol.check({"schema": 1}, leaf)
+
+
+def test_the_mission_leaves_are_where_the_binding_says():
+    """The specification's MQTT binding names these three leaves; Mote's tree
+    puts them under its own root and version, and nowhere else."""
+    assert protocol.topic("mote-01", protocol.COMMAND) == (
+        "mote/v2/mote-01/mission/command"
+    )
+    assert protocol.topic("mote-01", protocol.STATUS) == (
+        "mote/v2/mote-01/mission/status"
+    )
+    assert protocol.topic("mote-01", protocol.CANCEL) == (
+        "mote/v2/mote-01/mission/cancel"
+    )
+    assert protocol.any_robot(protocol.CAPABILITIES) == "mote/v2/+/capabilities"
 
 
 def test_decode_rejects_non_json_and_non_objects():
@@ -157,15 +187,7 @@ def test_decode_rejects_non_json_and_non_objects():
 
 def test_unknown_states_are_refused_at_the_source():
     with pytest.raises(protocol.ProtocolError):
-        protocol.status("mote-01", "abc", "goto x", "in-progress")
-    with pytest.raises(protocol.ProtocolError):
         protocol.health("mote-01", "fine", "", [])
-
-
-def test_terminal_flag_matches_the_state_machine():
-    for state in protocol.TASK_STATES:
-        payload = protocol.status("mote-01", "abc", "goto x", state)
-        assert payload["terminal"] == (state in protocol.TERMINAL_STATES)
 
 
 def test_pose_carries_the_frame_it_is_meaningful_in():
@@ -216,15 +238,26 @@ def test_schema_file_describes_every_field_the_builder_emits(kind, filename):
 def test_schema_file_pins_the_contract_version(kind, filename):
     schema = json.loads((SCHEMA_DIR / filename).read_text())
     assert schema["properties"]["schema"]["const"] == protocol.SCHEMA
-    assert schema["$id"].endswith(f"/v1/{filename}")
+    assert schema["$id"].endswith(f"/{protocol.VERSION}/{filename}")
 
 
 def test_schema_enums_match_the_code():
     health = json.loads((SCHEMA_DIR / "health.schema.json").read_text())
-    status = json.loads((SCHEMA_DIR / "status.schema.json").read_text())
     assert set(health["properties"]["state"]["enum"]) == set(protocol.HEALTH_STATES)
-    assert set(status["properties"]["state"]["enum"]) == set(protocol.TASK_STATES)
-    assert set(status["properties"]["source"]["enum"]) == {
-        protocol.SOURCE_FLEET,
-        protocol.SOURCE_LOCAL,
-    }
+
+
+def test_the_health_summary_admits_every_mission_state():
+    """The roster's "what is it doing" line is a summary of a mission/v0
+    mission, so a state added there must not read as invalid here."""
+    from mote_bringup.spec import mission
+
+    health = json.loads((SCHEMA_DIR / "health.schema.json").read_text())
+    states = health["properties"]["mission"]["properties"]["state"]["enum"]
+    assert set(states) == set(mission.STATES)
+
+
+def test_no_schema_file_survives_for_a_specification_payload():
+    """A stale mirror of a payload Mote no longer defines would be read as
+    authoritative by the next person who found it."""
+    names = {path.name for path in SCHEMA_DIR.glob("*.schema.json")}
+    assert not names & {"command.schema.json", "status.schema.json"}

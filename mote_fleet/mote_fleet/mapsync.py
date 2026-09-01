@@ -128,9 +128,11 @@ def publish(
 ) -> dict:
     """Upload one local revision as a candidate. Returns the server's answer.
 
-    The floor's ``zones.yaml`` is packed *into* the revision: zone coordinates
+    The floor's **binding** is packed *into* the revision: zone coordinates
     only mean anything in the map frame they were taught in, so they travel
-    with it or they travel wrong.
+    with it or they travel wrong. The vocabulary is not — it is a fact about
+    the building rather than about this map, and it is served on its own route
+    to anything that only needs to know what the places are called.
     """
     fdir = sites.floor_dir(site, floor)
     rev_dir = fdir / "maps" / revision
@@ -140,9 +142,18 @@ def publish(
     if not report.ok:
         raise SyncError(f"refusing to publish {revision}: {report.summary()}")
     extra = {}
-    zones = fdir / "zones.yaml"
-    if zones.is_file() and not (rev_dir / "zones.yaml").is_file():
-        extra["zones.yaml"] = zones.read_bytes()
+    for name in (bundle.BINDING_YAML, bundle.ZONES_YAML):
+        source = fdir / name
+        if source.is_file() and not (rev_dir / name).is_file():
+            extra[name] = source.read_bytes()
+            break
+    # The vocabulary rides along too, unpacked into the floor rather than kept
+    # in the revision: a fleet server holding it can answer "what places are
+    # here" for a floor no robot has published a map of, which is the whole
+    # point of splitting it out.
+    vocabulary = fdir / bundle.VOCABULARY_YAML
+    if vocabulary.is_file():
+        extra[bundle.VOCABULARY_YAML] = vocabulary.read_bytes()
     blob = bundle.pack(rev_dir, extra)
 
     path = (

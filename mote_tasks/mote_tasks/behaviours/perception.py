@@ -10,6 +10,8 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 from vision_msgs.msg import Detection3DArray
 
+from mote_tasks.trees.common import FAILURE_KEY, report_failure
+
 LABELS_QOS = QoSProfile(
     depth=1,
     reliability=ReliabilityPolicy.RELIABLE,
@@ -48,6 +50,7 @@ class AcquireObject(py_trees.behaviour.Behaviour):
         self.blackboard = self.attach_blackboard_client(name=name)
         self.blackboard.register_key(pose_key, access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(label_key, access=py_trees.common.Access.READ)
+        self.blackboard.register_key(FAILURE_KEY, access=py_trees.common.Access.WRITE)
 
     def setup(self, **kwargs):
         self.node = kwargs["node"]
@@ -106,9 +109,11 @@ class AcquireObject(py_trees.behaviour.Behaviour):
             )
             return py_trees.common.Status.SUCCESS
         if self.node.get_clock().now() > self.deadline:
-            self.node.get_logger().error(
-                f"{self.name}: no '{self.label}' seen within {self.timeout:.0f} s"
-            )
+            detail = f"{self.name}: no '{self.label}' seen within {self.timeout:.0f}s"
+            self.node.get_logger().error(detail)
+            # Recoverable: the object may be there next time, or the detector
+            # may be. Neither needs the request to change.
+            report_failure(self.blackboard, "timeout", detail, recoverable=True)
             return py_trees.common.Status.FAILURE
         return py_trees.common.Status.RUNNING
 

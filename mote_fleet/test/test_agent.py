@@ -7,6 +7,7 @@ CI architectures, where a broker is not installed. The version with a real
 broker and a real behaviour tree is ``test_e2e_fleet.py``.
 """
 
+import json
 import os
 import random
 import time
@@ -21,6 +22,10 @@ from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from rclpy.parameter import Parameter  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
+
+from mote_bringup.spec import mission as spec_mission  # noqa: E402
+from mote_fleet import agent  # noqa: E402
+from mote_tasks import capabilities  # noqa: E402
 
 
 class FakeMqtt:
@@ -71,39 +76,74 @@ class FakeMqtt:
         self.on_message(self, None, SimpleNamespace(topic=topic, payload=payload))
 
     def last(self, leaf):
-        from mote_fleet import protocol
-
-        for message in reversed(self.published):
-            parsed = protocol.parse_topic(message.topic)
-            if parsed and parsed[1] == leaf:
-                return protocol.decode(message.payload, leaf)
-        return None
+        published = self.all_of(leaf)
+        return published[-1] if published else None
 
     def all_of(self, leaf):
+        import json
+
         from mote_fleet import protocol
 
         out = []
         for message in self.published:
             parsed = protocol.parse_topic(message.topic)
-            if parsed and parsed[1] == leaf:
-                out.append(protocol.decode(message.payload, leaf))
+            if not parsed or parsed[1] != leaf:
+                continue
+            # A spec payload is checked by the spec, not by protocol.check —
+            # which now refuses to pretend it owns one.
+            out.append(
+                json.loads(message.payload)
+                if leaf in protocol.SPEC_PAYLOADS
+                else protocol.decode(message.payload, leaf)
+            )
         return out
 
 
 class Peer(Node):
-    """The rest of the robot: receives commands, publishes status + health."""
+    """The rest of the robot: the task server's half of the ROS seam.
+
+    It receives mission commands and publishes mission statuses and health —
+    all built by the same modules the real task server builds them with, so the
+    bridge under test is bridging the real shapes.
+    """
 
     def __init__(self):
         super().__init__("peer")
         self.commands = []
         self.create_subscription(
-            String, "task/command", lambda m: self.commands.append(m.data), 10
+            String,
+            "task/command",
+            lambda m: self.commands.append(json.loads(m.data)),
+            10,
         )
         self.status_pub = self.create_publisher(String, "task/status", 10)
+        self.capabilities_pub = self.create_publisher(
+            String, "task/capabilities", agent.LATCHED
+        )
         self.diag_pub = self.create_publisher(DiagnosticArray, "diagnostics_agg", 10)
 
-    def say(self, text):
-        self.status_pub.publish(String(data=text))
+    def say(self, mission_id, state, capability="goto", **kwargs):
+        """A status as the task server publishes one: source local, because on
+        the robot nothing can tell a fleet mission from a bench one."""
+        self.status_pub.publish(
+            String(
+                data=json.dumps(
+                    spec_mission.status(
+                        "mote-01",
+                        mission_id,
+                        capability,
+                        state,
+                        source=spec_mission.SOURCE_LOCAL,
+                        **kwargs,
+                    )
+                )
+            )
+        )
+
+    def advertise(self):
+        self.capabilities_pub.publish(
+            String(data=json.dumps(capabilities.capability_set("mote-01")))
+        )
 
     def report(self, level=DiagnosticStatus.OK, summary="OK"):
         array = DiagnosticArray()
@@ -196,7 +236,7 @@ def test_the_agent_reads_its_broker_from_the_enrolled_config(fleet):
 
 def test_the_last_will_marks_the_robot_offline_and_is_retained(fleet):
     protocol = fleet.protocol
-    assert fleet.mqtt.will.topic == "mote/v1/mote-01/presence"
+    assert fleet.mqtt.will.topic == "mote/v2/mote-01/presence"
     assert fleet.mqtt.will.retain is True
     assert (
         protocol.decode(fleet.mqtt.will.payload, protocol.PRESENCE)["online"] is False
@@ -206,7 +246,7 @@ def test_the_last_will_marks_the_robot_offline_and_is_retained(fleet):
 def test_connecting_subscribes_to_commands_and_announces_presence(fleet):
     protocol = fleet.protocol
     fleet.mqtt.connect()
-    assert "mote/v1/mote-01/task/command" in fleet.mqtt.subscriptions
+    assert "mote/v2/mote-01/mission/command" in fleet.mqtt.subscriptions
     presence = fleet.mqtt.last(protocol.PRESENCE)
     assert presence["online"] is True
     assert presence["robot_id"] == "mote-01"
@@ -231,56 +271,76 @@ def test_state_topics_are_retained(fleet):
 # ---- commands -----------------------------------------------------------
 
 
-def send(fleet, text, command_id=None):
+def send(fleet, capability="goto", payload_input=None, command_id=None):
     protocol = fleet.protocol
-    payload = protocol.command(text, command_id=command_id)
+    payload = spec_mission.command(
+        "mote-01",
+        capability,
+        payload_input if payload_input is not None else {"target": "kitchen"},
+        mission_id=command_id,
+    )
     fleet.mqtt.deliver(
-        protocol.topic("mote-01", protocol.COMMAND), protocol.encode(payload)
+        protocol.topic("mote-01", protocol.COMMAND), json.dumps(payload).encode()
     )
     fleet.spin(0.2)
     return payload
 
 
-def test_a_command_reaches_ros_and_reports_its_transitions(fleet):
+def test_a_mission_reaches_ros_and_reports_its_transitions(fleet):
     protocol = fleet.protocol
     fleet.mqtt.connect()
-    payload = send(fleet, "goto kitchen")
+    payload = send(fleet)
 
-    assert fleet.peer.commands == ["goto kitchen"]
-    assert fleet.mqtt.last(protocol.STATUS)["state"] == protocol.DISPATCHED
+    # Byte for byte: the bridge adds nothing to what the dispatcher sent.
+    assert fleet.peer.commands == [payload]
+    assert fleet.mqtt.last(protocol.STATUS)["state"] == spec_mission.DISPATCHED
 
-    fleet.peer.say("accepted: goto kitchen")
+    fleet.peer.say(payload["id"], spec_mission.ACCEPTED)
     fleet.spin(0.3)
-    assert fleet.mqtt.last(protocol.STATUS)["state"] == protocol.ACCEPTED
+    assert fleet.mqtt.last(protocol.STATUS)["state"] == spec_mission.ACCEPTED
 
-    fleet.peer.say("succeeded: goto kitchen")
+    fleet.peer.say(payload["id"], spec_mission.SUCCEEDED)
     fleet.spin(0.3)
     final = fleet.mqtt.last(protocol.STATUS)
-    assert final["state"] == protocol.SUCCEEDED
+    assert final["state"] == spec_mission.SUCCEEDED
     assert final["terminal"] is True
     assert final["id"] == payload["id"]
-    assert final["source"] == protocol.SOURCE_FLEET
+    # The task server said "local"; only the agent knows it dispatched this one.
+    assert final["source"] == spec_mission.SOURCE_FLEET
 
 
-def test_a_second_command_never_reaches_ros(fleet):
+def test_a_typed_failure_is_forwarded_untouched(fleet):
+    """The bridge must not re-derive a class or a recoverability: the executor
+    is the only thing that knows why its own mission failed."""
     protocol = fleet.protocol
     fleet.mqtt.connect()
-    send(fleet, "goto kitchen")
-    fleet.peer.say("accepted: goto kitchen")
+    payload = send(fleet)
+    failure = spec_mission.failure(
+        spec_mission.OBSTRUCTED, "drive_to_zone: Nav2 ended the goal with status 6"
+    )
+    fleet.peer.say(payload["id"], spec_mission.FAILED, failure=failure)
+    fleet.spin(0.3)
+    assert fleet.mqtt.last(protocol.STATUS)["failure"] == failure
+
+
+def test_a_second_mission_still_reaches_the_executor(fleet):
+    """The lane belongs to the task server now. The agent forwarding both is
+    what lets the *robot* answer `busy` naming the mission that holds it —
+    including when the holder is a local one the agent cannot see."""
+    fleet.mqtt.connect()
+    first = send(fleet)
+    fleet.peer.say(first["id"], spec_mission.ACCEPTED)
     fleet.spin(0.3)
 
-    send(fleet, "goto lab")
-    assert fleet.peer.commands == ["goto kitchen"]
-    rejection = fleet.mqtt.last(protocol.STATUS)
-    assert rejection["state"] == protocol.REJECTED
-    assert "goto kitchen" in rejection["detail"]
+    second = send(fleet, payload_input={"target": "lab"})
+    assert [c["id"] for c in fleet.peer.commands] == [first["id"], second["id"]]
 
 
 def test_a_redelivered_command_is_not_run_twice(fleet):
     fleet.mqtt.connect()
-    payload = send(fleet, "goto kitchen")
-    send(fleet, "goto kitchen", command_id=payload["id"])
-    assert fleet.peer.commands == ["goto kitchen"]
+    payload = send(fleet)
+    send(fleet, command_id=payload["id"])
+    assert len(fleet.peer.commands) == 1
 
 
 def test_a_malformed_command_is_ignored_not_dispatched(fleet):
@@ -288,30 +348,57 @@ def test_a_malformed_command_is_ignored_not_dispatched(fleet):
     fleet.mqtt.connect()
     topic = protocol.topic("mote-01", protocol.COMMAND)
     fleet.mqtt.deliver(topic, b"{not json")
-    fleet.mqtt.deliver(topic, protocol.encode({"schema": 1, "id": "x"}))
-    fleet.mqtt.deliver(topic, protocol.encode(protocol.command("   ")))
+    fleet.mqtt.deliver(topic, json.dumps({"schema": 1, "id": "x"}).encode())
+    # Addressed to another platform: forwarding it would run someone else's
+    # mission on this robot.
+    stray = spec_mission.command("mote-02", "goto", {"target": "kitchen"})
+    fleet.mqtt.deliver(topic, json.dumps(stray).encode())
     fleet.spin(0.2)
     assert fleet.peer.commands == []
 
 
-def test_a_locally_issued_task_is_reported_with_no_correlation_id(fleet):
+def test_a_locally_issued_mission_is_reported_with_no_correlation_id(fleet):
     protocol = fleet.protocol
     fleet.mqtt.connect()
-    fleet.peer.say("accepted: goto lab")
+    fleet.peer.say("bench-7", spec_mission.ACCEPTED)
     fleet.spin(0.3)
     status = fleet.mqtt.last(protocol.STATUS)
-    assert status["source"] == protocol.SOURCE_LOCAL
-    assert status["id"] is None
+    assert status["source"] == spec_mission.SOURCE_LOCAL
 
 
-def test_an_unanswered_command_fails_on_its_own(fleet):
+def test_an_unanswered_mission_fails_on_its_own(fleet):
     protocol = fleet.protocol
     fleet.mqtt.connect()
-    send(fleet, "goto kitchen")
+    send(fleet)
     fleet.spin(2.0)  # command_timeout is 1.0s in this fixture
     status = fleet.mqtt.last(protocol.STATUS)
-    assert status["state"] == protocol.FAILED
-    assert "no verdict" in status["detail"]
+    assert status["state"] == spec_mission.FAILED
+    assert status["failure"]["class"] == spec_mission.TIMEOUT
+
+
+# ---- capabilities --------------------------------------------------------
+
+
+def test_the_capability_set_is_forwarded_retained(fleet):
+    protocol = fleet.protocol
+    fleet.mqtt.connect()
+    fleet.peer.advertise()
+    fleet.spin(0.3)
+    document = fleet.mqtt.last(protocol.CAPABILITIES)
+    assert [item["key"] for item in document["capabilities"]] == ["goto", "fetch"]
+    assert all(
+        message.retain
+        for message in fleet.mqtt.published
+        if message.topic.endswith(protocol.CAPABILITIES)
+    )
+
+
+def test_a_robot_that_has_advertised_nothing_publishes_nothing(fleet):
+    """Forwarded, never authored: a robot whose task server is down offers no
+    capabilities, and that is the true answer rather than a stale one."""
+    fleet.mqtt.connect()
+    fleet.spin(0.3)
+    assert fleet.mqtt.last(fleet.protocol.CAPABILITIES) is None
 
 
 # ---- health -------------------------------------------------------------
@@ -337,17 +424,18 @@ def test_health_forwards_the_monitors_rollup_and_subsystems(fleet):
     assert health["battery"] is None
 
 
-def test_health_carries_the_task_the_robot_is_busy_with(fleet):
+def test_health_carries_the_mission_the_robot_is_busy_with(fleet):
     protocol = fleet.protocol
     fleet.mqtt.connect()
     fleet.peer.report()
-    send(fleet, "fetch red_box dropoff")
-    fleet.peer.say("accepted: fetch red_box dropoff")
+    payload = send(fleet, "fetch", {"target": "red_box", "destination": "dropoff"})
+    fleet.peer.say(payload["id"], spec_mission.ACCEPTED, capability="fetch")
     fleet.spin(0.5)
 
-    task = fleet.mqtt.last(protocol.HEALTH)["task"]
-    assert task["command"] == "fetch red_box dropoff"
-    assert task["state"] == protocol.ACCEPTED
+    running = fleet.mqtt.last(protocol.HEALTH)["mission"]
+    assert running["capability"] == "fetch"
+    assert running["state"] == spec_mission.ACCEPTED
+    assert running["lane"] == spec_mission.DEFAULT_LANE
 
 
 def test_health_goes_unknown_again_if_the_monitor_stops(fleet):

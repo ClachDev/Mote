@@ -21,14 +21,22 @@ from api_harness import (
     post_raw,
 )
 
+from mote_bringup.spec import mission
 from mote_fleet import protocol
 
 
-def dispatch(server, robot_id, command, token=None, **extra):
+def dispatch(
+    server, robot_id, capability="goto", payload_input=None, token=None, **extra
+):
     return post(
         server,
         f"/v1/robots/{robot_id}/dispatch",
-        {"schema": protocol.SCHEMA, "command": command, **extra},
+        {
+            "schema": protocol.SCHEMA,
+            "capability": capability,
+            "input": {"target": "kitchen"} if payload_input is None else payload_input,
+            **extra,
+        },
         token=token,
     )
 
@@ -37,7 +45,7 @@ def test_healthz_names_the_contract(server):
     status, body = get(server, "/healthz")
     assert status == 200
     assert body["ok"] is True
-    assert body["contract"] == "mote/v1"
+    assert body["contract"] == "mote/v2"
     assert body["robots"] == 0
 
 
@@ -127,7 +135,7 @@ def test_a_non_json_body_is_400(server):
 def test_config_tells_the_browser_where_the_broker_is(server):
     status, body = get(server, "/v1/config")
     assert status == 200
-    assert body["contract"] == "mote/v1"
+    assert body["contract"] == "mote/v2"
     assert body["broker"]["ws_port"] == 9001
     # Null on purpose: the page falls back to the host it was loaded from, so
     # MagicDNS, a tailnet address and localhost all work with no rebuild.
@@ -160,74 +168,105 @@ def test_the_ui_cannot_serve_files_outside_itself(server):
 
 
 def test_a_dispatch_is_published_with_a_correlation_id(server, operator, robot):
-    status, body = dispatch(server, robot, "goto kitchen", token=operator)
+    status, body = dispatch(server, robot, token=operator)
     assert status == 202
-    assert body["command"] == "goto kitchen"
+    assert (body["capability"], body["input"]) == ("goto", {"target": "kitchen"})
     assert body["issued_by"] == "ui:michael"
     topic, payload, retain = server.publisher.published[0]
     # Never retained: a retained command re-fires on every reconnect.
-    assert (topic, retain) == ("mote/v1/mote-01/task/command", False)
-    assert payload["command"] == "goto kitchen"
+    assert (topic, retain) == ("mote/v2/mote-01/mission/command", False)
+    assert payload["capability"] == "goto"
+    assert payload["input"] == {"target": "kitchen"}
+    assert payload["platform_id"] == "mote-01"
+    assert payload["lane"] == mission.DEFAULT_LANE
     assert payload["id"] == body["id"]
-    assert payload["schema"] == protocol.SCHEMA
+    assert payload["schema"] == mission.SCHEMA
 
 
 def test_a_dispatch_is_audited_before_it_is_published(server, operator, robot):
-    _, body = dispatch(server, robot, "goto kitchen", token=operator)
+    _, body = dispatch(server, robot, token=operator)
     entry = server.registry.audit()[0]
     assert entry["id"] == body["audit_id"]
     assert (entry["actor"], entry["result"]) == ("michael", "published")
     assert entry["command_id"] == body["id"]
+    # The audit column is prose for a human; the machine-readable record of
+    # what was dispatched is the mission id beside it.
+    assert entry["command"] == "goto target='kitchen'"
 
 
 def test_dispatch_without_a_token_is_refused_and_recorded(server, robot):
-    body = expect_error(lambda: dispatch(server, robot, "goto kitchen"), 401)
+    body = expect_error(lambda: dispatch(server, robot), 401)
     assert "operator token" in body["error"]
     assert not server.publisher.published
     # The attempt is in the log: "who tried" is the half of an audit trail a
     # dashboard never shows you.
     entry = server.registry.audit()[0]
     assert (entry["actor"], entry["result"]) == ("anonymous", "unauthorized")
-    assert entry["command"] == "goto kitchen"
+    assert entry["command"] == "goto target='kitchen'"
 
 
 def test_a_revoked_token_stops_working(server, operator, robot):
     server.registry.revoke_operator(operator)
-    expect_error(lambda: dispatch(server, robot, "goto kitchen", token=operator), 401)
+    expect_error(lambda: dispatch(server, robot, token=operator), 401)
     assert not server.publisher.published
 
 
 def test_dispatch_to_an_unknown_robot_is_404(server, operator):
-    expect_error(
-        lambda: dispatch(server, "mote-99", "goto kitchen", token=operator), 404
-    )
+    expect_error(lambda: dispatch(server, "mote-99", token=operator), 404)
     assert not server.publisher.published
     assert server.registry.audit()[0]["result"] == "rejected"
 
 
-def test_an_empty_command_is_400(server, operator, robot):
+def test_a_missing_capability_is_400(server, operator, robot):
     expect_error(lambda: dispatch(server, robot, "   ", token=operator), 400)
 
 
-def test_an_overlong_command_is_400(server, operator, robot):
+def test_an_input_that_is_not_an_object_is_400(server, operator, robot):
+    """The one shape check this route does make. A bare string input could not
+    be validated against any capability's schema, so it cannot reach a robot
+    that would then have to guess what it meant."""
     expect_error(
-        lambda: dispatch(server, robot, "goto " + "x" * 300, token=operator), 400
+        lambda: dispatch(server, robot, payload_input="kitchen", token=operator), 400
     )
 
 
-def test_the_grammar_is_not_second_guessed(server, operator, robot):
-    """The task layer owns the grammar and answers `rejected:` with a reason.
-    A parser here would be a second grammar to keep in step."""
-    status, _ = dispatch(server, robot, "wibble the flange", token=operator)
+def test_an_overlong_mission_is_400(server, operator, robot):
+    expect_error(
+        lambda: dispatch(
+            server, robot, payload_input={"target": "x" * 300}, token=operator
+        ),
+        400,
+    )
+
+
+def test_the_capability_set_is_not_second_guessed(server, operator, robot):
+    """The robot owns its capabilities and answers with a typed failure. A copy
+    of the input schema here would be a second contract to keep in step, and it
+    would refuse missions a newer robot understands."""
+    status, _ = dispatch(
+        server, robot, "x_wibble", {"flange": "sideways"}, token=operator
+    )
     assert status == 202
-    assert server.publisher.published[0][1]["command"] == "wibble the flange"
+    assert server.publisher.published[0][1]["capability"] == "x_wibble"
+
+
+def test_a_lane_and_a_deadline_travel_untouched(server, operator, robot):
+    status, _ = dispatch(
+        server,
+        robot,
+        token=operator,
+        lane="control",
+        deadline="2026-08-22T12:00:00.000Z",
+    )
+    assert status == 202
+    payload = server.publisher.published[0][1]
+    assert payload["lane"] == "control"
+    assert payload["deadline"] == "2026-08-22T12:00:00.000Z"
 
 
 def test_a_broker_that_is_down_is_reported_not_swallowed(server, operator, robot):
     server.publisher.fail = "broker fleet-box:1883 unreachable"
-    body = expect_error(
-        lambda: dispatch(server, robot, "goto kitchen", token=operator), 503
-    )
+    body = expect_error(lambda: dispatch(server, robot, token=operator), 503)
     assert "unreachable" in body["error"]
     entry = server.registry.audit()[0]
     assert entry["result"] == "error"
@@ -236,14 +275,14 @@ def test_a_broker_that_is_down_is_reported_not_swallowed(server, operator, robot
 
 def test_the_audit_route_needs_an_operator_token(server, operator, robot):
     expect_error(lambda: get(server, "/v1/audit"), 401)
-    dispatch(server, robot, "goto kitchen", token=operator)
+    dispatch(server, robot, token=operator)
     status, body = get(server, "/v1/audit", token=operator)
     assert status == 200
-    assert body["audit"][0]["command"] == "goto kitchen"
+    assert body["audit"][0]["command"] == "goto target='kitchen'"
 
 
 def test_audit_can_be_filtered_by_robot(server, operator, robot):
-    dispatch(server, robot, "goto kitchen", token=operator)
+    dispatch(server, robot, token=operator)
     _, body = get(server, "/v1/audit?robot_id=mote-02", token=operator)
     assert body["audit"] == []
 
@@ -313,7 +352,7 @@ def test_a_reconnecting_client_resubscribes_every_time():
         def subscribe(self, topic, qos=0):
             self.subscribed.append((topic, qos))
 
-    topics = ["mote/v1/+/health", "mote/v1/+/pose"]
+    topics = ["mote/v2/+/health", "mote/v2/+/pose"]
     on_connect = fleetctl.subscriber(topics)
     client = FakeClient()
 

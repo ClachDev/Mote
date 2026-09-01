@@ -188,30 +188,24 @@
         <!-- Each heading is hidden with the thing under it (app.mjs
              `renderSections`): a heading over an empty div reserves space for a
              fact the robot does not have. -->
-        <h3 id="task-head">task</h3>
-        <div id="task-line" class="task-line"></div>
+        <h3 id="mission-head">mission</h3>
+        <div id="mission-line" class="mission-line"></div>
         <!-- The log is what happened to the line above it, so it sits under it
-             with no heading of its own: `task` and `task status` were two
-             headings over one subject. -->
+             with no heading of its own: `mission` and `mission status` were
+             two headings over one subject. -->
         <div id="status-log" class="status-log"></div>
 
         <h3 id="dispatch-head">dispatch</h3>
         <form id="dispatch" class="dispatch" hidden>
-          <!-- The grammar is still the robot's, parsed only by its task layer.
-               This picker types for you — it writes `goto <zone>` into the same
-               box — because on a touchscreen the cost of a command is the
-               keyboard, and the zone names are already on screen. -->
-          <select id="zone" class="zone-picker" title="taught zones on this floor" hidden>
-            <option value="">go to a taught zone…</option>
-          </select>
-          <input
-            id="command"
-            type="text"
-            placeholder="send this robot somewhere"
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck="false"
-          />
+          <!-- Both controls below are generated from the robot's own
+               capability set, which arrives retained on the broker. Nothing
+               here knows that `goto` exists: the keys come from the document,
+               and a field is a zone picker exactly when its schema $refs the
+               zone reference — which is what that $ref is *for*. So a robot
+               that grows a capability grows this form, and a keyboard is
+               needed only where the schema really does want free text. -->
+          <select id="capability" class="capability-picker"></select>
+          <div id="mission-input" class="mission-input"></div>
           <button type="submit">send</button>
           <p id="dispatch-note" class="note"></p>
         </form>

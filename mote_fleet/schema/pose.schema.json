@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mote.clach.dev/schema/v1/pose.schema.json",
+  "$id": "https://mote.clach.dev/schema/v2/pose.schema.json",
   "title": "Robot Pose",
   "description": "The robot's last known pose in its map frame.",
   "type": "object",

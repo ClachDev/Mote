@@ -7,14 +7,15 @@ this stays because a CLI composes, exits with a status, and needs no display.
     fleetctl token new                        mint an enrollment token
     fleetctl operator new --name michael      mint an operator token
     fleetctl robots                           the registry roster
-    fleetctl dispatch mote-01 "goto kitchen"  send a task, follow it to terminal
+    fleetctl dispatch mote-01 goto target=kitchen
+                                              send a mission, follow it to terminal
     fleetctl audit                            who dispatched what
     fleetctl watch                            tail the whole fleet's topics
     fleetctl sites [site floor]               the map registry: floors, revisions
     fleetctl promote home ground <rev>        make a candidate map canonical
 
 **Dispatch goes through the fleet API, not to the broker.** M1's version
-published straight to `task/command`, which is right when there is one operator
+published straight to `mission/command`, which is right when there is one operator
 and no record; from M3 the API is the single write path, so every dispatch is
 authorized against an operator token and written to the audit log before it is
 published (fleet.md Q5/Q7). The topic tree did not change — only who may
@@ -41,6 +42,8 @@ import json  # noqa: E402
 import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
 
+from mote_bringup.spec import SpecError  # noqa: E402
+from mote_bringup.spec import mission  # noqa: E402
 from mote_fleet import protocol  # noqa: E402
 from registry import Registry, RegistryError, default_db  # noqa: E402
 
@@ -260,6 +263,30 @@ def _token(args) -> str:
     return token
 
 
+def _input(words) -> dict:
+    """Turn ``target=kitchen`` pairs into a mission input object.
+
+    A single ``{...}`` argument is taken as the whole object instead, because
+    the moment an input has a number, a boolean or a nested value in it, a
+    ``key=value`` shell grammar starts guessing types — and this CLI has no
+    business guessing where a capability declared them. Everything a pair
+    produces is a string; anything else, write the JSON.
+    """
+    words = list(words)
+    if len(words) == 1 and words[0].lstrip().startswith("{"):
+        parsed = json.loads(words[0])
+        if not isinstance(parsed, dict):
+            raise SystemExit("input JSON must be an object")
+        return parsed
+    payload = {}
+    for word in words:
+        key, sep, value = word.partition("=")
+        if not sep or not key:
+            raise SystemExit(f"input {word!r} is not key=value")
+        payload[key] = value
+    return payload
+
+
 def cmd_dispatch(args):
     """Dispatch through the API, then follow the robot's own status on the
     broker. Two connections because they are two different things: the write is
@@ -274,18 +301,27 @@ def cmd_dispatch(args):
         # before the HTTP response has told us which correlation id to look
         # for, and a status discarded then is a status lost.
         try:
-            received.append(protocol.decode(message.payload, protocol.STATUS))
-        except protocol.ProtocolError as exc:
+            received.append(mission.check(json.loads(message.payload), "status"))
+        except (ValueError, SpecError) as exc:
             print(f"! malformed status: {exc}", file=sys.stderr)
 
     def report(command_id):
         for status in list(received):
             if status["id"] != command_id:
-                # Another task on the same robot — most likely a local one.
+                # Another mission on the same robot — most likely a local one.
                 continue
             line = f"{status['stamp']}  {status['state']}"
-            if status.get("detail"):
+            failure = status.get("failure")
+            if failure:
+                # The class first and the prose after it: the class is what a
+                # caller acts on, and putting it last would bury it behind a
+                # sentence of variable length.
+                retry = "retryable" if failure["recoverable"] else "not retryable"
+                line += f"  [{failure['class']}, {retry}] {failure['detail']}"
+            elif status.get("detail"):
                 line += f"  ({status['detail']})"
+            for warning in status.get("warnings") or ():
+                line += f"\n{' ' * 26}! {warning}"
             if line in seen:
                 continue
             seen.append(line)
@@ -309,14 +345,18 @@ def cmd_dispatch(args):
         args.server,
         f"/v1/robots/{args.robot_id}/dispatch",
         payload={
-            "schema": protocol.SCHEMA,
-            "command": " ".join(args.command),
+            "schema": mission.SCHEMA,
+            "capability": args.capability,
+            "input": _input(args.input),
             "issued_by": args.issued_by,
         },
         token=token,
     )
     command_id = answer["id"]
-    print(f"-> {args.robot_id}: {answer['command']}  (id {command_id})")
+    print(
+        f"-> {args.robot_id}: {answer['capability']} {answer['input']}  "
+        f"(id {command_id})"
+    )
 
     deadline = time.monotonic() + args.wait
     while not done and time.monotonic() < deadline:
@@ -327,7 +367,7 @@ def cmd_dispatch(args):
     client.disconnect()
     if not done:
         sys.exit(f"no terminal status within {args.wait:.0f}s")
-    sys.exit(0 if done[0] == protocol.SUCCEEDED else 1)
+    sys.exit(0 if done[0] == mission.SUCCEEDED else 1)
 
 
 def cmd_watch(args):
@@ -356,6 +396,7 @@ def cmd_watch(args):
                 protocol.HEALTH,
                 protocol.POSE,
                 protocol.STATUS,
+                protocol.CAPABILITIES,
             )
         ],
     )
@@ -375,16 +416,24 @@ def _summarise(leaf: str, payload: dict) -> str:
             else f"OFFLINE ({payload.get('reason', '')})"
         )
     if leaf == protocol.HEALTH:
-        task = payload.get("task") or {}
-        busy = f"  task={task.get('command')} [{task.get('state')}]" if task else ""
+        running = payload.get("mission") or {}
+        busy = (
+            f"  mission={running.get('capability')} [{running.get('state')}]"
+            if running
+            else ""
+        )
         return f"{payload.get('state')}: {payload.get('summary')}{busy}"
     if leaf == protocol.POSE:
         return (
             f"x={payload.get('x')} y={payload.get('y')} yaw={payload.get('yaw')} "
             f"({payload.get('site')}/{payload.get('floor')})"
         )
-    detail = f" ({payload['detail']})" if payload.get("detail") else ""
-    return f"{payload.get('state')} '{payload.get('command')}'{detail}"
+    if leaf == protocol.CAPABILITIES:
+        keys = [item["key"] for item in payload.get("capabilities") or ()]
+        return f"revision {payload.get('revision')}: {', '.join(keys) or 'none'}"
+    failure = payload.get("failure")
+    note = f" [{failure['class']}] {failure['detail']}" if failure else ""
+    return f"{payload.get('state')} {payload.get('capability')}{note}"
 
 
 def main(argv=None):
@@ -432,9 +481,15 @@ def main(argv=None):
     p_audit.add_argument("--robot-id", default="", dest="robot_id")
     p_audit.set_defaults(func=cmd_audit)
 
-    p_dispatch = sub.add_parser("dispatch", help="send a task and follow it")
+    p_dispatch = sub.add_parser("dispatch", help="send a mission and follow it")
     p_dispatch.add_argument("robot_id")
-    p_dispatch.add_argument("command", nargs="+", help="e.g. goto kitchen")
+    p_dispatch.add_argument("capability", help="a capability key, e.g. goto")
+    p_dispatch.add_argument(
+        "input",
+        nargs="*",
+        help="key=value input properties, e.g. target=kitchen. A single "
+        "argument that starts with '{' is read as the whole input object.",
+    )
     p_dispatch.add_argument(
         "--wait", type=float, default=120.0, help="seconds to wait for a terminal state"
     )

@@ -44,11 +44,11 @@ def rooms():
 
 
 def test_a_written_room_loads_back_as_a_zone_the_robot_can_be_in(tmp_path, rooms):
-    path = tmp_path / "zones.yaml"
+    path = tmp_path
     added, skipped = merge_into_zones(path, rooms)
     assert (added, skipped) == (["room_01", "room_02"], [])
 
-    loaded = zones_lib.load_zones(str(path))
+    loaded = zones_lib.load_zones(path)
 
     assert set(loaded) == {"room_01", "room_02"}
     for name, zone in loaded.items():
@@ -62,8 +62,10 @@ def test_a_written_room_loads_back_as_a_zone_the_robot_can_be_in(tmp_path, rooms
 
 
 def test_a_hand_taught_room_is_not_renamed_by_a_later_run(tmp_path, rooms):
-    path = tmp_path / "zones.yaml"
-    path.write_text(
+    path = tmp_path
+    # A floor taught by hand, still in the combined shape. The merge migrates
+    # it on the way through, which is the only migration anybody runs.
+    (path / "zones.yaml").write_text(
         yaml.safe_dump(
             {
                 "frame_id": "map",
@@ -79,21 +81,24 @@ def test_a_hand_taught_room_is_not_renamed_by_a_later_run(tmp_path, rooms):
 
     assert len(skipped) == 1  # the room the kitchen already names
     assert len(added) == 1  # the room only a bare waypoint stands in
-    loaded = zones_lib.load_zones(str(path))
+    loaded = zones_lib.load_zones(path)
     assert isinstance(loaded["kitchen"].footprint, zones_lib.Circle)
     assert set(loaded) == {"kitchen", "pickup", *added}
 
 
 def test_running_it_twice_adds_nothing(tmp_path, rooms):
-    path = tmp_path / "zones.yaml"
+    path = tmp_path
     merge_into_zones(path, rooms)
-    before = path.read_text()
+    documents = ("vocabulary.yaml", "binding.yaml")
+    before = {name: (path / name).read_text() for name in documents}
 
     added, skipped = merge_into_zones(path, rooms)
 
     assert added == []
     assert len(skipped) == 2
-    assert path.read_text() == before
+    # Byte-identical, both halves: a re-run that bumped the vocabulary revision
+    # would make every binding on the fleet look a version behind.
+    assert {name: (path / name).read_text() for name in documents} == before
 
 
 def test_a_proposed_room_declares_itself_a_room(tmp_path, rooms):
@@ -103,8 +108,8 @@ def test_a_proposed_room_declares_itself_a_room(tmp_path, rooms):
     rather than guessed — and it is what the fleet serves to a dispatcher. The
     name it invents is a placeholder; the kind is not.
     """
-    path = tmp_path / "zones.yaml"
+    path = tmp_path
     merge_into_zones(path, rooms)
-    loaded = zones_lib.load_zones(str(path))
+    loaded = zones_lib.load_zones(path)
     assert {zone.kind for zone in loaded.values()} == {"room"}
     assert all(zone.navigable for zone in loaded.values())

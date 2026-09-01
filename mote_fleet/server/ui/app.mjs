@@ -1,12 +1,20 @@
 // The thin fleet dashboard: roster, live map, and dispatch.
 //
-// The read path is the broker — every robot's presence, health, pose and task
-// status arrives over MQTT-over-WebSockets, retained, so this page shows the
-// state of the fleet the instant it loads and never polls (fleet.md Q5). The
-// write path is the fleet API: `POST /v1/robots/<id>/dispatch` authorizes the
-// operator and writes an audit line before anything reaches `task/command`.
-// The two paths are deliberately different, and the browser holds no credential
-// that can publish to the broker.
+// The read path is the broker — every robot's presence, health, pose, mission
+// status and capability set arrives over MQTT-over-WebSockets, retained, so
+// this page shows the state of the fleet the instant it loads and never polls
+// (fleet.md Q5). The write path is the fleet API:
+// `POST /v1/robots/<id>/dispatch` authorizes the operator and writes an audit
+// line before anything reaches `mission/command`. The two paths are
+// deliberately different, and the browser holds no credential that can publish
+// to the broker.
+//
+// The dispatch form is *generated* from the selected robot's capability set.
+// It used to be a text box the operator typed a sentence into, which meant the
+// page had to know the grammar and the operator had to know it better. Now the
+// keys come from the document the robot publishes, and a field is a zone
+// picker exactly when its schema $refs zone/v0's zone reference — so this file
+// contains no list of capabilities and no list of which inputs are places.
 //
 // What this view is *not* is a Foxglove replacement. It answers "where is every
 // robot, what is each doing, send one somewhere" and hands the single-robot
@@ -29,7 +37,7 @@ import {
   robotState,
   rosterSubline,
   staleReason,
-  taskLine,
+  missionLine,
 } from './robot.mjs';
 
 const TOKEN_KEY = 'mote.operator.token';
@@ -113,6 +121,7 @@ function onBrokerMessage(topic, payload) {
   if (parsed.leaf === state.config.topics.presence) record.presence = message;
   else if (parsed.leaf === state.config.topics.health) record.health = message;
   else if (parsed.leaf === state.config.topics.pose) record.pose = message;
+  else if (parsed.leaf === state.config.topics.capabilities) record.capabilities = message;
   else if (parsed.leaf === state.config.topics.status) {
     record.status = message;
     const last = record.statuses[record.statuses.length - 1];
@@ -215,24 +224,78 @@ function renderRevisions() {
     : 'review maps';
 }
 
-// The zones of the floor on screen, as a `goto` the operator does not have to
-// type. It writes the command rather than sending it: the send button stays the
-// one place a task leaves this page.
+// The zones of the floor on screen feed every zone-typed mission input, so the
+// operator picks a place rather than spelling one. Redrawing the form is how
+// they get there: the fields are generated, and the zone list is one of the two
+// things they are generated from.
 function renderZones() {
-  const names = state.zones.map((zone) => zone.name).sort((a, b) => a.localeCompare(b));
-  dom.zone.hidden = names.length === 0;
-  dom.zone.replaceChildren(
-    el('option', { value: '', text: 'go to a taught zone…' }),
-    ...names.map((name) => el('option', { value: name, text: name })),
-  );
+  renderDispatch(state.robots.get(state.selected));
 }
 
-function onZone() {
-  const name = dom.zone.value;
-  if (!name) return;
-  dom.command.value = `goto ${name}`;
-  dom.dispatchNote.textContent = '';
-  dom.dispatchNote.className = 'note';
+// -- the dispatch form, generated from the capability set ------------------
+
+const ZONE_REF = 'https://spec.augereai.com/zone/v0/zone-ref.schema.json';
+
+function selectedCapability(record) {
+  const offered = (record && record.capabilities && record.capabilities.capabilities) || [];
+  return offered.find((item) => item.key === dom.capability.value) || offered[0] || null;
+}
+
+function renderDispatch(record) {
+  const offered = (record && record.capabilities && record.capabilities.capabilities) || [];
+  const wanted = dom.capability.value;
+  dom.capability.replaceChildren(
+    ...offered.map((item) =>
+      el('option', { value: item.key, text: item.display_name || item.key }),
+    ),
+  );
+  if (offered.some((item) => item.key === wanted)) dom.capability.value = wanted;
+  if (!offered.length) {
+    // Retained, so an empty set means the robot has never advertised one —
+    // its task server is not running, or it predates the capability topic.
+    // Either way there is nothing this page can honestly offer to send.
+    dom.capability.hidden = true;
+    dom.missionInput.replaceChildren(
+      el('p', { class: 'note', text: 'this robot has advertised no capabilities' }),
+    );
+    dom.dispatchSend.disabled = true;
+    return;
+  }
+  dom.capability.hidden = false;
+  dom.dispatchSend.disabled = false;
+  const capability = selectedCapability(record);
+  const schema = (capability && capability.input_schema) || {};
+  const properties = schema.properties || {};
+  const required = schema.required || [];
+  const names = state.zones.map((zone) => zone.name).sort((a, b) => a.localeCompare(b));
+  dom.missionInput.replaceChildren(
+    ...Object.entries(properties).map(([key, sub]) =>
+      el('label', { class: 'mission-field', title: sub.description || '' }, [
+        el('span', { class: 'mission-field-name', text: key + (required.includes(key) ? ' *' : '') }),
+        sub.$ref === ZONE_REF && names.length
+          ? el('select', { 'data-input': key }, [
+              el('option', { value: '', text: 'a taught zone…' }),
+              ...names.map((name) => el('option', { value: name, text: name })),
+            ])
+          : el('input', {
+              'data-input': key,
+              type: 'text',
+              placeholder: sub.$ref === ZONE_REF ? 'a zone name' : sub.description || key,
+              autocomplete: 'off',
+              autocapitalize: 'off',
+              spellcheck: 'false',
+            }),
+      ]),
+    ),
+  );
+  if (capability) {
+    dom.dispatchNote.textContent = capability.summary || '';
+    dom.dispatchNote.className = 'note';
+  }
+}
+
+function onCapability() {
+  renderDispatch(state.robots.get(state.selected));
 }
 
 // Into the review pane, on the floor already on screen. Promotion lives there
@@ -379,7 +442,7 @@ function renderDetail(record) {
   if (!record) {
     dom.detailStale.hidden = true;
     dom.detailHealth.hidden = true;
-    dom.taskLine.replaceChildren();
+    dom.missionLine.replaceChildren();
     dom.subsystems.replaceChildren();
     dom.statusLog.replaceChildren();
     dom.detailFooter.textContent = '';
@@ -388,6 +451,7 @@ function renderDetail(record) {
     dom.foxglove.hidden = true;
     return;
   }
+  renderDispatch(record);
 
   const health = record.health || {};
   const current = healthIsCurrent(record);
@@ -404,11 +468,12 @@ function renderDetail(record) {
   dom.detailHealth.className = `stale-banner health-banner ${banner ? health.state : ''}`;
   dom.detailHealth.hidden = !banner;
 
-  const task = taskLine(record);
-  dom.taskLine.replaceChildren(
+  const mission = missionLine(record);
+  dom.missionLine.replaceChildren(
     ...[
-      task.command && el('span', { class: 'task-command', text: task.command }),
-      el('span', { class: 'task-meta', text: task.meta }),
+      mission.capability &&
+        el('span', { class: 'mission-capability', text: mission.capability }),
+      el('span', { class: 'mission-meta', text: mission.meta }),
     ].filter(Boolean),
   );
 
@@ -429,10 +494,7 @@ function renderDetail(record) {
         el('div', { class: `status ${status.state}` }, [
           el('span', { class: 'status-time', text: status.stamp.slice(11, 19) }),
           el('span', { class: 'status-state', text: status.state }),
-          el('span', {
-            class: 'status-command',
-            text: `${status.command}${status.detail ? ` — ${status.detail}` : ''}`,
-          }),
+          el('span', { class: 'status-command', text: statusText(status) }),
           el('span', { class: 'status-source', text: status.source }),
         ]),
       ),
@@ -451,8 +513,8 @@ function renderDetail(record) {
 // heading is hidden with its content, the way the dispatch form already was.
 function renderSections(record) {
   const sections = detailSections(record);
-  dom.taskHead.hidden = !sections.task;
-  dom.taskLine.hidden = !sections.task;
+  dom.missionHead.hidden = !sections.mission;
+  dom.missionLine.hidden = !sections.mission;
   dom.statusLog.hidden = !sections.statuses;
   dom.dispatchHead.hidden = !sections.dispatch;
   dom.dispatch.hidden = !sections.dispatch;
@@ -460,26 +522,52 @@ function renderSections(record) {
   dom.subsystems.hidden = !sections.subsystems;
 }
 
+// What one status line says. The failure class leads, because it is the part
+// an operator acts on: `busy` means wait, `invalid_input` means fix the
+// mission, `obstructed` means look at the corridor. The sentence after it is
+// the detail, not the verdict.
+function statusText(status) {
+  const failure = status.failure;
+  if (failure) {
+    const retry = failure.recoverable ? 'retryable' : 'not retryable';
+    return `${status.capability} — ${failure.class} (${retry}): ${failure.detail}`;
+  }
+  const warnings = (status.warnings || []).join('; ');
+  const note = status.detail || '';
+  return `${status.capability}${note ? ` — ${note}` : ''}${warnings ? `  ! ${warnings}` : ''}`;
+}
+
 // -- dispatch ------------------------------------------------------------
 
 async function onDispatch(event) {
   event.preventDefault();
-  const command = dom.command.value.trim();
-  if (!command || !state.selected) return;
+  if (!state.selected) return;
+  const capability = dom.capability.value;
+  if (!capability) return;
+  const payload = {};
+  for (const field of dom.missionInput.querySelectorAll('[data-input]')) {
+    const value = field.value.trim();
+    // Absent, not empty: a property left blank is one the operator did not
+    // supply, and sending "" would fail the schema for a different reason than
+    // the true one.
+    if (value) payload[field.dataset.input] = value;
+  }
   dom.dispatchNote.textContent = 'dispatching…';
   dom.dispatchNote.className = 'note';
   try {
     const body = await api(`/v1/robots/${state.selected}/dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schema: 1, command }),
+      body: JSON.stringify({ schema: 1, capability, input: payload }),
     });
     // Nothing is echoed into the log from here: the robot's own task/status is
     // the truth about what happened, and it arrives over the broker in
     // milliseconds. Reporting "sent" as if it were "accepted" would be a lie
     // the operator has no way to check.
     dom.dispatchNote.textContent = `dispatched ${body.id}`;
-    dom.command.value = '';
+    for (const field of dom.missionInput.querySelectorAll('[data-input]')) {
+      field.value = '';
+    }
   } catch (error) {
     dom.dispatchNote.textContent = error.message;
     dom.dispatchNote.className = 'note error';
@@ -527,15 +615,15 @@ function bind() {
     detailStale: 'detail-stale',
     detailHealth: 'detail-health',
     detailFooter: 'detail-footer',
-    taskHead: 'task-head',
-    taskLine: 'task-line',
+    missionHead: 'mission-head',
+    missionLine: 'mission-line',
     subsystems: 'subsystems',
     subsystemsHead: 'subsystems-head',
     statusLog: 'status-log',
     dispatch: 'dispatch',
     dispatchHead: 'dispatch-head',
-    command: 'command',
-    zone: 'zone',
+    capability: 'capability',
+    missionInput: 'mission-input',
     tabDetail: 'tab-detail',
     dispatchNote: 'dispatch-note',
     foxglove: 'foxglove',
@@ -629,7 +717,6 @@ export async function boot() {
       if (name === 'review') review.shown();
     },
   });
-  dom.zone.addEventListener('change', onZone);
   dom.reviewJump.addEventListener('click', onReviewJump);
   dom.reviewBack.addEventListener('click', onReviewBack);
   document.addEventListener('keydown', onKey);
@@ -644,6 +731,8 @@ export async function boot() {
     mapView.draw();
   });
   dom.dispatch.addEventListener('submit', onDispatch);
+  dom.capability.addEventListener('change', onCapability);
+  dom.dispatchSend = dom.dispatch.querySelector('button[type="submit"]');
   document.getElementById('token-form').addEventListener('submit', onToken);
 
   state.config = await api('/v1/config');
@@ -654,10 +743,12 @@ export async function boot() {
   // robot reporting it at all.
   await review.loadFloors().catch((error) => console.warn('registry unavailable', error));
 
-  const { root, presence, health, pose, status } = state.config.topics;
+  const { root, presence, health, pose, status, capabilities } = state.config.topics;
   const reader = new BrokerReader({
     url: brokerUrl(state.config),
-    topics: [presence, health, pose, status].map((leaf) => `${root}/+/${leaf}`),
+    topics: [presence, health, pose, status, capabilities].map(
+      (leaf) => `${root}/+/${leaf}`,
+    ),
     onMessage: onBrokerMessage,
     onState: (status_, detail) => {
       dom.brokerState.textContent =

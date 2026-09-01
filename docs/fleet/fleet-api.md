@@ -112,58 +112,78 @@ M3; the rest are below.
 
 ### `POST /v1/robots/<robot_id>/dispatch`
 
-Send one task to one robot.
+Send one mission to one robot.
 
 ```json
-{"schema": 1, "command": "goto kitchen", "issued_by": "night shift"}
+{"schema": 1, "capability": "goto", "input": {"target": "kitchen"},
+ "issued_by": "night shift"}
 ```
 
 | Field | Type | Notes |
 |---|---|---|
 | `schema` | int | `1` |
-| `command` | string | the task-layer grammar, verbatim; whitespace-collapsed, ≤200 chars |
+| `capability` | string | a key from that robot's advertised capability set |
+| `input` | object | the capability's typed arguments; `{}` for one that takes none |
 | `issued_by` | string, *optional* | free text for audit; defaults to `ui:<operator name>` |
+| `id` | string, *optional* | supply your own correlation id — a re-POST of the same id is recognised by the robot rather than run twice |
+| `lane` | string, *optional* | concurrency lane; defaults to `default` |
+| `capability_version` | string, *optional* | pin the contract this input was built against |
+| `deadline` | string, *optional* | RFC 3339 instant after which the mission is pointless |
 
 ```json
-{"schema":1,"robot_id":"mote-01","id":"3e99cf44d1294ab5","command":"goto kitchen",
+{"schema":1,"robot_id":"mote-01","id":"3e99cf44d1294ab5","capability":"goto",
+ "input":{"target":"kitchen"},"lane":"default",
  "issued_at":"2026-07-26T19:00:27.412Z","issued_by":"ui:michael","audit_id":7,
- "status_topic":"mote/v1/mote-01/task/status"}
+ "status_topic":"mote/v2/mote-01/mission/status"}
 ```
 
 **`202 Accepted` means published, not accepted by the robot.** The `id` is the
 correlation id the agent will echo on every status; `status_topic` is where to
-watch for them. Whether the robot takes the task is answered on that topic
-within milliseconds — `accepted`, or `rejected` with a reason. An API that
-reported "accepted" here would be inventing an answer only the robot can give.
+watch for them. Whether the robot takes the mission is answered on that topic
+within milliseconds — `accepted`, or `rejected` with a typed failure. An API
+that reported "accepted" here would be inventing an answer only the robot can
+give.
 
 | Status | Meaning |
 |---|---|
-| `202` | published to `task/command` and recorded |
-| `400` | empty command, over-long command, or an invalid robot id |
+| `202` | published to `mission/command` and recorded |
+| `400` | missing capability, an `input` that is not an object, an over-long mission, or an invalid robot id |
 | `401` | missing, unknown, or revoked operator token |
 | `404` | no such robot in the registry |
 | `503` | the broker could not be reached; nothing was published |
 
-**The command grammar is not parsed here.** `fetch <target> <drop_zone>` and
-`goto <zone>` belong to the robot's task layer, which validates against *its*
-zones and answers `rejected:` with a reason an operator can act on. A parser in
-the fleet server would be a second grammar to keep in step, and it would reject
-commands a newer robot understands.
+**The input is not validated here.** The capability that declared the
+`input_schema` runs on the robot, which validates against *its* schema and *its*
+zones and answers with a typed failure — `invalid_input` naming the property,
+`unresolved_zone` naming the reason. A copy of the schema in the fleet server
+would be a second contract to keep in step, and it would refuse missions a newer
+robot understands.
 
-**One in-flight command per robot** is still enforced by the agent, not here
-(`control-plane.md`). Two operators dispatching at once both get `202`; the
-second robot-side answer is `rejected: busy with '…'`.
+**What a dispatcher should read first is the capability set.** It is retained on
+`mote/v2/<robot_id>/capabilities`, and it carries the keys, the input schemas
+and — through the zone reference `$ref` — which inputs are *places*, so those
+can be pre-checked against [`GET /v1/zones`](#get-v1zones) before anything is
+sent. The dashboard's dispatch form is generated from exactly that document.
+
+**One in-flight mission per (robot, lane)** is enforced by the robot's task
+layer, not here. Two operators dispatching at once both get `202`; the second
+robot-side answer is `rejected` with `failure.class: "busy"`, naming the mission
+that holds the lane.
 
 ### `GET /v1/audit`
 
 ```json
 {"schema":1,"audit":[
  {"id":7,"stamp":"2026-07-26T19:00:27Z","actor":"michael","action":"dispatch",
-  "robot_id":"mote-01","command":"goto kitchen","command_id":"3e99cf44d1294ab5",
+  "robot_id":"mote-01","command":"goto target='kitchen'","command_id":"3e99cf44d1294ab5",
   "result":"published","detail":"","remote":"100.64.0.7"}]}
 ```
 
 Newest first, `limit` defaults to 100 (max 1000), optional `robot_id` filter.
+
+`command` is a readable description of the mission, for a human reading the log.
+The machine-readable record of what was dispatched is `command_id` beside it,
+which every status the robot publishes carries back.
 
 `result` is one of `published` · `error` (the broker refused or was unreachable,
 with `detail`) · `rejected` (the API refused, e.g. no such robot) ·
@@ -179,9 +199,9 @@ failure mode to prefer.
 Everything the dashboard cannot work out from its own URL.
 
 ```json
-{"schema":1,"contract":"mote/v1",
- "topics":{"root":"mote/v1","presence":"presence","health":"health","pose":"pose",
-           "status":"task/status"},
+{"schema":1,"contract":"mote/v2",
+ "topics":{"root":"mote/v2","presence":"presence","health":"health","pose":"pose",
+           "status":"mission/status","capabilities":"capabilities"},
  "broker":{"ws_host":null,"ws_port":9001,"host":"fleet-box","port":1883},
  "foxglove_url":"foxglove://open?ds=foxglove-websocket&ds.url=ws://{robot_id}:8765",
  "maps":true}
@@ -271,6 +291,17 @@ under `/v1/zones` is bound to nothing.
 
 A caller that must never be handed a map can be given `/v1/zones` and only
 `/v1/zones`.
+
+**The split is now also in the files.** A floor is two documents —
+`vocabulary.yaml` and `binding.yaml` — rather than one `zones.yaml` filtered two
+ways, so this route serves a document rather than a projection of one, and the
+kind of leak a filter permits (a geometry key added later that nobody remembers
+to strip) is not representable. A map revision carries the *binding*, because
+coordinates travel with the frame they mean something in; the vocabulary sits at
+floor level, which is why this route answers for a floor with no published map
+at all. A candidate produced by the zone editor carries **both** halves, and
+promotion is what lifts its vocabulary to the floor: uploading is not
+publishing, applied to names as well as to coordinates.
 
 ### `GET /v1/zones/<site>/<floor>`
 
@@ -431,7 +462,7 @@ Operator token required. Body `{"schema": 1}`.
 {"schema":1,"site":"home","floor":"ground","revision":"20260728T090412",
  "url":"…/bundle.tar.gz","sha256":"sha256:1a2b…","bytes":186349,
  "promoted_by":"michael","warnings":[],"announced":true,"detail":"",
- "topic":"mote/v1/registry/site/home/floor/ground/current","audit_id":12}
+ "topic":"mote/v2/registry/site/home/floor/ground/current","audit_id":12}
 ```
 
 | Status | Meaning |

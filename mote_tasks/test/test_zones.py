@@ -29,12 +29,21 @@ def test_yaw_from_quaternion_round_trip():
 
 
 def test_append_zone_creates_replaces_and_loads(tmp_path):
-    path = tmp_path / "zones.yaml"
-    assert append_zone(path, "bin", 1.0, -2.0, 0.5) is False
-    assert append_zone(path, "sofa", 0.25, 0.0, -1.0) is False
-    assert append_zone(path, "bin", 1.5, -2.5, 0.5) is True
+    """Teaching writes the zone/v0 pair, and reading joins it back."""
+    assert append_zone(tmp_path, "bin", 1.0, -2.0, 0.5) is False
+    assert append_zone(tmp_path, "sofa", 0.25, 0.0, -1.0) is False
+    assert append_zone(tmp_path, "bin", 1.5, -2.5, 0.5) is True
 
-    zones = load_zones(str(path))
+    # The names went one way and the coordinates the other. This is the whole
+    # split, checked over the text rather than over the keys someone thought
+    # of: a coordinate in the shared document is the leak it exists to stop.
+    shared = (tmp_path / "vocabulary.yaml").read_text()
+    assert "bin" in shared and "sofa" in shared
+    for leak in ("x:", "y:", "yaw:", "radius:", "polygon:", "frame_id:"):
+        assert leak not in shared, f"{leak} leaked into the vocabulary"
+    assert "x: 1.5" in (tmp_path / "binding.yaml").read_text()
+
+    zones = load_zones(tmp_path)
     assert sorted(zones) == ["bin", "sofa"]
     assert zones["bin"].pose.pose.position.x == pytest.approx(1.5)
     assert zones["bin"].pose.header.frame_id == "map"
@@ -49,9 +58,8 @@ def test_append_zone_creates_replaces_and_loads(tmp_path):
 
 
 def test_append_zone_with_radius_gives_footprint(tmp_path):
-    path = tmp_path / "zones.yaml"
-    append_zone(path, "kitchen", 2.0, 3.0, 0.0, radius=1.5)
-    zones = load_zones(str(path))
+    append_zone(tmp_path, "kitchen", 2.0, 3.0, 0.0, radius=1.5)
+    zones = load_zones(tmp_path)
     fp = zones["kitchen"].footprint
     assert fp is not None
     assert fp.radius == pytest.approx(1.5)
@@ -170,15 +178,19 @@ def test_append_zone_keeps_a_polygon_but_radius_replaces_it(tmp_path):
     path.write_text(
         "zones:\n  ward: {x: 1.0, y: 1.0, polygon: [[0, 0], [2, 0], [2, 2], [0, 2]]}\n"
     )
-    # Re-teaching the pose must not silently un-room the zone.
+    # Re-teaching the pose must not silently un-room the zone. It is also the
+    # first write to a combined file, so it is the migration: nobody runs one,
+    # and nobody can forget to.
     append_zone(path, "ward", 1.5, 0.5, 0.0)
-    ward = load_zones(str(path))["ward"]
+    assert (tmp_path / "vocabulary.yaml").exists()
+    assert not (tmp_path / "zones.yaml").exists()
+    ward = load_zones(tmp_path)["ward"]
     assert isinstance(ward.footprint, Polygon)
     assert ward.pose.pose.position.x == pytest.approx(1.5)
 
     # ...but an explicit --radius is a deliberate new footprint.
-    append_zone(path, "ward", 1.5, 0.5, 0.0, radius=3.0)
-    assert load_zones(str(path))["ward"].footprint.radius == pytest.approx(3.0)
+    append_zone(tmp_path, "ward", 1.5, 0.5, 0.0, radius=3.0)
+    assert load_zones(tmp_path)["ward"].footprint.radius == pytest.approx(3.0)
 
 
 def test_save_zone_output_is_readable_by_the_bundle_validator(tmp_path):
@@ -190,18 +202,24 @@ def test_save_zone_output_is_readable_by_the_bundle_validator(tmp_path):
     """
     from mote_bringup import bundle
 
-    path = tmp_path / "zones.yaml"
-    append_zone(path, "kitchen", 1.0, 2.0, 0.5, radius=1.5)
-    append_zone(path, "ward_east", 4.0, 1.0, 0.0)
-    data = yaml.safe_load(path.read_text())
-    data["zones"]["ward_east"]["polygon"] = [[3.0, 0.0], [5.0, 0.0], [5.0, 2.0]]
-    path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=None))
-    append_zone(path, "ward_east", 4.1, 1.1, 0.0)  # re-teach: keeps the outline
+    append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.5, radius=1.5)
+    append_zone(tmp_path, "ward_east", 4.0, 1.0, 0.0)
+    binding = yaml.safe_load((tmp_path / "binding.yaml").read_text())
+    for item in binding["bindings"]:
+        if item["name"] == "ward_east":
+            item["footprint"] = {
+                "type": "polygon",
+                "vertices": [[3.0, 0.0], [5.0, 0.0], [5.0, 2.0]],
+            }
+    (tmp_path / "binding.yaml").write_text(
+        yaml.safe_dump(binding, sort_keys=False, default_flow_style=None)
+    )
+    append_zone(tmp_path, "ward_east", 4.1, 1.1, 0.0)  # re-teach: keeps the outline
 
-    zones = bundle.read_zones(path)["zones"]
+    zones = bundle.read_floor(tmp_path)["zones"]
     assert zones["kitchen"]["radius"] == 1.5
     assert zones["ward_east"]["polygon"][2] == [5.0, 2.0]
-    assert load_zones(str(path))["ward_east"].footprint is not None
+    assert load_zones(tmp_path)["ward_east"].footprint is not None
 
 
 # ---- the vocabulary half (zone/v0) --------------------------------------
@@ -283,14 +301,18 @@ def test_re_teaching_a_pose_keeps_the_vocabulary(tmp_path):
     """Driving somewhere to capture a better pose is a new coordinate, never a
     rename — dropping the aliases an operator typed would be silent data loss.
     """
-    path = tmp_path / "zones.yaml"
-    append_zone(path, "kitchen", 1.0, 2.0, 0.0, radius=1.5, kind="room")
-    data = yaml.safe_load(path.read_text())
-    data["zones"]["kitchen"]["aliases"] = ["galley"]
-    path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=None))
+    append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.0, radius=1.5, kind="room")
+    # An operator hand-edits the shared document, which is now the only place
+    # an alias can be written — a re-teach cannot reach it at all.
+    shared = tmp_path / "vocabulary.yaml"
+    document = yaml.safe_load(shared.read_text())
+    document["zones"][0]["aliases"] = ["galley"]
+    shared.write_text(
+        yaml.safe_dump(document, sort_keys=False, default_flow_style=None)
+    )
 
-    append_zone(path, "kitchen", 1.2, 2.2, 0.1)
-    zone = load_zones(str(path))["kitchen"]
+    append_zone(tmp_path, "kitchen", 1.2, 2.2, 0.1)
+    zone = load_zones(tmp_path)["kitchen"]
     assert zone.aliases == ("galley",) and zone.kind == "room"
     assert zone.pose.pose.position.x == 1.2
 
@@ -298,20 +320,27 @@ def test_re_teaching_a_pose_keeps_the_vocabulary(tmp_path):
 def test_teaching_bumps_the_vocabulary_revision(tmp_path):
     """A binding elsewhere records which vocabulary it was built against, so
     the counter has to move whenever a name could have."""
-    path = tmp_path / "zones.yaml"
-    append_zone(path, "kitchen", 1.0, 2.0, 0.0)
-    first = yaml.safe_load(path.read_text())["vocabulary_revision"]
-    append_zone(path, "ward", 3.0, 4.0, 0.0)
-    assert yaml.safe_load(path.read_text())["vocabulary_revision"] > first
+
+    def revision():
+        return yaml.safe_load((tmp_path / "vocabulary.yaml").read_text())["revision"]
+
+    append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.0)
+    first = revision()
+    append_zone(tmp_path, "ward", 3.0, 4.0, 0.0)
+    assert revision() > first
+    # The binding says which vocabulary it was built against, which is what
+    # makes a stale one detectable rather than merely wrong.
+    binding = yaml.safe_load((tmp_path / "binding.yaml").read_text())
+    assert binding["vocabulary_revision"] == revision()
 
 
 def test_teaching_a_constraint_kind_writes_the_flag(tmp_path):
-    path = tmp_path / "zones.yaml"
-    append_zone(path, "sluice", 1.0, 2.0, 0.0, kind="keepout")
-    assert yaml.safe_load(path.read_text())["zones"]["sluice"]["navigable"] is False
-    assert load_zones(str(path))["sluice"].navigable is False
+    append_zone(tmp_path, "sluice", 1.0, 2.0, 0.0, kind="keepout")
+    document = yaml.safe_load((tmp_path / "vocabulary.yaml").read_text())
+    assert document["zones"][0]["navigable"] is False
+    assert load_zones(tmp_path)["sluice"].navigable is False
 
 
 def test_teaching_an_unknown_kind_is_refused(tmp_path):
     with pytest.raises(ValueError, match="unknown kind"):
-        append_zone(tmp_path / "zones.yaml", "snug", 1.0, 2.0, 0.0, kind="snug")
+        append_zone(tmp_path, "snug", 1.0, 2.0, 0.0, kind="snug")

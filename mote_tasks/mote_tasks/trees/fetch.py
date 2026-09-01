@@ -22,37 +22,30 @@ OBJECT_POSE_KEY = "object_pose"
 OBJECT_LABEL_KEY = "object_label"
 DROP_POSE_KEY = "drop_pose"
 
-COMMAND = "fetch"
 
+def prepare(zones: dict, payload_input: dict):
+    """``(object_pose, object_label, drop_pose, drop_zone)`` for a ``fetch``.
 
-def parse_command(zones: dict, words: list):
-    """Parse ``fetch <target> <drop_zone>`` against known zones.
-
-    Returns ``(object_pose, object_label, drop_pose)``. A ``target`` that names
-    a zone yields that pose and no label; any other target is an open-vocabulary
-    object label (underscores become spaces) with no pose, left for the detector
-    to resolve. Raises ValueError with a user-facing message when the command is
-    malformed or the drop zone is unknown.
+    ``destination`` names a zone. ``target`` is the registry's deliberately
+    untyped half: a zone name when it matches one, otherwise an
+    open-vocabulary object label for the detector (underscores become spaces,
+    so ``red_box`` looks for "red box"). A target naming a *non-navigable* zone
+    is neither — falling through to the label branch would send the detector
+    hunting for an object called "keepout" — so it is refused with the zone's
+    own reason.
     """
-    if len(words) != 3 or words[0] != COMMAND:
-        raise ValueError(f"expected: {COMMAND} <target> <drop_zone>")
-    target, drop = words[1], words[2]
-    drop_zone = mote_zones.resolve(zones, drop)
-    if drop_zone is None or not drop_zone.navigable:
-        known = sorted(name for name, z in zones.items() if z.navigable)
-        raise ValueError(f"unknown drop zone '{drop}', have {known}")
-    # A target naming a zone is a place to drive to; anything else is a label
-    # for the detector. A *non-navigable* zone name is neither — falling
-    # through would send the detector hunting for an object called "keepout".
-    target_zone = mote_zones.resolve(zones, target)
-    if target_zone is not None:
-        if not target_zone.navigable:
-            raise ValueError(
-                f"zone '{target_zone.name}' is a {target_zone.kind} zone, "
-                "not a destination"
-            )
-        return target_zone.pose, None, drop_zone.pose
-    return None, target.replace("_", " "), drop_zone.pose
+    drop = mote_zones.destination(
+        zones, payload_input["destination"], where="destination"
+    )
+    target = payload_input["target"]
+    zone, reason = mote_zones.resolve_reason(zones, target)
+    if reason == "not_navigable":
+        raise mote_zones.ZoneUnresolved(
+            reason, f"target {zone.name!r} is a {zone.kind} zone, not a destination"
+        )
+    if zone is not None:
+        return zone.pose, None, drop.pose, drop
+    return None, target.replace("_", " "), drop.pose, drop
 
 
 def create_fetch_tree(

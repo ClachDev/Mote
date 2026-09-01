@@ -17,7 +17,18 @@ pytest.importorskip("paho.mqtt.client")
 
 import fake_robots  # noqa: E402
 
+from mote_bringup.spec import capability as spec_capability  # noqa: E402
+from mote_bringup.spec import mission  # noqa: E402
 from mote_fleet import protocol  # noqa: E402
+
+
+def a_command(capability="goto", payload_input=None, **kwargs):
+    return mission.command(
+        "mote-01",
+        capability,
+        payload_input if payload_input is not None else {"target": "dropoff"},
+        **kwargs,
+    )
 
 
 @pytest.fixture
@@ -73,53 +84,74 @@ def test_degraded_is_degraded_all_the_way_down():
     assert protocol.DEGRADED in [row["state"] for row in degraded["subsystems"]]
 
 
-def test_a_known_command_runs_to_success(robot):
-    command = protocol.command("goto dropoff")
+def test_a_known_mission_runs_to_success(robot):
+    command = a_command()
     robot._handle(command)
-    assert states(robot) == [protocol.DISPATCHED, protocol.ACCEPTED]
+    assert states(robot) == [mission.DISPATCHED, mission.ACCEPTED]
 
-    robot._task["due"] = 0  # the task's time is up
+    robot._mission["due"] = 0  # the mission's time is up
     robot.tick()
-    assert states(robot)[-1] == protocol.SUCCEEDED
+    assert states(robot)[-1] == mission.SUCCEEDED
     for payload in of(robot, protocol.STATUS):
-        protocol.check(payload, protocol.STATUS)
+        mission.check(payload, "status")
         assert payload["id"] == command["id"]
 
 
+def test_the_capability_set_is_the_robots_own(robot):
+    """Imported from ``mote_tasks``, never written here: the dashboard's
+    dispatch form is generated from this document, so a fixture with a
+    hand-written one would let the form drift from the robot it drives."""
+    assert [item["key"] for item in robot.capabilities["capabilities"]] == [
+        "goto",
+        "fetch",
+    ]
+    assert robot.capabilities["platform_id"] == "mote-01"
+    for item in robot.capabilities["capabilities"]:
+        spec_capability.check(item)
+
+
 @pytest.mark.parametrize(
-    "text,reason",
+    "command,failure_class",
     [
-        ("wibble", "unknown command"),
-        ("goto nowhere", "unknown zone"),
-        ("goto", "one zone"),
-        ("fetch box", "target and a drop zone"),
-        ("", "empty"),
+        (a_command(capability="wibble"), mission.UNKNOWN_CAPABILITY),
+        (a_command(payload_input={}), mission.INVALID_INPUT),
+        (a_command(payload_input={"target": "Nowhere"}), mission.INVALID_INPUT),
+        (a_command(payload_input={"target": "nowhere"}), mission.UNRESOLVED_ZONE),
+        (
+            a_command(capability="fetch", payload_input={"target": "box"}),
+            mission.INVALID_INPUT,
+        ),
     ],
 )
-def test_the_grammar_refuses_what_the_task_layer_would(robot, text, reason):
-    robot._handle(protocol.command(text))
-    assert states(robot) == [protocol.DISPATCHED, protocol.REJECTED]
-    assert reason in of(robot, protocol.STATUS)[-1]["detail"]
+def test_a_refusal_is_typed_the_way_the_robot_types_it(robot, command, failure_class):
+    robot._handle(command)
+    assert states(robot) == [mission.DISPATCHED, mission.REJECTED]
+    assert of(robot, protocol.STATUS)[-1]["failure"]["class"] == failure_class
 
 
 def test_a_redelivery_is_recognised_not_re_run(robot):
-    command = protocol.command("goto home")
+    command = a_command(payload_input={"target": "home"})
     robot._handle(command)
     robot._handle(command)
-    # The same command id arriving twice re-publishes where it got to; it does
-    # not start a second task, and it is not rejected as "busy" with itself.
+    # The same mission id arriving twice re-publishes where it got to; it does
+    # not start a second mission, and it is not rejected as "busy" with itself.
     assert states(robot) == [
-        protocol.DISPATCHED,
-        protocol.ACCEPTED,
-        protocol.ACCEPTED,
+        mission.DISPATCHED,
+        mission.ACCEPTED,
+        mission.ACCEPTED,
     ]
 
 
-def test_a_second_command_is_refused_while_one_is_in_flight(robot):
-    robot._handle(protocol.command("goto home"))
-    robot._handle(protocol.command("goto pickup"))
-    assert states(robot)[-1] == protocol.REJECTED
-    assert "busy" in of(robot, protocol.STATUS)[-1]["detail"]
+def test_a_second_mission_is_refused_while_one_is_in_flight(robot):
+    robot._handle(a_command(payload_input={"target": "home"}))
+    robot._handle(a_command(payload_input={"target": "pickup"}))
+    rejection = of(robot, protocol.STATUS)[-1]
+    assert states(robot)[-1] == mission.REJECTED
+    assert rejection["failure"]["class"] == mission.BUSY
+    # The busy failure names the mission that holds the lane, so a dispatcher
+    # knows what to wait for rather than merely that it must wait.
+    assert rejection["failure"]["recoverable"] is True
+    assert "lane" in rejection["failure"]["detail"]
 
 
 def test_the_will_is_an_offline_presence(robot):
@@ -129,4 +161,4 @@ def test_the_will_is_an_offline_presence(robot):
     will = robot.client._will_payload
     protocol.check(protocol.decode(will), protocol.PRESENCE)
     assert protocol.decode(will)["online"] is False
-    assert robot.client._will_topic.decode() == "mote/v1/mote-01/presence"
+    assert robot.client._will_topic.decode() == "mote/v2/mote-01/presence"

@@ -28,6 +28,12 @@
 # writes them with, so these two ROS-free files cross package boundaries.
 !mote_bringup/mote_bringup/__init__.py
 !mote_bringup/mote_bringup/bundle.py
+# ...and the mission and capability contracts, for the same reason: the dispatch
+# route builds the payloads with the module the robot reads them with. A
+# directory needs both lines — `*` excludes the directory itself, and docker
+# will not descend into one it has excluded.
+!mote_bringup/mote_bringup/spec/
+!mote_bringup/mote_bringup/spec/**
 # The dashboard is static files the API serves, so it ships in the same image.
 !mote_fleet/server/ui/
 !mote_fleet/server/ui/**

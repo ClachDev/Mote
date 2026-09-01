@@ -148,6 +148,12 @@ depends on the fleet server. So when connectivity drops:
   `accepted:`/`rejected:` to that command, and carries an MQTT correlation id
   upstream of the ROS seam. Without that convention the bare-String seam can't tell
   two in-flight commands apart.
+  **Superseded by the spec-v0 adoption** (milestone note below): the ROS seam now
+  carries a mission/v0 payload with the correlation id *in* it, so the rule moved
+  to the executor, which is the thing that actually holds the lane and which also
+  sees missions issued locally on the robot. The agent kept what only it can
+  answer — deduplicating a redelivery, retaining terminal statuses, failing an
+  unanswered mission, and `source`.
 
 **The agent being the sole egress is also the fleet-scale isolation story.**
 Because DDS never leaves the robot (nothing subscribes to the robot's DDS graph
@@ -306,6 +312,15 @@ The bridge is trivial because the dispatch seam is already string-shaped:
 strings (`accepted:`/`rejected:`/`succeeded:`/`failed:`) out
 (`task_server.py:1-15`). The agent JSON-wraps those onto MQTT — no new ROS message
 types, no changes to `task_server`.
+
+**What that bought, and what it cost.** It was right for M1: the fleet arrived
+without touching a working task layer. The cost showed up as soon as anything
+other than a human read the wire — a dispatcher had to know the grammar by
+having read a docstring, and a refusal was a sentence to parse. The spec-v0
+adoption pays it: the seam stays `std_msgs/String` (so the agent still forwards
+bytes and there is still one definition of the wire) but the string is now a
+mission/v0 payload, and the grammar became a capability set the robot
+publishes.
 
 **Can a web UI connect to the broker directly?** Yes. Browsers speak **MQTT over
 WebSockets** via [MQTT.js](https://www.emqx.com/en/blog/mqtt-vs-websocket); the
@@ -915,7 +930,8 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   M2, Ms. *Seams:* `task_server.py:67-68`, `:1-15`; `mote_bringup/systemd/`.
   **Built** as `mote_fleet`; the contract shipped as
   [`docs/fleet/control-plane.md`](../fleet/control-plane.md) (topic root carries
-  the major version, `mote/v1/<robot_id>/…`) and the measurements as
+  the major version, `mote/v1/<robot_id>/…`; now `v2` — see the spec-adoption
+  note below) and the measurements as
   [`m1-verification.md`](../fleet/m1-verification.md). Two findings land on
   later milestones: the agent costs exactly one DDS participant slot, so the M2
   budget above is unchanged; and **conda-forge's mosquitto has no websockets
@@ -982,7 +998,7 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   *candidate*, and only an operator's promote flips the floor's symlink and
   announces it, which is what makes the two-mappers case a non-event rather than
   a race. Five things landed differently from Q4, each recorded in the ledger's
-  §6: the topic is `mote/v1/registry/…` (the major version belongs in the root,
+  §6: the topic is `mote/<version>/registry/…` (the major version belongs in the root,
   and `registry` is therefore a reserved robot id); the shared validator is
   `mote_bringup/bundle.py` rather than a `mote_fleet` module, because the bundle
   layout is `sites.py`'s and the other direction would be a package cycle — the
@@ -1040,6 +1056,48 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   signed if available) packages. *Accept:* a device off the tailnet reaches nothing;
   a robot can't read another robot's command topic. *Depends on:* M0; folds into
   each milestone as it lands.
+
+### Cross-cutting — adopting the open specifications
+
+Not a milestone of its own: it re-shapes M1's control plane and M3's dispatch
+API in place, and everything above still describes where each piece lives.
+
+Mote is the reference implementation for
+[mission/v0, capability/v0 and zone/v0](https://github.com/AugereAI/augereai-spec),
+and the parts of them that were extracted *from* this system — the
+dispatcher-chosen correlation id, dedup on redelivery, one in-flight mission,
+retained status, never-retained command, the 20-second no-verdict timeout — were
+already proven here on hardware. **What the specs add is typing**, and adopting
+them is what the topic root `mote/v2` is:
+
+- **A capability set replaces the command grammar.** The robot publishes what it
+  can be asked to do, with a JSON Schema per input; the dashboard's dispatch
+  form is generated from that document, so the page holds no list of
+  capabilities and no list of which inputs are places. The
+  `$ref` to zone/v0's zone reference is what makes the second part machine-
+  readable.
+- **A typed failure replaces the detail string.** `rejected: busy with '…'`
+  became `failure.class: "busy"`, `recoverable: true`, with the in-flight
+  mission's id in `detail`. `recoverable` is set *per failure* rather than
+  looked up from the class, because the spec is right that it is a statement
+  about the world: a `precondition` failure on localisation clears itself and
+  one on a missing component does not.
+- **Preconditions became things that are evaluated**, not requirements written
+  in a docstring. `localized` and `zone_known` are declared and checked before a
+  mission is accepted, so a `goto` sent to an unlocalised robot is refused with
+  a reason instead of flailing in Nav2 for two minutes.
+
+Two consequences worth stating. The **payloads are no longer Mote's to version**
+— Mote vendors no copy of the specs' schemas, and
+`mote_bringup/test/test_spec_conformance.py` validates real payloads against the
+specification's own where a checkout of it is present. And **a v1 robot and a v2
+server do not interoperate**: nothing translates between them, deliberately,
+because a shim would be a third definition of the wire.
+
+The contracts are `mote_bringup/spec/`, ROS-free *and* stdlib-only so the fleet
+box's container installs no framework to read them, for the same reason
+`bundle.py` is ROS-free. Prose: [`control-plane.md`](../fleet/control-plane.md)
+and [`fleet-api.md`](../fleet/fleet-api.md).
 
 ---
 

@@ -21,6 +21,11 @@ import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
+DOCKERIGNORE = REPO / ".dockerignore"
+DOCKERFILES = (
+    REPO / "mote_fleet" / "deploy" / "Dockerfile",
+    REPO / "mote_perception" / "deploy" / "Dockerfile",
+)
 COMPOSE = REPO / "mote_fleet" / "deploy" / "docker-compose.yml"
 BROKER_SH = REPO / "mote_fleet" / "server" / "broker.sh"
 MOSQUITTO_CONF = REPO / "mote_fleet" / "server" / "mosquitto.conf"
@@ -152,3 +157,73 @@ def test_the_browser_is_told_the_published_websocket_port(compose):
     assert any("BROKER_WS_PORT" in p and p.endswith(":9001") for p in published), (
         f"the WebSocket listener is not published: {published}"
     )
+
+
+# ---- the build context --------------------------------------------------
+
+
+def copy_sources(dockerfile: Path) -> list:
+    """Every path a ``COPY`` reads from, as written in the Dockerfile.
+
+    The last argument of a COPY is its destination inside the image; everything
+    before it is a source in the build context. Line continuations are joined
+    first, and ``--from``/``--chown`` flags dropped.
+    """
+    text = re.sub(r"\\\n\s*", " ", dockerfile.read_text())
+    sources = []
+    for line in text.splitlines():
+        if not line.startswith("COPY "):
+            continue
+        words = [w for w in line[len("COPY ") :].split() if not w.startswith("--")]
+        sources.extend(words[:-1])
+    return sources
+
+
+def allowlist() -> list:
+    return [
+        line[1:].rstrip("/")
+        for line in DOCKERIGNORE.read_text().splitlines()
+        if line.startswith("!")
+    ]
+
+
+@pytest.mark.parametrize("dockerfile", DOCKERFILES, ids=lambda p: p.parent.parent.name)
+def test_every_copy_source_survives_the_dockerignore(dockerfile):
+    """`.dockerignore` denies everything and allows the files each image copies,
+    so a new COPY without a matching `!` line fails the build — and fails it in
+    CI rather than here, on a machine that has docker, twenty seconds in.
+
+    The file says so in a comment ("adding a COPY means adding a line here"),
+    which is a rule nobody enforces. This is the enforcement. It checks *this
+    file's own allowlist convention* — an exact entry, or a directory that is a
+    prefix of the path — rather than emulating docker's matcher, because a
+    second implementation of `.dockerignore` semantics is a worse thing to own
+    than the rule it would be checking.
+    """
+    allowed = allowlist()
+    for source in copy_sources(dockerfile):
+        source = source.rstrip("/")
+        covered = any(
+            source == entry or source.startswith(f"{entry}/") for entry in allowed
+        )
+        assert covered, (
+            f"{dockerfile.parent.parent.name}'s Dockerfile copies {source!r}, "
+            f"which .dockerignore excludes — add `!{source}` "
+            "(and `/**` beside it for a directory)"
+        )
+
+
+def test_a_directory_in_the_allowlist_carries_its_contents():
+    """`*` excludes the directory itself, and docker will not descend into one
+    it has excluded — so a bare `!dir/` allows nothing at all. Both lines or
+    neither, and the failure of getting it wrong is an empty directory in the
+    image rather than an error."""
+    entries = set(allowlist())
+    for entry in sorted(entries):
+        if entry.endswith("**"):
+            continue
+        if (REPO / entry).is_dir():
+            assert f"{entry}/**" in entries, (
+                f".dockerignore allows the directory {entry!r} but not its "
+                f"contents — add `!{entry}/**`"
+            )

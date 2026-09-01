@@ -1,9 +1,18 @@
+"""``fetch``'s input: two properties, one of which is deliberately untyped.
+
+``destination`` names a place and ``$ref``s the zone reference, so the schema
+checks its shape. ``target`` is a plain string in the standard registry,
+because it is either a zone name or an open-vocabulary object label and no
+schema can tell which — so the branch between them is here, and so is the case
+that makes it worth testing.
+"""
+
 import pytest
 
-from mote_tasks.trees.fetch import parse_command
-from mote_tasks.zones import Zone
+from mote_tasks.trees.fetch import prepare
+from mote_tasks.zones import Zone, ZoneUnresolved
 
-# A real Zone, because parse_command reads the vocabulary as well as the pose.
+# A real Zone, because resolution reads the vocabulary as well as the pose.
 # Zone does not care what `pose` is, so a sentinel still saves building a
 # PoseStamped.
 ZONES = {
@@ -13,45 +22,40 @@ ZONES = {
 }
 
 
+def a_fetch(target, destination="dropoff"):
+    return prepare(ZONES, {"target": target, "destination": destination})
+
+
 def test_zone_target_yields_pose_and_no_label():
-    object_pose, object_label, drop_pose = parse_command(
-        ZONES, ["fetch", "pickup", "dropoff"]
-    )
+    object_pose, object_label, drop_pose, drop = a_fetch("pickup")
     assert object_pose == "PICKUP_POSE"
     assert object_label is None
     assert drop_pose == "DROPOFF_POSE"
+    assert drop.name == "dropoff"
 
 
 def test_label_target_yields_label_and_no_pose():
-    object_pose, object_label, drop_pose = parse_command(
-        ZONES, ["fetch", "red_box", "dropoff"]
-    )
+    object_pose, object_label, drop_pose, _ = a_fetch("red_box")
     assert object_pose is None
     assert object_label == "red box"
     assert drop_pose == "DROPOFF_POSE"
 
 
-def test_malformed_command_raises():
-    with pytest.raises(ValueError):
-        parse_command(ZONES, ["fetch", "pickup"])
-    with pytest.raises(ValueError):
-        parse_command(ZONES, ["grab", "pickup", "dropoff"])
+def test_unknown_destination_is_unresolved_not_a_label():
+    with pytest.raises(ZoneUnresolved) as excinfo:
+        a_fetch("pickup", "nowhere")
+    assert excinfo.value.reason == "unknown_name"
 
 
-def test_unknown_drop_zone_raises():
-    with pytest.raises(ValueError):
-        parse_command(ZONES, ["fetch", "pickup", "nowhere"])
-
-
-def test_drop_zone_alias_resolves():
-    _, _, drop_pose = parse_command(ZONES, ["fetch", "red_box", "the bin"])
-    assert drop_pose == "DROPOFF_POSE"
+def test_destination_alias_resolves():
+    assert a_fetch("red_box", "the bin")[2] == "DROPOFF_POSE"
 
 
 def test_constraint_zone_is_refused_rather_than_read_as_a_label():
     # The dangerous shape: falling through to the label branch would send the
     # detector hunting for an object called "server room" and look like success.
-    with pytest.raises(ValueError, match="keepout"):
-        parse_command(ZONES, ["fetch", "server_room", "dropoff"])
-    with pytest.raises(ValueError):
-        parse_command(ZONES, ["fetch", "red_box", "server_room"])
+    with pytest.raises(ZoneUnresolved, match="keepout") as excinfo:
+        a_fetch("server_room")
+    assert excinfo.value.reason == "not_navigable"
+    with pytest.raises(ZoneUnresolved):
+        a_fetch("red_box", "server_room")

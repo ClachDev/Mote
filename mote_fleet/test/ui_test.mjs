@@ -43,7 +43,7 @@ import {
   detailSections,
   healthBanner,
   rosterSubline,
-  taskLine,
+  missionLine,
 } from '../server/ui/robot.mjs';
 
 const read = (name) => readFileSync(new URL(`../server/ui/${name}`, import.meta.url), 'utf8');
@@ -66,12 +66,12 @@ test('CONNECT names protocol 3.1.1 and a clean session', () => {
 });
 
 test('SUBSCRIBE carries the mandatory 0x02 flags', () => {
-  const packet = encodeSubscribe(1, ['mote/v1/+/health']);
+  const packet = encodeSubscribe(1, ['mote/v2/+/health']);
   assert.equal(packet[0], (8 << 4) | 0x02);
 });
 
 test('a PUBLISH is decoded with its topic, payload and retain flag', () => {
-  const topic = 'mote/v1/mote-01/health';
+  const topic = 'mote/v2/mote-01/health';
   const payload = JSON.stringify({ schema: 1, state: 'ok' });
   const body = [
     0,
@@ -133,11 +133,14 @@ test('a refusing CONNACK keeps its return code', () => {
 });
 
 test('topics parse into a robot id and a leaf', () => {
-  assert.deepEqual(parseTopic('mote/v1/mote-01/task/status'), {
+  assert.deepEqual(parseTopic('mote/v2/mote-01/mission/status'), {
     robotId: 'mote-01',
-    leaf: 'task/status',
+    leaf: 'mission/status',
   });
-  assert.equal(parseTopic('mote/v2/mote-01/health'), null);
+  // A topic from the previous major tree is not this one's to read: v1's
+  // mission payloads mean something different, and guessing would be worse
+  // than ignoring them.
+  assert.equal(parseTopic('mote/v1/mote-01/health'), null);
   assert.equal(parseTopic('something/else'), null);
 });
 
@@ -322,10 +325,15 @@ test('health that has stopped arriving is an exception too', () => {
   assert.match(rosterSubline(record, NOW), /^no health for/);
 });
 
-test('a robot running a task says so — the dot cannot', () => {
+test('a robot running a mission says so — the dot cannot', () => {
   const record = idle();
-  record.health.task = { state: 'running', command: 'goto kitchen' };
-  assert.equal(rosterSubline(record, NOW), 'running: goto kitchen');
+  record.health.mission = {
+    id: 'abc',
+    capability: 'goto',
+    state: 'accepted',
+    lane: 'default',
+  };
+  assert.equal(rosterSubline(record, NOW), 'accepted: goto');
 });
 
 // -- the detail pane ------------------------------------------------------
@@ -390,34 +398,34 @@ test('health from before the robot went quiet is the stale banner, not this one'
 test('an idle robot says one dim word, and still gets the section', () => {
   // "Is it busy" is the question the pane is opened with. An absent section is
   // not an answer to it.
-  assert.deepEqual(taskLine(idle(), NOW), { command: '', meta: 'idle' });
+  assert.deepEqual(missionLine(idle(), NOW), { capability: '', meta: 'idle' });
 });
 
 test('a running task is the command, with the state and its age beside it', () => {
   const record = idle();
-  record.health.task = { id: 'c1', state: 'running', command: 'goto kitchen' };
+  record.health.mission = { id: 'c1', state: 'running', capability: 'goto' };
   record.statuses = [
-    { id: 'c1', state: 'dispatched', command: 'goto kitchen', stamp: stamp(90) },
-    { id: 'c1', state: 'accepted', command: 'goto kitchen', stamp: stamp(88) },
+    { id: 'c1', state: 'dispatched', capability: 'goto', stamp: stamp(90) },
+    { id: 'c1', state: 'accepted', capability: 'goto', stamp: stamp(88) },
   ];
-  assert.deepEqual(taskLine(record, NOW), {
-    command: 'goto kitchen',
+  assert.deepEqual(missionLine(record, NOW), {
+    capability: 'goto',
     meta: 'running · 2m',
   });
 });
 
-test('the task age is the run that is still going, not the one before it', () => {
-  // `health.task` carries no stamp (protocol.py), so the age comes from the
-  // status that started the run — and a command sent twice must be aged from
+test('the mission age is the run still going, not the one before it', () => {
+  // `health.mission` carries no stamp (protocol.py), so the age comes from the
+  // status that started the run — and a mission sent twice must be aged from
   // the second time. The scan stops at the terminal status between them.
   const record = idle();
-  record.health.task = { id: null, state: 'accepted', command: 'goto kitchen' };
+  record.health.mission = { id: null, state: 'accepted', capability: 'goto' };
   record.statuses = [
-    { id: null, state: 'accepted', command: 'goto kitchen', stamp: stamp(3600) },
-    { id: null, state: 'succeeded', command: 'goto kitchen', stamp: stamp(3000), terminal: true },
-    { id: null, state: 'accepted', command: 'goto kitchen', stamp: stamp(120) },
+    { id: null, state: 'accepted', capability: 'goto', stamp: stamp(3600) },
+    { id: null, state: 'succeeded', capability: 'goto', stamp: stamp(3000), terminal: true },
+    { id: null, state: 'accepted', capability: 'goto', stamp: stamp(120) },
   ];
-  assert.equal(taskLine(record, NOW).meta, 'accepted · 2m');
+  assert.equal(missionLine(record, NOW).meta, 'accepted · 2m');
 });
 
 test('a task with no status to age it from still names its state', () => {
@@ -425,8 +433,8 @@ test('a task with no status to age it from still names its state', () => {
   // nothing belonging to the run. Saying `running` with no age beats inventing
   // one from the health stamp, which is the age of the report, not the run.
   const record = idle();
-  record.health.task = { id: 'c9', state: 'accepted', command: 'fetch box home' };
-  assert.deepEqual(taskLine(record, NOW), { command: 'fetch box home', meta: 'accepted' });
+  record.health.mission = { id: 'c9', state: 'accepted', capability: 'fetch' };
+  assert.deepEqual(missionLine(record, NOW), { capability: 'fetch', meta: 'accepted' });
 });
 
 test('the footer is the two numbers not worth a row each', () => {
@@ -441,12 +449,12 @@ test('the footer is the two numbers not worth a row each', () => {
 test('a section with nothing under it is not a section', () => {
   const record = idle();
   assert.deepEqual(detailSections(record), {
-    task: true, // always: an idle robot is an answer, not an absence
+    mission: true, // always: an idle robot is an answer, not an absence
     dispatch: true,
     subsystems: true,
-    statuses: false, // never given a task: the log has nothing to show
+    statuses: false, // never given one: the log has nothing to show
   });
-  record.statuses = [{ state: 'accepted', command: 'goto kitchen', stamp: stamp(3) }];
+  record.statuses = [{ state: 'accepted', capability: 'goto', stamp: stamp(3) }];
   assert.equal(detailSections(record).statuses, true);
   record.health.subsystems = [];
   assert.equal(detailSections(record).subsystems, false);
@@ -454,7 +462,7 @@ test('a section with nothing under it is not a section', () => {
 
 test('with no robot selected the detail pane has no sections at all', () => {
   assert.deepEqual(detailSections(null), {
-    task: false,
+    mission: false,
     dispatch: false,
     subsystems: false,
     statuses: false,
@@ -469,7 +477,7 @@ test('the detail pane is ordered by what an operator needs first', () => {
   const html = read('index.html');
   const pane = html.slice(html.indexOf('data-pane="detail"'), html.indexOf('</main>'));
   const headings = [...pane.matchAll(/<h3[^>]*>([^<]+)<\/h3>/g)].map((match) => match[1].trim());
-  assert.deepEqual(headings, ['task', 'dispatch', 'subsystems']);
+  assert.deepEqual(headings, ['mission', 'dispatch', 'subsystems']);
 
   const at = (needle) => {
     const index = pane.indexOf(needle);
@@ -481,10 +489,10 @@ test('the detail pane is ordered by what an operator needs first', () => {
   assert.ok(at('id="detail-name"') < at('id="detail-reported"'));
   assert.ok(at('id="detail-reported"') < at('id="foxglove"'));
   assert.ok(at('id="foxglove"') < at('id="detail-stale"'));
-  assert.ok(at('id="detail-stale"') < at('id="task-head"'));
-  // The log is what happened to the task line, so it sits under it — with no
-  // heading of its own, which is what `task status` used to be.
-  assert.ok(at('id="task-line"') < at('id="status-log"'));
+  assert.ok(at('id="detail-stale"') < at('id="mission-head"'));
+  // The log is what happened to the mission line, so it sits under it — with
+  // no heading of its own, which is what `mission status` used to be.
+  assert.ok(at('id="mission-line"') < at('id="status-log"'));
   assert.ok(at('id="status-log"') < at('id="dispatch-head"'));
   assert.ok(at('id="subsystems"') < at('id="detail-footer"'));
 
@@ -493,7 +501,7 @@ test('the detail pane is ordered by what an operator needs first', () => {
   const css = read('style.css');
   assert.match(css, /\.pane \{[^}]*flex-direction:\s*column/);
   for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    if (!/detail|task-line|task-command|task-meta|status-log|subsystems/.test(selector)) continue;
+    if (!/detail|mission-line|mission-capability|mission-meta|status-log|subsystems/.test(selector)) continue;
     assert.ok(!/(^|;)\s*order\s*:/.test(body), `${selector.trim()} reorders the pane`);
   }
 });
@@ -546,9 +554,9 @@ test('the headline reads as a robot, not as a section label', () => {
 
 test('the running command is the one thing in the pane worth the accent', () => {
   const css = read('style.css');
-  const command = css.slice(css.indexOf('.task-command {'));
+  const command = css.slice(css.indexOf('.mission-capability {'));
   assert.match(command.slice(0, command.indexOf('}')), /color:\s*var\(--accent\)/);
-  const meta = css.slice(css.indexOf('.task-meta {'));
+  const meta = css.slice(css.indexOf('.mission-meta {'));
   assert.match(meta.slice(0, meta.indexOf('}')), /color:\s*var\(--dim\)/);
 });
 
@@ -568,14 +576,19 @@ test('every heading in the detail pane can be hidden with its content', () => {
   }
 });
 
-test('the dispatch box does not teach the grammar', () => {
-  // The zone picker beside it already writes a valid command and the grammar
-  // reference is in the docs, so a placeholder spelling it out is a third copy
-  // — one that goes stale the first time the task layer learns a word.
+test('the dispatch form teaches no grammar because it holds none', () => {
+  // A placeholder spelling out `goto <zone>` was a copy of the task layer's
+  // grammar that went stale the first time the robot learned a word. There is
+  // now no free-text command box to put one in: the capability select and its
+  // fields are generated from the document the robot publishes, so the page
+  // cannot state a grammar even by accident.
   const html = read('index.html');
-  const input = html.slice(html.indexOf('id="command"'));
-  const placeholder = /placeholder="([^"]*)"/.exec(input.slice(0, input.indexOf('/>')))[1];
-  assert.equal(placeholder, 'send this robot somewhere');
+  assert.ok(!html.includes('id="command"'), 'the free-text command box is back');
+  assert.ok(html.includes('id="capability"'));
+  assert.ok(html.includes('id="mission-input"'));
+  const app = read('app.mjs');
+  // ...and nothing in the page names a capability key either.
+  assert.ok(!/['"`]goto['"`]/.test(app), 'app.mjs names a capability key');
 });
 
 // -- the narrow layout ---------------------------------------------------
@@ -927,11 +940,13 @@ test('the kind decides whether a zone is a point or an area', () => {
 });
 
 test('the kind list is the one the bundle validator will accept', () => {
-  // A kind outside `bundle.ZONE_KINDS` is refused at the parse, so a dropdown
+  // A kind outside zone/v0's list is refused at the parse, so a dropdown
   // offering one would be an option that fails on save. Read out of the python
   // rather than duplicated in a fixture, so adding a kind there fails here.
+  // The list moved from bundle.py to spec/zone.py when the vocabulary and the
+  // binding were split; bundle.py re-exports it, and this reads the original.
   const bundle = readFileSync(
-    new URL('../../mote_bringup/mote_bringup/bundle.py', import.meta.url),
+    new URL('../../mote_bringup/mote_bringup/spec/zone.py', import.meta.url),
     'utf8',
   );
   const kinds = (source, name) =>
