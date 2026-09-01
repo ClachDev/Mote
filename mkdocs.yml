@@ -158,3 +158,6 @@ nav:
       - Monitor-node CPU: tuning/2026-08-11-monitor-cpu.md
       - Orientation picking: tuning/2026-08-11-orientation-picking.md
       - C++ build type: tuning/2026-08-11-cmake-build-type.md
+      - SLAM build params: tuning/2026-08-25-slam-build-params.md
+      - "  ↳ birth-aligned replay": tuning/2026-08-25-slam-build-params/birth-aligned/report.md
+      - "  ↳ unaligned replay": tuning/2026-08-25-slam-build-params/unaligned/report.md
