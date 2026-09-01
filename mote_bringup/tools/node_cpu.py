@@ -21,7 +21,10 @@ interpreter — so a node is identified by what its command line says it is
 running (see :func:`node_instance`), confined to processes whose command line
 names ``--prefix`` (default: this checkout). A box running several worktrees, or
 holding a stack leaked by a dead agent job (see ``pixi run sweep``), would
-otherwise have another checkout's monitors counted as this one's.
+otherwise have another checkout's monitors counted as this one's. A C++ node is
+the opposite case and is matched on being an installed executable itself, which
+is what keeps the sampler working across a port from one language to the other —
+the measurement that justifies such a port needs both builds in one run.
 
 Two builds of one node can be sampled *against each other* by starting the
 second one renamed, which is the only sound way to compare them on a robot whose
@@ -29,7 +32,7 @@ own condition drifts between runs — a servo bus that answers in one run and no
 the next moves ``/joint_states`` and ``/tf`` by tens of Hz, and those rates are
 exactly what the monitors cost:
 
-    ros2 run mote_bringup health_monitor --ros-args -r __node:=health_monitor_b \
+    ros2 run mote_health health_monitor --ros-args -r __node:=health_monitor_b \
         -r diagnostics_agg:=diagnostics_agg_b -r health:=health_b
     pixi run node-cpu --nodes health_monitor,health_monitor_b
 
@@ -84,26 +87,45 @@ def _candidates(prefix):
     return out
 
 
-def node_instance(argv):
-    """The node this process *is*, or None if it is not one.
+def _program(argv):
+    """The installed executable this process is, or None if it is not one.
 
     A node started through ``ros2 run`` or ``pixi run`` is wrapped by processes
     that repeat its whole command line in their own, so a substring match would
     weigh a wrapper — one of which does no work at all — instead of the node.
-    The node is the only one of them an interpreter runs directly: argv[0] is a
-    python and argv[1] is the installed entry point, whose name is the node's.
+
+    A Python node is the only one of them an interpreter runs directly: argv[0]
+    is a python and argv[1] is the installed entry point, whose name is the
+    node's. A C++ node has no interpreter at all, and is instead the process
+    whose argv[0] is itself an installed executable — ``ros2 run`` finds it
+    under ``install/<pkg>/lib/<pkg>/``, which is what tells it apart from the
+    wrappers (whose argv[0] is python, pixi or a shell) inside a candidate set
+    already confined to this checkout.
+    """
+    program = os.path.basename(argv[0])
+    if "python" in program:
+        if len(argv) < 2:
+            return None
+        program = os.path.basename(argv[1])
+        return None if program == "ros2" else program
+    parts = Path(argv[0]).parts
+    if "install" in parts and "lib" in parts:
+        return program
+    return None
+
+
+def node_instance(argv):
+    """The node this process *is*, or None if it is not one.
 
     The name reported is the ``__node:=`` rename where a launch or a remap gave
-    it one, and the entry point's own name otherwise. That is what lets two
+    it one, and the executable's own name otherwise. That is what lets two
     builds of one node be weighed against each other in a single run: they
     differ only by the rename, and the rename is what tells them apart.
     """
-    if len(argv) < 2 or "python" not in os.path.basename(argv[0]):
+    program = _program(argv)
+    if program is None:
         return None
-    program = os.path.basename(argv[1])
-    if program == "ros2":
-        return None
-    for tok in argv[2:]:
+    for tok in argv[1:]:
         if tok.startswith("__node:="):
             return tok.split(":=", 1)[1]
     return program

@@ -168,6 +168,15 @@ What the port must be, on this evidence rather than on the original premise:
 That is a new first-party package plus three re-implementations, and it is
 tracked separately rather than bolted onto this change.
 
+**Done, 2026-09-01: `docs/tuning/2026-09-01-health-monitor-cpp.md`.** The
+package is `mote_health`; only one of the three re-implementations turned out to
+be one (`sd_notify` moved rather than being copied). Measured paired on mote-01,
+10.6% of a core to 1.1. One thing here did not reproduce and is worth knowing
+before quoting the table above: on a synthetic bench at these same rates the
+Python build measures **10.6, not 17.1**, and the difference is neither load nor
+payload — so the figures on this page belong to the live stack specifically, and
+a bench cannot be compared against them directly.
+
 ## `slip_monitor` is the largest remaining consumer
 
 At **7.1** (`ab-patched-vs-unpatched.json`) it now costs more than `task_server`.
