@@ -120,6 +120,24 @@ the robot's pose and not who commanded it.
 Cost is one process and **one DDS participant** (measured with
 `pixi run dds-check`), putting the full robot stack at ~26 of 33.
 
+## Wifi roaming
+
+The robot changes access point as it drives between rooms because the Broadcom
+firmware's roaming engine is on: `options brcmfmac roamoff=0`, the driver's own
+default, which Raspberry Pi OS overrides. Neither iwd nor wpa_supplicant will
+take that decision on this card, for reasons in their source rather than their
+configuration — `wifi/README.md` quotes both.
+
+```bash
+pixi run wifi-check     # what takes the roam decision (read-only)
+pixi run wifi-roaming   # write the modprobe option; takes effect at next boot
+pixi run wifi-roamlog   # log BSSID/signal/RTT during an acceptance walk
+```
+
+The trigger is -75 dBm with a 20 dB delta, compiled into the driver and not
+tunable. What to do if that is wrong for a site, and the measurements behind all
+of it, are in [`wifi/README.md`](wifi/README.md).
+
 ## systemd services
 
 Installed by `pixi run setup` (→ `systemd/install.sh`), which fills in the

@@ -69,6 +69,10 @@ runcmd:
 # >>> wifi
   # The WLAN radio stays rfkill-blocked until the regulatory domain is set, so
   # the country code comes before anything tries to bring the connection up.
+  # This profile is plain wpa-psk and stays that way: roaming between the site's
+  # access points is configured later, by `pixi run setup` in step 4, which
+  # writes one brcmfmac module option and touches no profile
+  # (mote_bringup/wifi/README.md).
   - [bash, -c, "raspi-config nonint do_wifi_country @WIFI_COUNTRY@ || true; rfkill unblock wifi || true; nmcli connection reload || true; nmcli connection up mote-wifi || true"]
 # <<< wifi
 
