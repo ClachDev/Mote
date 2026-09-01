@@ -231,31 +231,52 @@ def write_zones(tmp_path, body: str):
     return path
 
 
-def test_a_zone_with_no_vocabulary_is_a_navigable_area(tmp_path):
-    """Every field is optional, so no existing zones.yaml needed rewriting."""
+def test_a_zone_with_no_vocabulary_is_a_navigable_place(tmp_path):
+    """Both fields are optional, so no existing zones.yaml needed rewriting."""
     zone = load_zones(str(write_zones(tmp_path, "  bench: {x: 1.0, y: 2.0}\n")))[
         "bench"
     ]
-    assert (zone.kind, zone.navigable) == ("area", True)
-    assert zone.aliases == () and zone.parent is None
-    assert zone.label == "bench"  # falls back to the name
+    assert (zone.note, zone.navigable) == ("", True)
+    assert zone.label == "bench"  # the label *is* the name
 
 
-def test_display_name_and_aliases_reach_the_zone(tmp_path):
+def test_a_place_name_is_what_a_person_would_write(tmp_path):
+    """A zone is a place-name, so the name is the human one — spaces, accents
+    and all. There is no second field to put the readable spelling in."""
+    path = write_zones(
+        tmp_path,
+        "  store room: {x: 1.0, y: 2.0, note: 'stationery lives here'}\n"
+        '  "Café": {x: 3.0, y: 4.0}\n',
+    )
+    zones = load_zones(str(path))
+    assert sorted(zones) == ["Café", "store room"]
+    assert zones["store room"].note == "stationery lives here"
+    assert zones["store room"].label == "store room"
+
+
+def test_a_legacy_description_is_read_as_the_note_it_was(tmp_path):
+    path = write_zones(tmp_path, "  office: {x: 1.0, y: 2.0, description: kettle}\n")
+    assert load_zones(str(path))["office"].note == "kettle"
+
+
+def test_the_retired_fields_load_and_are_dropped(tmp_path):
+    """A floor taught before place-names must not need re-teaching, and none of
+    what it says about itself may survive as vocabulary."""
     path = write_zones(
         tmp_path,
         "  kitchen: {x: 1.0, y: 2.0, kind: room, display_name: The Kitchen,\n"
-        "    aliases: [galley, the kitchen]}\n",
+        "    aliases: [galley], parent: null, tags: [wet]}\n",
     )
     zone = load_zones(str(path))["kitchen"]
-    assert zone.kind == "room"
-    assert zone.label == "The Kitchen"
-    assert zone.aliases == ("galley", "the kitchen")
+    assert zone.label == "kitchen"
+    for retired in ("kind", "display_name", "aliases", "parent", "tags"):
+        assert not hasattr(zone, retired)
 
 
-def test_a_constraint_kind_is_not_navigable_without_being_told(tmp_path):
-    """`navigable` follows from the kind, so a keepout cannot be taught as a
-    destination by forgetting a field."""
+def test_a_legacy_keepout_is_still_not_navigable(tmp_path):
+    """The one thing `kind` is still read for. Dropping it outright would turn
+    every barrier on every already-taught floor into a destination — silently,
+    on the first load after the upgrade."""
     path = write_zones(tmp_path, "  sluice: {x: 1.0, y: 2.0, kind: keepout}\n")
     assert load_zones(str(path))["sluice"].navigable is False
 
@@ -268,52 +289,51 @@ def test_a_navigable_keepout_is_refused_rather_than_honoured(tmp_path):
         load_zones(str(path))
 
 
-def test_an_unknown_kind_is_refused(tmp_path):
+def test_a_kind_nothing_recognises_is_ignored_rather_than_refused(tmp_path):
+    """It used to be refused against a fixed list. There is no list now, and
+    refusing a floor over a field nothing reads would be the wrong price."""
     path = write_zones(tmp_path, "  lounge: {x: 1.0, y: 2.0, kind: snug}\n")
-    with pytest.raises(ValueError, match="unknown kind"):
-        load_zones(str(path))
+    assert load_zones(str(path))["lounge"].navigable is True
 
 
 def test_an_ambiguous_vocabulary_is_refused_at_load(tmp_path):
     """zone/v0: a conforming platform rejects a collision rather than picking a
-    winner. Loading it anyway would make `goto kitchen` depend on dict order.
+    winner. Loading it anyway would make `goto the kitchen` depend on dict
+    order. With one name per zone, a collision is two places called the same.
     """
     path = write_zones(
         tmp_path,
-        "  kitchen: {x: 1.0, y: 2.0}\n  galley: {x: 3.0, y: 4.0, aliases: [Kitchen]}\n",
+        "  the kitchen: {x: 1.0, y: 2.0}\n  The  Kitchen: {x: 3.0, y: 4.0}\n",
     )
     with pytest.raises(ValueError, match="ambiguous"):
         load_zones(str(path))
 
 
-def test_resolve_matches_name_then_alias_then_display_name(tmp_path):
+def test_resolve_matches_the_name_and_nothing_else(tmp_path):
+    """Exactly, then case-insensitively and whitespace-normalised — which is
+    what makes a name with a space in it typeable. A retired alias or display
+    name reaches nothing: the other spellings a place answers to are the
+    mission layer's resolver's job, reading the note."""
     path = write_zones(
         tmp_path,
-        "  kitchen: {x: 1.0, y: 2.0, display_name: The Kitchen, aliases: [galley]}\n",
+        "  the kitchen: {x: 1.0, y: 2.0, display_name: The Galley,\n"
+        "    aliases: [galley]}\n",
     )
     zones = load_zones(str(path))
-    for query in ("kitchen", "galley", "The Kitchen", "the  kitchen", "GALLEY"):
-        assert resolve(zones, query).name == "kitchen", query
-    assert resolve(zones, "pantry") is None
+    for query in ("the kitchen", "The Kitchen", "the  KITCHEN"):
+        assert resolve(zones, query).name == "the kitchen", query
+    for query in ("galley", "The Galley", "pantry"):
+        assert resolve(zones, query) is None, query
 
 
 def test_re_teaching_a_pose_keeps_the_vocabulary(tmp_path):
     """Driving somewhere to capture a better pose is a new coordinate, never a
-    rename — dropping the aliases an operator typed would be silent data loss.
+    rename — dropping the note an operator typed would be silent data loss.
     """
-    append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.0, radius=1.5, kind="room")
-    # An operator hand-edits the shared document, which is now the only place
-    # an alias can be written — a re-teach cannot reach it at all.
-    shared = tmp_path / "vocabulary.yaml"
-    document = yaml.safe_load(shared.read_text())
-    document["zones"][0]["aliases"] = ["galley"]
-    shared.write_text(
-        yaml.safe_dump(document, sort_keys=False, default_flow_style=None)
-    )
-
+    append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.0, radius=1.5, note="the kettle")
     append_zone(tmp_path, "kitchen", 1.2, 2.2, 0.1)
     zone = load_zones(tmp_path)["kitchen"]
-    assert zone.aliases == ("galley",) and zone.kind == "room"
+    assert zone.note == "the kettle"
     assert zone.pose.pose.position.x == 1.2
 
 
@@ -334,13 +354,20 @@ def test_teaching_bumps_the_vocabulary_revision(tmp_path):
     assert binding["vocabulary_revision"] == revision()
 
 
-def test_teaching_a_constraint_kind_writes_the_flag(tmp_path):
-    append_zone(tmp_path, "sluice", 1.0, 2.0, 0.0, kind="keepout")
+def test_teaching_a_place_a_robot_may_not_go_writes_the_flag(tmp_path):
+    """`--no-navigable` is what `--kind keepout` was: the fact, rather than a
+    taxonomy the fact had to be inferred from."""
+    append_zone(tmp_path, "sluice", 1.0, 2.0, 0.0, navigable=False)
     document = yaml.safe_load((tmp_path / "vocabulary.yaml").read_text())
     assert document["zones"][0]["navigable"] is False
     assert load_zones(tmp_path)["sluice"].navigable is False
 
 
-def test_teaching_an_unknown_kind_is_refused(tmp_path):
-    with pytest.raises(ValueError, match="unknown kind"):
-        append_zone(tmp_path, "snug", 1.0, 2.0, 0.0, kind="snug")
+def test_a_taught_note_travels_in_the_vocabulary_and_not_the_binding(tmp_path):
+    """The note is a fact about the building, so it is shared; the pose is a
+    coordinate in this robot's frame, so it is not."""
+    append_zone(tmp_path, "store room", 1.0, 2.0, 0.0, note="stationery lives here")
+    vocabulary = yaml.safe_load((tmp_path / "vocabulary.yaml").read_text())
+    assert vocabulary["zones"][0]["note"] == "stationery lives here"
+    binding = yaml.safe_load((tmp_path / "binding.yaml").read_text())
+    assert "note" not in binding["bindings"][0]

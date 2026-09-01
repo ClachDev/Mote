@@ -990,67 +990,48 @@ The controls are the map and the list together:
   left exactly where the robot said, while an outline this editor invents starts
   on the grid.
 - **It is the same list either way.** The zones of a revision are listed under
-  the map whether or not you are editing them — name, kind, shape — and
-  `edit zones` puts controls into those rows rather than replacing them with a
-  second list. Nothing moves when you click it: the rows stay where they are and
-  the fields open beside them.
-- **A row is a list you pick from**: the name selects that zone, beside it the
-  **kind**, then the shape it has. `⌖` appears only for a zone with no pose at
-  all (a segmented room is an outline, so there is no cross to drag) and arms
-  the next map click as its pose. `×` deletes the zone; **`add zone`**, the last
-  line of the list, drops a square at the view centre to be dragged into shape
-  and named.
+  the map whether or not you are editing them — the name, then whether it is a
+  **point** or an **area** — and `edit zones` puts controls into those rows
+  rather than replacing them with a second list. Nothing moves when you click
+  it: the rows stay where they are and the controls arrive in cells that were
+  already there.
+- **A row is a list you pick from**: the name selects that zone, and beside it
+  the shape it has — `point 1.20, -3.40`, or `area · 4 corners`. `⌖` appears
+  only for a zone with no pose at all (a segmented room is an outline, so there
+  is no cross to drag) and arms the next map click as its pose. `×` deletes the
+  zone; **`add zone`**, the last line of the list, drops a square at the view
+  centre to be dragged into shape and named.
 - **Where a control sits says what it acts on.** `save as candidate` and
   `cancel` take the place of `edit zones` above the list, because they end the
   edit that button began; `add zone` is in the list, because that is what it
   adds to. What the save says — a refusal, or the candidate it wrote — appears
   under the list, in room the list gives up as the message arrives, and stays
   until another revision is opened.
-- **Selecting a row** opens that zone's own fields beside the list — and a zone
-  is always selected, so they are always showing something: its **name**
-  (renaming is a deliberate act, not a side effect of clicking the list), the
-  **display name** an operator reads — and which the map is labelled with, here
-  and in the operations view, as soon as it is set — **also called** (the other spellings
-  `goto` should accept — an MCP dispatcher turning "the galley" into a command
-  matches these), **navigable**, the zone it is **inside**, **tags**, and a
-  **description**. They live here rather than in the row because they belong to
-  one zone at a time, and because a column each would make the list unreadable
-  long before zone/v0 ran out of fields.
+- **Selecting a row** shows that zone's record beside the list, under
+  **details** — and a zone is always selected, so it is always showing
+  something. Three rows, in both states: the **name**, the **note**, and the
+  **pose**. Text when you are looking, inputs when you are editing, in the same
+  rows either way. The note is the field you read *before* deciding whether to
+  edit anything, which is why the column does not wait for an edit to appear.
 
-**The kind decides whether a zone is a point or an area, and the geometry
-follows it.** A `charger`, `dock`, `pickup`, `dropoff` or `home` is a pose to
-drive to; everything else — `room`, `corridor`, `keepout`, `slow`, a plain
-`area` — is a place with extent, and "am I in it" is the question it exists to
-answer. So changing the kind changes the shape: call a taught waypoint a `room`
-and it gets an outline to drag onto the walls; call an outlined zone a `charger`
-and the outline goes, leaving the pose. That is how an area is drawn here, and
-it is one decision rather than two that can contradict each other.
+**A zone is a place-name**: a human name bound to geometry. The name is what the
+place is called and what `goto` takes — `store room`, `Café`, spaces and accents
+and all; there is no second machine name to keep in step with it. The note is
+free text for what the name cannot say: *stationery lives here, not in the
+office*. Between them that is the whole record, because the mission layer's
+resolver already knows what a store room is, and the note is the only part it
+could not have guessed. Other names a place answers to go in the note — the
+resolver reads the sentence, so there is no alias list.
 
-The one refusal: an outline whose centre falls outside it (a concave hallway)
-cannot become a point on its own, because there is no pose to fall back on —
-place one with `⌖` first.
+**Geometry is a property, not a type.** A zone has a pose, and it may also have
+an extent. The row says which: a `point` is somewhere to drive to, an `area` is
+a place with walls, and "am I in it" is the question that one exists to answer.
+`add zone` gives you an area to drag onto the walls; `⌖` gives an outline a pose.
 
-A zone taught by driving reads as an `area` until you say otherwise: `save-zone`
-writes no kind, and `bundle.zone_term` defaults a missing one to `area` rather
-than inventing one. Beyond geometry, three kinds change what a robot does today
-— `keepout` and `slow` are not destinations (`goto` and `fetch` both refuse
-them), and `segment-map` writes `room` — the rest are vocabulary a planner may
-read over `/v1/zones`.
-
-**You should not have to name a place twice.** A machine name is what `goto`
-takes (lowercase, digits, `_`, and the field says so as you type rather than at
-save), and a display name is what a person reads — so while the machine name is
-still one nobody chose (`zone_03`, as `segment-map` and `add zone` mint them),
-typing a display name sets it: "The Kitchen" gives `the_kitchen`, "Café" gives
-`cafe`. It is a proposal, in the field, editable; a name you have already chosen
-is never rewritten, because `goto` takes it and a `fetch` may be scripted
-against it. **Aliases** are the third naming field and a different job: other
-spellings a dispatcher may *say* for the same place, which `goto` also matches.
-
-Two names the same is refused before it is saved — the robot's loader refuses a
-vocabulary where one query answers to two zones rather than picking by luck, so
-the editor must not produce one. A name a dispatcher cannot type (`Café`, `Drop
-Off`) is refused the same way.
+Two places called the same thing is refused before it is saved — the robot's
+loader refuses a vocabulary where one query answers to two zones rather than
+picking by luck, so the editor must not produce one. So is a name with a space
+at either end, which looks identical to one without and resolves differently.
 
 **Saving derives a new candidate**: `save as candidate` sends the edited set,
 and the server re-packs the revision you were editing with those zones in place
@@ -1147,8 +1128,8 @@ curl -s http://fleet-box:8080/v1/zones/home/ground | python -m json.tool
 
 ```json
 {"schema":1,"site":"home","floor":"ground","revision":4,"zones":[
- {"name":"kitchen","display_name":"The Kitchen","aliases":["galley"],
-  "kind":"room","navigable":true,"parent":null,"tags":[],"description":""}],
+ {"name":"the kitchen","note":"the good kettle is in the store room",
+  "navigable":true}],
  "problems":[]}
 ```
 
@@ -1160,51 +1141,56 @@ is for the thing drawing zones on the basemap, which already has the basemap.
 
 ### Teaching the vocabulary
 
-`kind` is the one field worth setting as you teach, and `save-zone` takes it:
+A zone is a place-name: the name is what the place is called, and the note is
+what the name cannot say. `save-zone` takes both, and quote a name with spaces
+in it:
 
 ```bash
-pixi run save-zone kitchen --radius 1.5 --kind room
-pixi run save-zone bay_3 --kind dock
-pixi run save-zone sluice --radius 0.8 --kind keepout
+pixi run save-zone "the kitchen" --radius 1.5
+pixi run save-zone "store room" --note "stationery lives here, not the office"
+pixi run save-zone sluice --radius 0.8 --no-navigable
 ```
 
-The kinds are `area room corridor doorway threshold elevator stair dock charger
-pickup dropoff staging home keepout slow`; `area` is the default and claims
-nothing, so a zone taught without `--kind` is still perfectly valid. `keepout`
-and `slow` are **constraints, not destinations** — they come out `navigable:
-false`, and `goto sluice` is refused by the robot rather than driven to.
+`--no-navigable` marks a place a robot must not be sent to — `goto sluice` is
+then refused by the robot rather than driven to. Re-teaching a pose (`save-zone
+"the kitchen"` again) keeps the note and the flag: a better coordinate is not a
+rename.
 
-`display_name` and `aliases` are edited into `vocabulary.yaml` by hand, since only
-you know what people call the place:
+Other names a place answers to belong in the note. There is no alias list: the
+mission layer's resolver reads free text and already knows what a store room is,
+where a hand-maintained list of spellings was one more thing to keep in step.
+
+`pixi run segment-map` gives every candidate it proposes a footprint and nothing
+else; the names it invents (`zone_01`…) are placeholders for you to replace, in
+the dashboard's zone editor or by hand in `vocabulary.yaml`:
 
 ```yaml
 zones:
-  kitchen: {x: 2.0, y: 3.5, yaw: 1.57, radius: 1.5, kind: room,
-            display_name: The Kitchen, aliases: [galley, the kitchen]}
+  the kitchen: {x: 2.0, y: 3.5, yaw: 1.57, radius: 1.5,
+                note: the good kettle is in the store room}
 ```
 
-Aliases are matched case-insensitively and whitespace-normalised, so `goto "the
-Kitchen"` reaches `kitchen`. Re-teaching a pose (`save-zone kitchen` again)
-keeps the kind and the aliases — a better coordinate is not a rename.
-
-`pixi run segment-map` fills in `kind: room` on every candidate it proposes,
-because what it segments *are* rooms; the names it invents (`room_01`…) are
-placeholders for you to replace.
+A floor taught before place-names still loads without being re-taught: its
+`kind`, `display_name`, `aliases`, `parent` and `tags` are accepted and dropped,
+its `description` is read as the note it was, and `kind: keepout` still means
+`navigable: false`. What it loses is alias matching — `goto galley` no longer
+reaches a zone named `kitchen`.
 
 ### When `problems` is not empty
 
 The server reports a broken vocabulary rather than refusing to serve it — the
-map is unaffected, and a floor's basemap must not stop being served over a
-duplicated alias. Two things show up there:
+map is unaffected, and a floor's basemap must not stop being served over two
+rooms called the same thing. Two things show up there:
 
 - **two zones answering to one query.** Nothing may pick between them, so the
   name is unusable until you fix it. The robot's own loader *refuses* such a
   file outright, so this one will also stop `task_server` starting: fix it
   before it reaches a robot.
-- **a name a dispatcher cannot type**, e.g. a zone taught as `Café`. It is
-  served verbatim rather than silently renamed to `cafe`. The fix is to rename
-  the zone and put the label in `display_name`.
+- **a name nobody could have meant**, e.g. one with a space at either end: it
+  looks identical to the same name without and resolves differently. `Café` and
+  `store room` are not problems — they are what the places are called.
 
-A file with no coherent reading at all — an unknown `kind`, a `keepout` marked
-`navigable: true` — is refused at the parse, by `save-map` locally and by the
-server on upload, so it never becomes a candidate.
+A file with no coherent reading at all — a legacy `keepout` marked `navigable:
+true`, a `navigable` that is neither true nor false — is refused at the parse,
+by `save-map` locally and by the server on upload, so it never becomes a
+candidate.

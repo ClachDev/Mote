@@ -32,16 +32,14 @@ SITE, FLOOR = "home", "ground"
 CANONICAL = "20260726T120000"  # published by the server fixture
 
 ZONES = {
-    "kitchen": {
+    "the kitchen": {
         "x": 1.0,
         "y": -3.0,
         "yaw": 0.0,
-        "kind": "room",
-        "display_name": "Kitchen",
-        "aliases": ["galley"],
+        "note": "the good kettle is in the store room",
         "polygon": [[0.0, -4.0], [2.0, -4.0], [2.0, -2.0], [0.0, -2.0]],
     },
-    "office": {"x": 0.5, "y": 0.5, "yaw": 0.0, "kind": "room"},
+    "office": {"x": 0.5, "y": 0.5, "yaw": 0.0},
 }
 
 
@@ -88,10 +86,12 @@ def test_edit_derives_a_candidate_and_leaves_the_canonical_alone(server):
 
     # The candidate carries the submitted zones, keyed by name, no echo.
     parsed, raw = stored_zones(server, stored)
-    assert set(parsed["zones"]) == {"kitchen", "office"}
-    kitchen = parsed["zones"]["kitchen"]
-    assert [list(point) for point in kitchen["polygon"]] == ZONES["kitchen"]["polygon"]
-    assert kitchen["aliases"] == ["galley"]
+    assert set(parsed["zones"]) == {"the kitchen", "office"}
+    kitchen = parsed["zones"]["the kitchen"]
+    assert [list(point) for point in kitchen["polygon"]] == ZONES["the kitchen"][
+        "polygon"
+    ]
+    assert kitchen["note"] == "the good kettle is in the store room"
     # The file keys by name and carries no redundant copy inside the entry
     # (read_zones adds one when parsing; the raw file must not).
     assert "name" not in raw["zones"]["office"]
@@ -234,19 +234,30 @@ def test_zone_edit_requires_an_operator(server):
 
 def test_structurally_unreadable_zones_are_refused(server):
     token = server.registry.new_operator(name="editor")
-    bad = {"kitchen": {"x": 0.0, "y": 0.0, "yaw": 0.0, "aliases": "not-a-list"}}
+    bad = {"kitchen": {"x": 0.0, "y": 0.0, "yaw": "over there"}}
     expect_error(lambda: edit(server, bad, token), 422)
 
 
-def test_a_name_a_dispatcher_cannot_type_is_stored_with_a_warning(server):
+def test_a_name_a_dispatcher_could_not_have_meant_is_stored_with_a_warning(server):
     # The vocabulary rule: problems are reported, not enforced — the server
     # keeps the map good and *says* what dispatch will cost. The robot's own
     # loader is what refuses it. (The editor blocks these client-side too.)
+    #
+    # A name with spaces in it is no longer one of these: `store room` is what
+    # the place is called. What is left is a name two people would write the
+    # same way and a machine would not.
     token = server.registry.new_operator(name="editor")
-    bad = {"Kitchen Zone": {"x": 0.0, "y": 0.0, "yaw": 0.0}}
+    bad = {" store room": {"x": 0.0, "y": 0.0, "yaw": 0.0}}
     status, body = edit(server, bad, token)
     assert status == 201
-    assert any("Kitchen Zone" in warning for warning in body["warnings"])
+    assert any("store room" in warning for warning in body["warnings"])
+
+
+def test_a_place_name_with_spaces_in_it_is_stored_without_complaint(server):
+    token = server.registry.new_operator(name="editor")
+    status, body = edit(server, {"store room": {"x": 0.0, "y": 0.0}}, token)
+    assert status == 201
+    assert body["warnings"] == []
 
 
 def test_editing_a_floor_with_no_published_map_is_refused(server):

@@ -652,7 +652,6 @@ function bind() {
     reviewFit: 'review-fit',
     reviewNote: 'review-note',
     zonesEdit: 'zones-edit',
-    zoneEditor: 'zone-editor',
     zoneRows: 'zone-rows',
     zoneDetail: 'zone-detail',
     zoneSave: 'zone-save',
@@ -699,7 +698,6 @@ export async function boot() {
       // The zone editor's own controls. It lives in this pane because it edits
       // the *selected revision's* zones over that revision's own map.
       zonesEdit: dom.zonesEdit,
-      editor: dom.zoneEditor,
       editorRows: dom.zoneRows,
       editorDetail: dom.zoneDetail,
       editorNote: dom.zoneNote,

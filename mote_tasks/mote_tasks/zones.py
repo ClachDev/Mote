@@ -31,6 +31,14 @@ than as an unknown name — which sent an operator hunting for a typo that was
 not there. :func:`load_zones` is the same minus the unbound ones, for every
 caller that only ever wanted a pose.
 
+**A zone is a place-name**, so the vocabulary is one human name and a free-text
+`note` — nothing else. The mission layer's resolver already knows what a store
+room is; what it cannot know is that this building's store room is where the
+stationery lives, which is what the note is for. A floor written before this
+carries `kind`, `display_name`, `aliases`, `parent` and `tags`; they still load
+(`kind: keepout` still means non-navigable, and `description` is read as the
+note it was) and they are never written again.
+
 Example (`binding.yaml` alongside):
 
     schema: 1
@@ -38,9 +46,8 @@ Example (`binding.yaml` alongside):
     floor: ground
     revision: 4
     zones:
-      - {name: kitchen, kind: room, display_name: The Kitchen, aliases: [galley],
-         navigable: true, parent: null, tags: [], description: ''}
-      - {name: plant, kind: keepout, navigable: false, ...}
+      - {name: the kitchen, note: 'the good kettle is in the store room'}
+      - {name: plant, navigable: false}
 """
 
 import math
@@ -125,13 +132,15 @@ class Zone:
     name: str
     pose: PoseStamped | None = None
     footprint: Footprint | None = None
-    kind: str = "area"
+    #: Whether a robot may be dispatched here. Not vocabulary — it is the
+    #: planner's contract — but it travels with the names because it is not a
+    #: coordinate and every robot at the site needs the same answer.
     navigable: bool = True
-    display_name: str = ""
-    aliases: tuple = ()
-    parent: str | None = None
-    tags: tuple = ()
-    description: str = ""
+    #: Free text for where reality diverges from what the name implies:
+    #: "stationery lives here, not in the office". The one field a prior
+    #: cannot supply, and the reason there is no alias list — another name
+    #: this place answers to belongs in the sentence a resolver reads.
+    note: str = ""
     #: Whether *this robot* has been taught where it is. A name in the
     #: vocabulary with no binding is a real place with no pose here — which is
     #: the whole reason zone/v0 splits the two, and the difference between
@@ -143,8 +152,14 @@ class Zone:
 
     @property
     def label(self) -> str:
-        """What to call it when talking to a human."""
-        return self.display_name or self.name
+        """What to call it when talking to a human — which is its name.
+
+        Kept as a property because a zone is *labelled* in half a dozen places
+        and the split between a machine name and a human one was exactly the
+        thing place-names removed; a caller that asks for a label should not
+        have to know that the answer is now the same field.
+        """
+        return self.name
 
 
 def _polygon(name: str, raw) -> Polygon:
@@ -165,7 +180,8 @@ def append_zone(
     y: float,
     yaw: float,
     radius: float | None = None,
-    kind: str | None = None,
+    note: str | None = None,
+    navigable: bool | None = None,
     *,
     site: str = "",
     floor: str = "",
@@ -179,11 +195,12 @@ def append_zone(
     True if an existing zone was replaced.
 
     Re-teaching is a new *coordinate*, never a new name, so the vocabulary a
-    zone already carries is carried through untouched unless ``kind`` says
-    otherwise — driving somewhere to capture a better pose must not silently
-    drop the aliases an operator typed in by hand. Under the split that is no
-    longer a rule this function has to remember: the two documents are written
-    separately, and a coordinate cannot reach the one that holds the names.
+    zone already carries is carried through untouched unless ``note`` or
+    ``navigable`` says otherwise — driving somewhere to capture a better pose
+    must not silently drop what an operator typed in by hand. Under the split
+    that is no longer a rule this function has to remember: the two documents
+    are written separately, and a coordinate cannot reach the one that holds
+    the names.
 
     ``path`` is the floor directory. A legacy combined file is migrated on the
     way through, so the first ``save-zone`` on an old floor is also what splits
@@ -223,16 +240,10 @@ def append_zone(
         entry["polygon"] = previous["polygon"]
     elif "radius" in previous:
         entry["radius"] = previous["radius"]
-    if kind is not None:
-        if kind not in bundle.ZONE_KINDS:
-            raise ValueError(
-                f"unknown kind '{kind}' (one of {', '.join(bundle.ZONE_KINDS)})"
-            )
-        entry["kind"] = kind
-        # A constraint zone is not a destination, and the flag saying so is
-        # written rather than inferred: a reader deriving it from the kind
-        # would be a second copy of the rule, free to disagree with this one.
-        entry["navigable"] = kind not in bundle.CONSTRAINT_KINDS
+    if note is not None:
+        entry["note"] = note
+    if navigable is not None:
+        entry["navigable"] = bool(navigable)
     replaced = name in floor_zones["zones"]
     floor_zones["zones"][name] = entry
     # The vocabulary revision is what a binding records itself as built
@@ -291,13 +302,8 @@ def load_floor(path) -> dict[str, Zone]:
             name,
             pose,
             footprint,
-            kind=spec["kind"],
             navigable=spec["navigable"],
-            display_name=spec["display_name"],
-            aliases=tuple(spec["aliases"]),
-            parent=spec["parent"],
-            tags=tuple(spec["tags"]),
-            description=spec["description"],
+            note=spec["note"],
             bound=bool(spec.get("bound")),
             local=bool(spec.get("local")),
         )
@@ -305,9 +311,7 @@ def load_floor(path) -> dict[str, Zone]:
     # Loading one anyway would mean `goto kitchen` picking a winner by dict
     # order — which is the guess the spec exists to forbid, and it would be
     # made silently, once per boot, differently after an edit.
-    clashes = bundle.ambiguities(
-        [{"name": z.name, "aliases": list(z.aliases)} for z in zones.values()]
-    )
+    clashes = bundle.ambiguities([{"name": z.name} for z in zones.values()])
     if clashes:
         raise ValueError(f"{Path(path).name}: {clashes[0]}")
     return zones
@@ -343,17 +347,19 @@ class ZoneUnresolved(ValueError):
 def resolve(zones: dict[str, Zone], query: str) -> Zone | None:
     """The zone a human's words name, or None.
 
-    Exact name first, then aliases and display names case-insensitively and
-    whitespace-normalised, so "the Kitchen" reaches ``kitchen``. Ambiguity
-    cannot arise here because :func:`load_zones` refuses a vocabulary that
-    contains any.
+    Exact name first, then the name case-insensitively and whitespace-
+    normalised, so "The  Kitchen" reaches ``the kitchen``. That is the whole of
+    the matching: a zone has one name, and the other spellings a place answers
+    to are a job for the mission layer's resolver reading the ``note``, not for
+    a list of aliases an operator has to keep in step by hand. Ambiguity cannot
+    arise here because :func:`load_floor` refuses a vocabulary that contains
+    any.
     """
     if query in zones:
         return zones[query]
-    wanted = bundle.normalise_alias(query)
+    wanted = bundle.normalise_name(query)
     for zone in zones.values():
-        spellings = (zone.name, zone.display_name, *zone.aliases)
-        if any(s and bundle.normalise_alias(s) == wanted for s in spellings):
+        if bundle.normalise_name(zone.name) == wanted:
             return zone
     return None
 
@@ -396,7 +402,8 @@ def destination(zones: dict[str, Zone], query, where: str = "zone") -> Zone:
     if reason == zone_spec.NOT_NAVIGABLE:
         raise ZoneUnresolved(
             reason,
-            f"{where} {zone.name!r} is a {zone.kind} zone, not a destination",
+            f"{where} {zone.name!r} is not a destination — it is marked "
+            "navigable: false",
         )
     if reason == zone_spec.UNBOUND:
         raise ZoneUnresolved(

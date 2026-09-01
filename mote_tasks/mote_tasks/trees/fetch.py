@@ -31,8 +31,8 @@ def prepare(zones: dict, payload_input: dict):
     open-vocabulary object label for the detector (underscores become spaces,
     so ``red_box`` looks for "red box"). A target naming a *non-navigable* zone
     is neither — falling through to the label branch would send the detector
-    hunting for an object called "keepout" — so it is refused with the zone's
-    own reason.
+    hunting for an object called "server room" — so it is refused with the
+    zone's own reason.
     """
     drop = mote_zones.destination(
         zones, payload_input["destination"], where="destination"
@@ -41,7 +41,9 @@ def prepare(zones: dict, payload_input: dict):
     zone, reason = mote_zones.resolve_reason(zones, target)
     if reason == "not_navigable":
         raise mote_zones.ZoneUnresolved(
-            reason, f"target {zone.name!r} is a {zone.kind} zone, not a destination"
+            reason,
+            f"target {zone.name!r} is not a destination — it is marked "
+            "navigable: false",
         )
     if zone is not None:
         return zone.pose, None, drop.pose, drop

@@ -18,9 +18,9 @@
 //     since switched off, or (once the build stage lands) built on the fleet
 //     box with no robot involved at all.
 //   - It has room to grow. The carry-forward report, the build report, and the
-//     zone editing that turns a placeholder `zone_03` into `kitchen` all render
-//     here. The zone list below is deliberately a row per zone with its own
-//     cells, because that is where those controls go.
+//     zone editing that turns a placeholder `zone_03` into `store room` all
+//     render here. The zone list below is deliberately a row per zone with its
+//     own cells, because that is where those controls go.
 //
 // Two writes leave this pane, and both are audited operator actions: the
 // promote M4 already had, and the zone edit beside it (`zone_editor.mjs`),
@@ -246,7 +246,6 @@ export class ReviewView {
     this.editing = false;
     this.map = new MapView(dom.canvas);
     this.editor = new ZoneEditor(this.map, {
-      panel: dom.editor,
       rows: dom.editorRows,
       detail: dom.editorDetail,
       note: dom.editorNote,

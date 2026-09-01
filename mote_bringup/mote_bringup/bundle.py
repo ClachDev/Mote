@@ -104,15 +104,13 @@ POSEGRAPH_DATA = "map.data"
 
 # The zone vocabulary's rules are zone/v0's, in ``mote_bringup.spec.zone``.
 # They are re-exported here rather than restated because this module is what
-# ``save-map`` and the fleet server both import, and a second copy of "which
-# kinds exist" is a second copy free to disagree with the one the robot
+# ``save-map`` and the fleet server both import, and a second copy of "what a
+# place-name may be" is a second copy free to disagree with the one the robot
 # resolves against.
-ZONE_KINDS = zone.ZONE_KINDS
 CONSTRAINT_KINDS = zone.CONSTRAINT_KINDS
-POINT_KINDS = zone.POINT_KINDS
 ZONE_NAME_RE = zone.ZONE_NAME_RE
 VOCABULARY_KEYS = zone.VOCABULARY_KEYS
-normalise_alias = zone.normalise_alias
+normalise_name = zone.normalise_name
 check_vocabulary = zone.check_vocabulary
 ambiguities = zone.ambiguities
 
@@ -177,6 +175,10 @@ def zone_term(where: str, name, entry: dict) -> dict:
     the upload route's 422, ``save-map``'s refusal, the zone editor — catches
     ``BundleError`` and a spec exception escaping as a 500 would turn "your
     file says a keepout is navigable" into "the server broke".
+
+    Every field a zone once carried besides its name is still *accepted* here —
+    a floor taught before place-names must load without being re-taught — and
+    only ``name``, ``note`` and ``navigable`` come back out.
     """
     try:
         return zone.term(where, name, entry)

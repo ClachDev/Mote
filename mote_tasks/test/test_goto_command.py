@@ -15,22 +15,16 @@ from mote_tasks.zones import Zone, ZoneUnresolved
 # Zone does not care what `pose` is, so a sentinel still saves building a
 # PoseStamped, and the vocabulary defaults come out right by construction.
 ZONES = {
-    "kitchen": Zone(
-        "kitchen",
-        "KITCHEN_POSE",
-        kind="room",
-        display_name="The Kitchen",
-        aliases=("galley",),
-    ),
-    "pickup": Zone("pickup", "PICKUP_POSE", kind="pickup"),
-    "server_room": Zone("server_room", "SERVER_POSE", kind="keepout", navigable=False),
+    "the kitchen": Zone("the kitchen", "KITCHEN_POSE", note="the good kettle"),
+    "pickup": Zone("pickup", "PICKUP_POSE"),
+    "server_room": Zone("server_room", "SERVER_POSE", navigable=False),
 }
 
 
 def test_known_zone_yields_its_pose():
-    pose, zone = prepare(ZONES, {"target": "kitchen"})
+    pose, zone = prepare(ZONES, {"target": "the kitchen"})
     assert pose == "KITCHEN_POSE"
-    assert zone.name == "kitchen"
+    assert zone.name == "the kitchen"
 
 
 def test_goto_works_for_any_zone_not_just_rooms():
@@ -38,10 +32,11 @@ def test_goto_works_for_any_zone_not_just_rooms():
     assert prepare(ZONES, {"target": "pickup"})[0] == "PICKUP_POSE"
 
 
-def test_alias_and_display_name_reach_the_zone():
-    # What a dispatcher gets from /v1/zones is what it may say here.
-    assert prepare(ZONES, {"target": "galley"})[0] == "KITCHEN_POSE"
+def test_the_name_is_reached_however_it_is_capitalised_or_spaced():
+    # A place-name is what an operator writes, so it has to survive being
+    # written by hand. What a dispatcher gets from /v1/zones is what it may say.
     assert prepare(ZONES, {"target": "The Kitchen"})[0] == "KITCHEN_POSE"
+    assert prepare(ZONES, {"target": "the  KITCHEN"})[0] == "KITCHEN_POSE"
 
 
 def test_constraint_zone_is_refused_with_its_own_reason():
@@ -49,7 +44,7 @@ def test_constraint_zone_is_refused_with_its_own_reason():
     # is `not_navigable` rather than `unknown_name`, because an operator does a
     # different thing about each: one is a typo, the other is a zone doing
     # exactly what it was drawn to do.
-    with pytest.raises(ZoneUnresolved, match="keepout") as excinfo:
+    with pytest.raises(ZoneUnresolved, match="not a destination") as excinfo:
         prepare(ZONES, {"target": "server_room"})
     assert excinfo.value.reason == "not_navigable"
 

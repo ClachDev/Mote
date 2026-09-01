@@ -244,13 +244,8 @@ def test_publishing_a_split_floor_sends_the_binding_in_the_revision(
             "zones": {
                 "bay": {
                     "name": "bay",
-                    "kind": "dock",
-                    "display_name": "",
-                    "aliases": [],
+                    "note": "",
                     "navigable": True,
-                    "parent": None,
-                    "tags": [],
-                    "description": "",
                     "bound": True,
                     "x": 1.5,
                     "y": -2.0,

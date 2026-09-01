@@ -22,6 +22,17 @@ vocabulary document is **built** from the fields a vocabulary may carry, never
 geometry key and forgets this function exists, and the leak would be a
 plausible-looking coordinate rather than a crash.
 
+**A zone is a place-name**: a human name bound to geometry, and the record
+carries only what a prior cannot guess. The semantics come from the mission
+layer's resolver, which already knows what a store room is; what it cannot know
+is that *this* building's store room is where the stationery lives. So the
+vocabulary is the :data:`name` and a free-text :data:`note`, and nothing else.
+``kind``, ``display_name``, ``aliases``, ``parent`` and ``tags`` were a
+taxonomy for a reader that did not need one — five fields to fill in, four ways
+to spell one place, and a machine name beside a human one for a resolver that
+reads either. They are **tolerated on read** so that no floor taught before
+this has to be re-taught, and they are neither written nor served.
+
 This module is stdlib-only, like the rest of :mod:`mote_bringup.spec`. Reading
 and writing these documents as YAML is :mod:`mote_bringup.bundle`'s, which
 already owns the site bundle's files and already imports PyYAML; what lives
@@ -38,50 +49,20 @@ from mote_bringup.spec import SpecError
 SCHEMA = 1
 VERSION = "v0"
 
-#: The semantic role of a place, so a planner can reason about one it has never
-#: seen. ``area`` is the unopinionated default: a named place with no further
-#: claim. The order is the spec's — structure, then level transitions, then
-#: where a platform services itself, then where work happens, then constraints.
-ZONE_KINDS = (
-    "area",
-    "room",
-    "corridor",
-    "doorway",
-    "threshold",
-    "elevator",
-    "stair",
-    "dock",
-    "charger",
-    "pickup",
-    "dropoff",
-    "staging",
-    "home",
-    "keepout",
-    "slow",
-)
-
-#: Kinds that say where a robot may *not* or *should not* go. They are in the
-#: same vocabulary as destinations because they are the same thing to an
-#: operator drawing on a floor plan; the distinction is ``navigable``, and it is
-#: machine-checkable rather than a convention. Dispatching to one is bad input,
-#: not a route, so ``navigable: true`` on one of these is refused rather than
-#: honoured — otherwise the flag would mean whatever the file last said.
+#: Kinds a **retired** ``kind`` field used to give a zone to say that a robot
+#: may not or should not go there. The taxonomy is gone; this pair is kept
+#: because it is the only record an already-taught floor has that a zone is a
+#: keepout, and dropping it on read would turn a barrier into a destination —
+#: silently, on the first load after an upgrade. :func:`term` reads it to seed
+#: ``navigable`` and writes ``navigable`` back, which is the migration.
 CONSTRAINT_KINDS = frozenset(("keepout", "slow"))
 
-#: Kinds an outline rarely suits: a dock is a point you arrive at, not a region.
-#: This is a fact about the vocabulary and so lives beside it, but it is
-#: **guidance, not validation**: a bundle that carries an outline on a `charger`
-#: still loads, because a rule that refused one would refuse maps taught before
-#: the rule existed. What reads it is the zone editor, where changing a zone's
-#: kind is how an operator says which of the two a place is — and the geometry
-#: follows, rather than being toggled separately as though the two were
-#: unrelated.
-POINT_KINDS = frozenset(("dock", "charger", "pickup", "dropoff", "home"))
-
-#: A dispatchable zone name. The shared token a dispatcher types, so it is a
-#: machine name rather than a label: lowercase, no spaces, no punctuation to
-#: guess at. Anything an operator wants to *see* belongs in ``display_name``.
-ZONE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+#: A place-name: what an operator calls the room, and what a dispatcher types.
+#: One field, so there is one answer to "what is this place called" — the
+#: machine name beside a display name was two fields for one fact, and the
+#: resolver reads the human one anyway. Any printable text, with no leading or
+#: trailing space to make two names look identical and resolve differently.
+ZONE_NAME_RE = re.compile(r"^(?!\s)[^\x00-\x1f\x7f]+(?<!\s)$")
 
 #: A site or floor name — a directory name at both ends of the wire.
 PLACE_RE = re.compile(r"^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$")
@@ -89,15 +70,22 @@ PLACE_RE = re.compile(r"^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$")
 #: Vocabulary keys a zone entry may carry, beside the geometry that binds it.
 #: The list is what :func:`term` builds from; it is not a filter applied to
 #: something larger.
+#:
+#: ``note`` is the whole of the record that a prior cannot supply: "stationery
+#: lives here, not in the office". ``navigable`` is not vocabulary at all — it
+#: is the planner's contract, a fact about whether a robot may be sent here —
+#: but it travels with the names because it is not a coordinate and every robot
+#: at the site needs it.
 VOCABULARY_KEYS = (
-    "display_name",
-    "aliases",
-    "kind",
+    "note",
     "navigable",
-    "parent",
-    "tags",
-    "description",
 )
+
+#: Fields a zone entry may still carry from before place-names, read so that an
+#: old floor loads and dropped on the way out. ``description`` is ``note``'s
+#: former spelling and is read *into* it; the rest are read only for the
+#: ``navigable`` default above.
+LEGACY_KEYS = ("kind", "display_name", "aliases", "parent", "tags", "description")
 
 #: How a binding's coordinate came to be, which is what tells a consumer whether
 #: to trust it after the map changes. ``taught`` is the honest default and what
@@ -140,50 +128,42 @@ def _place(where: str, value) -> str:
 
 
 def term(where: str, name, entry: dict) -> dict:
-    """One zone's naming half, with zone/v0's defaults filled in.
+    """One zone's naming half: what the place is called, and a note about it.
 
-    Every field is optional in the file: a zone taught before any of this
-    existed is a perfectly good ``area``, and these defaults are what make that
-    true without rewriting a single file.
+    Both fields are optional in the file, and a floor taught before place-names
+    reads perfectly: its ``kind``/``display_name``/``aliases``/``parent``/
+    ``tags`` are accepted and dropped, and its ``description`` is read as the
+    ``note`` it was.
     """
-    kind = entry.get("kind") or "area"
-    if kind not in ZONE_KINDS:
-        raise SpecError(
-            f"{where}: zone {name!r} has unknown kind {kind!r} "
-            f"(one of {', '.join(ZONE_KINDS)})"
-        )
-    constraint = kind in CONSTRAINT_KINDS
-    navigable = entry.get("navigable")
-    if navigable is None:
-        navigable = not constraint
-    elif not isinstance(navigable, bool):
-        raise SpecError(f"{where}: zone {name!r} navigable must be true or false")
-    elif navigable and constraint:
-        raise SpecError(
-            f"{where}: zone {name!r} is a {kind} zone, which is not a destination; "
-            "navigable cannot be true"
-        )
-    parent = entry.get("parent")
-    if parent is not None and not isinstance(parent, str):
-        raise SpecError(f"{where}: zone {name!r} parent must be a zone name")
     return {
         "name": str(name),
-        "display_name": str(entry.get("display_name") or ""),
-        "aliases": _strings(where, name, "aliases", entry.get("aliases")),
-        "kind": kind,
-        "navigable": navigable,
-        "parent": parent or None,
-        "tags": _strings(where, name, "tags", entry.get("tags")),
-        "description": str(entry.get("description") or ""),
+        "note": str(entry.get("note") or entry.get("description") or ""),
+        "navigable": _navigable(where, name, entry),
     }
 
 
-def _strings(where: str, name, key: str, raw) -> list:
-    if raw is None:
-        return []
-    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
-        raise SpecError(f"{where}: zone {name!r} {key} must be a list of strings")
-    return [str(item) for item in raw]
+def _navigable(where: str, name, entry: dict) -> bool:
+    """Whether a robot may be dispatched here — stated, or read off a legacy kind.
+
+    A zone says nothing about this and is a destination. The exception is a
+    floor written before place-names, where ``kind: keepout`` is the only place
+    the fact was recorded: reading it here is what carries a barrier across the
+    change rather than turning it into somewhere to drive to. The contradiction
+    (a keepout that says it is navigable) is still refused, because the flag
+    would otherwise mean whichever of the two the file mentioned last.
+    """
+    constraint = str(entry.get("kind") or "") in CONSTRAINT_KINDS
+    navigable = entry.get("navigable")
+    if navigable is None:
+        return not constraint
+    if not isinstance(navigable, bool):
+        raise SpecError(f"{where}: zone {name!r} navigable must be true or false")
+    if navigable and constraint:
+        raise SpecError(
+            f"{where}: zone {name!r} is a {entry['kind']} zone, which is not a "
+            "destination; navigable cannot be true"
+        )
+    return navigable
 
 
 def vocabulary(site: str, floor: str, terms, *, revision: int = 0) -> dict:
@@ -216,15 +196,20 @@ def _revision(where: str, raw) -> int:
     return revision
 
 
-def normalise_alias(text: str) -> str:
+def normalise_name(text: str) -> str:
     """The form two spellings of one place have to share to count as a clash.
 
-    zone/v0 matches aliases case-insensitively and whitespace-normalised, so
+    A place-name is matched case-insensitively and whitespace-normalised, so
     "The Kitchen" and "the  kitchen" are the same query. Collision detection has
     to use the *same* comparison the resolver will, or a vocabulary passes
     authoring and is ambiguous in the field.
     """
     return " ".join(str(text).split()).casefold()
+
+
+#: The spelling this had while a zone carried aliases as well as a name. Kept
+#: as a name because the comparison did not change with them.
+normalise_alias = normalise_name
 
 
 def check_vocabulary(terms) -> list:
@@ -237,57 +222,37 @@ def check_vocabulary(terms) -> list:
     """
     terms = list(terms)
     problems = [
-        f"zone {item['name']!r} is not a dispatchable name (want lowercase "
-        "a-z0-9_ starting with a letter); put the label in display_name"
+        f"zone {item['name']!r} is not a name anyone can type (want printable "
+        "text with no leading or trailing space)"
         for item in terms
         if not ZONE_NAME_RE.match(item["name"])
     ]
-    return problems + ambiguities(terms) + _check_parents(terms)
+    return problems + ambiguities(terms)
 
 
 def ambiguities(terms) -> list:
     """The subset of :func:`check_vocabulary` that makes a name unanswerable.
 
-    Split out because it is the only half a robot must *refuse*: a zone it
-    cannot spell is still a zone it can be told to go to by its exact key, but
-    two zones answering to one query means ``goto`` has no single answer, and
+    Split out because it is the only half a robot must *refuse*: a zone whose
+    name is hard to type is still a zone it can be told to drive to, but two
+    zones answering to one query means ``goto`` has no single answer, and
     guessing between them is the one thing zone/v0 says a resolver must not do.
+    Now that a zone has one name and no aliases, the only way to make one is to
+    call two places the same thing — which is worth saying plainly.
     """
     problems = []
     claimed = {}
     for item in terms:
         name = item["name"]
-        for spelling in [name, *item["aliases"]]:
-            key = normalise_alias(spelling)
-            owner = claimed.get(key)
-            if owner is not None and owner != name:
-                problems.append(
-                    f"zones {owner!r} and {name!r} both answer to {key!r}; "
-                    "a query matching both can only be ambiguous"
-                )
-            else:
-                claimed[key] = name
-    return problems
-
-
-def _check_parents(terms) -> list:
-    """``parent`` must name a zone on this floor and must not form a cycle —
-    a cycle is not merely wrong, it is a containment walk that never ends."""
-    parents = {item["name"]: item["parent"] for item in terms}
-    problems = []
-    for name, parent in parents.items():
-        if parent is None:
-            continue
-        if parent not in parents:
-            problems.append(f"zone {name!r} names parent {parent!r}, which is not here")
-            continue
-        seen, walk = {name}, parent
-        while walk is not None:
-            if walk in seen:
-                problems.append(f"zone {name!r} is inside itself via {parent!r}")
-                break
-            seen.add(walk)
-            walk = parents.get(walk)
+        key = normalise_name(name)
+        owner = claimed.get(key)
+        if owner is not None and owner != name:
+            problems.append(
+                f"zones {owner!r} and {name!r} both answer to {key!r}; "
+                "a query matching both can only be ambiguous"
+            )
+        else:
+            claimed[key] = name
     return problems
 
 
@@ -335,14 +300,13 @@ def bound(
 ) -> dict:
     """One zone's coordinate half, for a :func:`binding`.
 
-    The name is **not** refused for being undispatchable. zone/v0's schema
-    patterns it, and a zone taught as ``Café`` does not match — but that name
-    is a fact about a floor an operator already has, the map it is bound to is
-    perfectly good, and refusing to read the floor over a spelling would be the
-    wrong price. :func:`check_vocabulary` reports it instead, which is where an
-    operator can act on it, and a binding never leaves this robot anyway. What
-    is refused is a *vocabulary* that cannot be resolved at all — an ambiguous
-    alias — because that one has no correct behaviour to fall back on.
+    The name is **not** refused for its spelling. A name is a fact about a
+    floor an operator already has, the map it is bound to is perfectly good,
+    and refusing to read the floor over a spelling would be the wrong price.
+    :func:`check_vocabulary` reports it instead, which is where an operator can
+    act on it, and a binding never leaves this robot anyway. What is refused is
+    a *vocabulary* that cannot be resolved at all — two places called the same
+    thing — because that one has no correct behaviour to fall back on.
     """
     if footprint is not None:
         check_footprint(name, footprint)
@@ -426,7 +390,6 @@ def resolution(
     frame_id: str | None = None,
     map_revision: str | None = None,
     pose: dict | None = None,
-    kind: str | None = None,
     navigable: bool | None = None,
     anchor_method: str | None = None,
     candidates=(),
@@ -464,7 +427,6 @@ def resolution(
         "frame_id": frame_id,
         "map_revision": map_revision,
         "pose": pose,
-        "kind": kind,
         "navigable": navigable,
         "anchor_method": anchor_method,
         "candidates": list(candidates),

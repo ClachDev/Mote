@@ -104,7 +104,7 @@ loader, one teach command.
 Teach a zone by driving there, not by editing YAML:
 
 ```bash
-pixi run save-zone kitchen --radius 1.5 --kind room
+pixi run save-zone "the kitchen" --radius 1.5
 ```
 
 Re-teaching a zone's pose keeps whatever footprint it already had; passing
@@ -131,10 +131,11 @@ are covered in [Missions](missions.md#zones-and-go-to-the-kitchen).
 
 ### Names travel, coordinates do not
 
-Beside its coordinates, a zone carries a **vocabulary**: `kind`,
-`display_name`, `aliases`, `navigable`, `parent`, `tags`. Every field is
-optional — an untouched zone is a navigable `area` — and `save-zone --kind`
-teaches the one field it can know.
+**A zone is a place-name**: a human name bound to geometry. Beside its
+coordinates it carries a **vocabulary** — the `name` it is called, a free-text
+`note` for what the name cannot say ("stationery lives here, not in the
+office"), and `navigable`. Both of the first two come from `save-zone`; a zone
+that says nothing but its name is a place a robot may drive to.
 
 That split is the whole reason the vocabulary exists separately. `(2.0, 3.5)`
 is a different physical point for the robot standing beside this one, and no

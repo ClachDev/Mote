@@ -4,18 +4,17 @@
 # the layout changes. Zones with a polygon are room footprints (goto
 # targets, outlined by the room walls); the rest are bare fetch
 # waypoints. The pose is the doorway approach, not the room centre --
-# a bed sits in the middle of each ward. `kind` is the zone/v0
-# semantic role the fleet serves to a dispatcher at /v1/zones.
+# a bed sits in the middle of each ward.
 frame_id: map
 zones:
-  pickup: {x: -11, y: 4.5, yaw: 1.571, kind: pickup}
-  dropoff: {x: 18.312, y: 14.8, yaw: 1.571, kind: dropoff}
-  home: {x: 0, y: 0, yaw: 0, kind: home}
-  kitchen: {x: -18.312, y: 14.5, yaw: 1.571, kind: room,
+  pickup: {x: -11, y: 4.5, yaw: 1.571}
+  dropoff: {x: 18.312, y: 14.8, yaw: 1.571}
+  home: {x: 0, y: 0, yaw: 0}
+  kitchen: {x: -18.312, y: 14.5, yaw: 1.571,
     polygon: [[-20.675, 13.325], [-15.95, 13.325], [-15.95, 18.925], [-20.675, 18.925]]}
-  pharmacy: {x: -8.562, y: 14.5, yaw: 1.571, kind: room,
+  pharmacy: {x: -8.562, y: 14.5, yaw: 1.571,
     polygon: [[-10.925, 13.325], [-6.2, 13.325], [-6.2, 18.925], [-10.925, 18.925]]}
-  laboratory: {x: -13.438, y: -14.5, yaw: -1.571, kind: room,
+  laboratory: {x: -13.438, y: -14.5, yaw: -1.571,
     polygon: [[-15.8, -18.925], [-11.075, -18.925], [-11.075, -13.325], [-15.8, -13.325]]}
-  ward_east: {x: 18.312, y: -14.5, yaw: -1.571, kind: room,
+  ward_east: {x: 18.312, y: -14.5, yaw: -1.571,
     polygon: [[15.95, -18.925], [20.675, -18.925], [20.675, -13.325], [15.95, -13.325]]}
