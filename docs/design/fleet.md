@@ -491,7 +491,8 @@ enrollment token**. First boot then runs, with no interactive steps:
 
 1. cloud-init installs pixi and `pixi install`s the robot package from the
    prefix.dev channel (the ROS software), and runs the one-time `pixi run setup`
-   (udev, wifi-powersave, systemd units — `CLAUDE.md`,
+   (udev, wifi power save and roaming, systemd units — `CLAUDE.md`,
+   `mote_bringup/wifi/README.md`,
    `mote_bringup/systemd/install.sh`); this is the OS-level setup the channel does
    *not* carry.
 2. `tailscale up` with the baked-in pre-auth key → **the robot joins the tailnet**

@@ -24,9 +24,15 @@ setup-ids = "ros2 run mote_hardware setup_ids"
 # (`pixi run kill`); `arm-jog` and `arm-pose` go through the controller instead.
 arm-check = "ros2 run mote_arm arm_check"
 udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
-wifi-powersave = "bash mote_bringup/networkmanager/install.sh"
+# Wifi (mote_bringup/wifi/README.md). `wifi-roaming` writes one modprobe option
+# and takes effect at the next reboot; it restarts NetworkManager only on a
+# robot still carrying the iwd backend, and guards that step.
+wifi-powersave = "bash mote_bringup/wifi/install.sh --powersave-only"
+wifi-roaming = "bash mote_bringup/wifi/install.sh --roaming-only"
+wifi-check = "bash mote_bringup/wifi/check.sh"
+wifi-roamlog = "bash mote_bringup/wifi/roamlog.sh"
 install-systemd = "bash mote_bringup/systemd/install.sh"
-setup = { depends-on = ["udev", "wifi-powersave", "install-systemd"] }
+setup = { depends-on = ["udev", "wifi-powersave", "wifi-roaming", "install-systemd"] }
 
 # Fleet: overlay + identity (docs/fleet/README.md)
 identity = "ros2 run mote_bringup identity"      # this robot's id/name/site
