@@ -737,6 +737,127 @@ try {
     }
   }
 
+  // -- the light theme ----------------------------------------------------
+  //
+  // A canvas gets no cascade, so nothing in `style.css` reaches `ctx.fillStyle`
+  // and a colour the drawing code names itself simply does not follow the
+  // theme. That is not hypothetical: a robot's id was drawn in the dark theme's
+  // near-white with a black halo, over a basemap whose free space is white in
+  // *both* themes, so on a page asked for the light theme the label over a
+  // robot read as an outline of itself. `theme.mjs` is the fix and `ui_test.mjs`
+  // holds the rule; what only a browser can answer is what the pixels came out.
+  //
+  // The preference is changed under the live page rather than reloaded, which
+  // also puts the palette's matchMedia listener under test: nothing in the DOM
+  // changes when the theme does, so a canvas that is not told keeps the colours
+  // it was drawn with.
+
+  const mapPaint = `(() => {
+      const c = document.getElementById('map-canvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 0;
+      for (let i = 0; i < d.length; i += 997) h = (h * 31 + d[i]) >>> 0;
+      return h;
+    })()`;
+
+  // Centre the selected robot, so the label is at a known place on the canvas
+  // rather than somewhere this has to go looking for it.
+  await session.evaluate(`(() => {
+    const follow = document.getElementById('follow');
+    follow.checked = true;
+    follow.dispatchEvent(new Event('change'));
+  })()`);
+
+  const beforeTheme = await session.evaluate(mapPaint);
+  await session.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: 'light' }],
+  });
+  const afterTheme = await settle(session, mapPaint, (hash) => hash !== beforeTheme, 5000);
+  check('the map repaints when the theme changes under it', afterTheme !== beforeTheme);
+
+  // The label, in pixels. `--label-ink` is resolved through an element because
+  // the tokens are written as hex and as `rgba()` and only the browser knows
+  // what either comes out as; everything else here is read off the canvas.
+  const label = await session.evaluate(`(() => {
+    const canvas = document.getElementById('map-canvas');
+    const { width, height } = canvas;
+    const data = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+    const ratio = window.devicePixelRatio || 1;
+
+    const probe = document.createElement('span');
+    document.body.append(probe);
+    probe.style.color = getComputedStyle(document.documentElement)
+      .getPropertyValue('--label-ink')
+      .trim();
+    // Doubled: this whole probe is a template literal on the way in, and an
+    // unrecognised escape in one is silently the bare letter.
+    const ink = getComputedStyle(probe).color.match(/[\\d.]+/g).slice(0, 3).map(Number);
+    probe.remove();
+
+    // The followed robot is drawn at the centre of the canvas, and its id sits
+    // a marker-radius and a gap above that in 12px type.
+    const cx = Math.round((width / ratio) / 2);
+    const cy = Math.round((height / ratio) / 2);
+    const box = { x0: cx - 45, x1: cx + 45, y0: cy - 28, y1: cy - 12 };
+
+    const tally = new Map();
+    let inked = 0;
+    for (let y = box.y0; y < box.y1; y += 1) {
+      for (let x = box.x0; x < box.x1; x += 1) {
+        const i = (Math.round(y * ratio) * width + Math.round(x * ratio)) * 4;
+        const pixel = [data[i], data[i + 1], data[i + 2]];
+        const key = pixel.join(',');
+        tally.set(key, (tally.get(key) || 0) + 1);
+        if (pixel.every((channel, c) => Math.abs(channel - ink[c]) <= 8)) inked += 1;
+      }
+    }
+    // Whatever the label is drawn over: on this floor, the basemap's free
+    // space, which is white whichever theme the page is in.
+    const [background] = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
+
+    const luminance = (rgb) => {
+      const [r, g, b] = rgb.map((channel) => {
+        const v = channel / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const a = luminance(ink);
+    const b = luminance(background.split(',').map(Number));
+    return {
+      ink,
+      background,
+      inked,
+      contrast: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
+    };
+  })()`);
+
+  // Two assertions, and both are needed. The contrast is the property that
+  // matters, but on its own it passes over a band with no label in it at all —
+  // so the ink has to be found on the canvas first.
+  check(
+    'the robot label is drawn in the label ink',
+    label.inked >= 8,
+    `${label.inked} ink pixels of rgb(${label.ink}) over rgb(${label.background})`,
+  );
+  check(
+    'the robot label reads against the basemap in the light theme',
+    label.contrast >= 4.5,
+    `contrast ${label.contrast.toFixed(2)}:1`,
+  );
+
+  const lightShot = shot.replace(/(\.png)?$/, '-light.png');
+  const lightPng = await session.send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(lightShot, Buffer.from(lightPng.data, 'base64'));
+  console.log(`screenshot: ${lightShot}`);
+
+  await session.send('Emulation.setEmulatedMedia', { features: [] });
+  await session.evaluate(`(() => {
+    const follow = document.getElementById('follow');
+    follow.checked = false;
+    follow.dispatchEvent(new Event('change'));
+  })()`);
+
   // -- the phone ----------------------------------------------------------
   //
   // The off-LAN client is a phone, and a phone is not a narrow desktop: it has
