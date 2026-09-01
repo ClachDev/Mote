@@ -241,10 +241,16 @@ twice. `iperf3` can, and `roamlog`'s `rx_kbps`/`tx_kbps` measure whatever it
 sends. It is a test dependency, not the robot's: install it by hand rather than
 adding it to `pixi.toml`, which would put it on every robot.
 
+**Put the server on a wired host, and bind it to the wired address.** A server
+on a machine that is itself on wifi measures two wireless links and blames the
+robot for both. A machine with both — most workstations — is worse, because
+`iperf3 -s` binds every address by default, so which link gets measured depends
+on which address the client happened to name.
+
 ```bash
 sudo apt install -y iperf3      # on the robot and on the machine it streams to
 
-iperf3 -s                       # on that machine
+iperf3 --server --bind <wired address of that machine>
 
 # on the robot, in one tmux pane, against that machine's LAN address:
 while :; do iperf3 -c <host> -t 120 -i 1 -b 8M; sleep 2; done
