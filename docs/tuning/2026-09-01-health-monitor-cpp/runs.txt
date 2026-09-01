@@ -1,0 +1,56 @@
+Raw output behind docs/tuning/2026-09-01-health-monitor-cpp.md.
+
+Machine: mote-01 (hostname auldbot), Raspberry Pi 5, 4 cores, aarch64,
+Linux 6.12.34+rpt-rpi-2712. 2026-09-01.
+
+All three CPU runs are PAIRED: the C++ build and the Python build running at the
+same instant against one synthetic input stream, the Python one started as
+
+  python install/mote_bringup/lib/mote_bringup/health_monitor --ros-args \
+      -r __node:=health_monitor_py -r health:=health_py \
+      -r diagnostics_agg:=diagnostics_agg_py
+
+and sampled together by
+
+  python mote_bringup/tools/node_cpu.py --duration 180 \
+      --nodes health_monitor,health_monitor_py
+
+The inputs are mote_health/test/compare_monitors.py --hold: /scan and
+/scan_filtered at 10 Hz, /joint_states at 50, /image_raw/compressed at 29, /tf
+at 50, /diagnostics at 1. The drive stack was NOT run; the arrival rates are all
+the monitor consumes. ROS_DOMAIN_ID=91, discovery LOCALHOST.
+
+
+paired-idle.{csv,json}          180 s, load1 mean 0.1
+    health_monitor      0.8 %   22.8 MB
+    health_monitor_py  10.5 %   64.7 MB
+    Light payloads: 360-point scans, 2 joints, a 4 KB stand-in for the JPEG.
+
+paired-loaded.{csv,json}        180 s, load1 mean 3.0, p95 3.6
+    health_monitor      0.9 %   22.9 MB
+    health_monitor_py   9.7 %   64.7 MB
+    Same inputs, with three busy loops holding the machine at the contention
+    docs/tuning/2026-08-11-monitor-cpu.md measured under (load1 3.6-3.8).
+    Contention moves neither build much: it is not the variable.
+
+paired-real-payloads.{csv,json} 180 s, load1 mean 0.6
+    health_monitor      1.1 %   26.2 MB
+    health_monitor_py  10.6 %   66.9 MB
+    Realistic payloads: 720-point scans with intensities, 8 joints (2 wheels +
+    6 arm), a 40 KB JPEG. This is the row quoted in the write-up.
+
+Both builds published `data: OK` on their own /health topic at the end of every
+run, so none of these figures is a monitor that had gone deaf.
+
+
+equivalence.json                40 s, workstation (linux-64), both builds live
+    verdict: equivalent, problems: []
+    39 publishes each on /diagnostics_agg and /health, mean gap 1.000 s.
+    5 distinct aggregate shapes and 5 distinct summaries, identical sets.
+    rate_hz means identical to 0.01 Hz on all four topics.
+    Produced by:
+      python mote_health/test/compare_monitors.py \
+          --b "python -m mote_bringup.health_monitor" --duration 40
+    with the Python build taken from the commit before its removal. Run on the
+    workstation rather than the robot because it needs both implementations on
+    one graph and asserts published content, not cost.

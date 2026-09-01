@@ -30,6 +30,7 @@ watch:
   - mote_bringup
   - mote_fleet
   - mote_hardware
+  - mote_health
   - mote_perception
   - mote_simulation
   - mote_tasks
@@ -113,6 +114,7 @@ nav:
           - SfM stage 0 results: hardware/research/sfm-stage0.md
   - The robot:
       - Bringup & reliability: robot/bringup.md
+      - Health monitor: robot/health.md
       - Sites, maps & zones: robot/sites.md
       - The mapping pipeline (design): design/mapping-pipeline.md
       - Missions — fetch and goto: robot/missions.md
@@ -163,3 +165,4 @@ nav:
       - "  ↳ birth-aligned replay": tuning/2026-08-25-slam-build-params/birth-aligned/report.md
       - "  ↳ unaligned replay": tuning/2026-08-25-slam-build-params/unaligned/report.md
       - Map alignment residual: tuning/2026-09-01-alignment-residual.md
+      - Health monitor in C++: tuning/2026-09-01-health-monitor-cpp.md

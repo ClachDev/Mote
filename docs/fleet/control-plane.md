@@ -141,7 +141,7 @@ stopped.
 
 The robot's own roll-up, forwarded rather than recomputed: `state`, `summary`
 and `subsystems` come from the health monitor's `/diagnostics_agg`
-(`mote_bringup/health_monitor.py`), so the fleet sees exactly what the robot
+(`mote_health`), so the fleet sees exactly what the robot
 sees.
 
 | Field | Type | Notes |

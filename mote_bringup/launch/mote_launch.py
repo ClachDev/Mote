@@ -152,7 +152,7 @@ def generate_launch_description():
     # with a watchdog and its own lifecycle (it must outlive a bringup restart to
     # report one); two copies would both publish /health.
     health_monitor = Node(
-        package="mote_bringup",
+        package="mote_health",
         executable="health_monitor",
         condition=IfCondition(LaunchConfiguration("health")),
         **respawn,

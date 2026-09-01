@@ -1,0 +1,39 @@
+{
+  "csv": "/tmp/node_cpu_loaded/paired-loaded.csv",
+  "samples": 180,
+  "span_s": 179.1,
+  "load1": {
+    "mean": 3.0,
+    "median": 3.2,
+    "p95": 3.6,
+    "max": 3.6
+  },
+  "cpu_pct": {
+    "health_monitor": {
+      "mean": 0.9,
+      "median": 1.0,
+      "p95": 2.0,
+      "max": 2.0
+    },
+    "health_monitor_py": {
+      "mean": 9.7,
+      "median": 10.0,
+      "p95": 10.0,
+      "max": 11.0
+    }
+  },
+  "rss_mb": {
+    "health_monitor": {
+      "mean": 22.9,
+      "median": 22.9,
+      "p95": 23.0,
+      "max": 23.0
+    },
+    "health_monitor_py": {
+      "mean": 64.7,
+      "median": 64.7,
+      "p95": 64.7,
+      "max": 64.7
+    }
+  }
+}

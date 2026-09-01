@@ -42,6 +42,7 @@ MOUNTS = {
     "hardware/research/sfm-depth.md": "design/research/sfm_multiview_depth.md",
     "hardware/research/sfm-stage0.md": "design/research/sfm_stage0_results.md",
     "robot/bringup.md": "mote_bringup/README.md",
+    "robot/health.md": "mote_health/README.md",
     "robot/missions.md": "mote_tasks/README.md",
     "robot/map-cleanup.md": "mote_bringup/mote_bringup/map_cleanup/README.md",
     "robot/foxglove.md": "mote_bringup/foxglove/README.md",

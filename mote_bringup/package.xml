@@ -17,7 +17,9 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
-  <exec_depend>rosidl_runtime_py</exec_depend>
+  <!-- mote_launch.py starts the health monitor with the base. The dependency
+       runs this way only: mote_health knows nothing about the launch files. -->
+  <exec_depend>mote_health</exec_depend>
   <exec_depend>twist_mux</exec_depend>
 
   <export>

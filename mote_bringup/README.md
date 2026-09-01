@@ -300,7 +300,14 @@ Three things are worth knowing:
   very same estimator over a bag. The derivation, and the six real events it
   found in those bags, are in `docs/tuning/2026-07-28-slip-detection.md`.
 
-## Health monitor — `health_monitor.py`
+## Health monitor — `mote_health`
+
+Lives in its own package now, and is C++: what a monitor costs is how often it
+is woken, and this one consumes ~152 msg/s, which no rclpy callback can afford.
+The evidence is `docs/tuning/2026-08-11-monitor-cpu.md`, the port
+`docs/tuning/2026-09-01-health-monitor-cpp.md`, and the package's own
+`mote_health/README.md`. What it decides is unchanged and is summarised here
+because it is read alongside the other monitors above.
 
 Runs as `mote-health.service` (or `pixi run health`). Watches subsystem liveness
 and publishes, every second:
@@ -317,8 +324,9 @@ and publishes, every second:
   pixi run -- ros2 topic echo /health
   ```
 
-**Severity → roll-up**, set per subsystem in `config/health.yaml`
-(overridable per-robot at `$MOTE_HOME/health.yaml`, resolved through `mote_home`):
+**Severity → roll-up**, set per subsystem in `mote_health/config/health.yaml`
+(overridable per-robot at `$MOTE_HOME/health.yaml`, the same rule `mote_home`
+holds for Python):
 
 | `severity` | Missing/stale means | Used for |
 |-----------|---------------------|----------|
@@ -345,8 +353,10 @@ Two things worth knowing about these thresholds:
   another monitor's liveness is not this monitor's job.
 
 The monitor is also the systemd watchdog feeder: it sends `READY=1` once up and
-pets the watchdog on every publish (`sd_notify.py`, a dependency-free
-`$NOTIFY_SOCKET` client that no-ops outside systemd).
+pets the watchdog on every publish (`mote_health/src/sd_notify.cpp`, a
+dependency-free `$NOTIFY_SOCKET` client that no-ops outside systemd). It moved
+with the monitor rather than being copied: `mote-health.service` is the only
+`Type=notify` unit, so nothing here was left needing the Python one.
 
 ## Clearing stray ROS processes — `sweep_orphans.py`
 
