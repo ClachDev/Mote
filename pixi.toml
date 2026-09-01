@@ -107,6 +107,12 @@ site = "ros2 run mote_bringup site"
 #   pixi run bag-replay -- --bag ~/.mote/bags/mapping/<ts> --params a.yaml b.yaml
 bag-replay = "python mote_simulation/tools/bag_replay/replay.py"
 
+# Mapping pipeline stage 2: a mapping bag in, a reviewable map candidate out —
+# solve, declutter, segment, validate, score, package. Needs no robot and no
+# live SLAM session; the bag is the source and the revision is a build artifact.
+#   pixi run map-build -- --bag ~/.mote/bags/mapping/<ts> --site home --floor ground
+map-build = "python mote_simulation/tools/map_build/map_build.py"
+
 # Quick launch commands
 launch = "ros2 launch mote_bringup mote_launch.py"
 mapping = "ros2 launch mote_bringup mapping_launch.py"

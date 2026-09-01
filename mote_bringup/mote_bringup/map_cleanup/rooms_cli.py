@@ -80,7 +80,14 @@ def zone_entry(room: Room) -> dict:
     }
 
 
-def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str]]:
+def merge_into_zones(
+    path: Path,
+    rooms: list[Room],
+    *,
+    site: str = "",
+    floor: str = "",
+    platform_id: str | None = None,
+) -> tuple[list[str], list[str]]:
     """Add the rooms that are not already named to a zones file.
 
     Returns ``(added, skipped)`` names. A candidate is skipped when its outline
@@ -88,15 +95,20 @@ def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str
     that room has a name, and it is not this tool's to replace. Bare waypoints
     (a ``pickup`` standing in the middle of a hall) do not suppress anything:
     they name a spot, not the room around it.
+
+    ``site``/``floor``/``platform_id`` stamp the documents that come out. The
+    CLI leaves them to whatever the floor already says, because it is writing
+    into a floor that knows; the offline map build passes them, because it is
+    writing a revision for a floor it was told about on the command line.
     """
     if path.suffix == ".yaml":
         # A caller that named the old combined file means the floor it is in.
         path = path.parent
     try:
-        floor = bundle.read_floor(path)
+        document = bundle.read_floor(path)
     except bundle.BundleError:
-        floor = {"frame_id": "map", "revision": 0, "zones": {}}
-    zones = floor["zones"]
+        document = {"frame_id": "map", "revision": 0, "zones": {}}
+    zones = document["zones"]
 
     named = [
         (float(spec["x"]), float(spec["y"]))
@@ -125,8 +137,8 @@ def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str
         )
         added.append(name)
     if added:
-        floor["revision"] = int(floor.get("revision") or 0) + 1
-    bundle.write_floor(path, floor)
+        document["revision"] = int(document.get("revision") or 0) + 1
+    bundle.write_floor(path, document, site=site, floor=floor, platform_id=platform_id)
     return added, skipped
 
 

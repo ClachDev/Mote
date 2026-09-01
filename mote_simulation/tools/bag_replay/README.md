@@ -51,7 +51,13 @@ pixi run bag-replay -- \
 Output lands in `bag_replay_results/<UTC>/`: `report.md` (open it — the map
 images are relative links), `run.json` (full metrics + provenance), and per set
 a `stack.log`, `replay.log`, `series.json` (re-scorable trajectory), `map.npz`
-(occupancy grid) and `map.png`.
+(occupancy grid, its resolution and its origin including the **yaw** — always
+zero in practice, recorded because a consumer assembling a `map.yaml` from this
+must not have to assume it) and `map.png`.
+
+**To build a map rather than score a tuning**, use `pixi run map-build`
+(`../map_build/`), which drives this harness and then assembles, declutters,
+segments, validates and packages the result as a candidate map revision.
 
 ## How it works
 

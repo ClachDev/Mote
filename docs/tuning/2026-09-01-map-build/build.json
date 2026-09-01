@@ -1,0 +1,428 @@
+{
+  "revision": "20260901T180343",
+  "built": "20260901T170343Z",
+  "out_dir": "/home/michael/.claude/jobs/c1592bca/tmp/acceptance3/20260901T170343Z",
+  "revision_dir": "/home/michael/.claude/jobs/c1592bca/tmp/acceptance3/20260901T170343Z/revision/20260901T180343",
+  "site": "home",
+  "floor": "ground",
+  "stages": [
+    {
+      "name": "solve",
+      "outcome": "ok",
+      "detail": "340 pose-graph nodes from 542 scans in 21 s"
+    },
+    {
+      "name": "assemble",
+      "outcome": "ok",
+      "detail": "240x182 @ 0.050 m/px, origin (-5.316, -5.211, 0.000)"
+    },
+    {
+      "name": "declutter",
+      "outcome": "ok",
+      "detail": "-1244 cells, +277, wall directions [11.2, 88.2, 110.2, 178.2]"
+    },
+    {
+      "name": "segment",
+      "outcome": "ok",
+      "detail": "9 room zone(s) proposed"
+    },
+    {
+      "name": "carry forward",
+      "outcome": "stub",
+      "detail": "task 345 \u2014 names are reported, not rebound"
+    },
+    {
+      "name": "validate",
+      "outcome": "ok",
+      "detail": "valid"
+    },
+    {
+      "name": "score",
+      "outcome": "ok",
+      "detail": "1 metric(s) worse than the baseline: map.speckle_frac"
+    },
+    {
+      "name": "package",
+      "outcome": "ok",
+      "detail": "20260901T180343.tar.gz, 7101101 bytes, sha256:a1d6a4393b634f43\u2026"
+    }
+  ],
+  "diff": [
+    {
+      "metric": "loop.start_end_dist_m",
+      "gloss": "start\u2194end distance, if the run closed",
+      "better": "lower",
+      "candidate": 0.09918580889101973
+    },
+    {
+      "metric": "loop.drift_ratio",
+      "gloss": "that distance over path length",
+      "better": "lower",
+      "candidate": 0.0007104602496457169
+    },
+    {
+      "metric": "map.mean_wall_thickness_m",
+      "gloss": "wall crispness; blur reads thicker",
+      "better": "lower",
+      "candidate": 0.06015459230069719,
+      "baseline": 0.06070439864657029,
+      "delta": -0.0005498063458731009,
+      "verdict": "same",
+      "relative": -0.009057108844354957
+    },
+    {
+      "metric": "map.speckle_frac",
+      "gloss": "isolated occupied cells",
+      "better": "lower",
+      "candidate": 0.003637465898757199,
+      "baseline": 0.0027683789603199014,
+      "delta": 0.0008690869384372977,
+      "verdict": "worse",
+      "relative": 0.3139335152066283
+    },
+    {
+      "metric": "map.explored_area_m2",
+      "gloss": "decided cells \u00d7 cell area",
+      "better": "higher",
+      "candidate": 63.260000000000005,
+      "baseline": 62.825,
+      "delta": 0.4350000000000023,
+      "verdict": "same",
+      "relative": 0.006923995224830916
+    }
+  ],
+  "images": [
+    [
+      "Built map (served)",
+      "map.png"
+    ],
+    [
+      "Raw solve",
+      "map_raw.png"
+    ],
+    [
+      "Declutter diagnostics",
+      "diagnostics.png"
+    ],
+    [
+      "Proposed rooms",
+      "rooms.png"
+    ]
+  ],
+  "inputs": {
+    "bag": {
+      "name": "20260802_142539",
+      "sha256": "099f9d0608ec818c75a3c5792c13b7e5a4d58a9c5fcd8f005a43a40088750f40",
+      "files": [
+        {
+          "name": "20260802_142539_0.mcap",
+          "bytes": 62008230,
+          "sha256": "67931d55e67654ebde39a3d9d22335dce0736fe85a44cae70be4309748d4e3a2"
+        },
+        {
+          "name": "20260802_142539_1.mcap",
+          "bytes": 62415137,
+          "sha256": "7cdbb43a048a6206a2fa50e12ab838bfaa40582a965b0b7f6e051725cd281269"
+        },
+        {
+          "name": "20260802_142539_2.mcap",
+          "bytes": 55809872,
+          "sha256": "609ff0d4d2f864149f747601407ece02c4272dab26ec75dd3c202159f17d35bf"
+        },
+        {
+          "name": "20260802_142539_3.mcap",
+          "bytes": 11669945,
+          "sha256": "58ea3168d0eb4322c84319f0b3b6721c01ed8ff973936fcc5c076a433777435f"
+        },
+        {
+          "name": "metadata.yaml",
+          "bytes": 7329,
+          "sha256": "8e675b8d0d09b2be28cf87e0bd11de37ea80f892f1f490b9db115e29d22fa92c"
+        }
+      ],
+      "path": "/home/michael/.mote/bags/mapping/20260802_142539"
+    },
+    "params": {
+      "path": "/home/michael/Projects/mote/.claude/worktrees/map-build-orchestrator/mote_bringup/config/slam_toolbox_build_params.yaml",
+      "sha256": "072929cf88c0147758b2a471546c7fac9a236b1ffef8d14c25981d54a3b4bb37"
+    },
+    "frame": [
+      0.0,
+      0.0,
+      -3.0
+    ],
+    "feed": "lockstep",
+    "harness_commit": "1c75eac"
+  },
+  "zones": {
+    "added": [
+      "room_01",
+      "room_02",
+      "room_03",
+      "room_04",
+      "room_05",
+      "room_06",
+      "room_07",
+      "room_08",
+      "room_09"
+    ],
+    "skipped": [],
+    "n_rooms": 9,
+    "overlay": "rooms.png",
+    "carry_forward": "**Not carried forward**: the baseline floor names 7 place(s) \u2014 `room_01`, `room_02`, `room_03`, `room_04`, `room_05`, `room_06`, `room_07`. Re-binding them onto this map's rooms is task 345; until it lands the reviewer renames the placeholders above in the dashboard's zone editor, which is where a name is edited on a candidate anyway."
+  },
+  "validation": {
+    "summary": "valid",
+    "errors": [],
+    "warnings": [],
+    "occupancy": {
+      "total": 43680,
+      "free": 0.503777,
+      "occupied": 0.075527,
+      "unknown": 0.420696
+    }
+  },
+  "baseline": {
+    "path": "/home/michael/.claude/jobs/c1592bca/tmp/baseline/20260802T203339",
+    "metrics": {
+      "map": {
+        "n_cells": 42716,
+        "unknown_frac": 0.4116958516715048,
+        "free_frac": 0.5121968349096357,
+        "occ_frac": 0.07610731341885944,
+        "explored_area_m2": 62.825,
+        "mean_wall_thickness_m": 0.06070439864657029,
+        "speckle_frac": 0.0027683789603199014,
+        "angular_support_deg": 47.524686611496804,
+        "angular_entropy_norm": 0.7737539891235249,
+        "unassigned_energy_frac": 0.20204506969103694,
+        "n_peaks": 4,
+        "directions": [
+          {
+            "angle_deg": 92.25,
+            "energy_frac": 0.26684065870019485,
+            "width_deg": 2.6600670365190853
+          },
+          {
+            "angle_deg": 160.25,
+            "energy_frac": 0.11935603677853039,
+            "width_deg": 2.371171686594371
+          },
+          {
+            "angle_deg": 179.25,
+            "energy_frac": 0.32560393495826956,
+            "width_deg": 2.5139618844536775
+          },
+          {
+            "angle_deg": 71.25,
+            "energy_frac": 0.08615429987196835,
+            "width_deg": 2.7076397806040102
+          }
+        ],
+        "frames": [
+          {
+            "angle_deg": 89.25,
+            "energy_frac": 0.5924445936584644,
+            "n_directions": 2,
+            "offset_from_dominant_deg": 0.0
+          },
+          {
+            "angle_deg": 70.25,
+            "energy_frac": 0.20551033665049873,
+            "n_directions": 2,
+            "offset_from_dominant_deg": 19.0
+          }
+        ],
+        "n_frames": 2,
+        "n_strong_frames": 2,
+        "dominant_frame_share": 0.5924445936584644,
+        "manhattan_frame_deg": 85.15941303221811,
+        "manhattan_concentration": 0.8577708949791387,
+        "manhattan_share": 0.4530011508219582
+      }
+    }
+  },
+  "metrics": {
+    "n_scans": 542,
+    "n_inserted": 340,
+    "traj_samples": 340,
+    "loop": {
+      "n": 340,
+      "start_end_dist_m": 0.09918580889101973,
+      "path_length_m": 139.60782315475134,
+      "drift_ratio": 0.0007104602496457169,
+      "duration_s": 1855.0016474723816
+    },
+    "feed": "lockstep",
+    "traj_source": "pose",
+    "wall_s": 20.7,
+    "map": {
+      "n_cells": 43680,
+      "unknown_frac": 0.4206959706959707,
+      "free_frac": 0.5037774725274725,
+      "occ_frac": 0.07552655677655677,
+      "explored_area_m2": 63.260000000000005,
+      "mean_wall_thickness_m": 0.06015459230069719,
+      "speckle_frac": 0.003637465898757199,
+      "angular_support_deg": 50.70095965324051,
+      "angular_entropy_norm": 0.7847452227091799,
+      "unassigned_energy_frac": 0.2024568210587793,
+      "n_peaks": 4,
+      "directions": [
+        {
+          "angle_deg": 92.75,
+          "energy_frac": 0.2823199735516087,
+          "width_deg": 2.7764656751564187
+        },
+        {
+          "angle_deg": 163.75,
+          "energy_frac": 0.12396016905685829,
+          "width_deg": 2.3252893831906696
+        },
+        {
+          "angle_deg": 2.25,
+          "energy_frac": 0.2961823802302831,
+          "width_deg": 2.5567636214272724
+        },
+        {
+          "angle_deg": 73.75,
+          "energy_frac": 0.09508065610247042,
+          "width_deg": 2.7053240626571378
+        }
+      ],
+      "frames": [
+        {
+          "angle_deg": 2.25,
+          "energy_frac": 0.5785023537818919,
+          "n_directions": 2,
+          "offset_from_dominant_deg": 0.0
+        },
+        {
+          "angle_deg": 73.75,
+          "energy_frac": 0.2190408251593287,
+          "n_directions": 2,
+          "offset_from_dominant_deg": 18.5
+        }
+      ],
+      "n_frames": 2,
+      "n_strong_frames": 2,
+      "dominant_frame_share": 0.5785023537818919,
+      "manhattan_frame_deg": 87.23950484652163,
+      "manhattan_concentration": 0.8599850867715234,
+      "manhattan_share": 0.40904568114691275
+    },
+    "map_raw": {
+      "n_cells": 43680,
+      "unknown_frac": 0.42703754578754577,
+      "free_frac": 0.46895604395604396,
+      "occ_frac": 0.10400641025641026,
+      "explored_area_m2": 62.56750186465682,
+      "mean_wall_thickness_m": 0.06432973901713941,
+      "speckle_frac": 0.013647369579572969,
+      "angular_support_deg": 50.414003858733345,
+      "angular_entropy_norm": 0.7837809435125195,
+      "unassigned_energy_frac": 0.2397107336918075,
+      "n_peaks": 4,
+      "directions": [
+        {
+          "angle_deg": 92.25,
+          "energy_frac": 0.278270610624543,
+          "width_deg": 2.6532849517899315
+        },
+        {
+          "angle_deg": 163.75,
+          "energy_frac": 0.1116209930937212,
+          "width_deg": 2.1794653675659705
+        },
+        {
+          "angle_deg": 2.25,
+          "energy_frac": 0.32153111819038543,
+          "width_deg": 2.6311468336443804
+        },
+        {
+          "angle_deg": 73.75,
+          "energy_frac": 0.04886654439954271,
+          "width_deg": 2.2758001071334455
+        }
+      ],
+      "frames": [
+        {
+          "angle_deg": 2.25,
+          "energy_frac": 0.5998017288149284,
+          "n_directions": 2,
+          "offset_from_dominant_deg": 0.0
+        },
+        {
+          "angle_deg": 73.75,
+          "energy_frac": 0.16048753749326392,
+          "n_directions": 2,
+          "offset_from_dominant_deg": 18.5
+        }
+      ],
+      "n_frames": 2,
+      "n_strong_frames": 2,
+      "dominant_frame_share": 0.5998017288149284,
+      "manhattan_frame_deg": 88.71921407987656,
+      "manhattan_concentration": 0.867644982249046,
+      "manhattan_share": 0.49203160040381133
+    }
+  },
+  "angular": {
+    "n_cells": 43680,
+    "unknown_frac": 0.4206959706959707,
+    "free_frac": 0.5037774725274725,
+    "occ_frac": 0.07552655677655677,
+    "explored_area_m2": 63.260000000000005,
+    "mean_wall_thickness_m": 0.06015459230069719,
+    "speckle_frac": 0.003637465898757199,
+    "angular_support_deg": 50.70095965324051,
+    "angular_entropy_norm": 0.7847452227091799,
+    "unassigned_energy_frac": 0.2024568210587793,
+    "n_peaks": 4,
+    "directions": [
+      {
+        "angle_deg": 92.75,
+        "energy_frac": 0.2823199735516087,
+        "width_deg": 2.7764656751564187
+      },
+      {
+        "angle_deg": 163.75,
+        "energy_frac": 0.12396016905685829,
+        "width_deg": 2.3252893831906696
+      },
+      {
+        "angle_deg": 2.25,
+        "energy_frac": 0.2961823802302831,
+        "width_deg": 2.5567636214272724
+      },
+      {
+        "angle_deg": 73.75,
+        "energy_frac": 0.09508065610247042,
+        "width_deg": 2.7053240626571378
+      }
+    ],
+    "frames": [
+      {
+        "angle_deg": 2.25,
+        "energy_frac": 0.5785023537818919,
+        "n_directions": 2,
+        "offset_from_dominant_deg": 0.0
+      },
+      {
+        "angle_deg": 73.75,
+        "energy_frac": 0.2190408251593287,
+        "n_directions": 2,
+        "offset_from_dominant_deg": 18.5
+      }
+    ],
+    "n_frames": 2,
+    "n_strong_frames": 2,
+    "dominant_frame_share": 0.5785023537818919,
+    "manhattan_frame_deg": 87.23950484652163,
+    "manhattan_concentration": 0.8599850867715234,
+    "manhattan_share": 0.40904568114691275
+  },
+  "verdict": "candidate emitted",
+  "verdict_detail": "`/home/michael/.claude/jobs/c1592bca/tmp/acceptance3/20260901T170343Z/revision/20260901T180343` \u2014 validated, packed as `20260901T180343.tar.gz`",
+  "next": "Review the map above, then upload `20260901T180343.tar.gz` to the registry as a candidate for `home/ground`. The upload route accepts enrolled robots only, so a builder needs a credential of its own \u2014 that is task 344; until it lands, a robot at the site can side-load the revision directory into its floor and `pixi run publish-map --revision 20260901T180343`. Promotion is unchanged: an operator's audited call, in the dashboard or `fleetctl promote`."
+}

@@ -175,7 +175,7 @@ def test_promote_cleaned_serves_clean_and_keeps_raw(mote_home):
     fdir = mote_home / "f"
     rev_dir = fdir / "maps" / "r1"
     _stage_raw_map(rev_dir)
-    clean = sites._promote_cleaned(rev_dir)
+    clean = sites.promote_cleaned(rev_dir)
 
     assert clean["ok"] and clean["removed"] > 0
     # raw retained, cleaned promoted to the served map.png, diagnostics written
@@ -195,7 +195,7 @@ def test_promote_cleaned_failure_falls_back_to_raw(mote_home):
     rev_dir.mkdir(parents=True)
     (rev_dir / "map.png").write_text("not a png")  # cv2 cannot read -> failure
     (rev_dir / "map.yaml").write_text("image: map.png\nresolution: 0.05\n")
-    clean = sites._promote_cleaned(rev_dir)
+    clean = sites.promote_cleaned(rev_dir)
 
     assert clean["ok"] is False and "error" in clean
     assert (rev_dir / "map.png").read_bytes() == (rev_dir / "map_raw.png").read_bytes()

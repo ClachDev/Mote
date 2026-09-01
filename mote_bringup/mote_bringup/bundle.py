@@ -147,7 +147,7 @@ MAX_UNPACKED = 256 * 1024 * 1024
 
 #: Trinary occupancy values as ``map_saver`` writes them: 0 occupied, 205
 #: unknown, 254 free. Read with slack either side, because the cleaning pass
-#: (sites._promote_cleaned) goes through cv2 and need not land exactly on them.
+#: (sites.promote_cleaned) goes through cv2 and need not land exactly on them.
 OCCUPIED_MAX = 25
 FREE_MIN = 230
 
@@ -777,7 +777,7 @@ def _validate_image(revision_dir: Path, report: Report):
         return
 
     # The raw and the cleaned map are the same frame with different pixels
-    # (sites._promote_cleaned), so a size that differs means one of them is
+    # (sites.promote_cleaned), so a size that differs means one of them is
     # not what it claims and every zone taught on this floor is suspect.
     raw = revision_dir / "map_raw.png"
     if raw.is_file():

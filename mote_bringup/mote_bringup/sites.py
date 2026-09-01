@@ -342,7 +342,7 @@ def revision_meta(fdir: Path, rev: str) -> dict:
     return yaml.safe_load(meta_file.read_text()) or {}
 
 
-def _clean_map_png(raw_png: Path, out_png: Path, diag_png: Path) -> dict:
+def clean_map_png(raw_png: Path, out_png: Path, diag_png: Path) -> dict:
     """Declutter a saved occupancy PNG: read raw_png, write the cleaned map to
     out_png and a diagnostics panel to diag_png. Returns cleaning stats for
     meta.yaml. Kept file-only (no ROS) so it is testable off the robot.
@@ -372,7 +372,7 @@ def _clean_map_png(raw_png: Path, out_png: Path, diag_png: Path) -> dict:
     }
 
 
-def _promote_cleaned(rev_dir: Path) -> dict:
+def promote_cleaned(rev_dir: Path) -> dict:
     """Turn a freshly-saved raw revision into a served, cleaned one.
 
     The untouched map_saver output (map.png) is kept as map_raw.png and the
@@ -380,6 +380,11 @@ def _promote_cleaned(rev_dir: Path) -> dict:
     identical for both (only pixels change), so zones and localization are
     unaffected. A cleaning failure never discards the map — the raw is served
     instead. Returns the clean stats block for meta.yaml.
+
+    Public because ``save-map`` is no longer its only caller: the offline map
+    build (``mote_simulation/tools/map_build``) runs this very function on the
+    revision it assembles, rather than a copy of it, so a built map and a saved
+    one are the same pass over the same pixels and their metrics compare.
     """
     raw_png = rev_dir / "map_raw.png"
     (rev_dir / "map.png").rename(raw_png)
@@ -387,7 +392,7 @@ def _promote_cleaned(rev_dir: Path) -> dict:
         (rev_dir / "map.yaml").read_text().replace("map.png", "map_raw.png")
     )
     try:
-        return _clean_map_png(raw_png, rev_dir / "map.png", rev_dir / "diagnostics.png")
+        return clean_map_png(raw_png, rev_dir / "map.png", rev_dir / "diagnostics.png")
     except Exception as exc:  # noqa: BLE001 — a bad clean must not lose the map
         shutil.copyfile(raw_png, rev_dir / "map.png")
         print(f"WARNING: map cleaning failed ({exc}); serving raw map", file=sys.stderr)
@@ -447,7 +452,7 @@ def save_map(clean: bool = True):
             f"incomplete map revision (missing map{'/map'.join(missing)}) — "
             "discarded; are mapping + slam_toolbox running?"
         )
-    clean_stats = _promote_cleaned(rev_dir) if clean else {"skipped": True}
+    clean_stats = promote_cleaned(rev_dir) if clean else {"skipped": True}
 
     meta = {"schema": SCHEMA, "saved": time.strftime("%Y-%m-%dT%H:%M:%S")}
     bag = latest_mapping_bag()
