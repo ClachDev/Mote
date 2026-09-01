@@ -99,11 +99,17 @@ All seven maps, degrees off axis:
 | birth-aligned | car-0.01745-repeat | 0.025 | 0.705 | 0.250 | −0.185 |
 
 Both FFT estimators call every map square. The sweep calls four of them 3.5° to
-5.6° off. The picture is the arbiter: `unaligned-squared.png` is
-`unaligned/car-0.0349/map.png` turned by the sweep's −3.465°, and the corridor
-that ran visibly downhill across the as-solved map is level. `energy_frac`
-around 0.68 says the primitive believes it found a dominant grid; there is no
-low-confidence signal to gate on.
+5.6° off. The picture is the arbiter — `unaligned/car-0.0349` as solved, then
+the same map turned by the sweep's −3.465°:
+
+![unaligned/car-0.0349 as solved](2026-08-25-slam-build-params/unaligned/car-0.0349/map.png)
+
+![the same map turned by the sweep's answer](2026-09-01-alignment-residual/unaligned-squared.png)
+
+The corridor that ran downhill across the first is level in the second, and the
+room boxes square up with it. `energy_frac` around 0.68 says the primitive
+believes it found a dominant grid; there is no low-confidence signal to gate
+on.
 
 The shipped revision's `meta.yaml` records "walls -0.27° off axis", which is the
 same primitive answering about the same build — the `birth-aligned/car-0.0175`
