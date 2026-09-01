@@ -35,11 +35,12 @@ road at nearly every stage.
 - The map that shipped was built **offline from the bag**: lockstep re-solve
   under corrected params (21 s per leg against ~35 min paced — the economics
   that make this whole design viable), a measured-then-injected frame rotation
-  to square the walls (two solves; the live 2.0° `coarse_angle_resolution`
-  snaps solutions to a ~2° orientation lattice, so alignment needed a
-  build-only 1° lattice), a declutter pass with a hand-tuned peak threshold
-  (the default admitted a phantom wall direction — task 337), room
-  segmentation, and validation.
+  to square the walls (two solves, at a build-only 1° `coarse_angle_resolution`
+  on the reasoning that the live 2.0° value snapped solutions to a ~2°
+  orientation lattice — **there is no such lattice**, and the finer sweep beat
+  the live value on nothing; see the alignment step below), a declutter pass
+  with a hand-tuned peak threshold (the default admitted a phantom wall
+  direction — task 337), room segmentation, and validation.
 - Getting the artifact onto the robot and into the registry required
   hand-assembly of a revision (the layout `save-map` writes, reproduced
   manually), an rsync side-load, a manual symlink flip, and a `publish-map`
@@ -123,11 +124,33 @@ done by hand on 2026-08-02:
 
 1. **Solve** — lockstep replay of the whole bag under the committed *build*
    params (`slam_toolbox_build_params.yaml`: the live file plus documented
-   divergences — closure settings tuned for the best map, 1° angular lattice).
-2. **Align** — measure the dominant wall orientation of the solved map
-   (windowed angular energy, folded 0/90, sub-bin interpolation), re-solve
-   once with the measured yaw injected as the frame birth-alignment. Assert
-   the residual (< 0.5°) or fail the build loudly.
+   divergences, each one measured). Today that is one key,
+   `loop_match_minimum_chain_size`, and only until the live file catches up:
+   the live config is best-known-good by policy, so there is little for a build
+   to win by parameter alone. What the build buys is the *steps* below.
+   (`docs/tuning/2026-08-25-slam-build-params.md`.)
+2. **Align** — measure the solved map's dominant wall orientation, re-solve
+   once with that yaw injected as the frame birth-alignment, then **measure
+   again and gate on the change**: the second solve must be at least as close
+   to axis as the first, by more than the estimator's own resolution. It is a
+   gate on improvement, not on absence, and the reason is that a map has no
+   absolute residual to assert — on the 2026-08-02 flat, thirds of the building
+   disagree about where the wall grid is by 8°, and there is a second family
+   18° off that. Re-measuring is not belt-and-braces either: a re-solve is
+   **not a rigid rotation** (slam_toolbox's correlation grid is a pixel grid,
+   so a frame born 3° elsewhere finds different matches), and the same −3.0°
+   injection moved three solves of one bag by +0.1°, −4.3° and −5.8°. The leg
+   that did not move is the live-parameter one, i.e. the case the build will
+   actually run.
+   **This step is blocked on a measurement that does not exist yet** (work item
+   10). `angular_stats.wall_rotation`, which the earlier draft of this design
+   named, reports all seven banked 2026-08-02 solves as within 0.3° of square
+   when four of them are 3.5–5.6° off, and mis-reads a known rotation below 2°
+   by up to 0.75°. A projection-sharpness sweep over the same pixels finds the
+   grid and holds a known rotation to 0.035° — but it is a throwaway probe, not
+   a primitive. The before/after orientations and the tile spread ride on the
+   candidate as review evidence either way. Evidence:
+   `docs/tuning/2026-09-01-alignment-residual.md`.
 3. **Declutter** — the FFT structure pass with prominence-based peak picking
    (task 337); no hand thresholds.
 4. **Segment** — room polygons from the cleaned map, as today.
@@ -195,7 +218,7 @@ rsync path is demoted to a bench tool.
 |---|---|
 | **Stays** | Site bundle layout + `bundle.validate` both ends; M4 registry, promotion, announcement, pull; zone vocabulary split; live-mapping stack for capture; lockstep harness |
 | **Changes** | Live SLAM params become best-known-good (chain 15 → 10 now — task 335 — and whatever proves out next); `save-map`/`publish-map` demoted to bench tools; promote picker becomes a review surface |
-| **New** | Bag sync + retention (sync-then-prune); build orchestrator + committed build params; build identity for candidate upload; vocabulary carry-forward; candidate preview/edit UI; build report |
+| **New** | Bag sync + retention (sync-then-prune); build orchestrator + committed build params; an orientation estimator the alignment step can be gated on; build identity for candidate upload; vocabulary carry-forward; candidate preview/edit UI; build report |
 
 ## Decisions
 
@@ -210,6 +233,12 @@ rsync path is demoted to a bench tool.
   never the sole holder of one.
 - **Zones' human half survives rebuilds.** Renaming a flat's rooms is done
   once, not per revision.
+- **A build gates on what it can measure, and reports the rest.** Every gate
+  names a threshold its own measurement resolves, demonstrated on a real map
+  rather than a synthetic one; anything softer than that is review evidence
+  printed on the candidate. An assertion the measurement cannot see is worse
+  than no assertion, because it is believed. (2026-09-01, from the alignment
+  step: a "< 0.5° residual" gate would have passed a map 3.6° out.)
 
 ## Open questions
 
@@ -224,6 +253,13 @@ rsync path is demoted to a bench tool.
 - **Map pixel edits** — erasing a phantom wall, closing a door the lidar saw
   open. Out of scope here; zones-only editing keeps the review surface small.
   A future task can add a mask layer that survives rebuilds the way names do.
+- **Buildings with no single wall grid** — the 2026-08-02 flat has an angled
+  wing 18° off its dominant family, and even within that family its thirds
+  spread 8°. Aligning such a map squares some of it and turns the rest. Does
+  the build say so on the candidate and leave it to the reviewer, or is a
+  spread past some width a reason not to align at all? Start: align on the
+  dominant family and print the spread. `room_segmentation` has the same
+  assumption and the same answer.
 
 ## Work breakdown
 
@@ -234,11 +270,14 @@ Sized so each is one dispatchable task; existing tasks noted.
 2. **Bag sync + sync-then-prune** — robot uploads mapping bags to the fleet
    box on session end; pruner trims only confirmed-synced bags; bag store
    beside the registry with checksums.
-3. **Build params file + divergence note** — `slam_toolbox_build_params.yaml`
-   committed beside the live file; every divergent key carries a one-line why.
+3. **Build params file + divergence note** — landed (#106):
+   `slam_toolbox_build_params.yaml` beside the live file, one divergent key,
+   held to it by `test_slam_build_params.py`. It also records what was measured
+   and rejected, so the same sweep is not run twice.
 4. **`map-build` orchestrator** — the stage-2 chain as one command on the
    fleet box, emitting a validated candidate + build report. Depends on the
-   lockstep harness landing (task 295 / PR 91) and prominence picking (337).
+   lockstep harness landing (task 295 / PR 91), prominence picking (337), and
+   item 10 for the alignment step's gate.
 5. **Build identity** — the registry accepts candidate uploads from a
    credentialed builder, not only enrolled robots; audit rows name it.
 6. **Vocabulary carry-forward** — same-frame rebinding by containment +
@@ -251,3 +290,11 @@ Sized so each is one dispatchable task; existing tasks noted.
    `zones.yaml`, audited, inert until promotion.
 9. **Build report on the review page** — stage-2 scoring diff rendered beside
    the promote picker.
+10. **An orientation estimator the alignment step can be gated on** — a
+    primitive that resolves a change of 0.25° on a real map, with the
+    validation table `wall_rotation` never had (a known rotation applied to a
+    real solved map, not a synthetic outline), plus the tile spread that says
+    whether the map has one wall grid at all. Blocks item 4's step 2.
+    `angular_stats.wall_rotation` stays as the ≥3° measurement it is, with its
+    limits corrected in place. Evidence:
+    `docs/tuning/2026-09-01-alignment-residual.md`.
