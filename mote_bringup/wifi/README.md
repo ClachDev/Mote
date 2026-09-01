@@ -379,6 +379,21 @@ deciding to move. A deliberate 3 s reconnect at -70 dBm is cheap against the
 For a mapping run none of this matters — `explore` runs on the Pi, so a wifi
 stall does not reach it. It is teleop that pays.
 
+### Why the gap is not just the scan
+
+It is tempting to read 6-15 s as the cost of a full-band scan and conclude that
+the chip is at its limit. The arithmetic does not support it. A full ETSI sweep
+is 13 channels on 2.4 GHz and 4 non-DFS ones on 5 GHz at roughly 30 ms each,
+plus about 16 DFS channels that must be listened to passively at roughly 110 ms:
+about 2.5-3 s. That matches the measurement, since the logger's own full scan
+costs about 4 s of degraded round trips.
+
+So the scan is perhaps a third of the gap, and the rest is the firmware not
+starting one until the traffic has already stalled. This matters for what to do
+next rather than for the settings, since neither the trigger nor the delta is
+reachable: the ceiling here is a policy compiled into a driver, not a property
+of the radio, so a userspace watchdog is not bounded by scan time either.
+
 ## Taking the threshold back: the watchdog
 
 Nothing in this directory can move -75 dBm or the 20 dB delta, so the next step
