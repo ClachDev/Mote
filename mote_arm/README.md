@@ -351,7 +351,7 @@ command is for.
 
 ### Named poses, and narrowing the envelope
 
-The base layer teaches map positions by driving there and running
+The base layer captures a map position by driving there and running
 `pixi run save-zone`; the arm's analogue is `pixi run arm-pose`. Pose the limp
 arm by hand, capture it, and later command it back:
 

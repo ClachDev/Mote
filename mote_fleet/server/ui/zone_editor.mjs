@@ -111,24 +111,42 @@ export function cursorFor(target, placing = false) {
   return target.kind === 'vertex' ? 'crosshair' : 'move';
 }
 
+// zone/v0's `anchor` records how a coordinate came to be, which is what tells a
+// reader whether to trust it after the map changes. Geometry placed or moved
+// here is neither `taught` — no robot drove there and captured a pose — nor
+// `derived` — no algorithm read it off the map. `external` is the one of
+// zone/v0's four that is true of it: resolved off the platform, `by` naming
+// what did it. The server fills in `at` and which operator was at the keyboard,
+// which a browser's clock and a browser's word for it cannot be trusted for.
+export const EDITOR_ANCHOR = { method: 'external', by: 'zone-editor' };
+
+// A binding carries one anchor for the whole of its geometry, so any edit to
+// that geometry re-anchors it: reshaping a `segment-map` room is no longer
+// something an algorithm alone produced. A zone this edit does not touch keeps
+// whatever provenance it arrived with, which is why every geometry helper goes
+// through here and nothing stamps the whole set on save.
+export function reanchored(zone) {
+  return { ...zone, anchor: { ...EDITOR_ANCHOR } };
+}
+
 export function withVertex(zone, index, x, y) {
   const polygon = zone.polygon.map((point, i) =>
     i === index ? [round(x), round(y)] : point,
   );
-  return { ...zone, polygon };
+  return reanchored({ ...zone, polygon });
 }
 
 export function withInsertedVertex(zone, afterIndex, x, y) {
   const polygon = zone.polygon.slice();
   polygon.splice(afterIndex + 1, 0, [round(x), round(y)]);
-  return { ...zone, polygon };
+  return reanchored({ ...zone, polygon });
 }
 
 // A polygon needs three vertices to enclose anything; refuse rather than
 // letting a delete quietly produce a line.
 export function withoutVertex(zone, index) {
   if (!zone.polygon || zone.polygon.length <= 3) return null;
-  return { ...zone, polygon: zone.polygon.filter((_, i) => i !== index) };
+  return reanchored({ ...zone, polygon: zone.polygon.filter((_, i) => i !== index) });
 }
 
 // Moving a zone moves its footprint and its pose together: they name the same
@@ -140,11 +158,11 @@ export function translated(zone, dx, dy) {
   }
   if (typeof zone.x === 'number') moved.x = round(zone.x + dx);
   if (typeof zone.y === 'number') moved.y = round(zone.y + dy);
-  return moved;
+  return reanchored(moved);
 }
 
 export function withPose(zone, x, y) {
-  return { ...zone, x: round(x), y: round(y) };
+  return reanchored({ ...zone, x: round(x), y: round(y) });
 }
 
 // A new zone arrives as a rectangle at the view centre with the first free
@@ -153,7 +171,7 @@ export function freshZone(existing, cx, cy, half = 1.0) {
   const names = new Set(existing.map((zone) => zone.name));
   let n = 1;
   while (names.has(`zone_${String(n).padStart(2, '0')}`)) n += 1;
-  return {
+  return reanchored({
     name: `zone_${String(n).padStart(2, '0')}`,
     x: round(cx),
     y: round(cy),
@@ -164,7 +182,7 @@ export function freshZone(existing, cx, cy, half = 1.0) {
       [round(cx + half), round(cy + half)],
       [round(cx - half), round(cy + half)],
     ],
-  };
+  });
 }
 
 // The map's own pixel grid, in world metres. A vertex dropped anywhere inside a

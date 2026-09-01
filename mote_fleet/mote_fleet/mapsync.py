@@ -129,7 +129,7 @@ def publish(
     """Upload one local revision as a candidate. Returns the server's answer.
 
     The floor's **binding** is packed *into* the revision: zone coordinates
-    only mean anything in the map frame they were taught in, so they travel
+    only mean anything in the map frame they were bound in, so they travel
     with it or they travel wrong. The vocabulary is not — it is a fact about
     the building rather than about this map, and it is served on its own route
     to anything that only needs to know what the places are called.

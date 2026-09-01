@@ -62,6 +62,41 @@ def test_segment_map_output_is_a_bundle_this_can_read(tmp_path):
         assert bundle.load_yaml(text) == yaml.safe_load(text)
 
 
+def test_a_combined_file_keeps_the_anchor_it_carries(tmp_path):
+    """Provenance survives the reader and the migration, or the migration
+    invents it.
+
+    A combined ``zones.yaml`` is not only a legacy file: the fleet dashboard's
+    zone editor packs its result as one, so this is the path an
+    operator-placed coordinate takes. Dropping the field on the way through
+    would have ``split`` stamp ``taught`` over it, recording a click as a pose
+    a robot was driven to — which is precisely the claim ``anchor.method``
+    exists to make checkable. An entry that says nothing still gets ``taught``,
+    because a file written before there was a field to say otherwise did not
+    say when or by whom either.
+    """
+    (tmp_path / bundle.ZONES_YAML).write_text(
+        "zones:\n"
+        "  the kitchen: {x: 1.0, y: 2.0, anchor: {method: external, by: zone-editor}}\n"
+        "  office: {x: 3.0, y: 4.0}\n"
+    )
+    zones = bundle.read_floor(tmp_path, "home", "ground")["zones"]
+    assert zones["the kitchen"]["anchor"]["method"] == "external"
+    assert zones["the kitchen"]["anchor"]["by"] == "zone-editor"
+    assert zones["office"]["anchor"]["method"] == "taught"
+
+
+def test_an_anchor_method_outside_the_spec_is_refused(tmp_path):
+    """The anchor is the one field a client authors, so it is the one field a
+    client could use to claim anything. Refused at the parse, where a bad
+    method is still a bad method rather than a stored fact."""
+    (tmp_path / bundle.ZONES_YAML).write_text(
+        "zones:\n  office: {x: 3.0, y: 4.0, anchor: {method: surveyed}}\n"
+    )
+    with pytest.raises(bundle.BundleError, match="surveyed"):
+        bundle.read_floor(tmp_path, "home", "ground")
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -441,7 +476,7 @@ def test_the_image_must_be_the_one_map_yaml_names(tmp_path):
 
 def test_a_raw_map_of_a_different_size_is_refused(tmp_path):
     """map.png and map_raw.png are the same frame with different pixels, so a
-    size that differs means every zone taught on this floor is suspect."""
+    size that differs means every zone bound on this floor is suspect."""
     directory = revision(tmp_path / "rev")
     png(directory / "map_raw.png", 10, 10, lambda x, y: 254)
     assert any("share a frame" in error for error in bundle.validate(directory).errors)

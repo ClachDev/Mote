@@ -173,7 +173,7 @@ Maps live in **site bundles** under `~/.mote/sites/`.
 SLAM, Nav2, and teleop.**
 
 The longer version of all of the above — provisioning a clean Pi, what a site
-bundle holds, the systemd services, teaching zones and running missions — is
+bundle holds, the systemd services, naming zones and running missions — is
 [Getting started](https://clachdev.github.io/Mote/getting-started/) on the docs
 site.
 

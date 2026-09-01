@@ -154,7 +154,7 @@ def has_zones(fdir: Path) -> bool:
 
 
 def zones_for_write() -> Path:
-    """The floor newly taught zones should be written into."""
+    """The floor a newly bound zone should be written into."""
     act = active()
     if not act:
         sys.exit("no active site (run: site create <name>)")
@@ -253,14 +253,25 @@ def cmd_info():
             notes = [f"{len(zones)} zones"]
             if with_fp:
                 notes.append(f"{with_fp} with a footprint")
-            # A name this robot has never been taught is worth saying: it is
-            # the difference between a floor it can work on and one it has only
-            # been told about.
+            # A name the binding carries no geometry for is worth saying: it is
+            # the difference between a floor this robot can work on and one it
+            # has only been told the names of.
             if unbound:
-                notes.append(f"{unbound} not taught here")
+                notes.append(f"{unbound} unbound here")
             legacy = " (combined zones.yaml — migrates on next write)"
             split = (fdir / bundle.VOCABULARY_YAML).exists()
             print(f"  zones        ok ({', '.join(notes)}){'' if split else legacy}")
+            if unbound:
+                # On its own line because the remedy is three sentences and the
+                # count is one word, and because the count alone reads as a
+                # tally rather than as something to act on.
+                print(
+                    "               an unbound name has no geometry in this "
+                    "floor's binding: place it in\n"
+                    "               the dashboard's zone editor and promote, "
+                    "pull the revision that binds\n"
+                    "               it, or drive there and run save-zone"
+                )
     else:
         print("  zones        missing")
     current = current_revision(fdir)
@@ -493,11 +504,11 @@ def install_revision(site: str, floor: str, revision: str, blob: bytes) -> str:
     ``current`` (nothing to do), ``flipped`` (already had it) or ``installed``.
 
     **Coordinates travel with the map; names do not.** A revision from a
-    different mapping session is a different map frame, so the poses taught in
+    different mapping session is a different map frame, so the poses bound in
     the old one are wrong the instant the new map is published — the bundle's
     ``binding.yaml`` therefore replaces the floor's, and the one it replaces is
     kept beside it as ``binding.<old-rev>.yaml``, because losing a map is
-    recoverable and losing every taught place silently is not. The
+    recoverable and losing every bound place silently is not. The
     ``vocabulary.yaml`` is left alone: the rooms did not change their names
     when the robot re-mapped them, which is the practical dividend of the
     zone/v0 split.

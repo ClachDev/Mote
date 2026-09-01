@@ -183,7 +183,7 @@ test('fit centres the whole basemap in the canvas', () => {
   assert.equal(view.tx, (1000 - map.width * view.scale) / 2);
 });
 
-// -- taught places on the basemap ---------------------------------------
+// -- bound places on the basemap ----------------------------------------
 
 test('a polygon zone becomes basemap pixels through the same transform', () => {
   const map = { resolution: 0.05, origin: [-10, -5, 0], width: 400, height: 200 };
@@ -714,6 +714,7 @@ test('both map canvases take their own touch gestures', () => {
 // pointer events on top of exactly these.
 
 const {
+  EDITOR_ANCHOR,
   NAME_RE,
   ambiguities,
   cursorFor,
@@ -857,7 +858,49 @@ test('moving a zone carries footprint and pose together', () => {
   assert.deepEqual(moved.polygon[0], [1, -1]);
   assert.equal(moved.x, 2);
   assert.equal(moved.y, 0);
-  assert.deepEqual(withPose(square, 5, 5), { ...square, x: 5, y: 5 });
+  assert.deepEqual(withPose(square, 5, 5), {
+    ...square,
+    x: 5,
+    y: 5,
+    anchor: EDITOR_ANCHOR,
+  });
+});
+
+test('geometry this editor places or moves stops claiming a robot drove there', () => {
+  // `anchor.method` is what tells a later reader whether to trust a coordinate
+  // after the map changes, and the answer differs: a taught pose was measured
+  // by driving a robot to it, a `segment-map` room was read off the map by an
+  // algorithm, and one of these is a click. Stamping a click `taught` puts a
+  // measurement nobody took into the one field that exists to say so.
+  const driven = { ...square, anchor: { method: 'taught', by: 'michael' } };
+  const derived = {
+    name: 'ward_a',
+    polygon: [[0, 0], [2, 0], [2, 2], [0, 2]],
+    anchor: { method: 'derived', by: 'segment-map' },
+  };
+
+  for (const edited of [
+    withPose(driven, 5, 5),
+    translated(driven, 1, -1),
+    withVertex(derived, 0, 0.5, 0.5),
+    withInsertedVertex(derived, 0, 1, 0),
+    withoutVertex({ ...derived, polygon: [...derived.polygon, [-1, 1]] }, 0),
+    freshZone([], 0, 0),
+  ]) {
+    assert.deepEqual(edited.anchor, EDITOR_ANCHOR);
+  }
+
+  // And a zone nobody touched keeps whatever provenance it arrived with —
+  // re-anchoring the whole set on save would lose the one fact that separates
+  // a room an algorithm proposed from one an operator drew.
+  const untouched = zonesPayload([driven, derived]);
+  assert.deepEqual(untouched.kitchen.anchor, { method: 'taught', by: 'michael' });
+  assert.deepEqual(untouched.ward_a.anchor, { method: 'derived', by: 'segment-map' });
+
+  // The editor names itself and says nothing about when or who: a browser's
+  // clock is the operator's laptop, and the server fills both in.
+  assert.equal(EDITOR_ANCHOR.method, 'external');
+  assert.ok(!('at' in EDITOR_ANCHOR));
 });
 
 test('a fresh zone gets the first free generated name and a real footprint', () => {
@@ -1277,11 +1320,11 @@ test('a zone row says whether it is a point or an area', () => {
 });
 
 test('inherited zones are called inherited, and the ordinary case is silent', () => {
-  // A revision carrying no zones.yaml inherits the floor's, taught in another
+  // A revision carrying no zones.yaml inherits the floor's, bound in another
   // SLAM session's frame. They draw perfectly and are wrong by however far the
   // two map origins differ — invisible on the canvas, so it is said.
   assert.equal(zoneSource('floor', 3).tag, 'inherited');
-  assert.match(zoneSource('floor', 3).title, /taught on another map/);
+  assert.match(zoneSource('floor', 3).title, /bound against another map/);
   assert.equal(zoneSource('revision', 0).tag, 'none');
   // And zones that belong to the map they are drawn on are just zones: a label
   // for the absence of a problem is a label nobody can act on.

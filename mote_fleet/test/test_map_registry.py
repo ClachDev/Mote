@@ -220,7 +220,7 @@ def test_re_uploading_the_same_revision_does_not_mint_a_second(server, robot, tm
 
 def test_two_robots_mapping_one_floor_keep_both_maps(server, robot, tmp_path):
     """The conflict rule: no merge, no overwrite, two candidates, and an
-    operator picks. Silently merging two map frames would break every taught
+    operator picks. Silently merging two map frames would break every bound
     zone coordinate."""
     enroll(server, "serial:bbb", name="Scout two")
     first = packed_revision(tmp_path, name="one")
@@ -450,7 +450,7 @@ def test_a_revision_with_no_zones_falls_back_to_the_floors(server, robot, tmp_pa
     zones at floor level, and a revision that carries none inherits them.
 
     ``source`` is what makes that safe to show a reviewer. Inherited zones were
-    taught in a *previous* session's frame, so they draw perfectly over this map
+    bound in a *previous* session's frame, so they draw perfectly over this map
     and are wrong by however far the two origins differ — nothing in the
     coordinates says which case this is, so the payload does.
     """
@@ -527,7 +527,7 @@ def test_zones_are_served_for_the_floor_being_drawn(server):
 def test_zones_travel_with_the_revision_that_becomes_canonical(
     server, robot, operator, tmp_path
 ):
-    """Zone coordinates only mean anything in the frame they were taught in,
+    """Zone coordinates only mean anything in the frame they were bound in,
     so promoting a map promotes its zones."""
     directory = write_revision(tmp_path / "rev")
     (directory / "zones.yaml").write_text(

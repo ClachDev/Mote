@@ -571,7 +571,7 @@ duplicated in two places — one small refactor to factor out at M4.)
 **Conflict: two robots map the same floor.** Do **not** auto-merge. A map frame's
 origin is *"an accident of where SLAM started, so zones/map/posegraph must live and
 travel together"* (`sites.py` docstring); silently merging two frames breaks every
-taught zone coordinate. Instead the server keeps both as **candidate revisions**,
+bound zone coordinate. Instead the server keeps both as **candidate revisions**,
 and an operator **promotes** one to canonical — the same `site use-map` semantics,
 centralised. Nothing is lost, nothing is silently merged, and the loser is retained
 for audit (matching the raw-map-retention ethos already in `save-map`).
@@ -1013,7 +1013,7 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   must not leave a floor half-promoted — the server re-announces every floor at
   startup, which repairs it; and zones travel *inside* the revision and replace
   the floor's on install, because a different session's map makes previously
-  taught zones wrong. The one thing the milestone does not do is make a pulled
+  bound zones wrong. The one thing the milestone does not do is make a pulled
   map take effect live: `map_server` reads its map at startup, so a flip lands
   on the next bringup, and health now carries the revision each robot is
   actually running so the gap is visible.

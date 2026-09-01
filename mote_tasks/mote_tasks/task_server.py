@@ -125,19 +125,21 @@ class TaskServer(Node):
                 "config",
                 "zones.default.yaml",
             )
-        # load_floor, not load_zones: a name in the floor's vocabulary that
-        # this robot has never been taught must reach the resolver, so a
-        # mission for it can be refused as `unbound` — "I know that place,
-        # nobody has driven me there" — rather than as an unknown name, which
-        # sends an operator hunting for a typo that is not there.
+        # load_floor, not load_zones: a name in the floor's vocabulary that the
+        # binding carries no geometry for must reach the resolver, so a mission
+        # for it can be refused as `unbound` — "I know that place, nothing has
+        # said where it is" — rather than as an unknown name, which sends an
+        # operator hunting for a typo that is not there.
         self.zones = zones.load_floor(zones_file)
-        taught = sorted(name for name, z in self.zones.items() if z.bound)
-        untaught = sorted(name for name, z in self.zones.items() if not z.bound)
-        self.get_logger().info(f"Zones {taught} from {zones_file}")
-        if untaught:
+        bound = sorted(name for name, z in self.zones.items() if z.bound)
+        unbound = sorted(name for name, z in self.zones.items() if not z.bound)
+        self.get_logger().info(f"Zones {bound} from {zones_file}")
+        if unbound:
             self.get_logger().warning(
-                f"named here but not taught on this robot: {', '.join(untaught)} "
-                "(drive there and run save-zone)"
+                f"named here, no geometry in the revision this robot is running:"
+                f" {', '.join(unbound)} (place them in the dashboard's zone "
+                "editor and promote, pull the revision that binds them, or "
+                "drive there and run save-zone)"
             )
 
         self.platform_id = platform_id or identity.robot_id() or UNENROLLED

@@ -68,7 +68,7 @@ flips the floor's ``map`` symlink and publishes the retained
 ``registry/site/<site>/floor/<floor>/current`` every agent pulls from. Two robots
 mapping one floor therefore end with two candidates and no merge — a map frame's
 origin is an accident of where SLAM started, so merging frames would break every
-taught zone (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
+bound zone (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
 validate with the *same* ROS-free module the robot writes with
 (``mote_bringup.bundle``).
 
@@ -629,7 +629,7 @@ class FleetHandler(BaseHTTPRequestHandler):
 
         The split zone/v0 asks for is expressed by the route, which is why this
         is not another leaf under ``/v1/maps``. Everything under that prefix is
-        bound to a basemap and is only true for the robot that taught it; this
+        bound to a basemap and is only true against that basemap's frame; this
         is bound to nothing, and is true for every robot at the site. A caller
         that must never be handed a map — an MCP front door turning "take it to
         the kitchen" into ``goto kitchen`` — can be given this and only this.

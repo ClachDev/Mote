@@ -16,7 +16,7 @@ flips the symlink and announces the floor's new canonical revision. That is what
 makes "two robots mapped the same floor" a non-event — both candidates are kept,
 neither is merged, and a human picks (fleet.md Q4: a map frame's origin is an
 accident of where SLAM started, so silently merging two frames breaks every
-taught zone coordinate).
+bound zone coordinate).
 
 **The filesystem is the truth about what is canonical.** The symlink *is* the
 answer, not a row that describes one, and it is flipped by an atomic
@@ -55,6 +55,7 @@ for _candidate in (
         sys.path.insert(0, str(_candidate))
 
 from mote_bringup import bundle  # noqa: E402
+from mote_bringup.spec import zone as zone_spec  # noqa: E402
 
 #: Candidates kept per floor, on top of whatever is canonical. Enough to see a
 #: mapping session's history and to roll back through it; not so many that a
@@ -280,10 +281,10 @@ class BundleStore:
         return meta
 
     def read_zones(self, site: str, floor: str) -> dict:
-        """The floor's taught zones, in the map frame the basemap is drawn in.
+        """The floor's bound zones, in the map frame the basemap is drawn in.
 
         This is the **binding**: coordinates, and therefore meaningful only
-        against the map they were taught on. It is served beside the basemap,
+        against the map they were bound in. It is served beside the basemap,
         to the one client that also has the basemap, and it is not what a
         dispatcher gets — see :meth:`read_vocabulary`.
 
@@ -331,7 +332,7 @@ class BundleStore:
             # Which of ``_zones_file``'s two candidates answered. The reviewer
             # cannot tell from the coordinates, and the difference is the trap
             # M4 named: a revision carrying no zones inherits the floor's, which
-            # were taught in a *previous* SLAM session's frame and are therefore
+            # were bound in a *previous* SLAM session's frame and are therefore
             # wrong for this map by exactly however far the two origins differ.
             "source": "revision" if path == directory else "floor",
             "frame_id": zones["frame_id"],
@@ -413,6 +414,8 @@ class BundleStore:
         for name, entry in zones.items():
             entry = dict(entry)
             entry.pop("name", None)
+            if entry.get("anchor"):
+                entry["anchor"] = self._stamp_anchor(entry["anchor"], by)
             cleaned[name] = entry
         payload = {
             "frame_id": previous.get("frame_id") or "map",
@@ -432,6 +435,35 @@ class BundleStore:
             require_posegraph=False,
         )
         return stored, report, source
+
+    @staticmethod
+    def _stamp_anchor(anchor, operator: str) -> dict:
+        """The provenance the browser could not supply, on an anchor it marked.
+
+        The editor stamps ``external`` on geometry it placed or moved, and
+        names itself in ``by`` because that is the whole of what it knows. When
+        it happened and who did it are the server's to say: a browser's clock
+        is the operator's laptop and a browser's word for who is at it is
+        whatever the page was told. An anchor arriving with either already
+        filled in is left alone — it came from the revision being edited, on a
+        zone this edit did not touch.
+        """
+        if not isinstance(anchor, dict):
+            return anchor
+        if anchor.get("method") != zone_spec.EXTERNAL:
+            return anchor
+        if anchor.get("by") != zone_spec.EDITOR:
+            return anchor
+        stamped = dict(anchor)
+        stamped["at"] = (
+            datetime.now(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+        stamped["by"] = (
+            f"{operator} ({zone_spec.EDITOR})" if operator else zone_spec.EDITOR
+        )
+        return stamped
 
     def vocabularies(self) -> list:
         """Every floor's vocabulary, for a dispatcher bootstrapping a whole

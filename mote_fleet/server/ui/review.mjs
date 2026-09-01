@@ -194,10 +194,10 @@ export function provenanceRows(revision) {
 //
 // **The ordinary case says nothing.** Zones that belong to the revision they are
 // drawn on are what "zones" already means; a caption announcing it is a label
-// for the absence of a problem, in words ("taught in this revision's own
+// for the absence of a problem, in words ("bound in this revision's own
 // frame") that only mean anything to someone who knows the problem. What is
 // worth a word is the exception: a revision carrying no zones of its own is
-// drawn with the *floor's*, taught in a previous SLAM session's frame and so
+// drawn with the *floor's*, bound in a previous SLAM session's frame and so
 // out by however far the two origins differ. `null` is "nothing to say".
 export function zoneSource(source, count) {
   if (!count) return { tag: 'none', title: 'this revision carries no zones' };
@@ -206,7 +206,7 @@ export function zoneSource(source, count) {
       tag: 'inherited',
       title:
         'this revision carries no zones, so the floor’s are drawn: they were ' +
-        'taught on another map and line up only as far as the two frames do',
+        'bound against another map and line up only as far as the two frames do',
     };
   }
   return null;

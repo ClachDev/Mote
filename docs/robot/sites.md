@@ -70,7 +70,7 @@ pixi run save-map  # into the active site's floor
 
 `save-map` stores the posegraph alongside the map, which is what lets a later
 session *continue* in the same frame. Extend a map; do not remap it — remapping
-starts a new frame and every zone taught in the old one becomes wrong.
+starts a new frame and every zone bound in the old one becomes wrong.
 
 Mapping runs record a rosbag by default (`mapping_launch.py record:=true`; the
 sim passes false) and `save-map` stamps that session's bag into the revision's
@@ -93,15 +93,20 @@ image. Details: [map cleaning](map-cleanup.md).
 
 ## Zones
 
-A **zone** is the one named-place concept: a taught pose in the floor's map
-frame that the robot can navigate to. `goto <zone>` drives to any of them, and
+A **zone** is the one named-place concept: a pose in the floor's map frame
+that the robot can navigate to. `goto <zone>` drives to any of them, and
 `fetch` uses them as its pickup and drop waypoints. A zone may *optionally*
 carry an area **footprint** — a circle or a polygon — which turns a bare
 waypoint into something that also answers "am I inside it?". That is optional
 metadata on one concept, not a second kind of thing: one YAML section, one
-loader, one teach command.
+loader.
 
-Teach a zone by driving there, not by editing YAML:
+Geometry reaches a floor three ways: `save-zone` on the robot, `segment-map`
+over a saved map, and the dashboard's zone editor. Only the first needs a robot,
+and it is the only one that measures an approach heading — so a zone a mission
+has to arrive at facing something is still worth driving to.
+
+Drive there and capture the pose:
 
 ```bash
 pixi run save-zone "the kitchen" --radius 1.5
@@ -110,7 +115,7 @@ pixi run save-zone "the kitchen" --radius 1.5
 Re-teaching a zone's pose keeps whatever footprint it already had; passing
 `--radius` is the deliberate way to replace one.
 
-Rooms do not have to be taught one at a time, either:
+Rooms do not have to be bound one at a time, either:
 
 ```bash
 pixi run segment-map          # propose one polygon zone per room
@@ -118,10 +123,12 @@ pixi run segment-map --write  # merge the proposal into zones.yaml to rename
 ```
 
 `segment-map` carves a saved map's free space into rooms on one physical
-assumption — a doorway is narrow. It is additive over hand-taught zones (a
+assumption — a doorway is narrow. It is additive over zones already bound (a
 candidate covering an already-footprinted zone is dropped), so re-running is a
 no-op, and it writes beside `zones.yaml`, never into the immutable map
-revision. Two consequences worth knowing: a corridor network is not proposed at
+revision. A proposed room is anchored `derived`, not `taught`: an algorithm read
+it off a map, which is what tells an operator later that a re-map invalidates
+it. Two consequences worth knowing: a corridor network is not proposed at
 all, and the geometry is Manhattan after rotation. See
 [map cleaning & room segmentation](map-cleanup.md) and the
 [validation run](../tuning/2026-07-27-room-segmentation.md).
@@ -134,8 +141,9 @@ are covered in [Missions](missions.md#zones-and-go-to-the-kitchen).
 **A zone is a place-name**: a human name bound to geometry. Beside its
 coordinates it carries a **vocabulary** — the `name` it is called, a free-text
 `note` for what the name cannot say ("stationery lives here, not in the
-office"), and `navigable`. Both of the first two come from `save-zone`; a zone
-that says nothing but its name is a place a robot may drive to.
+office"), and `navigable`. `save-zone` and the dashboard's zone editor both
+write the first two; a zone that says nothing but its name is a place a robot
+may drive to.
 
 That split is the whole reason the vocabulary exists separately. `(2.0, 3.5)`
 is a different physical point for the robot standing beside this one, and no
@@ -165,8 +173,8 @@ whole mapping session. That inertness is also the conflict answer: two robots
 that map one floor leave two candidates, never a merge.
 
 A pulled revision replaces the floor's `zones.yaml` (keeping the old one as
-`zones.<old-rev>.yaml`), because a different session's map makes previously
-taught zones wrong, and takes effect on the **next bringup**, since
+`zones.<old-rev>.yaml`), because a different session's map makes the floor's
+existing bindings wrong, and takes effect on the **next bringup**, since
 `map_server` reads its map at startup.
 
 The operator flow is in the

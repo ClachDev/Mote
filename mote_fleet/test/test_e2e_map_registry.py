@@ -178,7 +178,7 @@ def test_publish_promote_and_pull(tmp_path, monkeypatch, broker, fleet_api, caps
         pulled = sites.floor_dir(SITE, FLOOR) / "maps" / REVISION
         assert bundle.validate(pulled, require_posegraph=False).ok
         assert sites.resolve_map()  # nav2_launch.py would now find a map
-        # Zones arrived with it, in the frame they were taught in.
+        # Zones arrived with it, in the frame they were bound in.
         zones = bundle.read_zones(sites.floor_dir(SITE, FLOOR) / "zones.yaml")
         assert list(zones["zones"]) == ["kitchen"]
         # And the fleet can see which revision this robot is actually running.
