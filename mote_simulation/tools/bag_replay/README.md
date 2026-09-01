@@ -216,11 +216,14 @@ how fast a leg can finish.
   is being violated.
 
   The same module exposes `wall_rotation()` — windowed, folded 0/90, sub-bin
-  interpolated — which is the canonical way to measure *how far* a map's wall
-  grid is turned. Map alignment should call it rather than re-deriving the fold.
-  It is accurate to ~0.07° from 2° up and **under-reports below that** (a true
-  1.5° reads ~0.5°), because a barely-rotated line rasterises into runs that are
-  still spectrally axis-aligned — so it cannot measure a 1–2° residual shear.
+  interpolated — the one implementation of that fold. It reads a *change* in a
+  map's wall grid of 3° or more to ~0.2°, and **nothing below that**: a
+  barely-rotated line rasterises into runs that are still spectrally
+  axis-aligned, so a true 1.5° reads ~0.5°. On real solved maps it is worse
+  than its floor suggests — it called all seven maps of the 2026-08-25
+  build-params run square when four were 3.5–5.6° out — so **do not gate a map
+  alignment step on it**. Measurements and the estimator that would:
+  `docs/tuning/2026-09-01-alignment-residual.md`.
 
   Angles are reported as **wall orientations**. A wall's Fourier energy lies
   perpendicular to it, so the raw spectrum peak is the wall *normal*; the

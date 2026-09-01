@@ -139,3 +139,7 @@ can read that it was tried, and why it cannot.
   docstring records the floor and the under-reporting below it. Whether a
   finer sweep helps the *alignment* step specifically therefore remains
   unmeasured; it is not evidence for a divergence, it is an absence of it.
+  Followed up in `2026-09-01-alignment-residual.md`, which measures these very
+  maps: `wall_rotation` calls all seven square and four of them are 3.5–5.6°
+  out, so the limit above is generous. That does not move the conclusions here,
+  which rest on drift, wall thickness and speckle.

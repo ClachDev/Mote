@@ -44,10 +44,14 @@ automated tear signal there is. It is trustworthy for the tears that matter
 (measured: run 3's two frames, 25 and 41 deg apart) and blind below roughly
 its own merge tolerance — see :data:`FRAME_MERGE_DEG`.
 
-:func:`wall_rotation` is the **alignment primitive**: windowed energy, folded
-0/90, sub-bin interpolated. An alignment step measuring how far a map's wall
-grid is turned should call it rather than re-deriving the fold, which is how one
-hand-rolled attempt landed on a different answer than the next.
+:func:`wall_rotation` is a **coarse orientation reading**: windowed energy,
+folded 0/90, sub-bin interpolated. It is the one place the fold lives, which is
+what stopped two hand-rolled attempts landing on two answers. It is **not
+sufficient to gate a map-alignment step on**: measured against real solved maps
+rather than the synthetic outlines its tests use, it reports every one of seven
+banked solves as within 0.3 deg of square when four of them are 3.5-5.6 deg
+out. See its own docstring and
+``docs/tuning/2026-09-01-alignment-residual.md``.
 
 Conventions
 -----------
@@ -432,11 +436,14 @@ def wall_rotation(
 ) -> dict:
     """Dominant wall rotation of a map, folded to [0, 90), with sub-bin precision.
 
-    This is the canonical measurement an alignment step should use to answer
-    "how far is this map's wall grid turned?" before re-solving. It exists here,
-    rather than being hand-rolled at each call site, because the same fold was
-    written twice during the 2026-08-02 session and got a different answer each
-    time.
+    One implementation of the fold, rather than one per call site: the same
+    fold was written twice during the 2026-08-02 session and got a different
+    answer each time.
+
+    **Read the last two paragraphs before gating anything on this.** Everything
+    between here and them was measured on the synthetic room outlines in
+    ``test_angular_stats.py``. The last two were measured on real solved maps,
+    and they are worse.
 
     ``window`` zero-pads by :data:`ROTATION_PAD_FRAC` and applies a 2-D Hann
     taper, which removes the rectangular aperture's axis-aligned sinc cross.
@@ -463,15 +470,27 @@ def wall_rotation(
     **There is a hard floor at about 2 deg, and it under-reports below it.**
     A wall line rotated by less than ~2 deg on a pixel grid rasterises into runs
     long enough that its dominant spectral content is still axis-aligned, so the
-    peak is pulled onto the axis. Measured (true -> reported): -0.5 -> -0.13,
-    -1.0 -> -0.46, -1.5 -> -0.46, -2.0 -> -2.26, -3.0 -> -2.90, and 0.068 deg
-    mean error from 3 deg up. A bigger building does not help — it is
-    rasterisation, not resolution.
+    peak is pulled onto the axis. Measured on the synthetic outline (true ->
+    reported): -0.5 -> -0.13, -1.0 -> -0.46, -1.5 -> -0.46, -2.0 -> -2.26,
+    -3.0 -> -2.90, and 0.068 deg mean error from 3 deg up. A bigger building
+    does not help — it is rasterisation, not resolution.
 
-    So: good for measuring a wall grid's rotation and driving a re-solve at 2
-    deg and above, and **unusable for the 1-2 deg residual shear** — it will
-    report roughly a third of it and a correction built on that will silently
-    under-correct.
+    **On a real solved map the floor is not the limit; the answer is.**
+    Measured 2026-09-01 over the seven maps banked by the 2026-08-25
+    build-params run: this function reports all of them within 0.3 deg of
+    square, and four of them are 3.5-5.6 deg out — settled by eye and by a
+    projection sweep whose error on a known rotation of those same maps is
+    under 0.035 deg. What survives is the *relative* reading: rotate one of
+    those maps and this reports the change to ~0.2 deg from 3 deg up. A real
+    occupancy grid carries thick walls, furniture, speckle and more than one
+    wall family; the outline in the tests carries none of those.
+
+    So: good for a relative reading at 3 deg and above, and **not something to
+    gate a map-alignment step on** — neither the 1-2 deg residual shear
+    (roughly a third of it comes back) nor the absolute question "is this map
+    square". ``docs/tuning/2026-09-01-alignment-residual.md`` has the tables and
+    the pictures, and ``docs/design/mapping-pipeline.md`` work item 10 is the
+    primitive that would answer it.
     """
     params = params or SpectrumParams()
     wall = np.asarray(wall, dtype=bool)

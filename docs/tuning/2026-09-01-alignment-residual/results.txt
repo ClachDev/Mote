@@ -1,0 +1,40 @@
+A. the same maps under three estimators (deg off axis)
+condition      leg                   wall_rotation  efrac  dominant_rot  projection
+unaligned      car-0.0349                   -0.276  0.684        -0.250       3.465
+unaligned      car-0.0175                   -0.018  0.656         0.250       4.994
+unaligned      car-0.01745                   0.026  0.643         0.250       5.576
+birth-aligned  car-0.0349                   -0.092  0.680         0.250       3.568
+birth-aligned  car-0.0175                   -0.107  0.703        -0.250       0.736
+birth-aligned  car-0.01745                   0.025  0.705         0.250      -0.185
+birth-aligned  car-0.01745-repeat            0.025  0.705         0.250      -0.185
+
+B. response to a known rotation applied to birth-aligned/car-0.0349
+   base readings: wall_rotation -0.092  dominant_rot +0.250  projection +3.568
+ applied  wall_rot d     err  dom_rot d     err   proj d     err
+    0.25       0.107  -0.143      0.500   0.250    0.276   0.026
+    0.50       0.424  -0.076      0.500   0.000    0.529   0.029
+    0.75       0.411  -0.339      0.500  -0.250    0.785   0.035
+    1.00       0.700  -0.300      0.500  -0.500    1.011   0.011
+    1.50       1.444  -0.056      2.500   1.000    1.525   0.025
+    2.00       2.746   0.746      3.000   1.000    2.008   0.008
+    3.00       3.168   0.168      3.500   0.500    3.023   0.023
+    5.00       5.183   0.183      6.000   1.000    5.029   0.029
+   10.00      10.215   0.215     11.000   1.000   10.021   0.021
+
+C. effect of the -3.0 deg injection, by projection sweep
+leg                   unaligned  birth-aligned    delta  vs injected
+car-0.0349                3.465          3.568    0.103        3.103
+car-0.0175                4.994          0.736   -4.259       -1.259
+car-0.01745               5.576         -0.185   -5.761       -2.761
+
+D. projection sweep per ninth of the map (deg off axis)
+   unaligned/car-0.0349: whole map +3.46
+      -17.15   +2.18   -1.56
+      -15.89   +0.37   +4.02
+      -15.61   -3.76   +4.48
+     spread across all tiles 21.6 deg; within the dominant family 8.2 deg
+   birth-aligned/car-0.0175: whole map +0.74
+      -19.82   -0.24   -3.67
+      -18.66   +0.27   +0.42
+      -12.86   -6.74   +1.23
+     spread across all tiles 21.0 deg; within the dominant family 8.0 deg

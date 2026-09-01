@@ -114,6 +114,7 @@ nav:
   - The robot:
       - Bringup & reliability: robot/bringup.md
       - Sites, maps & zones: robot/sites.md
+      - The mapping pipeline (design): design/mapping-pipeline.md
       - Missions — fetch and goto: robot/missions.md
       - Map cleaning & room segmentation: robot/map-cleanup.md
       - Foxglove layout: robot/foxglove.md
@@ -161,3 +162,4 @@ nav:
       - SLAM build params: tuning/2026-08-25-slam-build-params.md
       - "  ↳ birth-aligned replay": tuning/2026-08-25-slam-build-params/birth-aligned/report.md
       - "  ↳ unaligned replay": tuning/2026-08-25-slam-build-params/unaligned/report.md
+      - Map alignment residual: tuning/2026-09-01-alignment-residual.md
