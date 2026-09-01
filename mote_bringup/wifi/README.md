@@ -241,11 +241,13 @@ twice. `iperf3` can, and `roamlog`'s `rx_kbps`/`tx_kbps` measure whatever it
 sends. It is a test dependency, not the robot's: install it by hand rather than
 adding it to `pixi.toml`, which would put it on every robot.
 
-**Put the server on a wired host, and bind it to the wired address.** A server
-on a machine that is itself on wifi measures two wireless links and blames the
-robot for both. A machine with both — most workstations — is worse, because
-`iperf3 -s` binds every address by default, so which link gets measured depends
-on which address the client happened to name.
+**Put the server on a wired host.** One that is itself on wifi measures two
+wireless links and blames the robot for both. A host with both — most
+workstations — is usually fine, because the wired route wins on metric and the
+client names the wired address, but it is worth a glance at `nmcli device
+status` rather than an assumption. `--bind-dev <wired iface>` settles it by
+construction, and also keeps the server off a tailnet interface, where an
+unauthenticated bandwidth server has no business being.
 
 ```bash
 sudo apt install -y iperf3      # on the robot and on the machine it streams to
