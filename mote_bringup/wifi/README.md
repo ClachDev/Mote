@@ -328,20 +328,75 @@ be on, but it gives up that band's reach everywhere else — which is what havin
 an access point per room exists to provide — and it is unverified whether a
 *firmware* roam honours the host's frequency list at all.
 
-**Still to do**: the second walk, under load with Foxglove connected and the
-camera streaming. Roaming under traffic is what failed before, and the idle walk
-does not stand in for it.
+### Under load it roams late, and that is the residual
 
-## If -75 dBm turns out to be wrong
+The same walk on the same route, with 8 Mbit/s of TCP running, over 2 min 11 s.
+The address held throughout, so the subnet fault stays fixed under traffic. Three
+roams, and every one of them is the same shape:
 
-Nothing in this directory can move it, so the next step is not a threshold but a
-mechanism: a small watchdog on the robot that reads the signal at 1 Hz and, below
-a threshold of its own, tells NetworkManager to activate a better BSSID
-(`nmcli device wifi connect <ssid> bssid <bssid>`). It costs a few seconds of
-link where the firmware's roam costs a fraction of one, so it is worth building
-only once a walk has shown the firmware will not move — and the log from that
-walk, with its `best_other_dbm` column, is exactly the evidence for setting its
-threshold.
+| at | left at | arrived at | improvement |
+|---|---|---|---|
+| 15:46:25 | -86 dBm | -35 dBm | 51 dB |
+| 15:47:11 | -83 dBm | -48 dBm | 35 dB |
+| 15:47:56 | *disassociated* | -50 dBm | — |
+
+**The firmware holds on until the link is nearly dead and then moves to an
+access point 35-51 dB better.** It is not choosing badly between close
+alternatives; it is not looking at all until the current link fails. The third
+roam is the extreme case: the robot spent about 6 s associated to nothing before
+it landed.
+
+The cost is 29 of 99 samples losing the gateway ping, in runs of 3 to 15 s, with
+the negotiated rate on the floor (6 Mbps, the 802.11a minimum) and the stream
+down to tens of kbps. Recovery is prompt — full rate is back within a second or
+two of each roam, with TCP catch-up bursts to 95-169 Mbit/s as the backlog
+drains — so nothing is permanently broken. But "at most a few seconds of loss"
+is not met.
+
+**`visible_same_ssid` stayed at 1 for all 99 rows**, though two scans fired.
+The idle walk on the same route did produce candidates. At the desk, NM lists 5
+same-SSID access points when idle and on a first scan under load, and 1 on a
+second scan under sustained load — one sample, so suggestive rather than proof,
+but it fits: the radio has no time to go off-channel while the stream is
+running, so the only scan that succeeds is the one after the link has degraded
+enough for traffic to stop, which is also the moment the roam finally happens.
+The two effects compound. The 20 dB `WL_ROAM_DELTA` sets how much better a
+candidate must be; the scan deferral decides when a candidate can be seen at
+all.
+
+**More access points would not fix this.** It is tempting to read -86 dBm as a
+coverage hole, but the robot jumped from -86 to -35 dBm in one second: an
+excellent access point was already in range and had been for some time. Adding
+coverage gives the firmware more to ignore.
+
+What would fix it is taking the decision back into userspace on a threshold of
+its own — the watchdog below — and the measurement to justify it now exists. Its
+own scan problem is the same one, with one difference in its favour: it can
+disconnect, which frees the radio, so it does not have to see a candidate before
+deciding to move. A deliberate 3 s reconnect at -70 dBm is cheap against the
+15 s this costs.
+
+For a mapping run none of this matters — `explore` runs on the Pi, so a wifi
+stall does not reach it. It is teleop that pays.
+
+## Taking the threshold back: the watchdog
+
+Nothing in this directory can move -75 dBm or the 20 dB delta, so the next step
+is not a threshold but a mechanism: a small watchdog on the robot that reads the
+signal at 1 Hz and, below a threshold of its own, tells NetworkManager to move
+(`nmcli device wifi connect <ssid> bssid <bssid>`, or a plain reconnect).
+
+The loaded walk above is what justifies building it, and it also settles the
+design question that would otherwise sink it. The obvious objection is that a
+watchdog needs a scan to choose a target, and scanning is exactly what stops
+working under load. But it does not have to choose: disconnecting frees the
+radio, so a watchdog can decide to *leave* on signal alone and let the
+reassociation pick. It trades a deliberate few seconds for the 15 s the firmware
+costs, and it can be tuned where the firmware cannot.
+
+Cheaper things to try first, since neither needs code: drop the camera's rate or
+resolution so the radio has headroom to scan while streaming, and check whether
+that alone shortens the hand-off.
 
 The other direction, taking `wlan0` out of NetworkManager entirely and running
 `wpa_supplicant` with `bgscan="simple:30:-65:300"`, gets host-driven roaming
