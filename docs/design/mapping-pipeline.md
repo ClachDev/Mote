@@ -12,9 +12,11 @@ at the end is sized so each item becomes one dispatchable task.
 > its validator (`mote_bringup/mote_bringup/sites.py`,
 > `mote_bringup/mote_bringup/bundle.py`), the map registry and its promotion
 > flow (`docs/design/fleet.md` M4, `mote_fleet/server/bundle_store.py`), the
-> zone vocabulary split (names travel, coordinates do not — fleet-api.md), the
-> declutter/segmentation passes (`mote_bringup/mote_bringup/map_cleanup/`), and
-> the lockstep replay harness (task 295, `mote_simulation/tools/bag_replay/`).
+> zone records the floor carries (task 625 collapses zone/v0's
+> vocabulary/binding split into one floor-level document — see stage 2, step 5),
+> the declutter/segmentation passes (`mote_bringup/mote_bringup/map_cleanup/`),
+> and the lockstep replay harness (task 295,
+> `mote_simulation/tools/bag_replay/`).
 > None of those move. What this design changes is **what happens between them,
 > on which machine, and under whose control**.
 
@@ -120,8 +122,9 @@ mapping session.
 ### Stage 2 — Build (fleet box)
 
 Trigger: a new bag arriving, or an operator asking for a rebuild of an old bag
-under new params. One orchestrator (`pixi run map-build <bag>`) chains what was
-done by hand on 2026-08-02:
+under new params. One orchestrator (`pixi run map-build -- --bag <bag>`, task
+343) chains what was done by hand on 2026-08-02. It runs on a workstation
+today and moves to the fleet box with item 5:
 
 1. **Solve** — lockstep replay of the whole bag under the committed *build*
    params (`slam_toolbox_build_params.yaml`: the live file plus documented
@@ -155,13 +158,24 @@ done by hand on 2026-08-02:
 3. **Declutter** — the FFT structure pass with prominence-based peak picking
    (task 337); no hand thresholds.
 4. **Segment** — room polygons from the cleaned map, as today.
-5. **Carry forward the vocabulary** — the previous revision's zone names,
-   aliases, kinds and taught poses re-bind onto the new geometry: same-frame
-   rebuilds by containment (a named zone whose pose lands inside a proposed
-   room claims it); new frames get proposed matches for the operator to
-   confirm in review. Placeholder names are minted only for genuinely new
-   rooms. (This is the vocabulary/binding split doing work: names are the
-   stable half, coordinates are rebuilt.)
+5. **Carry forward the zones** — a rebuild must not cost the operator a
+   renaming session, so the floor's existing zones survive it and only
+   genuinely new rooms are minted as placeholders. A segmented room containing
+   an existing zone's pose takes that zone's name; the leftovers are proposed
+   for the operator to confirm in review, never auto-accepted.
+
+   > **This step was written on a premise that has since been settled the
+   > other way** (task 625, 2026-09-02). The draft above rested on the zone/v0
+   > vocabulary/binding split — names are the stable half, coordinates are
+   > rebuilt per revision — and so made carry-forward a *re-binding* of names
+   > onto new geometry. Under floor-level zones a zone is a coordinate in the
+   > floor's frame, a fact about the building: the kitchen does not move, a
+   > map is an estimate registered into that frame, and a rebuild moves no
+   > zone at all. That deletes the same-frame half of this step outright and
+   > turns the cross-frame half into a question about the *map's* registration
+   > rather than the names'. What survives is the matching of new rooms to
+   > existing zones, and the report the review pane reads. Item 6 carries the
+   > rescoping.
 6. **Validate + score** — `bundle.validate`, then the truth-free metrics
    (loop drift when the trajectory closes, explored area, speckle, wall
    thickness) diffed against the current canonical revision. Regressions
@@ -182,14 +196,18 @@ this stage touches a robot or the canonical map.
 The operator decision point, and the place the 2026-08-02 session had nothing.
 Requirements, in priority order:
 
-- **See the candidate.** Selecting a candidate in the promote picker renders
-  *that revision's* map in the pane (route for a candidate's `map.png`; task
-  339), clearly marked as a preview, with a one-click return to canonical.
-- **See the zones on it.** The candidate's zones draw over the preview exactly
-  as canonical zones draw today (circle, polygon, waypoint cross), plus the
-  carry-forward report: which names re-bound automatically, which are proposed
-  matches, which rooms are new placeholders.
-- **Edit before promoting.** *Built* (task 339's review pane,
+- **See the candidate.** *Built* (task 339): a `review` pane draws the
+  revision under review from its own `map.png`, `map.json` and `zones.json`.
+  It is a mode rather than a column — opening it stands the operations panes
+  down at every width, because a canonical canvas with robots on it beside a
+  candidate one without is the confusion the pane exists to remove.
+- **See the zones on it.** *Built* with the pane: the candidate's zones draw
+  over it exactly as canonical zones draw on the operations map (circle,
+  polygon, waypoint cross), and the read reports whether they came from the
+  revision or were inherited from the floor. Still to do: the carry-forward
+  report — which rooms matched an existing zone, which are proposed, which are
+  new placeholders (item 6).
+- **Edit before promoting.** *Built* (task 346, in that pane —
   `server/ui/zone_editor.mjs`): rename a zone, write its note, adjust or delete
   a polygon, and place a pose by clicking the map (`⌖`), which is what replaced
   driving to a goto target — `save-zone` remains for poses that need a real
@@ -218,9 +236,9 @@ rsync path is demoted to a bench tool.
 
 | | |
 |---|---|
-| **Stays** | Site bundle layout + `bundle.validate` both ends; M4 registry, promotion, announcement, pull; zone vocabulary split; live-mapping stack for capture; lockstep harness |
+| **Stays** | Site bundle layout + `bundle.validate` both ends; M4 registry, promotion, announcement, pull; live-mapping stack for capture; lockstep harness |
 | **Changes** | Live SLAM params become best-known-good (chain 15 → 10 now — task 335 — and whatever proves out next); `save-map`/`publish-map` demoted to bench tools; promote picker becomes a review surface |
-| **New** | Bag sync + retention (sync-then-prune); build orchestrator + committed build params; an orientation estimator the alignment step can be gated on; build identity for candidate upload; vocabulary carry-forward; candidate preview/edit UI; build report |
+| **New** | Bag sync + retention (sync-then-prune); build orchestrator + committed build params; an orientation estimator the alignment step can be gated on; build identity for candidate upload; zone carry-forward; candidate preview/edit UI; build report |
 
 ## Decisions
 
@@ -233,8 +251,8 @@ rsync path is demoted to a bench tool.
   a timestamp. (Operator decision, 2026-08-02.)
 - **The bag store is the system of record for mapping sessions**; the robot is
   never the sole holder of one.
-- **Zones' human half survives rebuilds.** Renaming a flat's rooms is done
-  once, not per revision.
+- **Zone names survive rebuilds.** Renaming a flat's rooms is done once, not
+  per revision.
 - **A build gates on what it can measure, and reports the rest.** Every gate
   names a threshold its own measurement resolves, demonstrated on a real map
   rather than a synthetic one; anything softer than that is review evidence
@@ -265,36 +283,47 @@ rsync path is demoted to a bench tool.
 
 ## Work breakdown
 
-Sized so each is one dispatchable task; existing tasks noted.
+Sized so each is one dispatchable task. Each names its Voro task, and the
+state of that task is the state of the item.
 
-1. **Live params to best-known-good** — task 335 (chain 15 → 10, comment
-   rewrite). Unchanged by this design; the divergence note lands with item 3.
-2. **Bag sync + sync-then-prune** — robot uploads mapping bags to the fleet
-   box on session end; pruner trims only confirmed-synced bags; bag store
-   beside the registry with checksums.
-3. **Build params file + divergence note** — landed (#106):
+1. **Live params to best-known-good** — task 335, ready (chain 15 → 10,
+   comment rewrite). Unchanged by this design; the divergence note landed with
+   item 3.
+2. **Bag sync + sync-then-prune** — task 341, ready. The robot uploads mapping
+   bags to the fleet box on session end; the pruner trims only confirmed-synced
+   bags; a bag store beside the registry, with checksums.
+3. **Build params file + divergence note** — task 342, landed (PR #106):
    `slam_toolbox_build_params.yaml` beside the live file, one divergent key,
    held to it by `test_slam_build_params.py`. It also records what was measured
    and rejected, so the same sweep is not run twice.
-4. **`map-build` orchestrator** — the stage-2 chain as one command on the
-   fleet box, emitting a validated candidate + build report. Depends on the
-   lockstep harness landing (task 295 / PR 91), prominence picking (337), and
-   item 10 for the alignment step's gate.
-5. **Build identity** — the registry accepts candidate uploads from a
-   credentialed builder, not only enrolled robots; audit rows name it.
-6. **Vocabulary carry-forward** — same-frame rebinding by containment +
-   new-frame proposals, emitted into the candidate with a carry-forward
-   report.
-7. **Candidate preview** — task 339 (see the map you promote), extended with
-   the zones overlay.
-8. **Candidate zone editing** — *done* (task 339): rename, note, polygon and
-   click-to-place on the candidate from the dashboard, deriving a new
-   candidate, audited, inert until promotion. What remains is accepting or
-   rejecting a carry-forward match, which needs step 6.
-9. **Build report on the review page** — stage-2 scoring diff rendered beside
-   the promote picker.
-10. **An orientation estimator the alignment step can be gated on** — a
-    primitive that resolves a change of 0.25° on a real map, with the
+4. **`map-build` orchestrator** — task 343, in review (PR #113). The stage-2
+   chain as one command, emitting a validated candidate and a build report. It
+   runs on a workstation rather than the fleet box, beside `bag_replay` and
+   excluded from the robot sync; the fleet box gets it when item 5 gives a
+   builder standing to upload. Steps 1, 3–7 are built; step 2 waits on item 10.
+   Its evidence run — the 2026-08-02 bag rebuilt against the promoted
+   revision as baseline — is banked with that PR as
+   `docs/tuning/2026-09-01-map-build.md`.
+5. **Build identity** — task 344, ready. The registry accepts candidate uploads
+   from a credentialed builder, not only from enrolled robots; audit rows name
+   it.
+6. **Zone carry-forward** — task 345 (still titled "zone vocabulary
+   carry-forward"), parked behind task 625, which **rescopes it** — see the
+   note under stage 2, step 5. Under floor-level zones the same-frame half of
+   this item is void — the zones did not move — and what remains is matching
+   newly segmented rooms against the floor's existing zones, proposing the
+   leftovers, and emitting the report the review pane reads.
+7. **Candidate preview** — task 339, landed (PR #100): the review pane renders
+   the revision under review, its own map and its own zones, marked as a
+   candidate and separate from the operations map.
+8. **Candidate zone editing** — task 346, landed (PR #101): rename, note,
+   polygon and click-to-place on the candidate from the dashboard, deriving a
+   new candidate, audited, inert until promotion. What remains is accepting or
+   rejecting a carry-forward match, which needs item 6.
+9. **Build report on the review page** — task 347, parked behind item 4. The
+   stage-2 scoring diff rendered beside the promote button.
+10. **An orientation estimator the alignment step can be gated on** — task 615,
+    ready. A primitive that resolves a change of 0.25° on a real map, with the
     validation table `wall_rotation` never had (a known rotation applied to a
     real solved map, not a synthetic outline), plus the tile spread that says
     whether the map has one wall grid at all. Blocks item 4's step 2.
