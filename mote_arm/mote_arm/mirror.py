@@ -50,6 +50,78 @@ def latched(depth: int = 1) -> QoSProfile:
     return qos
 
 
+class Diagnostics:
+    """Where the motion is being lost, measured rather than reasoned about.
+
+    Teleop that stutters or falls short of its range has three candidate causes
+    and they are indistinguishable from the outside: the mirror not ticking at
+    the rate it claims, leader poses arriving in gaps, or the arm not achieving
+    the velocity it is being asked for. Each is a number, so each is printed:
+
+      tick   how fast this loop really runs, and its worst period
+      leader arrival rate of leader/joint_states, and the worst gap between two
+      cmd    rate the commanded pose advances -- what the mirror is asking for
+      arm    rate the measured pose advances -- what the arm actually did
+      lag    how far the arm trails the command right now
+
+    cmd at the rate limit with arm well below it, and a lag that grows, is the
+    arm failing to follow. Both low is the mirror. A leader gap over the deadman
+    is the input path. Reported for the joint that moved most over the window,
+    since that is the one being driven.
+    """
+
+    def __init__(self, node: "ArmMirror", period: float = 0.5):
+        self._node = node
+        self._period = period
+        self._reset(time.monotonic())
+        self.leader_stamps: list[float] = []
+
+    def _reset(self, now: float) -> None:
+        self._start = now
+        self._ticks = 0
+        self._dt_max = 0.0
+        self._last_tick = now
+        self._commanded0 = self._node.mirror.commanded
+        self._measured0 = self._node.mirror.measured
+        self.leader_stamps = []
+
+    def on_leader(self, now: float) -> None:
+        self.leader_stamps.append(now)
+
+    def tick(self, now: float) -> None:
+        self._ticks += 1
+        self._dt_max = max(self._dt_max, now - self._last_tick)
+        self._last_tick = now
+        elapsed = now - self._start
+        if elapsed < self._period:
+            return
+
+        commanded = self._node.mirror.commanded
+        measured = self._node.mirror.measured
+        moved = {n: abs(v - self._commanded0.get(n, v)) for n, v in commanded.items()}
+        joint = max(moved, key=moved.get, default=None)
+
+        gaps = [b - a for a, b in zip(self.leader_stamps, self.leader_stamps[1:])]
+        parts = [
+            f"tick {self._ticks / elapsed:4.1f}Hz worst {self._dt_max * 1e3:5.1f}ms",
+            f"leader {len(self.leader_stamps) / elapsed:4.1f}Hz "
+            f"worst gap {max(gaps, default=0.0) * 1e3:5.1f}ms",
+        ]
+        if joint is not None:
+            cmd_rate = moved[joint] / elapsed
+            arm_rate = (
+                abs(measured.get(joint, 0.0) - self._measured0.get(joint, 0.0))
+                / elapsed
+            )
+            lag = abs(commanded[joint] - measured.get(joint, commanded[joint]))
+            parts.append(
+                f"{joint} cmd {cmd_rate:.3f} arm {arm_rate:.3f} rad/s  lag {lag:+.3f} rad"
+            )
+        parts.append(self._node.mirror.state)
+        self._node.get_logger().info("diag  " + "  |  ".join(parts))
+        self._reset(now)
+
+
 class ArmMirror(Node):
     def __init__(self):
         super().__init__("arm_mirror")
@@ -57,6 +129,8 @@ class ArmMirror(Node):
         self.declare_parameter("rate", 20.0)
         self.declare_parameter("max_velocity", MirrorLimits.max_velocity)
         self.declare_parameter("deadman_timeout", MirrorLimits.deadman_timeout)
+        # `pixi run arm-mirror --ros-args -p diagnose:=true`
+        self.declare_parameter("diagnose", False)
 
         path = self.get_parameter("robot_yaml").get_parameter_value().string_value
         self.cfg = config.ArmConfig.from_yaml_file(path) if path else config.load()
@@ -75,6 +149,9 @@ class ArmMirror(Node):
         self.create_subscription(Bool, "teleop/estop", self._on_estop, latched())
 
         self._reported = None
+        self.diagnostics = (
+            Diagnostics(self) if self.get_parameter("diagnose").value else None
+        )
         self._estop_requested = False
         self.period = 1.0 / max(1.0, self.get_parameter("rate").value)
 
@@ -88,6 +165,8 @@ class ArmMirror(Node):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _on_leader(self, msg: JointState) -> None:
+        if self.diagnostics is not None:
+            self.diagnostics.on_leader(time.monotonic())
         self.mirror.on_leader(dict(zip(msg.name, msg.position)), self._now())
 
     def _on_states(self, msg: JointState) -> None:
@@ -113,6 +192,8 @@ class ArmMirror(Node):
             self.get_logger().info("panic cleared; following again")
 
     def tick(self) -> None:
+        if self.diagnostics is not None:
+            self.diagnostics.tick(time.monotonic())
         self._apply_estop()
         goal = self.mirror.update(self._now(), self.period)
         if goal:

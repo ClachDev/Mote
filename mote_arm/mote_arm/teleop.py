@@ -88,6 +88,16 @@ class LeaderMirror:
     def estopped(self) -> bool:
         return self._estop
 
+    @property
+    def commanded(self) -> dict[str, float]:
+        """The pose being asked for — read-only, for diagnostics."""
+        return dict(self._commanded)
+
+    @property
+    def measured(self) -> dict[str, float]:
+        """The pose last reported by the arm — read-only, for diagnostics."""
+        return dict(self._measured)
+
     def on_leader(self, pose: Mapping[str, float], now: float) -> None:
         """Record a virtual-leader pose. Unknown joint names are ignored."""
         self._leader = {n: v for n, v in pose.items() if n in self._joints}
