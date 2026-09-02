@@ -56,6 +56,8 @@ CLEAR_KEY = "z"
 SYNC_KEY = "0"
 QUIT_KEYS = ("x", "\x03", "\x04")
 PUBLISH_RATE_HZ = 20.0
+# Slow enough to read while a joint is moving, fast enough to look continuous.
+LIVE_LINE_PERIOD = 0.15
 
 
 class VirtualLeader(Node):
@@ -108,6 +110,14 @@ class VirtualLeader(Node):
         self._direction[name] = direction
         self._key_time[name] = now
 
+    def driving(self, now: float) -> list[str]:
+        """Joints whose key is still repeating, in config order."""
+        return [
+            j.name
+            for j in self.cfg.joints
+            if now - self._key_time.get(j.name, -1e9) <= self.key_timeout
+        ]
+
     def step(self, now: float, dt: float) -> bool:
         """Advance the leader pose; True if it is live (an input is being held)."""
         live = False
@@ -133,10 +143,59 @@ class VirtualLeader(Node):
         self._estop_pub.publish(Bool(data=engaged))
 
 
+# True while a live status line is on screen, waiting to be overwritten in place.
+# Any ordinary line must clear it first, or the two overlap.
+_live_line = False
+
+
 def _out(text: str = "") -> None:
     """Print in a raw terminal, where a bare newline would stair-step."""
+    global _live_line
+    if _live_line:
+        sys.stdout.write("\r\033[K")
+        _live_line = False
     sys.stdout.write(text + "\r\n")
     sys.stdout.flush()
+
+
+def _live(text: str) -> None:
+    """Rewrite one status line in place, rather than scrolling a new one."""
+    global _live_line
+    sys.stdout.write("\r\033[K" + text)
+    sys.stdout.flush()
+    _live_line = True
+
+
+def _clear_live() -> None:
+    global _live_line
+    if _live_line:
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+        _live_line = False
+
+
+def _driving_line(node: VirtualLeader, names: list[str]) -> str:
+    """Where the driven joints are, and whether they are against a limit.
+
+    "Hold the key past the soft limit and watch it stop" is not something an
+    operator can judge from an arm that has simply stopped moving: it looks the
+    same as a stall, a dropped link or a servo that gave up. So say which it is.
+    """
+    measured = node.measured()
+    parts = []
+    for name in names:
+        joint = node.cfg.joint(name)
+        now = measured.get(name, float("nan"))
+        target = node.pose.get(name, now)
+        if target in (joint.min_rad, joint.max_rad):
+            edge = "min" if target == joint.min_rad else "max"
+            parts.append(f"{name} {now:+.3f}  AT LIMIT ({edge} {target:+.3f})")
+        else:
+            parts.append(
+                f"{name} {now:+.3f} -> {target:+.3f} "
+                f"[{joint.min_rad:+.3f}, {joint.max_rad:+.3f}]"
+            )
+    return "  " + "   ".join(parts)
 
 
 def _help(node: VirtualLeader) -> None:
@@ -147,7 +206,8 @@ def _help(node: VirtualLeader) -> None:
             f"  {pair[0]} / {pair[1]}   {joint.name:<14} "
             f"limits [{joint.min_rad:+.3f}, {joint.max_rad:+.3f}]"
         )
-    _out("  SPACE panic (torque off)   z clear   0 re-sync   [ ] speed   x quit")
+    _out("  SPACE panic (torque off)   z clear   0 re-sync   [ ] speed")
+    _out("  p all joint positions   ? this help   x quit")
 
 
 def _status(node: VirtualLeader, estopped: bool) -> None:
@@ -164,6 +224,7 @@ def _drive(node: VirtualLeader) -> None:
     period = 1.0 / PUBLISH_RATE_HZ
     estopped = False
     idle_since = time.monotonic()
+    last_line = 0.0
 
     _out("virtual leader — the arm mirrors this pose. '?' for keys, 'x' to quit.")
     if not node.wait_for_states():
@@ -178,6 +239,7 @@ def _drive(node: VirtualLeader) -> None:
         while select.select([sys.stdin], [], [], 0)[0]:
             key = sys.stdin.read(1)
             if key in QUIT_KEYS:
+                _clear_live()
                 return
             if key in node.keys:
                 name, direction = node.keys[key]
@@ -207,11 +269,16 @@ def _drive(node: VirtualLeader) -> None:
             elif key == "p":
                 _status(node, estopped)
 
+        driving = node.driving(now)
         live = node.step(now, period) and not estopped
         if live:
             node.publish()
             idle_since = now
+            if now - last_line >= LIVE_LINE_PERIOD:
+                last_line = now
+                _live(_driving_line(node, driving))
         elif now - idle_since > node.key_timeout:
+            _clear_live()
             # Idle: the leader must not sit ahead of the arm, or resuming would
             # pay out the accumulated difference as an unrequested move.
             node.sync()
