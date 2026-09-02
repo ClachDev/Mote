@@ -251,7 +251,7 @@ overwriting the directory.
 
 ### `GET /v1/maps/<site>/<floor>/zones.json`
 
-The floor's taught places **with their coordinates**, in the same map frame as
+The floor's bound places **with their coordinates**, in the same map frame as
 the basemap, so the dashboard can draw them and an operator can see the `goto`
 targets they are about to type. This is the zone **binding**: it is served
 beside the basemap, to a client that already has the basemap, and it is not
@@ -266,9 +266,9 @@ below.
 ```
 
 Read from the **canonical revision's** `zones.yaml`, falling back to the
-floor-level file for a bundle seeded by rsync. `404` for a floor with no taught
-zones — an empty list would claim the floor has none, which is a different
-statement — and `404` for a floor with no published map, because a coordinate
+floor-level file for a bundle seeded by rsync. `404` for a floor whose
+revision binds nothing — an empty list would claim the floor names no places,
+which is a different statement — and `404` for a floor with no published map, because a coordinate
 with no map frame to be in is not an answer.
 
 ---
@@ -323,7 +323,7 @@ where the stationery lives.
 | `name` | What the place is called, which is also what a dispatcher types. Printable text with no leading or trailing space; unique within a **floor**, not within a site — two floors may each have a `reception`. Matched exactly, then case-insensitively and whitespace-normalised. |
 | `note` | Free text for where reality diverges from what the name implies. The other names a place answers to belong here: a resolver reads the sentence, and there is no alias list to keep in step by hand. |
 | `navigable` | Whether it is a legal destination. Not vocabulary — it is the planner's contract — but it travels with the names because it is not a coordinate. |
-| `revision` | Bumped every time a zone is taught, so a binding can record which vocabulary it was built against. |
+| `revision` | Bumped every time a zone's vocabulary is written, so a binding can record which vocabulary it was built against. |
 | `problems` | Empty when the vocabulary is well-formed; see below. |
 
 `kind`, `display_name`, `aliases`, `parent` and `tags` were part of this
@@ -390,7 +390,7 @@ The shape of it is one rule:
 
 That is also the conflict answer. Two robots that map the same floor produce two
 candidates, both kept, neither merged — a map frame's origin is an accident of
-where SLAM started, so merging two frames would break every taught zone
+where SLAM started, so merging two frames would break every bound zone
 coordinate (fleet.md Q4). The loser is retained for audit.
 
 **A revision is an immutable directory, and distribution is a copy plus one
@@ -529,7 +529,7 @@ which looks entirely convincing and is the exact failure this route removes.
 
 `source` is `revision` when the revision carries its own `zones.yaml` and
 `floor` when it inherits the floor's. The difference matters and the coordinates
-cannot express it: inherited zones were taught in a *previous* SLAM session's
+cannot express it: inherited zones were bound in a *previous* SLAM session's
 frame, so they draw perfectly over this map and are wrong by however far the two
 origins differ.
 
@@ -590,6 +590,16 @@ publishing a map *because* it was wrong. It also keeps the coordinates in the
 frame they were drawn in: the operator is looking at that revision's own map.
 Omitted, the canonical revision is edited, which is the same thing for a floor
 whose published map is what is on screen.
+
+**An entry's `anchor` is carried, not re-invented.** zone/v0's
+`anchor.method` says how a coordinate came to be — `taught` for a pose a robot
+was driven to, `derived` for one an algorithm read off a map — and a submitted
+entry keeps whatever it names, so a zone this edit did not touch keeps its
+provenance. The dashboard's editor sends `{"method": "external", "by":
+"zone-editor"}` on geometry it placed or moved, because neither of the other
+two is true of a click; the server fills in `at` from its own clock and
+rewrites `by` to name the operator holding the token, which is the half a
+browser cannot be trusted for. A method outside zone/v0's four is a `422`.
 
 **The bar is the source's, not the upload's.** A revision with no posegraph is
 one mapping cannot be continued from — an error for a robot's upload, where the

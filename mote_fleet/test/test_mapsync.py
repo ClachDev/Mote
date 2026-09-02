@@ -3,7 +3,7 @@
 This is M4's acceptance without SLAM and without a broker: a robot's saved
 revision is published to the registry, an operator promotes it, and a *second*
 robot — a different ``MOTE_HOME`` — pulls the canonical revision and ends up
-with the map staged, published, and the zones that were taught in its frame.
+with the map staged, published, and the zones that were bound in its frame.
 
 No ROS here. ``mapsync`` is deliberately ROS-free so the whole flow can be
 exercised as function calls; the agent's use of it (subscribe, queue, worker
@@ -117,8 +117,8 @@ def test_zones_arrive_with_the_map_and_the_old_ones_are_kept(
     server, operator, robot_home, tmp_path
 ):
     """A revision from another mapping session is another map frame, so the
-    zones taught in the old one are wrong the moment it is published — but
-    losing every taught place silently is not acceptable either."""
+    zones bound in the old one are wrong the moment it is published — but
+    losing every bound place silently is not acceptable either."""
     floor_dir = sites.floor_dir(SITE, FLOOR)
     floor_dir.mkdir(parents=True)
     (floor_dir / "zones.yaml").write_text(

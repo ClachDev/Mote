@@ -14,22 +14,29 @@ L-shaped ward or a corridor stretch that no circle can describe.
     floors/<floor>/vocabulary.yaml   what the places are CALLED. No
                                      coordinates, so it is safe to share with
                                      every robot at the site.
-    floors/<floor>/binding.yaml      where THIS robot believes they are, in
-                                     this floor's map frame. Never shared.
+    floors/<floor>/binding.yaml      where geometry says they are, in this
+                                     floor's map frame. Travels only inside
+                                     the revision that frame belongs to.
 
-They are taught together — you drive somewhere, name it, and say what it is —
-but they are not the same kind of fact. `(2.0, 3.5)` in this robot's map frame
-is a different physical point in the next robot's, so the fleet publishes the
-vocabulary and never the binding. A legacy combined `zones.yaml` is still read
-(`bundle.read_floor` migrates it) and is replaced by the pair the first time
-anything writes.
+They are not the same kind of fact. `(2.0, 3.5)` in this map frame is a
+different physical point in the next robot's, so the fleet publishes the
+vocabulary and never the binding on its own. A legacy combined `zones.yaml` is
+still read (`bundle.read_floor` migrates it) and is replaced by the pair the
+first time anything writes.
+
+Geometry reaches a floor three ways, and only the first involves a robot:
+driving there and running `save-zone`, which is the one that also measures an
+approach heading; `segment-map` reading room outlines off a saved map; and the
+fleet dashboard's zone editor, where an operator places and drags zones on a
+candidate revision. A promoted revision then carries the result to every robot
+at the site, so a robot can hold geometry for a floor it has never driven.
 
 What the split buys a reader is :data:`unbound`. :func:`load_floor` returns
-every name the floor carries, bound or not, so a name this robot has never been
-taught is answerable as "I know that place, nobody has driven me there" rather
-than as an unknown name — which sent an operator hunting for a typo that was
-not there. :func:`load_zones` is the same minus the unbound ones, for every
-caller that only ever wanted a pose.
+every name the floor carries, bound or not, so a name with no geometry in the
+binding this robot holds is answerable as "I know that place, nothing has said
+where it is" rather than as an unknown name — which sent an operator hunting
+for a typo that was not there. :func:`load_zones` is the same minus the unbound
+ones, for every caller that only ever wanted a pose.
 
 **A zone is a place-name**, so the vocabulary is one human name and a free-text
 `note` — nothing else. The mission layer's resolver already knows what a store
@@ -141,13 +148,13 @@ class Zone:
     #: cannot supply, and the reason there is no alias list — another name
     #: this place answers to belongs in the sentence a resolver reads.
     note: str = ""
-    #: Whether *this robot* has been taught where it is. A name in the
-    #: vocabulary with no binding is a real place with no pose here — which is
-    #: the whole reason zone/v0 splits the two, and the difference between
-    #: "you typed it wrong" and "nobody has driven me there yet".
+    #: Whether the binding this robot holds carries geometry for it. A name in
+    #: the vocabulary with no binding is a real place with no pose here — which
+    #: is the whole reason zone/v0 splits the two, and the difference between
+    #: "you typed it wrong" and "nothing has said where that is".
     bound: bool = True
-    #: A zone this robot was taught that the site's vocabulary does not name.
-    #: Usable here; never advertised as a shared zone.
+    #: A zone this robot holds a binding for that the site's vocabulary does
+    #: not name. Usable here; never advertised as a shared zone.
     local: bool = False
 
     @property
@@ -275,7 +282,7 @@ def load_floor(path) -> dict[str, Zone]:
 
     A zone with no binding comes back with ``pose=None`` and ``bound=False``
     rather than being dropped. That is the point of the split: the robot can
-    then say ``unbound`` — "I know that place, nobody has taught me where it
+    then say ``unbound`` — "I know that place, nothing has told me where it
     is" — where before it could only say the name was unknown, which sent an
     operator hunting for a typo that was not there.
     """
@@ -323,7 +330,7 @@ def load_zones(path) -> dict[str, Zone]:
     :func:`load_floor` minus the unbound ones, for every caller that only ever
     wanted a pose — ``containing``, the dashboard's basemap, ``save-zone``.
     The task layer uses ``load_floor``, because refusing a mission is where the
-    difference between "unknown" and "untaught" is worth saying.
+    difference between "unknown" and "unbound" is worth saying.
     """
     return {name: zone for name, zone in load_floor(path).items() if zone.bound}
 
@@ -333,9 +340,9 @@ class ZoneUnresolved(ValueError):
 
     The reason is the point. "Not found" collapses two different faults an
     operator does different things about: a name that is not in the vocabulary
-    at all is a mistake in the request, while one that is there and untaught
-    here is a gap in *this* robot's training on a floor where its neighbours may
-    know the place perfectly well. mission/v0 carries it out as
+    at all is a mistake in the request, while one that is there and unbound
+    here is a gap in the geometry this robot holds, on a floor where its
+    neighbours may know the place perfectly well. mission/v0 carries it out as
     ``failure.class: "unresolved_zone"`` with the reason in ``detail``.
     """
 
@@ -372,10 +379,12 @@ def resolve_reason(zones: dict[str, Zone], query) -> tuple[Zone | None, str | No
 
     * ``unknown_name`` — not in this floor's vocabulary. A mistake in the
       request.
-    * ``unbound`` — in the vocabulary, and *this* robot has never been taught
-      where it is. A gap in this robot's training, on a floor where its
-      neighbours may know the place perfectly well. An operator drives there
-      and runs ``save-zone``; they do not fix a typo.
+    * ``unbound`` — in the vocabulary, and the binding this robot holds carries
+      no geometry for it. Not a typo, so the remedies are the three that put a
+      coordinate there: place it in the dashboard's zone editor on a candidate
+      revision and promote that; pull the revision that already binds it (the
+      robot may be running an older one); or drive there and ``save-zone``,
+      which is the one that measures an approach heading.
     * ``not_navigable`` — a constraint zone used as a destination. It exists
       and an operator drew it on purpose, so saying "unknown" would send them
       hunting for a spelling mistake that is not there.
@@ -408,8 +417,10 @@ def destination(zones: dict[str, Zone], query, where: str = "zone") -> Zone:
     if reason == zone_spec.UNBOUND:
         raise ZoneUnresolved(
             reason,
-            f"{where} {zone.name!r} is a place on this floor, but this robot has "
-            "not been taught where it is — drive there and run save-zone",
+            f"{where} {zone.name!r} is a place on this floor, but the map "
+            "revision this robot is running has no geometry for it — place it "
+            "in the dashboard's zone editor and promote, pull the revision "
+            "that binds it, or drive there and run save-zone",
         )
     if reason is not None:
         known = sorted(name for name, z in zones.items() if z.navigable and z.bound)

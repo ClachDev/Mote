@@ -103,7 +103,7 @@ autonomously — run it *on the Pi*, so a WiFi drop cannot end the mission.
 `save-map` writes an immutable map revision into the active site's floor, runs a
 cleaning pass over it, and validates it. [Sites, maps &
 zones](robot/sites.md) explains what a site bundle is, why maps are revisions,
-and how to teach named places.
+and the three ways a named place gets a coordinate.
 
 ## 6. Drive the map
 

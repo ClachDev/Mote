@@ -47,8 +47,9 @@ road at nearly every stage.
   whose design assumes the robot built the map. Distribution order ran
   backwards (robot first, registry second).
 - Zones: `segment-map` proposed seven placeholder rooms; renaming is manual;
-  the one taught pose (`office`) was invalidated by the new frame and must be
-  re-taught by driving to it. The candidate was published with placeholder
+  the one taught pose (`office`) was invalidated by the new frame and had to
+  be captured again (the dashboard's zone editor, which can now place it on the
+  candidate, did not yet exist). The candidate was published with placeholder
   names because packing happens at publish time.
 - The bags themselves — the actual source — live in the robot's
   `~/.mote/bags/` under a pruner that trims older bags on every recording run.
@@ -188,13 +189,14 @@ Requirements, in priority order:
   as canonical zones draw today (circle, polygon, waypoint cross), plus the
   carry-forward report: which names re-bound automatically, which are proposed
   matches, which rooms are new placeholders.
-- **Edit before promoting.** Rename a zone, accept/reject a proposed match,
-  edit aliases/kind, adjust or delete a polygon, and **click-to-teach a pose**
-  (place `office` by clicking the office on the map — replaces drive-to-teach
-  for goto targets; taught-by-driving remains for poses that need real
-  approach headings). Edits write back to the candidate's `zones.yaml` on the
-  server (bumping `vocabulary_revision`); the candidate stays inert
-  throughout.
+- **Edit before promoting.** *Built* (task 339's review pane,
+  `server/ui/zone_editor.mjs`): rename a zone, write its note, adjust or delete
+  a polygon, and place a pose by clicking the map (`⌖`), which is what replaced
+  driving to a goto target — `save-zone` remains for poses that need a real
+  approach heading. A save derives a new candidate from the one under review
+  rather than writing into it (bumping `vocabulary_revision`); the source's
+  bytes never change and the result stays inert until promoted. Still to do:
+  accepting or rejecting a proposed carry-forward match.
 - **See the build report.** The scoring diff from stage 2, on the same page
   as the promote button.
 - **Promote.** Unchanged M4 semantics: audited operator action, symlink flip,
@@ -285,9 +287,10 @@ Sized so each is one dispatchable task; existing tasks noted.
    report.
 7. **Candidate preview** — task 339 (see the map you promote), extended with
    the zones overlay.
-8. **Candidate zone editing** — rename/alias/kind/polygon/click-to-teach on
-   the candidate from the dashboard; server-side writes to candidate
-   `zones.yaml`, audited, inert until promotion.
+8. **Candidate zone editing** — *done* (task 339): rename, note, polygon and
+   click-to-place on the candidate from the dashboard, deriving a new
+   candidate, audited, inert until promotion. What remains is accepting or
+   rejecting a carry-forward match, which needs step 6.
 9. **Build report on the review page** — stage-2 scoring diff rendered beside
    the promote picker.
 10. **An orientation estimator the alignment step can be gated on** — a

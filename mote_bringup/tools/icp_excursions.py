@@ -9,7 +9,7 @@ permanently displaced?
 
 The two look identical in a per-interval speed histogram and are worlds apart
 downstream: a spike briefly disturbs the costmap, a step corrupts the map frame
-for the rest of the session and every zone taught in it.
+for the rest of the session and every zone bound in it.
 
 Wheel odometry is the local reference. It is not truth over a session, but over
 the couple of seconds either side of one scan it drifts far less than the metres

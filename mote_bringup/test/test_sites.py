@@ -103,7 +103,7 @@ def test_resolve_zones_and_write_target(mote_home):
         sites.zones_for_write()
     sites.create("home")
     expected = sites.floor_dir("home", "ground")
-    # Nothing to resolve until something is taught — but that is where it goes.
+    # Nothing to resolve until a zone is bound — but that is where it goes.
     assert sites.resolve_zones() == ""
     assert sites.zones_for_write() == expected
 

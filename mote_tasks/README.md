@@ -44,22 +44,32 @@ pixi run -- ros2 run mote_tasks mission fetch target=pickup destination=dropoff
 ```
 
 On the real robot, run `pixi run tasks` alongside `pixi run robot`. Zones
-belong to the active site (see the Sites section in CLAUDE.md) and are taught
-by driving the robot to the spot and running `pixi run save-zone <name>` —
-poses are reachable by construction. `tasks_launch.py` resolves the active
+belong to the active site (see the Sites section in CLAUDE.md). Geometry gets
+there three ways: `pixi run save-zone <name>` captures the pose the robot is
+standing at, `pixi run segment-map` reads room outlines off a saved map, and
+the fleet dashboard's zone editor places them on a candidate revision, which a
+promotion then hands to every robot at the site. Only `save-zone` proves the
+pose is reachable, by having driven to it; the other two put a coordinate on
+the map and leave that to the planner. `tasks_launch.py` resolves the active
 site's zones automatically, falling back to the committed
 `config/zones.default.yaml` (which also documents the format).
 
 ## Zones, and "go to the kitchen"
 
-A **zone** is the one named-place concept: a taught pose in the map frame that
-the robot can navigate to. `fetch` uses zones as its `pickup`/`dropoff`
+A **zone** is the one named-place concept: a pose in the map frame that the
+robot can navigate to. `fetch` uses zones as its `pickup`/`dropoff`
 waypoints, and `goto <zone>` drives to any of them — `goto kitchen`,
 `goto home`, whatever is in the table. A zone can *optionally* carry an **area
 footprint**, which turns it from a bare waypoint into something that also
 answers "am I inside it?". That footprint is just optional metadata on the
-single zone concept — not a second kind of thing — so there's one YAML
-section, one loader, one teach command:
+single zone concept — not a second kind of thing — so there's one loader
+whatever wrote the file.
+
+A floor stores this as the zone/v0 pair: `vocabulary.yaml` for what the places
+are called, `binding.yaml` for where geometry says they are. The combined
+`zones.yaml` below is the pre-split shape, still read (and migrated the first
+time anything writes) because the sim worlds and the committed default ship
+that way — one file is the right shape for a fixture with one robot in it.
 
 ```yaml
 frame_id: map
@@ -78,7 +88,7 @@ answers "which zone am I in?" (nearest-pose first) using the footprints.
 ### Circles and polygons
 
 A `radius` is the simple default — one number, and `pixi run save-zone <name>
---radius R` teaches it along with the pose. It only describes a roughly round
+--radius R` writes it along with the pose. It only describes a roughly round
 room, though. A real ward is a rectangle, a ward with an ensuite is an L, and a
 corridor stretch is a long thin box; sizing a circle to fit inside one of those
 leaves most of the room outside the zone, and sizing it to cover the room
@@ -90,20 +100,21 @@ A `polygon` is a list of `[x, y]` vertices in the file's `frame_id`, closed
 implicitly, in either winding order, and may be concave — membership is a ray
 cast, not a convex-hull test. A zone carrying both keys uses the polygon.
 
-Polygons are not taught by driving; the intended source is post-processing a
-saved map into room outlines (the tracked follow-up), which is also why a
-polygon zone may omit `x`/`y` — the loader then derives a pose guaranteed to
-lie inside the outline (the centroid, or, when the shape is concave enough that
-its centroid falls outside, the middle of the widest span through it). Where a
-pose *is* given it always wins, which matters: in the hospital wards the room
-centre is occupied by a bed, so the taught pose is the doorway approach.
+Polygons do not come from driving. `pixi run segment-map` reads them off a
+saved map, and the fleet dashboard's zone editor draws and drags them on a
+candidate revision — which is also why a polygon zone may omit `x`/`y`: the
+loader then derives a pose guaranteed to lie inside the outline (the centroid,
+or, when the shape is concave enough that its centroid falls outside, the
+middle of the widest span through it). Where a pose *is* given it always wins,
+which matters: in the hospital wards the room centre is occupied by a bed, so
+the pose is the doorway approach.
 
-Because polygons arrive from a different direction than poses do, re-teaching a
-room's pose with `pixi run save-zone <name>` keeps whatever footprint the zone
-already had; passing `--radius R` is the deliberate way to replace it. Zones
-are written into the active site's floor (`site info` shows the zone count and
-how many have a footprint), or the legacy `~/.mote/zones.yaml` when no site is
-active.
+Because polygons arrive from a different direction than poses do, re-capturing
+a room's pose with `pixi run save-zone <name>` keeps whatever footprint the
+zone already had; passing `--radius R` is the deliberate way to replace it.
+Zones are written into the active site's floor (`site info` shows the zone
+count, how many have a footprint, and how many names have no geometry here at
+all), or the legacy `~/.mote/zones.yaml` when no site is active.
 
 ## Interface
 

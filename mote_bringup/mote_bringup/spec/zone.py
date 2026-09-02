@@ -51,7 +51,7 @@ VERSION = "v0"
 
 #: Kinds a **retired** ``kind`` field used to give a zone to say that a robot
 #: may not or should not go there. The taxonomy is gone; this pair is kept
-#: because it is the only record an already-taught floor has that a zone is a
+#: because it is the only record an already-written floor has that a zone is a
 #: keepout, and dropping it on read would turn a barrier into a destination —
 #: silently, on the first load after an upgrade. :func:`term` reads it to seed
 #: ``navigable`` and writes ``navigable`` back, which is the migration.
@@ -88,19 +88,41 @@ VOCABULARY_KEYS = (
 LEGACY_KEYS = ("kind", "display_name", "aliases", "parent", "tags", "description")
 
 #: How a binding's coordinate came to be, which is what tells a consumer whether
-#: to trust it after the map changes. ``taught`` is the honest default and what
-#: Mote does; ``fiducial`` is the only one that survives re-mapping without
-#: re-teaching, and the only one under which two platforms can independently
-#: arrive at the same physical point without sharing a map.
+#: to trust it after the map changes. ``fiducial`` is the only one that survives
+#: re-mapping without re-teaching, and the only one under which two platforms
+#: can independently arrive at the same physical point without sharing a map.
+#: Mote writes three of the four:
+#:
+#: * ``taught`` — a robot was driven there and ``save-zone`` captured its pose.
+#:   A measurement, taken by that platform in that map frame.
+#: * ``derived`` — read off a saved map by an algorithm, which ``by`` names:
+#:   ``segment-map``'s room outlines, and the pose a polygon-only zone gets.
+#: * ``external`` — resolved off the platform. What the fleet dashboard's zone
+#:   editor writes for geometry an operator placed or moved on the map: no
+#:   robot measured it and no algorithm read it off the map, so neither of the
+#:   other two would be true. ``by`` names what did it.
+#:
+#: ``external`` is the closest of zone/v0's four to "a person pointed at the
+#: map" rather than an exact fit — the spec glosses it as an off-platform
+#: localisation system. The enum is closed, so the alternatives were stamping a
+#: click as a measurement or as an algorithm's output, which are the two larger
+#: lies. A successor revision should carry a method for it (mote #616).
 ANCHOR_METHODS = ("taught", "derived", "fiducial", "external")
 
 TAUGHT = "taught"
 DERIVED = "derived"
+FIDUCIAL = "fiducial"
+EXTERNAL = "external"
+
+#: What the zone editor puts in an ``external`` anchor's ``by``. Shared with
+#: ``server/ui/zone_editor.mjs``, which stamps it, and with the server, which
+#: recognises it in order to record *which* operator was at the keyboard.
+EDITOR = "zone-editor"
 
 # -- why a name did not resolve -------------------------------------------
 
 UNKNOWN_NAME = "unknown_name"  # not in the vocabulary
-UNBOUND = "unbound"  # in it; this platform has never been taught it
+UNBOUND = "unbound"  # in it; this platform's binding has no geometry for it
 WRONG_FLOOR = "wrong_floor"  # bound, but not on the active floor
 STALE_REVISION = "stale_revision"  # bound against a revision with no continuity
 NOT_NAVIGABLE = "not_navigable"  # a constraint zone used as a destination
@@ -110,8 +132,11 @@ REASONS = (UNKNOWN_NAME, UNBOUND, WRONG_FLOOR, STALE_REVISION, NOT_NAVIGABLE, AM
 
 #: ``unknown_name`` and ``unbound`` are deliberately distinct, and this is the
 #: pair the split exists to make representable. The first is a mistake in the
-#: request; the second is a gap in *this* robot's training, on a floor where its
-#: neighbours may know the place perfectly well. An operator does different
+#: request: no floor names that place. The second is a name the floor does
+#: carry with no geometry beside it in the binding this platform holds — which
+#: may be because the promoted revision binds it for nobody, because this
+#: platform is running an older revision than the one that binds it, or because
+#: it has simply never been given a coordinate here. An operator does different
 #: things about them, and collapsing both to "not found" hides the fleet's most
 #: common real fault.
 DISTINCT_REASONS = (UNKNOWN_NAME, UNBOUND)
@@ -289,6 +314,28 @@ def anchor(
     return record
 
 
+def read_anchor(where: str, value) -> dict:
+    """One anchor as it arrives from a document or a browser, through
+    :func:`anchor` so an unknown method is refused at the edge.
+
+    A submitted anchor is the only part of a zone's provenance the platform
+    does not author, so it is the one part that could claim anything: a caller
+    that copied it straight through would let a browser record a click as a
+    measurement. Refusing here is what stops the claim reaching a stored
+    revision, where nothing afterwards can tell it from a real one.
+    """
+    if not isinstance(value, dict):
+        raise SpecError(f"{where} anchor is not a mapping")
+    return anchor(
+        value.get("method") or TAUGHT,
+        at=value.get("at"),
+        by=str(value.get("by") or ""),
+        fiducial_id=value.get("fiducial_id"),
+        offset=value.get("offset"),
+        confidence=value.get("confidence"),
+    )
+
+
 def bound(
     name: str,
     x: float,
@@ -355,10 +402,10 @@ def binding(
     map_revision: str = "",
     vocabulary_revision: int = 0,
 ) -> dict:
-    """The private document: where *this* platform believes those places are.
+    """The private document: where those places are in this map frame.
 
     ``map_revision`` is not bookkeeping. A binding is valid only against a
-    revision that declares frame continuity with the one it was taught on, and
+    revision that declares frame continuity with the one it was bound in, and
     a platform whose active revision is not continuous with its binding must
     resolve every affected zone as ``stale_revision`` rather than return the old
     coordinate. Zones, map and pose-graph travel together or not at all.
@@ -542,14 +589,19 @@ def split(
     same dict: each document is built from its own key list, so a geometry key
     added later cannot leak into the vocabulary by being forgotten.
 
-    Every migrated binding is anchored ``taught`` with no timestamp. That is the
-    honest record — the file it came from did not say when, or by whom, and
-    inventing either would put a fact into a provenance field that nothing
-    measured.
+    An entry that carries its own ``anchor`` keeps it. That matters for the one
+    combined file nobody hand-wrote: the zone editor packs its result as a
+    ``zones.yaml`` and it comes back through here, so dropping the anchor would
+    re-stamp every coordinate an operator placed as one a robot drove to.
+    Where an entry says nothing, the binding is anchored ``taught`` with no
+    timestamp — the honest record for a file written before there was a field
+    to say otherwise, which did not say when or by whom either.
     """
     terms, bindings = [], []
     for name, entry in zones["zones"].items():
         terms.append(term("zones.yaml", name, entry))
+        carried = entry.get("anchor")
+        carried = read_anchor(f"zone {name!r}", carried) if carried else None
         footprint = None
         if entry.get("polygon"):
             footprint = {"type": "polygon", "vertices": entry["polygon"]}
@@ -563,7 +615,7 @@ def split(
                     entry["y"],
                     entry.get("yaw", 0.0),
                     footprint=footprint,
-                    anchored=anchor(TAUGHT),
+                    anchored=carried or anchor(TAUGHT),
                 )
             )
             continue
@@ -581,7 +633,7 @@ def split(
                 px,
                 py,
                 footprint=footprint,
-                anchored=anchor(DERIVED, by="polygon"),
+                anchored=carried or anchor(DERIVED, by="polygon"),
             )
         )
     revision = zones.get("revision", 0)
@@ -605,8 +657,8 @@ def merge(vocabulary_doc: dict, binding_doc: dict | None) -> dict:
     What a *reader* wants — the task layer resolving a name, the dashboard
     drawing a floor — is both halves at once, and rebuilding that join in three
     places would be three chances to get the unbound case wrong. The join is
-    outer on the vocabulary: a name with no binding is present with no
-    geometry, which is what makes ``unbound`` answerable rather than
+    outer on the vocabulary: a name the binding has no geometry for is present
+    with none, which is what makes ``unbound`` answerable rather than
     indistinguishable from ``unknown_name``.
     """
     bindings = {
@@ -617,8 +669,8 @@ def merge(vocabulary_doc: dict, binding_doc: dict | None) -> dict:
         zones[item["name"]] = dict(item, **_geometry(bindings.pop(item["name"], None)))
     for name, item in bindings.items():
         # A binding for a name the vocabulary does not have is a *local
-        # extension*: this robot was taught a place nobody has named for the
-        # site. It stays usable here and is never advertised as a shared zone.
+        # extension*: this platform holds a binding for a place nobody has
+        # named for the site. It stays usable here and is never advertised as a shared zone.
         zones[name] = dict(term("binding", name, {}), **_geometry(item), local=True)
     return {
         "site": vocabulary_doc.get("site") or "",

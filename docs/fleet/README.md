@@ -694,7 +694,7 @@ M4, robots publish into rather than an operator rsyncing (§11). A robot with no
 basemap on the server still appears in the roster with its health and its mission;
 the map pane says so rather than drawing an empty grid.
 
-**Taught zones are drawn on the basemap**: a circle for a `radius` footprint, an
+**A floor's bound zones are drawn on the basemap**: a circle for a `radius` footprint, an
 outline for a `polygon`, a cross for a bare waypoint, each labelled — so the
 `goto <zone>` targets you can type are the ones you can see. They come from the
 canonical revision, in that revision's map frame.
@@ -730,7 +730,7 @@ and the detail pane. Two things follow from losing the side-by-side view:
 **The dispatch form is generated from the robot's own capability set.** It
 arrives retained on the broker, so the page knows the keys and the input shapes
 without asking; a select lists what this robot offers, and one field appears per
-input property. A field becomes a **zone picker** — the taught zones of the
+input property. A field becomes a **zone picker** — the bound zones of the
 floor on screen — exactly when its schema `$ref`s zone/v0's zone reference,
 which is what that `$ref` is for. So the page contains no list of capabilities
 and no list of which inputs are places, a robot that grows a capability grows
@@ -942,7 +942,7 @@ which appears whenever the floor on screen has something waiting. It shows:
   can be continued in this frame), its bytes and digest.
 - **The zones in it**, and — the part that is easy to miss — an `inherited`
   mark beside the heading when they are not the revision's own. A revision that
-  carries no zones is drawn with the floor's, taught in a previous session's
+  carries no zones is drawn with the floor's, bound in a previous session's
   frame: they draw perfectly over the new map and are out by however far the two
   origins differ, which the canvas cannot show. Zones that belong to the map
   they are drawn on are marked nothing at all — that is what "zones" means.
@@ -986,9 +986,18 @@ The controls are the map and the list together:
   claims precision the map does not have. A whole zone moves by whole pixels, so
   a traced room keeps its shape. **Hold shift to move freely**, for the rare
   case that wants a coordinate between two pixels. Only what you drag is
-  snapped: a pose taught by driving a robot there is a measurement, and it is
-  left exactly where the robot said, while an outline this editor invents starts
-  on the grid.
+  snapped, whoever put it there — a pose a robot measured by driving to it and
+  one an earlier edit placed are alike in being already recorded — while an
+  outline this editor invents starts on the grid. Drag a pose and it does snap:
+  a drag is a fresh coordinate, with the map's precision and no more.
+- **What you move stops claiming a robot drove there.** Each zone's coordinate
+  records how it came to be — `taught` when a robot was driven there and
+  `save-zone` captured the pose, `derived` when `segment-map` read it off the
+  map — and that is what tells whoever looks next whether a re-map invalidates
+  it. Anything you place or drag here is neither, so it is saved as `external`,
+  stamped with your operator name and the server's clock. A zone you did not
+  touch keeps what it had, so a segmented room stays `derived` until somebody
+  reshapes it.
 - **It is the same list either way.** The zones of a revision are listed under
   the map whether or not you are editing them — the name, then whether it is a
   **point** or an **area** — and `edit zones` puts controls into those rows
@@ -1045,7 +1054,7 @@ it looks right. Two consequences worth knowing:
   revision plus the five newest candidates, so the intermediates fall off on
   their own.
 - **A revision that inherited the floor's zones stops inheriting.** The saved
-  candidate carries them, which is what you want: inherited zones were taught in
+  candidate carries them, which is what you want: inherited zones were bound in
   another session's frame, and dragging them onto this map is the correction.
 
 `cancel` discards the edit. There is no autosave and nothing is written until
@@ -1068,7 +1077,7 @@ digest, stages it in a temporary directory, renames it into `maps/<rev>/` and
 flips its local `map` symlink. A half-transferred revision is never visible.
 
 **Zones travel with the map.** A revision from a different mapping session is a
-different map frame, so the zones taught in the old one are wrong the moment the
+different map frame, so the zones bound in the old one are wrong the moment the
 new map is published — the bundle's `binding.yaml` therefore replaces the floor's,
 and the one it replaces is kept beside it as `zones.<old-rev>.yaml`.
 
@@ -1083,7 +1092,7 @@ how the dashboard shows a robot that has not picked the new map up yet.
 Nothing is merged, and nothing is lost. Both are candidates, an operator
 promotes one, and the other is retained. This is not a limitation to fix: a map
 frame's origin is an accident of where SLAM started, so silently merging two
-frames would break every taught zone coordinate. If both robots proposed the
+frames would break every bound zone coordinate. If both robots proposed the
 same revision id (they are per-second timestamps), the second is stored as
 `<rev>-2` and `fleetctl sites <site> <floor>` shows which robot uploaded which.
 
@@ -1152,9 +1161,9 @@ pixi run save-zone sluice --radius 0.8 --no-navigable
 ```
 
 `--no-navigable` marks a place a robot must not be sent to — `goto sluice` is
-then refused by the robot rather than driven to. Re-teaching a pose (`save-zone
-"the kitchen"` again) keeps the note and the flag: a better coordinate is not a
-rename.
+then refused by the robot rather than driven to. Capturing a pose again
+(`save-zone "the kitchen"`) keeps the note and the flag: a better coordinate is
+not a rename.
 
 Other names a place answers to belong in the note. There is no alias list: the
 mission layer's resolver reads free text and already knows what a store room is,
@@ -1170,7 +1179,7 @@ zones:
                 note: the good kettle is in the store room}
 ```
 
-A floor taught before place-names still loads without being re-taught: its
+A floor written before place-names still loads unchanged: its
 `kind`, `display_name`, `aliases`, `parent` and `tags` are accepted and dropped,
 its `description` is read as the note it was, and `kind: keepout` still means
 `navigable: false`. What it loses is alias matching — `goto galley` no longer

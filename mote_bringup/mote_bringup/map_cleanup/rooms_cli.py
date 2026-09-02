@@ -11,7 +11,7 @@ what the rooms are actually called.
 
 Merging never overwrites: a candidate covering the pose of a zone that already
 has a footprint is dropped as already-named, and an existing zone is never
-touched. That makes re-running after teaching a few rooms by hand additive, and
+touched. That makes re-running after binding a few rooms by hand additive, and
 running twice in a row a no-op.
 """
 

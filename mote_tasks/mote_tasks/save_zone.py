@@ -1,22 +1,31 @@
-"""Teach a zone by driving to it: capture the robot's current map-frame pose
-into the active site's zones.yaml (legacy ~/.mote/zones.yaml if no site).
+"""Bind a zone by driving to it: capture the robot's current map-frame pose
+into the active site's floor (legacy ~/.mote/zones.yaml if no site).
 
     ros2 run mote_tasks save_zone <name> [--radius R] [--note TEXT]
                                         [--no-navigable] [base_frame]
 
-Poses taught this way are reachable by construction. ``--radius`` (metres)
-gives the zone a circular area footprint, so it answers "am I in it" and reads
-as a room rather than a bare waypoint; omit it for a plain navigation target.
-Re-teaching an existing name replaces its pose but keeps its footprint, which
-may be a polygon outline this command cannot capture (see mote_tasks.zones).
+One of three ways geometry reaches a floor — ``segment-map`` reads outlines off
+a saved map, and the fleet dashboard's zone editor places them on a candidate
+revision — and the only one that has to happen on the robot. What it buys for
+that is a pose the robot demonstrably reached, at the heading it arrived on:
+this is the command for a place a mission must approach from a particular side,
+where the other two put a coordinate on the map and leave the rest to the
+planner. The binding is anchored ``taught``, which is what tells a reader later
+that re-mapping the floor invalidates it.
+
+``--radius`` (metres) gives the zone a circular area footprint, so it answers
+"am I in it" and reads as a room rather than a bare waypoint; omit it for a
+plain navigation target. Re-capturing an existing name replaces its pose but
+keeps its footprint, which may be a polygon outline this command cannot capture
+(see mote_tasks.zones).
 
 The name is the whole of what a place is called — quote it if it has spaces —
 and ``--note`` is free text for what the name cannot say: "stationery lives
-here, not in the office". Names and notes are the half of a zone that travels:
-the fleet serves them to a dispatcher at ``/v1/zones`` and never the pose,
-because the pose is only true in this robot's map frame. ``--no-navigable``
-marks a place a robot must not be sent to. Re-teaching keeps whatever the zone
-already carries — a better coordinate is not a rename.
+here, not in the office". Names and notes are the half of a zone that travels
+on its own: the fleet serves them to a dispatcher at ``/v1/zones`` and never
+the pose, because the pose is only true against the map frame beside it.
+``--no-navigable`` marks a place a robot must not be sent to. Re-capturing
+keeps whatever the zone already carries — a better coordinate is not a rename.
 """
 
 import sys

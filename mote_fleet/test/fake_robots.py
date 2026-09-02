@@ -330,7 +330,7 @@ class FakeRobot:
 
         Input validation is the real validator against the real schema; the
         zone check is this fixture's, because a fake robot has no map and the
-        zone names it knows are the ones the shipped basemap was taught.
+        zone names it knows are the ones the shipped basemap binds.
         """
         try:
             spec_capability.validate_input(declared["input_schema"], payload_input)

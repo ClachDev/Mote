@@ -132,7 +132,7 @@ def test_polygon_zone_loads_and_contains(tmp_path):
     )
     zones = load_zones(str(path))
     ward = zones["ward"]
-    assert ward.pose.pose.position.x == pytest.approx(3.0)  # the taught pose wins
+    assert ward.pose.pose.position.x == pytest.approx(3.0)  # the given pose wins
     assert ward.footprint.contains(3.0, 1.0) is True
     assert ward.footprint.contains(3.0, 3.0) is False
     assert containing(zones, 3.0, 3.0) == []
@@ -178,7 +178,7 @@ def test_append_zone_keeps_a_polygon_but_radius_replaces_it(tmp_path):
     path.write_text(
         "zones:\n  ward: {x: 1.0, y: 1.0, polygon: [[0, 0], [2, 0], [2, 2], [0, 2]]}\n"
     )
-    # Re-teaching the pose must not silently un-room the zone. It is also the
+    # Re-capturing the pose must not silently un-room the zone. It is also the
     # first write to a combined file, so it is the migration: nobody runs one,
     # and nobody can forget to.
     append_zone(path, "ward", 1.5, 0.5, 0.0)
@@ -214,7 +214,7 @@ def test_save_zone_output_is_readable_by_the_bundle_validator(tmp_path):
     (tmp_path / "binding.yaml").write_text(
         yaml.safe_dump(binding, sort_keys=False, default_flow_style=None)
     )
-    append_zone(tmp_path, "ward_east", 4.1, 1.1, 0.0)  # re-teach: keeps the outline
+    append_zone(tmp_path, "ward_east", 4.1, 1.1, 0.0)  # recapture: keeps the outline
 
     zones = bundle.read_floor(tmp_path)["zones"]
     assert zones["kitchen"]["radius"] == 1.5
@@ -260,7 +260,7 @@ def test_a_legacy_description_is_read_as_the_note_it_was(tmp_path):
 
 
 def test_the_retired_fields_load_and_are_dropped(tmp_path):
-    """A floor taught before place-names must not need re-teaching, and none of
+    """A floor written before place-names must load unchanged, and none of
     what it says about itself may survive as vocabulary."""
     path = write_zones(
         tmp_path,
@@ -275,7 +275,7 @@ def test_the_retired_fields_load_and_are_dropped(tmp_path):
 
 def test_a_legacy_keepout_is_still_not_navigable(tmp_path):
     """The one thing `kind` is still read for. Dropping it outright would turn
-    every barrier on every already-taught floor into a destination — silently,
+    every barrier on every already-written floor into a destination — silently,
     on the first load after the upgrade."""
     path = write_zones(tmp_path, "  sluice: {x: 1.0, y: 2.0, kind: keepout}\n")
     assert load_zones(str(path))["sluice"].navigable is False
@@ -326,7 +326,7 @@ def test_resolve_matches_the_name_and_nothing_else(tmp_path):
         assert resolve(zones, query) is None, query
 
 
-def test_re_teaching_a_pose_keeps_the_vocabulary(tmp_path):
+def test_re_capturing_a_pose_keeps_the_vocabulary(tmp_path):
     """Driving somewhere to capture a better pose is a new coordinate, never a
     rename — dropping the note an operator typed would be silent data loss.
     """
@@ -337,7 +337,7 @@ def test_re_teaching_a_pose_keeps_the_vocabulary(tmp_path):
     assert zone.pose.pose.position.x == 1.2
 
 
-def test_teaching_bumps_the_vocabulary_revision(tmp_path):
+def test_binding_a_zone_bumps_the_vocabulary_revision(tmp_path):
     """A binding elsewhere records which vocabulary it was built against, so
     the counter has to move whenever a name could have."""
 
@@ -354,7 +354,7 @@ def test_teaching_bumps_the_vocabulary_revision(tmp_path):
     assert binding["vocabulary_revision"] == revision()
 
 
-def test_teaching_a_place_a_robot_may_not_go_writes_the_flag(tmp_path):
+def test_marking_a_place_a_robot_may_not_go_writes_the_flag(tmp_path):
     """`--no-navigable` is what `--kind keepout` was: the fact, rather than a
     taxonomy the fact had to be inferred from."""
     append_zone(tmp_path, "sluice", 1.0, 2.0, 0.0, navigable=False)
@@ -363,7 +363,7 @@ def test_teaching_a_place_a_robot_may_not_go_writes_the_flag(tmp_path):
     assert load_zones(tmp_path)["sluice"].navigable is False
 
 
-def test_a_taught_note_travels_in_the_vocabulary_and_not_the_binding(tmp_path):
+def test_a_note_travels_in_the_vocabulary_and_not_the_binding(tmp_path):
     """The note is a fact about the building, so it is shared; the pose is a
     coordinate in this robot's frame, so it is not."""
     append_zone(tmp_path, "store room", 1.0, 2.0, 0.0, note="stationery lives here")

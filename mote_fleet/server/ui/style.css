@@ -1098,7 +1098,7 @@ main:has(.review-pane.active) > .pane:not(.review-pane) {
 }
 
 /* A pill in the page's own idiom, and the only one that is a warning: it says
-   these coordinates were taught somewhere else. */
+   these coordinates were bound against a different map. */
 .pill.warn {
   border-color: var(--degraded);
   color: var(--degraded);

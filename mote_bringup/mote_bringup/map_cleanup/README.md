@@ -65,7 +65,7 @@ res.directions_deg   # detected wall orientations
 `room_segmentation.py` is the second stage: it takes the same occupancy grid and
 carves its free space into **rooms**, each proposed to the task layer as a zone
 with a polygon footprint, so a freshly mapped floor arrives with its rooms
-already outlined instead of every one taught by driving to it.
+already outlined instead of every one captured by driving to it.
 
 ```bash
 pixi run segment-map [MAP.yaml] [--write] [--out DIR]
@@ -76,8 +76,8 @@ With no argument it segments the active site floor's current map and writes
 beside that floor's `zones.yaml`; `--write` merges the proposal in, where the
 generated `room_NN` names are meant to be renamed to what the rooms are called.
 Merging never overwrites — a candidate covering a zone that already has a
-footprint is dropped as already-named — so it is additive after hand-teaching
-and a no-op run twice.
+footprint is dropped as already-named — so it is additive over zones that are
+already bound, and a no-op run twice.
 
 It follows ROSE²'s idea (extend the walls into lines, let the lines partition the
 map into faces, merge the faces back into rooms) with the FFT orientation scan

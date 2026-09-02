@@ -49,7 +49,7 @@ const state = {
   operator: null,
   mapKey: null,
   floor: null, // the registry's view of the floor on screen: revisions, candidates
-  zones: [], // the floor's taught places, for the map and the dispatch picker
+  zones: [], // the floor's bound places, for the map and the dispatch picker
 };
 
 const dom = {};
@@ -169,14 +169,14 @@ async function ensureMap(record) {
     dom.mapLabel.textContent = `${key} — no basemap on the fleet server (${error.message})`;
     return;
   }
-  // Taught places, in the same frame as the basemap. A floor may have none,
+  // Bound places, in the same frame as the basemap. A floor may have none,
   // which is a 404 and not an error worth showing.
   api(`/v1/maps/${site}/${floor}/zones.json`)
     .then((body) => state.mapKey === key && setZones(body.zones))
     .catch(() => state.mapKey === key && setZones([]));
 }
 
-// Taught places go two ways: onto the basemap, and into the dispatch picker.
+// Bound places go two ways: onto the basemap, and into the dispatch picker.
 // Both are the floor's, so they arrive and are cleared together.
 function setZones(zones) {
   state.zones = zones || [];
@@ -274,7 +274,7 @@ function renderDispatch(record) {
         el('span', { class: 'mission-field-name', text: key + (required.includes(key) ? ' *' : '') }),
         sub.$ref === ZONE_REF && names.length
           ? el('select', { 'data-input': key }, [
-              el('option', { value: '', text: 'a taught zone…' }),
+              el('option', { value: '', text: 'a zone…' }),
               ...names.map((name) => el('option', { value: name, text: name })),
             ])
           : el('input', {

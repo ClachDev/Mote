@@ -46,7 +46,7 @@ What a validated revision has to contain::
 A floor's zones are two documents (zone/v0, ``mote_bringup.spec.zone``), and
 only one of them belongs in a revision. ``binding.yaml`` — poses, footprints,
 anchors — travels *inside* a published revision, because those coordinates are
-only meaningful in the map frame they were taught in and the two must move
+only meaningful in the map frame they were bound in and the two must move
 together or the fleet ends up drawing a kitchen through a wall.
 ``vocabulary.yaml`` — the names — stays at floor level, because the rooms did
 not change what they are called when the robot re-mapped them. A combined
@@ -113,6 +113,7 @@ VOCABULARY_KEYS = zone.VOCABULARY_KEYS
 normalise_name = zone.normalise_name
 check_vocabulary = zone.check_vocabulary
 ambiguities = zone.ambiguities
+read_anchor = zone.read_anchor
 
 #: Present and non-empty in every revision, whoever wrote it.
 REQUIRED = (MAP_YAML, META_YAML)
@@ -349,6 +350,15 @@ def parse_zones(raw: dict, where: str = "zones") -> dict:
         polygon = entry.get("polygon")
         if polygon is not None:
             zone["polygon"] = _polygon(where, name, polygon)
+        if entry.get("anchor") is not None:
+            # Provenance, carried rather than re-invented downstream. The zone
+            # editor submits this shape, and a coordinate an operator placed on
+            # a map must not come back out of the reader as one a robot was
+            # driven to — which is what dropping the field here meant.
+            try:
+                zone["anchor"] = read_anchor(where, entry["anchor"])
+            except SpecError as exc:
+                raise BundleError(f"{where}: zone {name!r} {exc}") from exc
         if "x" not in zone or "y" not in zone:
             # A polygon-only zone is legal — the loader derives a pose inside
             # the outline (mote_tasks.zones) — but a zone with neither is not
@@ -399,8 +409,8 @@ def vocabulary(zones: dict, site: str, floor: str) -> dict:
     know what places can be *named* — because names are portable. The binding
     beside it is not.
 
-    Local extensions are left out: a zone this robot was taught but nobody has
-    named for the site is real and usable here, and advertising it as a shared
+    Local extensions are left out: a zone this robot holds a binding for that
+    nobody has named for the site is real and usable here, and advertising it as a shared
     zone would be this robot inventing vocabulary for its neighbours.
     """
     terms = [
@@ -414,7 +424,14 @@ def vocabulary(zones: dict, site: str, floor: str) -> dict:
 
 
 def binding(zones: dict, site: str, floor: str, platform_id: str) -> dict:
-    """The private half, as a zone/v0 document. Never leaves this robot."""
+    """The private half, as a zone/v0 document.
+
+    Private to a *map frame*, not to a machine. It travels inside the revision
+    it was measured in — that is how M4 hands a floor's geometry to a robot
+    that has never driven it — and never on its own, because a coordinate
+    without the frame beside it is a number that means something somewhere
+    else.
+    """
     bindings = []
     for item in zones["zones"].values():
         footprint = None
@@ -507,8 +524,9 @@ def read_floor(directory, site: str = "", floor: str = "") -> dict:
         # Either half alone is a legitimate directory. A **map revision**
         # carries only the binding, because coordinates travel with the frame
         # they mean something in and the names of the rooms do not; a floor
-        # nobody has driven yet carries only the vocabulary, which is the
-        # portability the split buys. What comes back is the join either way.
+        # that has been named but has no geometry yet carries only the
+        # vocabulary, which is the portability the split buys. What comes back
+        # is the join either way.
         vocabulary_doc = (
             load_yaml_file(vocabulary_path)
             if vocabulary_path.is_file()
@@ -746,7 +764,11 @@ def validate(revision_dir, *, require_posegraph: bool = True) -> Report:
                 for problem in check_vocabulary(report.zones["zones"].values())
             )
     else:
-        report.warnings.append(f"no {BINDING_YAML} — this floor has no taught places")
+        report.warnings.append(
+            f"no {BINDING_YAML} — no geometry for any of this floor's places, so "
+            "every name resolves unbound. Place them in the dashboard's zone "
+            "editor on this revision, or drive there and run save-zone"
+        )
 
     unexpected = sorted(set(report.files) - ALLOWED)
     if unexpected:
@@ -778,7 +800,7 @@ def _validate_image(revision_dir: Path, report: Report):
 
     # The raw and the cleaned map are the same frame with different pixels
     # (sites._promote_cleaned), so a size that differs means one of them is
-    # not what it claims and every zone taught on this floor is suspect.
+    # not what it claims and every zone bound on this floor is suspect.
     raw = revision_dir / "map_raw.png"
     if raw.is_file():
         raw_size = png_size(raw)

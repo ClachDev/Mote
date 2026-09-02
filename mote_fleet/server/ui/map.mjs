@@ -26,7 +26,7 @@ export function zoneLabel(zone) {
 }
 
 // A zone as pixels on the basemap: a polygon's vertices, or a circle. Pure, so
-// the placement of a taught place is testable the same way a robot's is.
+// the placement of a bound place is testable the same way a robot's is.
 export function zoneOutline(map, zone) {
   if (zone.polygon && zone.polygon.length >= 3) {
     return {
@@ -402,7 +402,7 @@ export class MapView {
         : worldToPixel(this.map, zone.x, zone.y);
 
     ctx.save();
-    // Taught places are context, not the subject: drawn under the robots, in
+    // Bound places are context, not the subject: drawn under the robots, in
     // one muted colour, so a `goto <zone>` target can be read off the map
     // without competing with where anything actually is.
     ctx.strokeStyle = palette.zoneStroke;

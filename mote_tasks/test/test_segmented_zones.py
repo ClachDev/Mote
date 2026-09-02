@@ -61,9 +61,9 @@ def test_a_written_room_loads_back_as_a_zone_the_robot_can_be_in(tmp_path, rooms
     assert left and right and left != right
 
 
-def test_a_hand_taught_room_is_not_renamed_by_a_later_run(tmp_path, rooms):
+def test_a_hand_bound_room_is_not_renamed_by_a_later_run(tmp_path, rooms):
     path = tmp_path
-    # A floor taught by hand, still in the combined shape. The merge migrates
+    # A floor bound by hand, still in the combined shape. The merge migrates
     # it on the way through, which is the only migration anybody runs.
     (path / "zones.yaml").write_text(
         yaml.safe_dump(
