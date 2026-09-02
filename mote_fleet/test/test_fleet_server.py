@@ -12,6 +12,13 @@ server, and the helpers for talking to it, are ``conftest.py`` +
 ``api_harness.py``; the map registry's own routes are ``test_map_registry.py``.
 """
 
+import json
+import urllib.error
+import urllib.request
+
+import pytest
+
+import fleet_server
 from api_harness import (
     enroll,
     expect_error,
@@ -274,7 +281,7 @@ def test_a_broker_that_is_down_is_reported_not_swallowed(server, operator, robot
 
 
 def test_the_audit_route_needs_an_operator_token(server, operator, robot):
-    expect_error(lambda: get(server, "/v1/audit"), 401)
+    expect_error(lambda: get(server, "/v1/audit", token=""), 401)
     dispatch(server, robot, token=operator)
     status, body = get(server, "/v1/audit", token=operator)
     assert status == 200
@@ -362,3 +369,183 @@ def test_a_reconnecting_client_resubscribes_every_time():
     on_connect(client, None, {}, 0)
     assert [t for t, _ in client.subscribed] == topics + topics
     assert {qos for _, qos in client.subscribed} == {protocol.QOS}
+
+
+# ---- the auth gate: every route, walked ------------------------------------
+#
+# These read `fleet_server.ROUTES` rather than a list kept here, so a route
+# added to the server is covered the day it is added and a route that quietly
+# stops requiring a credential fails a test rather than a review.
+
+#: A value for every path variable the table uses. A route introducing a new
+#: one fails here with a KeyError, which is the intended way to be told.
+SAMPLES = {
+    "robot_id": "mote-01",
+    "site": "home",
+    "floor": "ground",
+    "revision": "20260726T120000",
+    "leaf": "map.json",
+}
+
+
+def url_for(route):
+    return route.template.format(**SAMPLES)
+
+
+def call(server, route, token):
+    """One request at a route, answered as ``(status, body bytes)``.
+
+    Raw rather than parsed because the table holds a route serving gzip, and a
+    test of who may reach a route has no business decoding what it serves.
+    """
+    request = urllib.request.Request(
+        server.url + url_for(route),
+        data=None if route.method == "GET" else json.dumps({}).encode(),
+        headers={"Content-Type": "application/json"},
+        method=route.method,
+    )
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+GATED = [r for r in fleet_server.ROUTES if r.auth == fleet_server.OPERATOR]
+OPEN = [r for r in fleet_server.ROUTES if r.auth != fleet_server.OPERATOR]
+
+
+#: What the gate says, and the only refusal these tests are about.
+REFUSAL = b"operator token"
+
+
+@pytest.mark.parametrize("route", GATED, ids=url_for)
+def test_every_gated_route_refuses_an_anonymous_request(server, robot, route):
+    """M3 put a token on dispatch alone, so the roster, the basemaps, the audit
+    log and the broker's address were readable by anything that could reach the
+    port. This is the statement, per route, that they are not."""
+    status, body = call(server, route, "")
+    assert (status, REFUSAL in body) == (401, True)
+    assert not server.publisher.published
+
+
+@pytest.mark.parametrize("route", GATED, ids=url_for)
+def test_every_gated_route_refuses_an_unknown_token(server, robot, route):
+    assert call(server, route, "not-a-real-token")[0] == 401
+
+
+@pytest.mark.parametrize("route", GATED, ids=url_for)
+def test_every_gated_route_refuses_a_revoked_token(server, robot, route):
+    token = server.registry.new_operator(name="leaver")
+    server.registry.revoke_operator(token)
+    assert call(server, route, token)[0] == 401
+
+
+@pytest.mark.parametrize("route", OPEN, ids=url_for)
+def test_an_open_route_never_asks_for_an_operator_token(server, robot, route):
+    """The carve-outs, read off the table rather than out of prose: /healthz,
+    because a liveness probe that needs a secret is one nobody wires up, and the
+    three robot-facing routes, which carry their own credential (enrollment) or
+    none at all (M4's map exchange, until robots have one).
+
+    An open route may still refuse the request — enrollment without an
+    enrollment token does, and an upload with no bundle in it does — so what is
+    asserted is that it never refuses for want of an *operator*."""
+    status, body = call(server, route, "")
+    assert REFUSAL not in body, f"{route.template} is gated after all"
+    assert status != 403
+
+
+def test_the_table_names_which_routes_are_open(server):
+    """Restated here so that opening a route is a deliberate edit to a test and
+    not a line nobody reads."""
+    assert {(r.method, r.template) for r in OPEN} == {
+        ("GET", "/healthz"),
+        ("POST", "/v1/enroll"),
+        ("POST", "/v1/sites/{site}/floors/{floor}/revisions/{revision}"),
+        ("GET", "/v1/sites/{site}/floors/{floor}/revisions/{revision}/bundle.tar.gz"),
+    }
+
+
+def test_every_route_names_a_handler_that_exists(server):
+    for route in fleet_server.ROUTES:
+        assert callable(getattr(fleet_server.FleetHandler, route.handler))
+
+
+def test_authorization_is_checked_before_the_route_exists(server):
+    """A 404 for an anonymous caller would say which routes are real."""
+    expect_error(lambda: get(server, "/v1/nothing", token=""), 401)
+    expect_error(lambda: post(server, "/v1/nothing", {"schema": protocol.SCHEMA}), 401)
+
+
+def test_a_known_route_with_a_token_is_404_when_it_does_not_exist(server):
+    expect_error(lambda: get(server, "/v1/nothing"), 404)
+
+
+def test_the_static_ui_stays_open(server):
+    """The page has to load in order to ask for a token, and it carries no
+    fleet data until it has one."""
+    status, content_type, body = get_bytes(server, "/index.html", token="")
+    assert status == 200
+    assert content_type.startswith("text/html")
+    assert b"operator token" in body
+
+
+def test_healthz_stays_open(server):
+    status, body = get(server, "/healthz", token="")
+    assert (status, body["ok"]) == (200, True)
+
+
+def test_a_robot_pulls_a_bundle_without_a_credential(server, robot, tmp_path):
+    """The other half of M4's upload: an agent told which revision is canonical
+    has no operator token, and the alternative to this carve-out is a fleet whose
+    maps never reach its robots."""
+    from api_harness import packed_revision, post_bytes
+
+    revision = "20260727T101500"
+    post_bytes(
+        server,
+        f"/v1/sites/home/floors/ground/revisions/{revision}?robot_id={robot}",
+        packed_revision(tmp_path),
+    )
+    status, content_type, blob = get_bytes(
+        server,
+        f"/v1/sites/home/floors/ground/revisions/{revision}/bundle.tar.gz",
+        token="",
+    )
+    assert (status, content_type) == (200, "application/gzip")
+    assert blob
+
+
+# ---- what the route table matches ------------------------------------------
+
+
+def test_a_path_variable_never_swallows_a_separator():
+    """Matching is on the raw path, so an escaped separator stays inside one
+    segment and is refused by name validation rather than becoming two
+    components."""
+    route, variables = fleet_server.match_route("GET", "/v1/zones/..%2F..%2Fetc/ground")
+    assert route.handler == "_vocabulary"
+    assert variables["site"] == "..%2F..%2Fetc"
+
+
+def test_a_literal_segment_wins_over_a_variable_one():
+    """``bundle.tar.gz`` is the robot's route and the review leaves are the
+    operator's; they differ in one segment and in what they cost to reach."""
+    pull, _ = fleet_server.match_route(
+        "GET", "/v1/sites/home/floors/ground/revisions/r1/bundle.tar.gz"
+    )
+    review, _ = fleet_server.match_route(
+        "GET", "/v1/sites/home/floors/ground/revisions/r1/map.png"
+    )
+    assert (pull.handler, pull.auth) == ("_bundle", fleet_server.ROBOT)
+    assert (review.handler, review.auth) == ("_revision", fleet_server.OPERATOR)
+
+
+def test_a_method_is_part_of_the_match():
+    """The same path uploads under POST and is not readable under GET."""
+    path = "/v1/sites/home/floors/ground/revisions/r1"
+    assert fleet_server.match_route("POST", path)[0].handler == "_upload"
+    assert fleet_server.match_route("GET", path)[0] is None

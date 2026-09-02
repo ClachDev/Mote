@@ -88,8 +88,15 @@ runcmd:
 
   # 3. The software. Until the prefix.dev channel ships a robot package (M5),
   #    this is the same source checkout + pixi build the robot runs today.
+  #
+  #    `install --locked` before the build: it aborts if pixi.lock is out of
+  #    date with pixi.toml rather than solving something new, and every package
+  #    in that lockfile is pinned by sha256. So the robot installs the dependency
+  #    set that was tested — a silent re-solve on a machine nobody is watching is
+  #    what this forbids.
   - [bash, -c, "sudo -u @USER@ -H bash -lc 'curl -fsSL https://pixi.sh/install.sh | bash'"]
   - [bash, -c, "sudo -u @USER@ -H bash -lc 'git clone @REPO@ ~/Mote'"]
+  - [bash, -c, "sudo -u @USER@ -H bash -lc 'cd ~/Mote && ~/.pixi/bin/pixi install --locked'"]
   - [bash, -c, "sudo -u @USER@ -H bash -lc 'cd ~/Mote && ~/.pixi/bin/pixi run build'"]
 
   # 4. Host-level setup the package cannot carry: udev rules, wifi power save,

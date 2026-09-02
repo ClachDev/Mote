@@ -103,6 +103,14 @@ dependency than 200 lines that are tested.
 authorizes an operator token and writes an audit row first. The read path is
 unchanged and goes straight to the broker.
 
+**Every `/v1` route needs that token**, not only the writes, and one gate in
+front of routing takes it — so a route added later is authenticated by default
+and an anonymous caller gets `401` rather than a `404` that would say which
+routes exist. `fleet_server.ROUTES` is the table it matches against and the table
+the tests walk. Four routes are open, each for a stated reason: `/healthz`, the
+static UI, enrollment, and the two robot-facing map routes, which carry no
+credential because robots have none to carry yet. The broker is still anonymous.
+
 **What is dispatched is a capability and a typed input**, and the server
 validates neither: the capability that declared the `input_schema` runs on the
 robot, so a copy on the server would be a second contract to keep in step *and*

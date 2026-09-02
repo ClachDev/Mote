@@ -112,7 +112,7 @@ Milestone M2 of `docs/design/fleet.md`; the operator flow is `docs/fleet/README.
 
 ## Fleet: the operator view + dispatch API (M3)
 
-Milestone M3 of `docs/design/fleet.md`, and the end of v0. The **HTTP** wire is specified as its own versioned contract in **`docs/fleet/fleet-api.md`** (M1's MQTT one is `control-plane.md`); the operator flow is `docs/fleet/README.md` §6–9 and the measurements are `m3-verification.md`. **The two directions of the loop take different paths on purpose.** *Reads* ride MQTT: the browser subscribes to `mote/v2/+/{presence,health,pose,capabilities,mission/status}` over WebSockets, and because all of those are retained it has the whole fleet's state within a second of loading — no polling, no service in the middle. *Writes* ride HTTP: `POST /v1/robots/<id>/dispatch` authorizes an operator token (`fleetctl operator new --name <you>`; the name is what the audit row records), writes the audit row, then publishes to the same `mission/command` topic. **The topic tree did not change — only who publishes to it**, and `fleetctl dispatch` moved to the API too, so there is one write path rather than one per client. The mission's `input` is validated only by the robot, against the schema its own capability declared: a copy in the server would be a second contract to keep in step, and it would refuse missions a newer robot understands. **The browser cannot publish**: `server/ui/mqtt.mjs` is a hand-rolled subscribe-only MQTT 3.1.1 client that implements no PUBLISH packet, so the split is enforced by omission (M7 makes it structural with a subscribe-only broker credential). The UI is static ES modules — no bundler, no npm, no vendored library — served by the same stdlib `http.server`; `map.mjs` holds the Q5 world→pixel transform (`px = (wx-origin_x)/res`, `py = height - (wy-origin_y)/res`) and a pan/zoom/follow canvas, and only draws robots on the *same* site+floor as the selected one because a pose from another floor is a different map frame. **Basemaps come from site bundles on the fleet box** (`--maps-dir`, default `$MOTE_FLEET_HOME/sites`, the layout `sites.py` writes, seeded by rsync until **M4** makes the registry canonical behind the same two routes). **M1's websockets blocker is settled**: `pixi run fleet-broker` runs `eclipse-mosquitto` under docker with the repo's own `mosquitto.conf`, because conda-forge's build has none; `pixi run -e fleet fleet-broker-local` is the conda binary for a box without docker, and it strips the WS stanza and says so. Two things that run in the same file (`test_ui.py` → `ui_test.mjs`) are the MQTT codec and the transform, tested under node against the very files the browser loads; `browser_check.mjs` drives a real headless Chrome over CDP against a running stack and is an operator's tool, not a CI test — `pixi run fleet-ui-check` is that stack in one command (broker on ephemeral ports, server, a temp `MOTE_FLEET_HOME`, the sim's `office_world` bundle as the basemap, and `test/fake_robots.py`, which publishes `protocol.py` and `spec/` payloads, imports `mote_tasks`' own capability set rather than writing one, and is *not* a second robot implementation), torn down afterwards; `-- --keep` leaves it up for UI work. It stays out of CI because it needs docker (conda's mosquitto still has no websockets) *and* a chrome, which the arm runner has not — the decision, and what wiring it in would take, are recorded in `m3-verification.md` §2 rather than left looking like coverage. **A fourth pane, `review`, is where a candidate map is looked at and promoted** (`server/ui/review.mjs`; routes and rationale under the map registry below). It is a *mode*, not a column: opening it stands the operations panes down at every width, because two canvases — one canonical with robots on it, one a candidate without — is the confusion a dedicated view exists to remove. **The phone is the realistic off-LAN client**, so below 760 px the panes become one at a time behind a bottom tab bar (`server/ui/layout.mjs`), selecting a robot in the roster navigates to the map — what the desktop layout gets for free by showing both — and the canvas gained pinch-to-zoom (`pinchSpan`/`pinchUpdate` in `map.mjs`, pure and tested, because a division by a zero span puts NaN in the view scale and blanks the map for good) plus a fingertip-sized hit target. The breakpoint is a **silent** seam — CSS decides what is displayed, JS decides when a selection navigates, and disagreement yields a tab bar over stacked panes rather than an error — so it lives in `layout.mjs` and `ui_test.mjs` reads the stylesheet and holds it there, as it does for every pane having a tab and for `touch-action: none` on the canvas (without which the browser eats the drag and the pinch before a single pointer event arrives). Dispatch's form is **generated from the robot's own capability set** (retained on the broker): a select of the keys it offers, one field per input property, and a **zone picker** exactly where a property's schema `$ref`s zone/v0's zone reference — so the page holds no list of capabilities and no list of which inputs are places, and a keyboard is needed only where the schema really wants free text. Three pre-existing bugs fell out, all of which a desk hides: `hidden` does not hide an element whose class sets `display` (the empty promote picker), the canvas backing store was resized on width alone so a height change left the previous frame's scale bar under the new one, and the scale bar was drawn in the dark theme's near-white on a white basemap — a canvas gets no cascade, so it now reads `--dim` off the element. Measurements, including `browser_check.mjs`'s phone pass, are `m3-verification.md` §9; **a real device is still the acceptance** — emulation gets the viewport and the touch points right and the thumb wrong.
+Milestone M3 of `docs/design/fleet.md`, and the end of v0. The **HTTP** wire is specified as its own versioned contract in **`docs/fleet/fleet-api.md`** (M1's MQTT one is `control-plane.md`); the operator flow is `docs/fleet/README.md` §6–9 and the measurements are `m3-verification.md`. **The two directions of the loop take different paths on purpose.** *Reads* ride MQTT: the browser subscribes to `mote/v2/+/{presence,health,pose,capabilities,mission/status}` over WebSockets, and because all of those are retained it has the whole fleet's state within a second of loading — no polling, no service in the middle. *Writes* ride HTTP: `POST /v1/robots/<id>/dispatch` authorizes an operator token (`fleetctl operator new --name <you>`; the name is what the audit row records), writes the audit row, then publishes to the same `mission/command` topic. **The topic tree did not change — only who publishes to it**, and `fleetctl dispatch` moved to the API too, so there is one write path rather than one per client. The mission's `input` is validated only by the robot, against the schema its own capability declared: a copy in the server would be a second contract to keep in step, and it would refuse missions a newer robot understands. **The browser cannot publish**: `server/ui/mqtt.mjs` is a hand-rolled subscribe-only MQTT 3.1.1 client that implements no PUBLISH packet, so the split is enforced by omission (a subscribe-only broker credential would make it structural, and waits on the broker having credentials at all). The UI is static ES modules — no bundler, no npm, no vendored library — served by the same stdlib `http.server`; `map.mjs` holds the Q5 world→pixel transform (`px = (wx-origin_x)/res`, `py = height - (wy-origin_y)/res`) and a pan/zoom/follow canvas, and only draws robots on the *same* site+floor as the selected one because a pose from another floor is a different map frame. **Basemaps come from site bundles on the fleet box** (`--maps-dir`, default `$MOTE_FLEET_HOME/sites`, the layout `sites.py` writes, seeded by rsync until **M4** makes the registry canonical behind the same two routes). **M1's websockets blocker is settled**: `pixi run fleet-broker` runs `eclipse-mosquitto` under docker with the repo's own `mosquitto.conf`, because conda-forge's build has none; `pixi run -e fleet fleet-broker-local` is the conda binary for a box without docker, and it strips the WS stanza and says so. Two things that run in the same file (`test_ui.py` → `ui_test.mjs`) are the MQTT codec and the transform, tested under node against the very files the browser loads; `browser_check.mjs` drives a real headless Chrome over CDP against a running stack and is an operator's tool, not a CI test — `pixi run fleet-ui-check` is that stack in one command (broker on ephemeral ports, server, a temp `MOTE_FLEET_HOME`, the sim's `office_world` bundle as the basemap, and `test/fake_robots.py`, which publishes `protocol.py` and `spec/` payloads, imports `mote_tasks`' own capability set rather than writing one, and is *not* a second robot implementation), torn down afterwards; `-- --keep` leaves it up for UI work. It stays out of CI because it needs docker (conda's mosquitto still has no websockets) *and* a chrome, which the arm runner has not — the decision, and what wiring it in would take, are recorded in `m3-verification.md` §2 rather than left looking like coverage. **A fourth pane, `review`, is where a candidate map is looked at and promoted** (`server/ui/review.mjs`; routes and rationale under the map registry below). It is a *mode*, not a column: opening it stands the operations panes down at every width, because two canvases — one canonical with robots on it, one a candidate without — is the confusion a dedicated view exists to remove. **The phone is the realistic off-LAN client**, so below 760 px the panes become one at a time behind a bottom tab bar (`server/ui/layout.mjs`), selecting a robot in the roster navigates to the map — what the desktop layout gets for free by showing both — and the canvas gained pinch-to-zoom (`pinchSpan`/`pinchUpdate` in `map.mjs`, pure and tested, because a division by a zero span puts NaN in the view scale and blanks the map for good) plus a fingertip-sized hit target. The breakpoint is a **silent** seam — CSS decides what is displayed, JS decides when a selection navigates, and disagreement yields a tab bar over stacked panes rather than an error — so it lives in `layout.mjs` and `ui_test.mjs` reads the stylesheet and holds it there, as it does for every pane having a tab and for `touch-action: none` on the canvas (without which the browser eats the drag and the pinch before a single pointer event arrives). Dispatch's form is **generated from the robot's own capability set** (retained on the broker): a select of the keys it offers, one field per input property, and a **zone picker** exactly where a property's schema `$ref`s zone/v0's zone reference — so the page holds no list of capabilities and no list of which inputs are places, and a keyboard is needed only where the schema really wants free text. Three pre-existing bugs fell out, all of which a desk hides: `hidden` does not hide an element whose class sets `display` (the empty promote picker), the canvas backing store was resized on width alone so a height change left the previous frame's scale bar under the new one, and the scale bar was drawn in the dark theme's near-white on a white basemap — a canvas gets no cascade, so it now reads `--dim` off the element. Measurements, including `browser_check.mjs`'s phone pass, are `m3-verification.md` §9; **a real device is still the acceptance** — emulation gets the viewport and the touch points right and the thumb wrong.
 
 ## Fleet: the map registry (M4)
 
@@ -162,7 +162,7 @@ floor, which is the practical dividend of the zone/v0 split. Three deliberate co
 the flip and the announcement are reported separately (a broker that is down must
 not half-promote a floor; the server re-announces every floor at startup, which
 repairs it), an **upload carries no operator credential** — it names an enrolled
-robot, is bounded and audited, and is inert until M7 gives robots a credential —
+robot, is bounded and audited, and is inert until robots have a credential —
 and a pulled map takes effect on the **next bringup**, since `map_server` reads
 its map at startup, so health now carries the revision each robot is actually
 running. M3's `/v1/maps` routes kept their shape and changed source; the
@@ -561,6 +561,77 @@ the legacy `navigable` seed), `mote_tasks/zones.py` (`Zone`, `resolve`,
 Gazetteer" design), `docs/fleet/fleet-api.md` §the zone vocabulary. **The
 specification's own `spec/zone/v0/README.md` is not in this repo** and still
 describes the seven-field vocabulary; a successor revision there is outstanding.
+
+## Fleet: the API auth gate, the tailnet policy, locked installs (M7, part)
+
+The cheap half of M7 of `docs/design/fleet.md`: the API's own credential, the
+network's own rules, and a reproducible install. The broker half — per-robot and
+per-operator broker credentials and the ACL that keeps the three principals
+apart — is deliberately **not** here and is parked behind M6, so the broker is
+still anonymous and `fleetctl watch` and the dashboard's read path still connect
+to it without a credential.
+
+**One gate in front of `/v1` routing, and it is the route table that dispatches.**
+Through M3 only `dispatch` and `audit` checked a token, which left the roster,
+the basemaps, the zone vocabularies, the registry and the broker's address
+readable by anything that could reach the port. `fleet_server.ROUTES` is now the
+list of every path the server answers — method, path template, handler and the
+credential it costs — and `_handle` matches against it, takes the credential and
+only then calls the handler. Three consequences, all of them the reason for the
+table rather than a chain of `elif`s. A route added later is **authenticated by
+default**, and has to opt out in the same line that declares it. An anonymous
+caller is refused **before the table is consulted for existence**, so a 404 can
+never say which routes are real. And the acceptance is a test that *walks the
+table* (`test_fleet_server.py`, `SAMPLES` filling the path variables) rather than
+a hand-kept list of routes that goes stale the first time one is added — a route
+with a new path variable fails it with a `KeyError`, which is the intended way to
+be told.
+
+**Four table entries are open, plus the static UI, each for a stated reason.**
+`/healthz`, because a liveness probe that needs a secret is a liveness probe
+nobody wires up. The static UI — not a route at all, but what an unmatched GET
+falls through to — because the page has to load in order to ask for a token.
+`POST /v1/enroll`, because it carries its own enrollment token and an unattended
+first boot has no human behind it. And **both halves of M4's map exchange** —
+the robot's upload and the robot's `bundle.tar.gz` pull — because robots have no
+credential to present and gating the pull would mean a fleet whose maps never
+reach its robots. The pull is the carve-out M7's own branch did not have to make:
+it was written before M4 existed. The upload was already inert by M4's design;
+the pull serves only what an operator has already promoted.
+
+**The dashboard has two states, signed in or asking to be.** `/v1/config` is
+operator-only like every other route, so there is no read-only mode left to fall
+back to and `app.mjs`'s boot is now `start()`: no token means the gate, a token
+that stops working means the gate again, and pasting one starts everything with
+no reload. Two things fell out. The basemap is fetched **with the token and
+decoded from a blob** (`loadImage`, injected into the review pane exactly as
+`api` is), because `<img src>` carries no `Authorization` header and gating
+`map.png` otherwise blanks both canvases. And the dispatch note stopped being
+overwritten: one line carried both what the selected capability does and what the
+last dispatch did, so any re-render replaced the outcome the operator had just
+read — the summary is now written when the *selection* changes, keyed on robot
+and capability. `fleetctl`'s `robots` and `sites` verbs needed the token too, for
+the same reason: they read routes that used to be open.
+
+**The tailnet policy is a committed file**, `mote_bringup/tailscale/policy.hujson`,
+pasted into the admin console by the operator (`docs/fleet/README.md` §1a). It
+carries its own `tests` block asserting that **no robot can reach another robot**,
+and Tailscale refuses to save a policy that fails it — so the acceptance is
+checked by the thing enforcing it rather than by a person reading the rules.
+`test_tailnet_roles.py` adds what the console cannot: that the file still parses,
+and that every tag `install.sh` can advertise is one the policy declares (an
+undeclared tag fails `tailscale up` with "requested tags are invalid or not
+permitted", which is a robot stopped by a file it never reads).
+
+**Provisioning installs from the lockfile.** `pixi install --locked` before
+`pixi run build` in `provisioning/user-data.template`: it aborts if `pixi.lock`
+is out of date with `pixi.toml` rather than solving something new, and every
+package in that lockfile is pinned by sha256. A silent re-solve on a robot nobody
+is watching is what this forbids.
+
+The M3 `[hidden]` defect this milestone's branch also carried is **already fixed
+on main** — `style.css` has the `[hidden] { display: none !important }` rule with
+its own note — so nothing was ported for it.
 
 ## Fleet: the server pipelines (Ms)
 

@@ -44,13 +44,20 @@ Status codes are part of the contract: a client may switch on them.
 
 ## Authentication
 
+**Every `/v1` route needs an operator token except those named below.** The
+check is one gate in front of route dispatch, not a line in each handler, so a
+route added later is authenticated by default and has to opt out in a place a
+reviewer reads. An anonymous caller is refused *before* the route table is
+consulted for existence: an unknown path answers `401`, never a `404` that would
+say which routes are real.
+
 | Route | Credential |
 |---|---|
-| `POST /v1/enroll` | an **enrollment token** in the body (single-use by default) |
-| `POST /v1/robots/<id>/dispatch`, `GET /v1/audit` | an **operator token** as `Authorization: Bearer <token>` |
-| `POST …/revisions/<rev>/promote` | an **operator token** |
-| `POST …/revisions/<rev>` (map upload) | none, but the `robot_id` must be enrolled — see [the registry](#the-map-registry-m4) |
-| everything else | none — see the security note below |
+| everything under `/v1` | an **operator token** as `Authorization: Bearer <token>` |
+| `GET /healthz` | none — a liveness probe that needs a secret is one nobody wires up |
+| the static UI (`/`, `/*.mjs`, …) | none — the page has to load in order to ask for a token, and holds no fleet data until it has one |
+| `POST /v1/enroll` | an **enrollment token** in the body (single-use by default) — a robot is not an operator, and an unattended first boot has no human behind it |
+| `POST …/revisions/<rev>` (map upload) and `GET …/revisions/<rev>/bundle.tar.gz` (pull) | none, but an upload's `robot_id` must be enrolled — see [the registry](#the-map-registry-m4) |
 
 Operator tokens are minted on the fleet box, against the registry file, never
 over the network:
@@ -67,13 +74,22 @@ is refused. Revocation keeps the row: who *had* access is part of the record.
 Bearer header only — never a query parameter, which would put the credential in
 every access log between here and the browser.
 
-**Security posture, plainly.** The read routes are unauthenticated and the
-broker is anonymous, exactly as M1 left them. M3 adds a credential on the
-*write* path and a record of who used it, which is the milestone's brief; it is
-proportionate only while the tailnet is the boundary. M7 adds operator auth on
-the read routes, per-robot broker credentials, and the Tailscale ACLs. Until
-then, do not expose this port to a network the robots are not already trusted
-on.
+**The two robot routes are the carve-out that costs something, and it is
+deliberate.** M4's rule is that uploading is not publishing: a candidate changes
+nothing about any floor until an operator promotes it, so the upload is bounded,
+audited and inert, and the pull serves only what an operator has already
+promoted. The alternative today is a credential robots do not have — issuing one
+at enrollment is its own piece of work, and until it lands these two routes are
+what the tailnet protects rather than what the API does.
+
+**Security posture, plainly.** The API needs a credential everywhere; the broker
+is still anonymous, so the dashboard's MQTT read path is open to anything on the
+tailnet that can reach port 9001. The write path is not: the browser's MQTT
+client implements no PUBLISH packet, and every write to `mission/command` goes
+through `POST …/dispatch` here. The outer boundary is the tailnet
+(`mote_bringup/tailscale/policy.hujson`), which is what keeps this port off the
+public internet. Do not expose it to a network the robots are not already
+trusted on.
 
 ---
 
@@ -462,8 +478,8 @@ grey rectangle, which is what a mapping run that never got going looks like.
 **Why this route has no credential.** Everything it can do is inert: a candidate
 changes no floor, is bounded in size and count, and is recorded in the audit log
 against the robot that sent it. The write that *does* change something —
-promote — is the operator's. M7 replaces the `robot_id` check with a per-robot
-credential.
+promote — is the operator's. Replacing the `robot_id` check with a per-robot
+credential waits on robots having one to present.
 
 ### `POST /v1/sites/<site>/floors/<floor>/revisions/<rev>/promote`
 
@@ -540,8 +556,8 @@ split: these are still coordinates, still served under a path bound to a
 basemap, and still never over `/v1/zones`. Naming a revision is naming a map
 frame.
 
-All three are reads, so like every other read route they take no operator token;
-M7 changes that for all of them at once.
+All three are reads, and like every other `/v1` route they need an operator
+token.
 
 ### `POST /v1/sites/<site>/floors/<floor>/zones`
 
@@ -624,8 +640,15 @@ The dashboard holds an operator token for this API and **no broker credential at
 all that can publish**. The read path connects to the broker's WebSocket
 listener with a client that implements no PUBLISH packet
 ([`ui/mqtt.mjs`](../../mote_fleet/server/ui/mqtt.mjs)) — the split is enforced by
-omission, not by intention. M7 makes that structural on the broker side too,
-with a subscribe-only credential.
+omission, not by intention. A subscribe-only broker credential would make it
+structural on the broker's side too, and waits on the broker having credentials
+at all.
+
+**The token is what the page is built out of.** `/v1/config` is operator-only
+like every other route, so there is no read-only mode to fall back to: the
+dashboard has two states, signed in or asking to be. Pasting a token starts
+everything without a reload, and a token that stops working puts the page back at
+the gate rather than into a half-state showing stale rows.
 
 **Reviewing a candidate is all GETs.** The review pane reads a revision's
 `map.json`, `map.png` and `zones.json`; the two writes beside them are the

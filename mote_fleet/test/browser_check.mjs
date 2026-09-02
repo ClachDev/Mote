@@ -592,9 +592,14 @@ try {
       const label = document.getElementById('review-map-label').textContent;
       const [floor, revision] = label.split(' · ');
       const base = '/v1/sites/' + floor.replace('/', '/floors/') + '/revisions/' + revision;
+      // Every /v1 route needs the operator token, this one included: reading it
+      // back out of the page's own storage is what the page does.
+      const headers = {
+        Authorization: 'Bearer ' + localStorage.getItem('mote.operator.token'),
+      };
       const [map, zones] = await Promise.all([
-        fetch(base + '/map.json').then(r => r.json()),
-        fetch(base + '/zones.json').then(r => r.json()),
+        fetch(base + '/map.json', { headers }).then(r => r.json()),
+        fetch(base + '/zones.json', { headers }).then(r => r.json()),
       ]);
       const centred = (value, origin) => {
         const cells = (value - origin) / map.resolution - 0.5;
@@ -1047,6 +1052,44 @@ try {
   const phonePng = await session.send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(phoneShot, Buffer.from(phonePng.data, 'base64'));
   console.log(`screenshot: ${phoneShot}`);
+
+  // -- the gate -----------------------------------------------------------
+  //
+  // Every /v1 route needs an operator token, `/v1/config` included, so there is
+  // no read-only mode to fall back to: without a credential the page asks for
+  // one. Last, because it takes the token away.
+  if (token) {
+    await session.evaluate(`localStorage.removeItem('mote.operator.token')`);
+    await session.send('Page.navigate', { url });
+    const gate = await settle(
+      session,
+      `JSON.stringify({
+        operator: (document.querySelector('.operator') || {}).textContent || '',
+        roster: (document.getElementById('roster') || {}).textContent || '',
+        robots: document.querySelectorAll('.robot-id').length,
+      })`,
+      (json) => JSON.parse(json).operator.includes('operator token'),
+    );
+    const state = JSON.parse(gate);
+    check(
+      'without a token the page asks for one and shows no fleet',
+      state.roster.includes('operator token') && state.robots === 0,
+      gate,
+    );
+
+    // And pasting one starts everything, with no reload — which is what makes
+    // the gate a state of the page rather than an error page.
+    await session.evaluate(`(() => {
+      document.getElementById('token').value = '${token}';
+      document.getElementById('token-form').requestSubmit();
+    })()`);
+    const signedIn = await settle(
+      session,
+      `[...document.querySelectorAll('.robot-id')].map(n => n.textContent).join(',')`,
+      (ids) => ids.includes('mote-01'),
+    );
+    check('pasting a token signs the page in without a reload', signedIn.includes('mote-01'), signedIn);
+  }
 
   const errors = await session.evaluate(`window.__errors ? window.__errors.length : 0`);
   check('no uncaught page errors', errors === 0, String(errors));
