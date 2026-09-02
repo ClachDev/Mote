@@ -26,6 +26,7 @@ pixi run arm            # SO-101 arm: bench control stack (ros2_control, no miss
 pixi run arm-jog        # Interactive per-joint jog CLI (needs a stack owning the bus)
 pixi run arm-check      # Standalone arm bus enumeration + health (read-only, base stopped)
 pixi run arm-calibrate  # Range calibration: centre the joints, sweep, emit limits
+pixi run arm-limits     # Servo goal-range fence (EEPROM 9/11): show / clear / restore
 pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
 pixi run arm-teleop     # Virtual-leader teleop: keyboard -> leader pose (mote_arm/TELEOP.md)
 pixi run arm-mirror     # Mirror: leader pose -> clamped, rate-limited arm_controller goals
@@ -819,6 +820,28 @@ section. Contains:
   way back. **Servos can
   arrive with non-zero offsets** (this arm: 2027, -1723, 1772, -1706, -40,
   1317), so the existing value is always read and folded in.
+- `arm_limits` (`pixi run arm-limits show|clear|restore`) — **a fourth place a
+  limit can live, and the only one not in a file.** EEPROM registers 9 and 11
+  (`Min_Angle_Limit`/`Max_Angle_Limit`) fence which goals a servo accepts and
+  refuse the rest **in silence**: no error, no status bit, no log line, so the
+  joint stops at the same angle every time, in one direction, at any load —
+  indistinguishable from running out of torque. This arm arrived with five of
+  six joints fenced *inside their own travel*, and it presented as teleop being
+  "stuttery and not going its full range": `shoulder_lift` stopped at -0.865 rad
+  against a configured -1.7785, at 0% load, with the command running 0.8 rad
+  past it, and its `Min_Angle_Limit` read 1478 = -0.874 rad about zero 2048.
+  Two properties hid it. The fence binds **only under torque**, so
+  `arm-calibrate` sweeps a limp joint straight through it and measures travel
+  the arm will then refuse — the calibration and the arm disagree and only the
+  arm is wrong. And the band is compared against the **corrected** goal, so
+  moving a zero moves what it fences without changing any number a person can
+  read. `arm-calibrate` therefore clears the fence in phase 2 *before* it writes
+  an offset, snapshotting the as-found bands to `~/.mote/arm_limits_backup.yaml`
+  first; `arm-check` reports the band beside the configured one. **Cleared, not
+  narrowed to match**: the guard is the soft limit in `$MOTE_HOME/arm.yaml`,
+  enforced by `MoteHardware::clamp_rad` and `teleop.py`, which is versioned and
+  printed by three commands — a second copy in EEPROM adds nothing until the two
+  disagree, and then it wins invisibly. Hence no `arm-limits set`.
 - **Reads on this bus are hazardous twice over, and `FeetechBus._read` is the
   single choke point for both.** It clears the input buffer before every read,
   because a late reply is otherwise consumed as the answer to the *next*

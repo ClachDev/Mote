@@ -59,9 +59,10 @@ def _report_angle_limits(limits: list) -> None:
         )
     if problems:
         print(
-            f"\n{', '.join(problems)}: the servo will refuse goals outside its own "
-            "band, so the joint stops there whatever robot.yaml and arm.yaml say. "
-            "Widen the register or narrow the configured limits to match."
+            f"\n{', '.join(problems)}: the servo refuses goals outside its own "
+            "band, silently, so the joint stops there whatever robot.yaml and "
+            "arm.yaml say. `pixi run arm-limits clear` hands the whole range "
+            "back; `pixi run arm-limits show` says what is there now."
         )
 
 

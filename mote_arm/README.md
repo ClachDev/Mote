@@ -357,6 +357,54 @@ unless a driver was killed outright, which is detected by reading the torque
 register), and the result is saved without asking, since saving it is what the
 command is for.
 
+### The servo's own goal-range limits, which are not the soft limits
+
+There is a fourth place a limit can live, and it is the only one that is not in
+a file. EEPROM registers 9 and 11 (`Min_Angle_Limit` / `Max_Angle_Limit`) fence
+which goal positions a servo will accept. A goal outside the band is **refused
+in silence**: no error, no status bit, no log line. The joint stops at the same
+angle every time, in one direction only, whatever the load — which is precisely
+what running out of torque looks like.
+
+This arm arrived with five of six joints fenced inside their own travel, and it
+cost an evening. `shoulder_lift` stopped dead at −0.865 rad against a
+configured −1.7785, at 0% load, while the commanded position ran 0.8 rad past
+it. Its `Min_Angle_Limit` read **1478**, and 1478 counts is −0.874 rad about a
+zero of 2048:
+
+```
+joint            id    min   max   accepts (rad)      configured
+shoulder_pan      1   1123  3079   -1.419 .. +1.582   -2.033 .. +2.033
+shoulder_lift     2   1478  3859   -0.874 .. +2.778   -1.778 .. +1.778
+elbow_flex        3    716  2941   -2.043 .. +1.370   -1.646 .. +1.646
+wrist_flex        4    709  3075   -2.054 .. +1.575   -1.761 .. +1.761
+wrist_roll        5      0   4095  -3.142 .. +3.140   -2.880 .. +2.880
+gripper           6   2047  3510   -0.002 .. +2.243   -1.073 .. +1.073
+```
+
+Two properties made it hard to see. The fence only binds under torque, so
+`arm-calibrate` sweeps straight through it by hand and measures the full travel
+— the calibration and the arm disagree, and only the arm is wrong. And the band
+is compared against the *corrected* goal, so re-centring a zero moves what it
+fences without changing a number anyone can read.
+
+```
+pixi run arm-limits show      # read-only: the band, in counts and radians
+pixi run arm-limits clear     # hand every joint its whole 0-4095 range back
+pixi run arm-limits restore   # write the as-found bands back
+```
+
+`arm-calibrate` now clears them as part of phase 2, before it writes an offset,
+and backs the as-found values up to `$MOTE_HOME/arm_limits_backup.yaml` first —
+they exist nowhere else. `arm-check` reports the band beside the configured one.
+
+**Cleared, not narrowed to match.** The guard that matters is the soft limit in
+`$MOTE_HOME/arm.yaml`, enforced by `MoteHardware::clamp_rad` and by `teleop.py`:
+it is versioned, testable, and printed by three commands. A second copy in
+EEPROM adds nothing until the day the two disagree, and then it wins invisibly.
+So there is no `arm-limits set`; a narrower envelope belongs in `arm.yaml`,
+where `arm-pose limits` already puts one.
+
 ### Named poses, and narrowing the envelope
 
 The base layer captures a map position by driving there and running

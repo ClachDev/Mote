@@ -375,6 +375,34 @@ class FeetechBus:
             time.sleep(0.1)
         return None
 
+    def write_angle_limits(self, servo_id: int, low: int, high: int) -> bool:
+        """Write the goal-range registers to EEPROM and verify they took.
+
+        ``low``/``high`` are raw counts in the same frame as a goal position, so
+        0 and 4095 hand the joint its whole single-turn range back. Returns True
+        only once a confirmed read-back matches, for the reason
+        ``write_homing_offset`` does: this is persistent servo config with no
+        copy anywhere else, and reporting an unverified write would leave the
+        arm silently capped.
+        """
+        if not 0 <= low <= high <= COUNTS_PER_TURN - 1:
+            raise ValueError(
+                f"angle limits {low}..{high} outside 0..{COUNTS_PER_TURN - 1}"
+            )
+        for _ in range(4):
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 0)
+            time.sleep(0.05)
+            self._packet.write2ByteTxRx(self._port, servo_id, _MIN_ANGLE_LIMIT, low)
+            time.sleep(0.05)
+            self._packet.write2ByteTxRx(self._port, servo_id, _MAX_ANGLE_LIMIT, high)
+            time.sleep(0.05)
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 1)
+            # The read-back races the relock; give the servo time to settle.
+            time.sleep(0.15)
+            if self.read_angle_limits(servo_id) == (low, high):
+                return True
+        return False
+
     def _read_gain_reg(self, servo_id: int, addr: int) -> int | None:
         return self._read(1, servo_id, addr)
 

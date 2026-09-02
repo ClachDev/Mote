@@ -588,3 +588,49 @@ def load_offsets_backup(path: Path | str | None = None) -> dict[str, int]:
         str(name): int(entry["offset"])
         for name, entry in (data.get("offsets") or {}).items()
     }
+
+
+def limits_backup_path() -> Path:
+    return mote_home() / "arm_limits_backup.yaml"
+
+
+def save_limits_backup(
+    limits: dict[str, tuple[int, int]],
+    ids: dict[str, int],
+    when: str,
+    path: Path | str | None = None,
+) -> Path:
+    """Record the goal-range registers as found, *before* any are overwritten.
+
+    Same rule as ``save_offsets_backup``, for the same reason: registers 9 and
+    11 live only in the servo. This arm arrived with five of six joints fenced
+    to a band narrower than their travel, which nothing here had ever read, so
+    the value being overwritten may be the only record of how a servo shipped.
+    """
+    p = Path(path) if path is not None else limits_backup_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "saved": when,
+                "limits": {
+                    name: {"id": ids[name], "min": int(low), "max": int(high)}
+                    for name, (low, high) in sorted(limits.items())
+                },
+            },
+            sort_keys=True,
+        )
+    )
+    return p
+
+
+def load_limits_backup(path: Path | str | None = None) -> dict[str, tuple[int, int]]:
+    """Return {joint: (min, max)} from the backup, or empty if there is none."""
+    p = Path(path) if path is not None else limits_backup_path()
+    if not p.exists():
+        return {}
+    data = yaml.safe_load(p.read_text()) or {}
+    return {
+        str(name): (int(entry["min"]), int(entry["max"]))
+        for name, entry in (data.get("limits") or {}).items()
+    }

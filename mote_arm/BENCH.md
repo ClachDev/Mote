@@ -182,6 +182,25 @@ its line, so pasting the block never silently reverts a joint to a guess. A join
 whose sweep is unusable also does not get its zero moved — the usable set is
 decided before any EEPROM is touched.
 
+### The goal-range fence
+
+Between phase 1 and phase 2 the run reads registers 9 and 11 on every joint —
+the band of goal positions the servo will accept — and offers to clear any that
+is narrower than the whole 0-4095 range. Say yes. A fence binds only under
+torque, so the sweep you just did went straight through it: the calibration
+about to be written describes travel the arm will then refuse to make, silently,
+stopping at the same angle every time as if it had run out of torque. This arm
+arrived with five of six joints fenced.
+
+The as-found bands are snapshotted to `~/.mote/arm_limits_backup.yaml` before
+the first write, so:
+
+```
+pixi run arm-limits show      # read-only: the band, in counts and radians
+pixi run arm-limits clear     # hand the whole range back, outside a calibration
+pixi run arm-limits restore   # put the as-found bands back
+```
+
 ### The offsets themselves
 
 ```

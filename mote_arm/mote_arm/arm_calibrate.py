@@ -55,7 +55,7 @@ from datetime import datetime, timezone
 
 
 from mote_arm import config, poses
-from mote_arm.bus import BusError, FeetechBus, port_holders
+from mote_arm.bus import COUNTS_PER_TURN, BusError, FeetechBus, port_holders
 from mote_arm.calibrate import (
     DEFAULT_MARGIN,
     CalibrationError,
@@ -68,10 +68,14 @@ from mote_arm.calibrate import (
     limits_from_sweep,
     pose_impact,
     save_calibration,
+    save_limits_backup,
     save_offsets_backup,
     zero_shift,
 )
 from mote_arm.config import RAD_PER_COUNT
+
+# The whole single-turn goal range, which a centred zero assumes it has.
+FULL_RANGE = (0, COUNTS_PER_TURN - 1)
 
 
 def _open_bus(cfg) -> FeetechBus:
@@ -143,6 +147,72 @@ class _LiveTable:
             return
         for line in [self.header, self.columns, *rows]:
             print(line)
+
+
+def _clear_fences(bus, joints, recorders, args) -> None:
+    """Hand every joint the whole 0-4095 goal range back before moving its zero.
+
+    Registers 9 and 11 fence which goals a servo will accept, and a goal outside
+    the band is refused in silence: the joint stops at one angle, in one
+    direction, at any load. This arm arrived with five of six joints fenced
+    inside their own travel, and it read as the shoulder running out of torque.
+
+    Cleared here for two reasons. The band is compared against the *corrected*
+    goal, so re-centring a zero moves what it fences without changing a number
+    anyone can see. And the limits this run is about to emit come from travel
+    swept by hand with torque off, where a fence stops nothing -- so a fence
+    left in place would refuse goals inside the very range being written to
+    arm.yaml. The soft limits stay the guard; they are in a file.
+    """
+    bands = {}
+    for joint in joints:
+        band = bus.read_angle_limits(joint.id)
+        if band is None:
+            raise SystemExit(
+                f"could not read {joint.name}'s goal-range limits. Refusing to "
+                "continue blind -- a fence left in place silently caps the arm "
+                "inside the range this run is about to write."
+            )
+        bands[joint.name] = band
+
+    fenced = {n: b for n, b in bands.items() if b != FULL_RANGE}
+    if not fenced:
+        return
+
+    print("\n=== the servos' own goal-range limits ===")
+    print("These fence which goals a servo accepts and refuse the rest in")
+    print("silence. Clearing them leaves arm.yaml's soft limits as the guard.")
+    print(f"\n{'joint':<16}{'accepts':>13}{'counts swept':>14}{'refused':>9}")
+    for joint in joints:
+        if joint.name not in fenced:
+            continue
+        low, high = fenced[joint.name]
+        swept = recorders[joint.name].result().unwrapped_span
+        print(
+            f"{joint.name:<16}{f'{low}..{high}':>13}{swept:>14}"
+            f"{max(0, swept - (high - low)):>9}"
+        )
+    print("\n'refused' is how many counts of measured travel the servo will not go to.")
+
+    if not _confirm(f"\nclear {len(fenced)} fence(s)? [y/N] ", args.yes):
+        raise SystemExit("aborted; nothing written")
+
+    backup = save_limits_backup(
+        bands,
+        {j.name: j.id for j in joints},
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
+    )
+    print(f"backed up to {backup} (`pixi run arm-limits restore` undoes this)")
+
+    for name in sorted(fenced):
+        joint = next(j for j in joints if j.name == name)
+        if not bus.write_angle_limits(joint.id, *FULL_RANGE):
+            raise SystemExit(
+                f"\nSTOPPED: {name}: goal-range write not verified.\n"
+                f"Put the arm back with `pixi run arm-limits restore` "
+                f"(from {backup}), then investigate before re-running."
+            )
+    print(f"{len(fenced)} fence(s) cleared and confirmed.")
 
 
 def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
@@ -488,6 +558,8 @@ def _run(bus, cfg, selected, args) -> None:
 
     if not usable:
         raise SystemExit("\nno joint produced a usable sweep — nothing to emit")
+
+    _clear_fences(bus, usable, recorders, args)
 
     offsets: dict[str, int] = {}
     calibrated: dict = {}

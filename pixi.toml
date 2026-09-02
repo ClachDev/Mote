@@ -160,6 +160,10 @@ arm-calibrate = "ros2 run mote_arm arm_calibrate"
 # Read/back up/restore the servos' position-correction offsets (EEPROM). The
 # recovery path if a calibration run is interrupted part-way.
 arm-offsets = "ros2 run mote_arm arm_offsets"
+# Read/clear/restore the servos' goal-range limits (EEPROM registers 9 and 11).
+# A goal outside the band is refused silently, so a fenced joint stops at the
+# same angle every time and reads exactly like a joint out of torque.
+arm-limits = "ros2 run mote_arm arm_limits"
 # Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
 arm-gains = "ros2 run mote_arm arm_gains"
 # Virtual-leader teleop (mote_arm/TELEOP.md). No leader arm: the keyboard moves a
