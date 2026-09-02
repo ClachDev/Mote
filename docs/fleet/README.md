@@ -503,7 +503,7 @@ policy in §1a says who may reach which port, and nothing here is exposed to the
 internet. Do not put the broker on a network the robots are not already trusted
 on. Per-robot and per-operator broker credentials are still to come; the shape of
 what changes is in
-[`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
+[`control-plane.md`](control-plane.md#security-posture-and-what-is-still-owed).
 
 ---
 
