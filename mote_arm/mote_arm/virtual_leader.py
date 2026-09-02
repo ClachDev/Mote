@@ -46,6 +46,7 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool
 
 from mote_arm import cli, config, teleop
+from mote_arm.teleop import MirrorLimits
 from mote_arm.mirror import latched
 
 # Key pairs in joint order: the top row raises a joint, the home row lowers it.
@@ -189,12 +190,20 @@ def _driving_line(node: VirtualLeader, names: list[str]) -> str:
         target = node.pose.get(name, now)
         if target in (joint.min_rad, joint.max_rad):
             edge = "min" if target == joint.min_rad else "max"
-            parts.append(f"{name} {now:+.3f}  AT LIMIT ({edge} {target:+.3f})")
+            note = "" if not joint.unreachable else " — but the register edge"
+            note += "" if not joint.unreachable else " bites first, see '?'"
+            parts.append(f"{name} {now:+.3f}  AT LIMIT ({edge} {target:+.3f}){note}")
         else:
-            parts.append(
+            line = (
                 f"{name} {now:+.3f} -> {target:+.3f} "
                 f"[{joint.min_rad:+.3f}, {joint.max_rad:+.3f}]"
             )
+            # The arm is being asked for something it is not doing. Saying so
+            # here is the difference between "why is nothing happening" and
+            # knowing the command is fine and the joint is not moving.
+            if now == now and abs(target - now) > MirrorLimits.max_lag:
+                line += "  NOT FOLLOWING"
+            parts.append(line)
     return "  " + "   ".join(parts)
 
 
@@ -202,10 +211,18 @@ def _help(node: VirtualLeader) -> None:
     _out()
     _out(f"speed {node.speed:.2f} rad/s   deadman {node.key_timeout:.2f} s")
     for pair, joint in zip(KEY_PAIRS, node.cfg.joints):
-        _out(
+        # The reachable band, not the configured one: an angle the 12-bit goal
+        # register cannot express is not a limit you can drive to, it is one the
+        # arm stops at without saying why.
+        line = (
             f"  {pair[0]} / {pair[1]}   {joint.name:<14} "
-            f"limits [{joint.min_rad:+.3f}, {joint.max_rad:+.3f}]"
+            f"limits [{joint.reachable_min:+.3f}, {joint.reachable_max:+.3f}]"
         )
+        if joint.unreachable:
+            line += f"  (narrowed from [{joint.min_rad:+.3f}, {joint.max_rad:+.3f}])"
+        _out(line)
+    for problem in node.cfg.problems:
+        _out(f"  WARNING {problem}")
     _out("  SPACE panic (torque off)   z clear   0 re-sync   [ ] speed")
     _out("  p all joint positions   ? this help   x quit")
 

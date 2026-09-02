@@ -44,12 +44,23 @@ class MirrorLimits:
     # terminal's key-repeat gap, short enough that a released key stops the arm
     # while it is still obviously connected to the key.
     deadman_timeout: float = 0.4
+    # Radians the commanded pose may lead the measured one. A position servo
+    # that cannot reach its target -- gravity on the lifting joint, a hand on
+    # the arm, something in the way -- does not say so; it simply sits there
+    # while the command runs away, straining harder every tick against a target
+    # it will never meet, and every re-seed then snaps the command back. So the
+    # command is not allowed to run away: it waits for the arm. Well above the
+    # 0.01-0.03 rad of ordinary proportional droop, so normal following is
+    # untouched.
+    max_lag: float = 0.15
 
     def __post_init__(self) -> None:
         if self.max_velocity <= 0:
             raise ValueError("max_velocity must be positive")
         if self.deadman_timeout <= 0:
             raise ValueError("deadman_timeout must be positive")
+        if self.max_lag <= 0:
+            raise ValueError("max_lag must be positive")
 
 
 # What the mirror is doing, for logging and for tests to assert on.
@@ -82,6 +93,9 @@ class LeaderMirror:
         # arm's present position: that halts the residual travel towards the
         # last setpoint instead of letting it coast there.
         self._halt_pending = False
+        # Joints whose command is being held back because the arm is not
+        # following. Empty is the normal case.
+        self.stalled: list[str] = []
         self.state = WAITING
 
     @property
@@ -159,15 +173,26 @@ class LeaderMirror:
 
         max_step = self.limits.max_velocity * max(0.0, dt)
         goal: dict[str, float] = {}
+        stalled: list[str] = []
         for name, target in self._leader.items():
             joint = self._joints[name]
             start = self._commanded.get(name, self._measured.get(name))
             if start is None:
                 continue
             stepped = advance(start, joint.clamp_rad(target), max_step)
+            # Never lead the arm by more than max_lag: if it is not following,
+            # the command stops advancing and waits rather than running away.
+            here = self._measured.get(name)
+            if here is not None:
+                stepped = max(
+                    here - self.limits.max_lag, min(here + self.limits.max_lag, stepped)
+                )
+                if abs(stepped - here) >= self.limits.max_lag - 1e-9:
+                    stalled.append(name)
             self._commanded[name] = stepped
             goal[name] = stepped
 
+        self.stalled = sorted(stalled)
         self.state = TRACKING
         return goal or None
 

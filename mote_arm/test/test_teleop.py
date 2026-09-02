@@ -155,3 +155,58 @@ def test_limits_must_be_positive():
         MirrorLimits(max_velocity=0.0)
     with pytest.raises(ValueError):
         MirrorLimits(deadman_timeout=-1.0)
+
+
+def test_the_command_never_runs_away_from_an_arm_that_is_not_moving():
+    """A stalled joint must not be commanded further and further ahead.
+
+    Measured on the real arm: shoulder_lift stopped dead at -0.865 rad while the
+    mirror went on commanding 0.25 rad/s into it, and the lag grew without bound
+    (0.087 -> 0.812 rad over four seconds). The servo cannot report that it has
+    given up, so the only evidence is that the measured pose is not changing.
+    """
+    m = mirror(max_velocity=1.0, max_lag=0.15)
+    m.on_measured({"elbow_flex": 0.0})
+
+    goal = None
+    for i in range(60):  # 3 s of a held key, with the arm never moving
+        now = i * DT
+        m.on_leader({"elbow_flex": 1.0}, now)
+        goal = m.update(now, DT)
+        m.on_measured({"elbow_flex": 0.0})
+
+    assert goal["elbow_flex"] == pytest.approx(0.15)
+    assert m.stalled == ["elbow_flex"]
+
+
+def test_a_following_arm_is_never_reported_as_stalled():
+    m = mirror(max_velocity=1.0, max_lag=0.15)
+    m.on_measured({"elbow_flex": 0.0})
+    for i in range(40):
+        now = i * DT
+        m.on_leader({"elbow_flex": 1.0}, now)
+        goal = m.update(now, DT)
+        # The arm keeps up, trailing by the ordinary droop.
+        m.on_measured({"elbow_flex": goal["elbow_flex"] - 0.02})
+    assert m.stalled == []
+    assert goal["elbow_flex"] > 0.5
+
+
+def test_the_command_resumes_once_the_arm_moves_again():
+    m = mirror(max_velocity=1.0, max_lag=0.15)
+    m.on_measured({"elbow_flex": 0.0})
+    for i in range(40):
+        m.on_leader({"elbow_flex": 1.0}, i * DT)
+        m.update(i * DT, DT)
+    assert m.stalled == ["elbow_flex"]
+
+    # Whatever was holding it lets go and the joint tracks its command again,
+    # trailing by ordinary droop. It cannot overshoot the command on its own —
+    # a position servo goes where it is told and no further.
+    for i in range(10):
+        now = 3.0 + i * DT
+        m.on_measured({"elbow_flex": m.commanded["elbow_flex"] - 0.02})
+        m.on_leader({"elbow_flex": 1.0}, now)
+        goal = m.update(now, DT)
+    assert goal["elbow_flex"] > 0.5
+    assert m.stalled == []

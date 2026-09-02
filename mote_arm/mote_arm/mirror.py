@@ -117,7 +117,10 @@ class Diagnostics:
             parts.append(
                 f"{joint} cmd {cmd_rate:.3f} arm {arm_rate:.3f} rad/s  lag {lag:+.3f} rad"
             )
-        parts.append(self._node.mirror.state)
+        state = self._node.mirror.state
+        if self._node.mirror.stalled:
+            state += " STALLED:" + ",".join(self._node.mirror.stalled)
+        parts.append(state)
         self._node.get_logger().info("diag  " + "  |  ".join(parts))
         self._reset(now)
 
@@ -149,11 +152,15 @@ class ArmMirror(Node):
         self.create_subscription(Bool, "teleop/estop", self._on_estop, latched())
 
         self._reported = None
+        self._stalled = []
         self.diagnostics = (
             Diagnostics(self) if self.get_parameter("diagnose").value else None
         )
         self._estop_requested = False
         self.period = 1.0 / max(1.0, self.get_parameter("rate").value)
+
+        for problem in self.cfg.problems:
+            self.get_logger().warn(problem)
 
         limits = self.mirror.limits
         self.get_logger().info(
@@ -201,6 +208,17 @@ class ArmMirror(Node):
             # the step to what that allows, and a trajectory the arm cannot
             # finish in time just runs ahead of the hardware.
             self.arm.send(goal, self.period)
+
+        if self.mirror.stalled != self._stalled:
+            self._stalled = list(self.mirror.stalled)
+            if self._stalled:
+                self.get_logger().warn(
+                    f"not following: {', '.join(self._stalled)} is "
+                    f"{self.mirror.limits.max_lag:.2f} rad behind and not moving — "
+                    "holding the command there rather than driving further ahead"
+                )
+            else:
+                self.get_logger().info("following again")
 
         if self.mirror.state != self._reported:
             self._reported = self.mirror.state
