@@ -26,17 +26,29 @@ from mote_fleet import protocol
 
 
 class FakeBroker:
-    """Stands in for ``BrokerLink``. ``fail`` is how "the broker is down" is
-    tested without taking a broker down."""
+    """Stands in for the broker — both halves of it.
+
+    ``publish`` is ``BrokerLink``'s, and ``fail`` is how "the broker is down" is
+    tested without taking a broker down. It is also a *loopback*: a retained
+    publish is handed to whatever has subscribed, which is how a test puts a
+    robot's presence or status in front of the server without a broker. Only
+    retained messages are delivered, because only retained messages are what a
+    subscriber connecting later would be given, and that is what the read
+    routes serve.
+    """
 
     def __init__(self):
         self.published = []
         self.fail = ""
+        self.subscribers = []
 
     def publish(self, topic, payload, retain=False):
         if self.fail:
             return False, self.fail
         self.published.append((topic, json.loads(payload), retain))
+        if retain:
+            for subscriber in self.subscribers:
+                subscriber(topic, payload)
         return True, ""
 
     def retained(self, topic):
@@ -159,16 +171,24 @@ def start_server(tmp_path, **kwargs):
     """A listening fleet server with a stub broker. Caller shuts it down."""
     maps = Path(tmp_path) / "sites"
     maps.mkdir(exist_ok=True)
+    publisher = kwargs.pop("publisher", None) or FakeBroker()
     httpd = serve(
         db=Path(tmp_path) / "registry.db",
         host="127.0.0.1",
         port=0,
         broker_host="fleet-box",
         broker_port=1883,
-        publisher=kwargs.pop("publisher", None) or FakeBroker(),
+        publisher=publisher,
         maps_dir=maps,
         **kwargs,
     )
+    # The stub's retained messages go where a real subscription's would. The
+    # feed itself is not started (there is no broker to dial); what is under
+    # test here is the state the server keeps and the route that serves it, and
+    # the real MQTT hop is tested against a real mosquitto in the e2e pair.
+    if hasattr(publisher, "subscribers"):
+        publisher.subscribers.append(httpd.state.apply)
+        httpd.state.connected = True
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -226,6 +246,19 @@ def post_bytes(server, path, blob, content_type="application/gzip"):
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         return response.status, json.loads(response.read())
+
+
+def retain(server, robot_id, leaf, payload):
+    """Publish one retained payload on a robot's topic, through the broker.
+
+    Not straight into the server's state: the route's promise is that what a
+    robot published is what comes back, so the test's payload has to travel the
+    way a robot's does — encoded, decoded, and never touched in between.
+    """
+    server.publisher.publish(
+        protocol.topic(robot_id, leaf), protocol.encode(payload), retain=True
+    )
+    return payload
 
 
 def enroll(server, fingerprint, **extra):

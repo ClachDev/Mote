@@ -338,6 +338,20 @@ def test_the_registry_survives_a_server_restart(tmp_path, broker):
         second.server_close()
 
 
+def api_get(url, path, token=""):
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url + path)
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
 def api_post(url, path, payload, token=""):
     import urllib.error
     import urllib.request
@@ -445,7 +459,153 @@ def test_dispatch_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api
     finally:
         agent.close()
         operator.close()
-        fleet_api.publisher.close()
+        executor.shutdown()
+        for node in (agent, tasks, nav):
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_a_mission_can_be_followed_over_http_alone(
+    tmp_path, monkeypatch, broker, fleet_api
+):
+    """The acceptance for the read route: discover a robot, dispatch to it, and
+    follow the mission to a terminal state with no MQTT client in this test.
+
+    Everything else is as real as the tests above — a mosquitto, the fleet
+    server with its own subscription, the agent, and the ``mote_tasks`` tree —
+    and the only thing the test speaks is HTTP. That is the whole claim: a
+    client which asks once and acts (an MCP front door, a script) depends on
+    ``fleet-api.md`` and not additionally on the topic tree, its retention rules
+    and a broker credential.
+    """
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path / "mote"))
+    monkeypatch.setenv("ROS_DOMAIN_ID", str(random.randint(60, 100)))
+
+    from mote_bringup import identity
+
+    from mote_fleet import enroll
+
+    enroll.main(["--server", fleet_api.url, "--token", fleet_api.registry.new_token()])
+    robot_id = identity.robot_id()
+    token = fleet_api.registry.new_operator(name="mcp")
+
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
+    zones_file = tmp_path / "zones.yaml"
+    zones_file.write_text(ZONES)
+
+    from mote_fleet.agent import MoteAgent
+    from mote_tasks.task_server import TaskServer
+
+    agent = MoteAgent(
+        parameter_overrides=[
+            Parameter("health_period", value=0.5),
+            Parameter("pose_period", value=0.5),
+            Parameter("keepalive", value=2),
+        ]
+    )
+    tasks = TaskServer(
+        parameter_overrides=[
+            Parameter("zones_file", value=str(zones_file)),
+            Parameter("tick_period", value=0.05),
+        ]
+    )
+    nav = MockNav()
+    executor = SingleThreadedExecutor()
+    for node in (agent, tasks, nav):
+        executor.add_node(node)
+
+    def robot_state():
+        code, body = api_get(fleet_api.url, f"/v1/robots/{robot_id}", token=token)
+        assert code == 200, body
+        return body
+
+    def until(condition, timeout=60.0):
+        """Spin the robot's executor, then ask the API. The request is blocking
+        and must not be made from inside a spin callback."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for _ in range(10):
+                executor.spin_once(timeout_sec=0.05)
+            state = robot_state()
+            if condition(state):
+                return state
+        return None
+
+    try:
+        assert spin_until(executor, lambda: agent.connected), "agent never connected"
+
+        # ---- discovery: which robots there are, and which are online ----
+        state = until(lambda state: (state["presence"] or {}).get("online"))
+        assert state, "presence never reached the API"
+        code, roster = api_get(fleet_api.url, "/v1/robots")
+        assert code == 200, roster
+        assert roster["broker_connected"] is True
+        row = next(r for r in roster["robots"] if r["robot_id"] == robot_id)
+        assert row["presence"]["online"] is True
+
+        # ---- and what this robot can be asked to do ----
+        state = until(lambda state: state["capabilities"] is not None)
+        assert state, "the capability set never reached the API"
+        keys = [item["key"] for item in state["capabilities"]["capabilities"]]
+        assert keys == ["goto", "fetch"]
+        # Forwarded, not rebuilt: this is the robot's own document.
+        assert state["capabilities"]["platform_id"] == robot_id
+
+        # ---- dispatch, and follow it to terminal through the same route ----
+        code, answer = api_post(
+            fleet_api.url,
+            f"/v1/robots/{robot_id}/dispatch",
+            {
+                "schema": mission.SCHEMA,
+                "capability": "goto",
+                "input": {"target": "kitchen"},
+            },
+            token=token,
+        )
+        assert code == 202, answer
+
+        state = until(
+            lambda state: (
+                (state["mission_status"] or {}).get("id") == answer["id"]
+                and state["mission_status"]["terminal"]
+            )
+        )
+        assert state, robot_state()["mission_status"]
+        assert state["mission_status"]["state"] == mission.SUCCEEDED
+        assert state["mission_status"]["source"] == mission.SOURCE_FLEET
+        assert len(nav.goals) == 1
+        assert nav.goals[0].pose.position.x == pytest.approx(-1.5)  # kitchen
+
+        # ---- a refusal is readable here too, and it is typed: the class is
+        # what a client acts on, not a sentence ----
+        code, refused = api_post(
+            fleet_api.url,
+            f"/v1/robots/{robot_id}/dispatch",
+            {
+                "schema": mission.SCHEMA,
+                "capability": "goto",
+                "input": {"target": "nowhere"},
+            },
+            token=token,
+        )
+        assert code == 202, refused
+        state = until(
+            lambda state: (
+                (state["mission_status"] or {}).get("id") == refused["id"]
+                and state["mission_status"]["terminal"]
+            )
+        )
+        assert state, robot_state()["mission_status"]
+        assert state["mission_status"]["state"] == mission.REJECTED
+        assert state["mission_status"]["failure"]["class"] == mission.UNRESOLVED_ZONE
+        assert len(nav.goals) == 1
+
+        # ---- health arrives on the same route ----
+        state = until(lambda state: state["health"] is not None)
+        assert state, "health never reached the API"
+        assert state["health"]["robot_id"] == robot_id
+    finally:
+        agent.close()
         executor.shutdown()
         for node in (agent, tasks, nav):
             node.destroy_node()

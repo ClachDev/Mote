@@ -426,13 +426,21 @@ supersedes M0's operator-set id: the server owns the id space.
 | Route | Purpose |
 |---|---|
 | `GET /healthz` | liveness, contract version, robot count |
-| `GET /v1/robots` | the roster |
-| `GET /v1/robots/<robot_id>` | one row |
+| `GET /v1/robots` | the roster, each row with its `presence` payload |
+| `GET /v1/robots/<robot_id>` | one row, plus the retained payloads below as the server last saw them |
 | `POST /v1/enroll` | allocate (or return) a robot id |
 
 The map registry's routes — upload a candidate, pull a revision, promote one —
 are the same server and are specified in [`fleet-api.md`](fleet-api.md), with
 the retained `current` topic above as their only MQTT half.
+
+**A client that reads these topics need not subscribe to them.** The fleet
+server holds its own subscription to `presence`, `health`, `pose`,
+`capabilities` and `mission/status` and forwards what it last saw over
+`GET /v1/robots/<robot_id>` — the same payloads, unchanged, for the client that
+asks once and acts rather than following the stream (specified in
+[`fleet-api.md`](fleet-api.md#get-v1robotsrobot_id)). Subscribing is still what
+a dashboard does, and the only way to see every transition.
 
 ### `POST /v1/enroll`
 

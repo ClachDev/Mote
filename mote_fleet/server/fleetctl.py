@@ -6,7 +6,9 @@ this stays because a CLI composes, exits with a status, and needs no display.
 
     fleetctl token new                        mint an enrollment token
     fleetctl operator new --name michael      mint an operator token
-    fleetctl robots                           the registry roster
+    fleetctl robots                           the roster, with who is online
+    fleetctl robots mote-01                   one robot: presence, health,
+                                              pose, capabilities, last mission
     fleetctl dispatch mote-01 goto target=kitchen
                                               send a mission, follow it to terminal
     fleetctl audit                            who dispatched what
@@ -22,6 +24,13 @@ published (fleet.md Q5/Q7). The topic tree did not change — only who may
 publish to it — so ``watch`` and the status half of ``dispatch`` still read
 directly from the broker, which is the cheap, live, no-service-in-the-middle
 read path the design asks for.
+
+**One-shot reads go through the API.** ``robots`` and ``robots <id>`` ask the
+fleet server what it last saw on the retained topics rather than opening an MQTT
+connection to find out, because a question with an answer does not need a
+stream: no broker credential, no waiting to see whether a topic is going to
+arrive, and an exit status. ``watch`` and ``dispatch`` keep the broker, which is
+what following every transition actually requires.
 
 The token for that lives in ``--token`` or ``$MOTE_FLEET_TOKEN``.
 
@@ -139,16 +148,73 @@ def cmd_token(args):
 
 
 def cmd_robots(args):
-    robots = _get(args.server, "/v1/robots").get("robots", [])
+    """The roster, or one robot's live state — both from the API, not the
+    broker. ``watch`` is what a live stream is for; this is the one-shot
+    answer, and it costs no MQTT connection to get."""
+    if args.robot_id:
+        _print_robot(_get(args.server, f"/v1/robots/{args.robot_id}", _token(args)))
+        return
+    body = _get(args.server, "/v1/robots")
+    robots = body.get("robots", [])
     if not robots:
         print("no robots enrolled")
         return
-    print(f"{'ID':12} {'NAME':16} {'SITE':10} {'ENROLLED':21} FINGERPRINT")
+    if not body.get("broker_connected"):
+        # Otherwise every robot reads as offline and the reason is invisible.
+        print(
+            "the fleet server is not connected to the broker — presence is "
+            "unknown, not offline",
+            file=sys.stderr,
+        )
+    print(
+        f"{'ID':12} {'NAME':16} {'SITE':10} {'PRESENCE':8} {'ENROLLED':21} FINGERPRINT"
+    )
     for robot in robots:
         print(
             f"{robot['robot_id']:12} {robot['name'][:16]:16} "
-            f"{(robot['site'] or '-')[:10]:10} {robot['enrolled_at']:21} "
-            f"{robot['fingerprint']}"
+            f"{(robot['site'] or '-')[:10]:10} {_presence(robot.get('presence')):8} "
+            f"{robot['enrolled_at']:21} {robot['fingerprint']}"
+        )
+
+
+def _presence(payload) -> str:
+    """Three states, not two: a robot nobody has heard from is not offline."""
+    if not payload:
+        return "unknown"
+    return "online" if payload.get("online") else "offline"
+
+
+def _print_robot(body: dict):
+    print(f"{body['robot_id']}  {body['name']}  ({body['site'] or 'no site'})")
+    print(f"  enrolled   {body['enrolled_at']}  {body['fingerprint']}")
+    print(f"  presence   {_presence(body.get('presence'))}")
+    health = body.get("health")
+    if health:
+        print(f"  health     {health['state']}: {health['summary']}")
+    pose = body.get("pose")
+    if pose:
+        print(
+            f"  pose       x={pose['x']} y={pose['y']} yaw={pose['yaw']} "
+            f"({pose.get('site')}/{pose.get('floor')})"
+        )
+    capabilities = body.get("capabilities")
+    if capabilities:
+        keys = ", ".join(item["key"] for item in capabilities["capabilities"])
+        print(f"  can do     {keys}")
+    status = body.get("mission_status")
+    if status:
+        # The *last* transition, not a history: one retained status is all the
+        # broker holds, and inventing the rest here would be a fiction.
+        line = f"{status['state']} ({status['capability']}, id {status['id']})"
+        failure = status.get("failure")
+        if failure:
+            retry = "retryable" if failure["recoverable"] else "not retryable"
+            line += f"  [{failure['class']}, {retry}] {failure['detail']}"
+        print(f"  mission    {line}")
+    if not body.get("broker_connected"):
+        print(
+            "  (the fleet server is not connected to the broker — every field "
+            "above is the last it saw, or nothing)"
         )
 
 
@@ -474,6 +540,12 @@ def main(argv=None):
     p_operator.set_defaults(func=cmd_operator)
 
     p_robots = sub.add_parser("robots", help="list enrolled robots")
+    p_robots.add_argument(
+        "robot_id",
+        nargs="?",
+        default="",
+        help="one robot's live state instead of the roster (needs an operator token)",
+    )
     p_robots.set_defaults(func=cmd_robots)
 
     p_audit = sub.add_parser("audit", help="what was dispatched, by whom")
