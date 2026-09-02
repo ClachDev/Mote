@@ -329,7 +329,8 @@ broker that lost its retained state with its volume, repairs itself.
 fleet box is reached — MagicDNS name, tailnet address or localhost.
 
 `sha256` is checked by the puller before anything is staged. It is not a
-security boundary (the tailnet is that until M7); it is there because a
+security boundary (the tailnet is that, while the broker is anonymous); it is
+there because a
 transfer that silently truncated would otherwise become a map, and a wrong map
 is worse than no map.
 
@@ -474,25 +475,32 @@ robots enrolling at once get eight distinct ids.
 
 ---
 
-## Security posture (and what M7 changes)
+## Security posture (and what is still owed)
 
-M1 is proportionate to the M0 substrate and no further. Stated plainly so it is
-not mistaken for a finished story:
+Stated plainly so it is not mistaken for a finished story:
 
 - **The broker is anonymous.** Any client that can reach it may publish or
   subscribe anywhere in the tree. WireGuard is the authentication boundary;
   nothing here is reachable from the public internet.
-- **The fleet API has no auth** on its read routes. Enrollment tokens and, since
-  M3, operator tokens are the only credentials in the system.
+- **The fleet API is not.** Every `/v1` route needs an operator token, checked by
+  one gate in front of routing ([`fleet-api.md`](fleet-api.md)); `/healthz`, the
+  static UI, enrollment and the two robot-facing map routes are the carve-outs,
+  each for a stated reason.
+- **The tailnet has rules.** `mote_bringup/tailscale/policy.hujson` is the
+  committed access policy: operators reach the fleet box and a robot's SSH and
+  Foxglove ports, robots reach the fleet server and their inference box, and no
+  robot reaches another. Its `tests` block asserts that last one, and Tailscale
+  refuses to save a policy that fails it.
 - **Dispatch is mediated, as of M3.** M1's `fleetctl` published straight to the
   broker; now it and the dashboard both POST to `/v1/robots/<id>/dispatch`,
-  which authorizes an operator token and writes an audit row before publishing
-  ([`fleet-api.md`](fleet-api.md)). As this section promised, **the topic tree
-  did not change** — only who publishes to it. The browser holds no broker
-  credential that can publish; making that structural on the broker side, with a
-  subscribe-only credential, is still M7's.
+  which authorizes an operator token and writes an audit row before publishing.
+  As this section promised, **the topic tree did not change** — only who
+  publishes to it. The browser holds no broker credential that can publish;
+  making that structural on the broker side, with a subscribe-only credential,
+  waits on the broker having credentials at all.
 
-M7 adds per-robot broker credentials (username = `robot_id`, publish confined to
-its own prefix), operator auth on the API, and the Tailscale ACLs that stop
-robots reaching each other. Until then: do not put the broker or the API on a
-network the robots are not already trusted on.
+What is still owed is the broker half: per-robot credentials (username =
+`robot_id`, publish confined to its own prefix), a subscribe-only operator
+credential for the browser, and the ACL that keeps the three principals apart.
+Until then, do not put the broker on a network the robots are not already
+trusted on.

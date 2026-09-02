@@ -42,6 +42,9 @@ The contract is ``docs/fleet/fleet-api.md``::
                                              a new candidate (operator)
     GET  /                                   the operator UI (static files)
 
+The table that dispatches these is ``ROUTES``, below, and it carries what each
+one costs: an operator token unless the entry says otherwise.
+
     pixi run fleet-server -- --db ~/fleet/registry.db --broker-host fleet-box
 
 **Dispatch is mediated here, and only here.** M1's ``fleetctl`` published
@@ -83,13 +86,29 @@ accident of where its SLAM session started, so it is true for that robot and
 false for the one beside it; the name is true for both. The binding stays where
 it was, under ``/v1/maps``, served to the client that also has the basemap.
 
-**Security posture for M3:** the read routes are still unauthenticated, exactly
-as M1 left them, and the broker is still anonymous. What M3 adds is a credential
-on the *write* path and a record of who used it. That stays proportionate only
-while the tailnet is the boundary; M7 is where operator auth reaches the read
-routes, per-robot broker credentials land, and Tailscale ACLs stop robots
-reaching each other. Until then, do not expose this port to a network the robots
-are not already trusted on.
+**Every ``/v1`` route needs a credential, and one gate takes it.** Through M3
+only dispatch checked, which left the roster, the basemaps, the audit log and
+the broker's address readable by anything that could reach the port. The check
+now happens in ``_handle`` in front of route dispatch, against the table above,
+so a route added later is authenticated without anyone remembering to
+authenticate it and an anonymous caller is refused before the table is consulted
+for existence — a 404 would say which routes are real.
+
+What is open is open for a stated reason rather than by omission. ``/healthz``,
+because a liveness probe that needs a secret is a liveness probe nobody wires up.
+The static UI — which is not in the table at all, being what an unmatched GET
+falls through to — because the page has to load in order to ask for a token, and
+it holds no fleet data until it has one. ``POST /v1/enroll``, because it carries
+its own credential in the body and an unattended first boot has no human behind
+it. And both halves of M4's map exchange, a robot uploading a candidate and a
+robot pulling the revision it was told is canonical, because robots have no
+credential to present yet; an upload is bounded, audited and inert, and a pull
+serves what an operator has already promoted.
+
+The tailnet (``mote_bringup/tailscale/policy.hujson``) is still the outer
+boundary and still what keeps this port off the public internet. What changed is
+that it is no longer the *only* boundary. The broker remains anonymous: giving
+robots and operators their own broker credentials is its own piece of work.
 """
 
 import argparse
@@ -102,6 +121,7 @@ import sys
 import traceback
 import threading
 import time
+import typing
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -149,14 +169,138 @@ UI_DIR = Path(__file__).resolve().parent / "ui"
 # test without a package.json declaring the tree a module.
 mimetypes.add_type("text/javascript", ".mjs")
 
-#: Route shape for the registry's per-revision paths. The three review leaves
-#: mirror ``/v1/maps/<site>/<floor>/…`` exactly, because they answer the same
-#: three questions about a revision that is *not* the floor's canonical one —
-#: which is what an operator has to see before promoting it.
-REVISION_RE = re.compile(
-    r"^(?P<site>[^/]+)/floors/(?P<floor>[^/]+)/revisions/(?P<revision>[^/]+)"
-    r"(?P<leaf>/promote|/bundle\.tar\.gz|/map\.json|/map\.png|/zones\.json)?$"
+#: What a revision answers to under review. These three mirror
+#: ``/v1/maps/<site>/<floor>/…`` exactly, because they answer the same three
+#: questions about a revision that is *not* the floor's canonical one — which is
+#: what an operator has to see before promoting it. ``bundle.tar.gz`` is not one
+#: of them: it is the robot's pull, and has a route of its own.
+REVIEW_LEAVES = ("map.json", "map.png", "zones.json")
+
+
+# -- the route table --------------------------------------------------------
+#
+# One table, read by the request gate and walked by the tests. Making it the
+# thing that *dispatches* rather than a description beside a chain of `elif`s is
+# what keeps "every route is authorized" a property of the code instead of a
+# claim about it: a route that is not in the table is not served, and a route in
+# the table carries its credential requirement in the same line as its path.
+
+#: An operator token as a bearer header. The default, and the reason it is the
+#: default: a route added later is authenticated without anybody remembering to
+#: authenticate it, and has to opt out in a line a reviewer reads.
+OPERATOR = "operator"
+#: The enrollment token in the request body. A robot is not an operator, and an
+#: unattended first boot has no human behind it.
+ENROLLMENT = "enrollment"
+#: No credential, by M4's decision: an upload names an enrolled robot, is
+#: bounded and audited, and is inert until an operator promotes it; a pull serves
+#: what an operator has already promoted. Robots have nothing else to present.
+ROBOT = "robot"
+#: Open to anything that can reach the port, for a stated reason.
+OPEN = "open"
+
+
+class Route(typing.NamedTuple):
+    """One path this server answers, and what it costs to reach it."""
+
+    method: str
+    #: Path template. ``{name}`` matches one segment and is passed to the
+    #: handler as a keyword argument of that name.
+    template: str
+    handler: str
+    auth: str = OPERATOR
+    #: The handler answers the refusal itself, because it records the attempt
+    #: in the audit log first — "who tried" is the half of an audit trail a
+    #: dashboard never shows you. The gate still resolves the token; what it
+    #: hands over is ``operator=None``.
+    audits_refusal: bool = False
+    #: The handler reads the request body itself: an uploaded bundle is neither
+    #: JSON nor small.
+    raw_body: bool = False
+
+
+ROUTES = (
+    # Open, and each for a reason rather than by omission. /healthz because a
+    # liveness probe that needs a secret is a liveness probe nobody wires up;
+    # enrollment because it carries its own credential; the two halves of the
+    # robot's map exchange per M4 (below).
+    Route("GET", "/healthz", "_healthz", OPEN),
+    Route("POST", "/v1/enroll", "_enroll", ENROLLMENT),
+    Route(
+        "POST",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}",
+        "_upload",
+        ROBOT,
+        raw_body=True,
+    ),
+    # A robot pulling the revision it was just told is canonical. It is the
+    # other half of the upload above and carries no credential for the same
+    # reason: robots have none to carry yet. This entry precedes the review
+    # leaves below so the literal segment wins over ``{leaf}``.
+    Route(
+        "GET",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}/bundle.tar.gz",
+        "_bundle",
+        ROBOT,
+    ),
+    # Everything else needs an operator.
+    Route("GET", "/v1/config", "_config"),
+    Route("GET", "/v1/robots", "_roster"),
+    Route("GET", "/v1/robots/{robot_id}", "_robot"),
+    Route("GET", "/v1/audit", "_audit"),
+    Route("GET", "/v1/maps", "_maps"),
+    Route("GET", "/v1/maps/{site}/{floor}/{leaf}", "_map"),
+    Route("GET", "/v1/zones", "_zones"),
+    Route("GET", "/v1/zones/{site}/{floor}", "_vocabulary"),
+    Route("GET", "/v1/sites", "_sites"),
+    Route("GET", "/v1/sites/{site}/floors/{floor}", "_floor"),
+    Route(
+        "GET",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}/{leaf}",
+        "_revision",
+    ),
+    Route(
+        "POST",
+        "/v1/robots/{robot_id}/dispatch",
+        "_dispatch",
+        audits_refusal=True,
+    ),
+    Route(
+        "POST",
+        "/v1/sites/{site}/floors/{floor}/zones",
+        "_edit_zones",
+        audits_refusal=True,
+    ),
+    Route(
+        "POST",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}/promote",
+        "_promote",
+        audits_refusal=True,
+    ),
 )
+
+
+def match_route(method: str, path: str):
+    """``(route, path variables)`` for a request, or ``(None, {})``.
+
+    Matching is on the raw path, never on an unquoted one: ``%2F`` stays inside
+    a segment, so a name carrying an escaped separator reaches ``_names`` and is
+    refused there rather than silently becoming two path components.
+    """
+    parts = path.strip("/").split("/")
+    for route in ROUTES:
+        shape = route.template.strip("/").split("/")
+        if route.method != method or len(shape) != len(parts):
+            continue
+        variables = {}
+        for expected, actual in zip(shape, parts):
+            if expected.startswith("{"):
+                variables[expected[1:-1]] = actual
+            elif expected != actual:
+                break
+        else:
+            return route, variables
+    return None, {}
 
 
 class BrokerLink:
@@ -302,89 +446,131 @@ class FleetHandler(BaseHTTPRequestHandler):
     # -- routes -----------------------------------------------------------
 
     def do_HEAD(self):
-        self.do_GET()
+        self._handle("GET")
 
     def do_GET(self):
-        path, _, query = self.path.partition("?")
-        path = path.rstrip("/") or "/"
-        params = urllib.parse.parse_qs(query)
-
-        if path == "/healthz":
-            self._send(
-                200,
-                {
-                    "schema": protocol.SCHEMA,
-                    "ok": True,
-                    "service": "mote-fleet",
-                    "contract": f"{protocol.ROOT}/{protocol.VERSION}",
-                    "version": VERSION,
-                    "robots": len(self.server.registry.robots()),
-                },
-            )
-        elif path == "/v1/config":
-            self._send(200, self.server.ui_config())
-        elif path == "/v1/robots":
-            self._send(
-                200,
-                {"schema": protocol.SCHEMA, "robots": self.server.registry.robots()},
-            )
-        elif path.startswith("/v1/robots/"):
-            robot = self.server.registry.robot(path.rsplit("/", 1)[-1])
-            if robot is None:
-                self._error(404, "no such robot")
-            else:
-                self._send(200, {"schema": protocol.SCHEMA, **robot})
-        elif path == "/v1/audit":
-            self._audit(params)
-        elif path == "/v1/maps":
-            self._send(
-                200, {"schema": protocol.SCHEMA, "maps": self.server.list_maps()}
-            )
-        elif path.startswith("/v1/maps/"):
-            self._map(path[len("/v1/maps/") :])
-        elif path == "/v1/zones":
-            self._store(lambda store: {"vocabularies": store.vocabularies()})
-        elif path.startswith("/v1/zones/"):
-            self._vocabulary(path[len("/v1/zones/") :])
-        elif path == "/v1/sites":
-            self._store(lambda store: {"sites": store.sites()})
-        elif path.startswith("/v1/sites/"):
-            self._registry_get(path[len("/v1/sites/") :])
-        elif path.startswith("/v1/"):
-            self._error(404, f"no route {path}")
-        else:
-            self._static(path)
+        self._handle("GET")
 
     def do_POST(self):
+        self._handle("POST")
+
+    def _handle(self, method: str):
+        """Resolve the route, take the credential, then call the handler.
+
+        The credential is taken **here**, once, in front of every route rather
+        than inside the handlers that happen to want one. Through M3 only
+        dispatch checked, which left the roster, the basemaps, the audit log and
+        the broker's address readable by anything that could reach the port.
+        Checking here also settles what an unauthenticated caller learns from a
+        path that does not exist: nothing, because the answer is 401 before the
+        route table is consulted for existence.
+        """
         raw_path, _, query = self.path.partition("?")
         path = raw_path.rstrip("/") or "/"
-        params = urllib.parse.parse_qs(query)
-        # The upload route carries a packed bundle, so it reads its own body:
-        # everything else here is JSON and small.
-        if path.startswith("/v1/sites/") and not (
-            path.endswith("/promote") or path.endswith("/zones")
-        ):
-            self._upload(path[len("/v1/sites/") :], params)
+        self.params = urllib.parse.parse_qs(query)
+        self.body = {}
+        self.operator = None
+        self.auth_error = ""
+
+        route, path_vars = match_route(method, path)
+        if route is None:
+            # Default deny, and deny *before* answering: an unrouted path under
+            # /v1 is authenticated first, so a 404 cannot be used to map which
+            # routes are real. Everything else is the static UI, which is open
+            # because the page has to load in order to ask for a token.
+            if path == "/v1" or path.startswith("/v1/"):
+                if self._authorize() is None:
+                    return
+                self._error(404, f"no route {path}")
+            elif method == "GET":
+                self._static(path)
+            else:
+                self._error(404, f"no route {path}")
             return
+
+        if route.auth == OPERATOR:
+            self.operator = self._authorize(defer=route.audits_refusal)
+            if self.operator is None and not route.audits_refusal:
+                return
+
+        if not route.raw_body:
+            try:
+                self.body = self._body()
+            except ValueError as exc:
+                self._error(400, str(exc))
+                return
+
+        getattr(self, route.handler)(**path_vars)
+
+    def _authorize(self, defer: bool = False):
+        """The operator behind this request, or None having answered 401.
+
+        ``defer`` leaves the answer to the handler, which is what an audited
+        route needs: the refusal has to reach the log naming what was attempted,
+        and only the handler knows that.
+        """
         try:
-            body = self._body()
-        except ValueError as exc:
-            self._error(400, str(exc))
+            return self._operator()
+        except Unauthorized as exc:
+            self.auth_error = str(exc)
+            if not defer:
+                self._error(401, str(exc))
+            return None
+
+    def _refuse(self, **record) -> None:
+        """Record an unauthorized attempt on an audited route, then answer it."""
+        self.server.registry.record(
+            actor="anonymous",
+            result="unauthorized",
+            detail=self.auth_error,
+            remote=self.address_string(),
+            **record,
+        )
+        self._error(401, self.auth_error)
+
+    # -- what the routes answer -------------------------------------------
+
+    def _healthz(self):
+        self._send(
+            200,
+            {
+                "schema": protocol.SCHEMA,
+                "ok": True,
+                "service": "mote-fleet",
+                "contract": f"{protocol.ROOT}/{protocol.VERSION}",
+                "version": VERSION,
+                "robots": len(self.server.registry.robots()),
+            },
+        )
+
+    def _config(self):
+        self._send(200, self.server.ui_config())
+
+    def _roster(self):
+        self._send(
+            200, {"schema": protocol.SCHEMA, "robots": self.server.registry.robots()}
+        )
+
+    def _robot(self, robot_id: str):
+        robot = self.server.registry.robot(robot_id)
+        if robot is None:
+            self._error(404, "no such robot")
             return
-        if path == "/v1/enroll":
-            self._enroll(body)
-        elif path.startswith("/v1/robots/") and path.endswith("/dispatch"):
-            self._dispatch(path[len("/v1/robots/") : -len("/dispatch")], body)
-        elif path.startswith("/v1/sites/") and path.endswith("/promote"):
-            self._promote(path[len("/v1/sites/") :], body)
-        elif path.startswith("/v1/sites/") and path.endswith("/zones"):
-            self._edit_zones(path[len("/v1/sites/") : -len("/zones")], body)
-        else:
-            self._error(404, f"no route {path}")
+        self._send(200, {"schema": protocol.SCHEMA, **robot})
+
+    def _maps(self):
+        self._send(200, {"schema": protocol.SCHEMA, "maps": self.server.list_maps()})
+
+    def _zones(self):
+        self._store(lambda store: {"vocabularies": store.vocabularies()})
+
+    def _sites(self):
+        self._store(lambda store: {"sites": store.sites()})
 
     # -- enrollment -------------------------------------------------------
 
-    def _enroll(self, body: dict):
+    def _enroll(self):
+        body = self.body
         token = (body.get("token") or "").strip()
         fingerprint = (body.get("fingerprint") or "").strip()
         requested_id = (body.get("robot_id") or "").strip()
@@ -439,7 +625,7 @@ class FleetHandler(BaseHTTPRequestHandler):
 
     # -- dispatch + audit -------------------------------------------------
 
-    def _dispatch(self, robot_id: str, body: dict):
+    def _dispatch(self, robot_id: str):
         """Authorize, record, publish — in that order.
 
         The order is the point. The audit row is written *before* the publish
@@ -455,6 +641,7 @@ class FleetHandler(BaseHTTPRequestHandler):
         ``invalid_input`` and says which property, which is an answer an
         operator can act on and a parser here could not improve.
         """
+        body = self.body
         registry = self.server.registry
         remote = self.address_string()
         capability = str(body.get("capability") or "").strip()
@@ -462,22 +649,15 @@ class FleetHandler(BaseHTTPRequestHandler):
         if payload_input is None:
             payload_input = {}
         described = _describe(capability, payload_input)
-        try:
-            operator = self._operator()
-        except Unauthorized as exc:
-            registry.record(
-                actor="anonymous",
+        if self.operator is None:
+            self._refuse(
                 action="dispatch",
                 robot_id=robot_id,
                 command=described[:MAX_COMMAND],
-                result="unauthorized",
-                detail=str(exc),
-                remote=remote,
             )
-            self._error(401, str(exc))
             return
 
-        actor = operator["name"]
+        actor = self.operator["name"]
         if not capability:
             self._error(400, "a capability is required")
             return
@@ -554,12 +734,8 @@ class FleetHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _audit(self, params: dict):
-        try:
-            self._operator()
-        except Unauthorized as exc:
-            self._error(401, str(exc))
-            return
+    def _audit(self):
+        params = self.params
         try:
             limit = int((params.get("limit") or ["100"])[0])
         except ValueError:
@@ -576,13 +752,11 @@ class FleetHandler(BaseHTTPRequestHandler):
 
     # -- basemaps ---------------------------------------------------------
 
-    def _map(self, rest: str):
-        parts = rest.split("/")
+    def _map(self, site: str, floor: str, leaf: str):
         leaves = ("map.json", "map.png", "zones.json")
-        if len(parts) != 3 or parts[2] not in leaves:
+        if leaf not in leaves:
             self._error(404, f"expected /v1/maps/<site>/<floor>/{'|'.join(leaves)}")
             return
-        site, floor, leaf = parts
         if not self._names(site, floor):
             return
         if leaf == "zones.json":
@@ -624,7 +798,7 @@ class FleetHandler(BaseHTTPRequestHandler):
 
     # -- the zone vocabulary ----------------------------------------------
 
-    def _vocabulary(self, rest: str):
+    def _vocabulary(self, site: str, floor: str):
         """``/v1/zones/<site>/<floor>`` — what places can be named here.
 
         The split zone/v0 asks for is expressed by the route, which is why this
@@ -634,11 +808,6 @@ class FleetHandler(BaseHTTPRequestHandler):
         that must never be handed a map — an MCP front door turning "take it to
         the kitchen" into ``goto kitchen`` — can be given this and only this.
         """
-        parts = rest.split("/")
-        if len(parts) != 2:
-            self._error(404, "expected /v1/zones/<site>/<floor>")
-            return
-        site, floor = parts
         if not self._names(site, floor):
             return
         self._store(lambda store: store.read_vocabulary(site, floor))
@@ -666,29 +835,25 @@ class FleetHandler(BaseHTTPRequestHandler):
             return
         self._send(200, {"schema": protocol.SCHEMA, **payload})
 
-    def _registry_get(self, rest: str):
-        parts = rest.split("/")
-        if len(parts) == 3 and parts[1] == "floors":
-            site, _, floor = parts
-            if self._names(site, floor):
-                self._store(lambda store: store.detail(site, floor))
+    def _floor(self, site: str, floor: str):
+        if not self._names(site, floor):
             return
-        match = REVISION_RE.match(rest)
-        # `/promote` is a POST, and a bare revision path has nothing to answer:
-        # both are 404 here rather than falling through to the bundle.
-        if not match or match.group("leaf") in (None, "/promote"):
-            self._error(404, f"no route /v1/sites/{rest}")
+        self._store(lambda store: store.detail(site, floor))
+
+    def _revision(self, site: str, floor: str, revision: str, leaf: str):
+        if leaf not in REVIEW_LEAVES:
+            self._error(404, f"expected one of {'|'.join(REVIEW_LEAVES)}")
             return
-        site, floor = match.group("site"), match.group("floor")
-        revision = match.group("revision")
         if not self._names(site, floor, revision):
             return
-        leaf = match.group("leaf").lstrip("/")
         if leaf == "zones.json":
             self._store(lambda store: store.read_revision_zones(site, floor, revision))
             return
-        if leaf in ("map.json", "map.png"):
-            self._send_map(leaf, lambda store: store.read_map(site, floor, revision))
+        self._send_map(leaf, lambda store: store.read_map(site, floor, revision))
+
+    def _bundle(self, site: str, floor: str, revision: str):
+        """The packed revision, for the agent that was told to pull it."""
+        if not self._names(site, floor, revision):
             return
         try:
             blob = self.server.store.pack(site, floor, revision)
@@ -708,26 +873,19 @@ class FleetHandler(BaseHTTPRequestHandler):
             X_Bundle_Sha256=bundle.digest(blob),
         )
 
-    def _upload(self, rest: str, params: dict):
+    def _upload(self, site: str, floor: str, revision: str):
         """Take one candidate revision from a robot.
 
         Deliberately **not** operator-authenticated, and deliberately inert: a
         candidate changes nothing about any floor until it is promoted, and the
         route that does change something is the operator's. What is required is
         that the uploader name an enrolled robot, so the artifact has a subject
-        in the audit log. M7 replaces that with a per-robot credential.
+        in the audit log. Giving a robot a credential of its own is the
+        companion security task's, not this one's.
         """
-        match = REVISION_RE.match(rest)
-        if not match or match.group("leaf"):
-            self._error(
-                404, "expected POST /v1/sites/<site>/floors/<floor>/revisions/<rev>"
-            )
-            return
-        site, floor = match.group("site"), match.group("floor")
-        revision = match.group("revision")
         if not self._names(site, floor, revision):
             return
-        robot_id = (params.get("robot_id") or [""])[0]
+        robot_id = (self.params.get("robot_id") or [""])[0]
         if not protocol.valid_id(robot_id):
             self._error(400, "a robot_id query parameter is required")
             return
@@ -790,7 +948,7 @@ class FleetHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _promote(self, rest: str, body: dict):
+    def _promote(self, site: str, floor: str, revision: str):
         """Make a candidate canonical: authorize, flip, announce, record.
 
         The flip is the fact and the announcement is best effort — a broker
@@ -798,30 +956,14 @@ class FleetHandler(BaseHTTPRequestHandler):
         plainly whether the fleet was told, and the server re-announces every
         floor at startup so a missed announcement heals itself.
         """
-        match = REVISION_RE.match(rest)
-        if not match or match.group("leaf") != "/promote":
-            self._error(404, "expected POST .../revisions/<rev>/promote")
-            return
-        site, floor = match.group("site"), match.group("floor")
-        revision = match.group("revision")
         registry = self.server.registry
         target = f"{site}/{floor}/{revision}"
-        try:
-            operator = self._operator()
-        except Unauthorized as exc:
-            registry.record(
-                actor="anonymous",
-                action="map.promote",
-                command=target,
-                result="unauthorized",
-                detail=str(exc),
-                remote=self.address_string(),
-            )
-            self._error(401, str(exc))
+        if self.operator is None:
+            self._refuse(action="map.promote", command=target)
             return
         if not self._names(site, floor, revision):
             return
-        actor = operator["name"]
+        actor = self.operator["name"]
         entry = registry.record(
             actor=actor,
             action="map.promote",
@@ -865,7 +1007,7 @@ class FleetHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _edit_zones(self, rest: str, body: dict):
+    def _edit_zones(self, site: str, floor: str):
         """An operator's zone edit: derive a candidate from a revision.
 
         The edit writes nothing the fleet can see — the result is an ordinary
@@ -880,25 +1022,11 @@ class FleetHandler(BaseHTTPRequestHandler):
         derivation and never the thing written — the route's own resource is
         the floor's zones, and the result is a revision id neither end chose.
         """
-        parts = rest.split("/")
-        if len(parts) != 3 or parts[1] != "floors":
-            self._error(404, "expected POST /v1/sites/<site>/floors/<floor>/zones")
-            return
-        site, _, floor = parts
+        body = self.body
         registry = self.server.registry
         target = f"{site}/{floor}"
-        try:
-            operator = self._operator()
-        except Unauthorized as exc:
-            registry.record(
-                actor="anonymous",
-                action="map.zones",
-                command=target,
-                result="unauthorized",
-                detail=str(exc),
-                remote=self.address_string(),
-            )
-            self._error(401, str(exc))
+        if self.operator is None:
+            self._refuse(action="map.zones", command=target)
             return
         source = str(body.get("revision") or "")
         if not self._names(site, floor, *([source] if source else [])):
@@ -907,7 +1035,7 @@ class FleetHandler(BaseHTTPRequestHandler):
         if not isinstance(zones, dict):
             self._error(400, "a zones mapping is required: {zones: {name: {...}}}")
             return
-        actor = operator["name"]
+        actor = self.operator["name"]
         # The audit row names what was edited, not only which floor: two
         # candidates of one floor are two different maps, and "who renamed the
         # rooms on this map" is unanswerable from the floor alone.

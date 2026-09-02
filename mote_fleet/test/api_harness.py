@@ -173,26 +173,43 @@ def start_server(tmp_path, **kwargs):
     thread.start()
     httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}"
     httpd.maps = maps
+    # Every /v1 route needs an operator, so one comes with the harness and
+    # ``get`` sends it unless a test says otherwise.
+    httpd.token = httpd.registry.new_operator(name="harness")
     return httpd
 
 
 # -- speaking to it ---------------------------------------------------------
 
+#: Sent when a call names no token. ``token=""`` means "send none", which is
+#: what the tests that are about the *absence* of a credential pass.
+DEFAULT = object()
 
-def get(server, path, token=None):
-    request = urllib.request.Request(server.url + path)
+
+def _authorize(request, server, token):
+    token = server.token if token is DEFAULT else token
     if token:
         request.add_header("Authorization", f"Bearer {token}")
+
+
+def get(server, path, token=DEFAULT):
+    request = urllib.request.Request(server.url + path)
+    _authorize(request, server, token)
     with urllib.request.urlopen(request, timeout=10) as response:
         return response.status, json.loads(response.read())
 
 
-def get_bytes(server, path):
-    with urllib.request.urlopen(server.url + path, timeout=10) as response:
+def get_bytes(server, path, token=DEFAULT):
+    request = urllib.request.Request(server.url + path)
+    _authorize(request, server, token)
+    with urllib.request.urlopen(request, timeout=10) as response:
         return response.status, response.headers["Content-Type"], response.read()
 
 
 def post(server, path, payload, token=None):
+    # Unlike ``get``, this defaults to *no* token: enrollment carries its own
+    # credential in the body, and every dispatch test is explicit about which
+    # operator it is acting as.
     request = urllib.request.Request(
         server.url + path,
         data=json.dumps(payload).encode(),

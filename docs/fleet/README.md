@@ -75,19 +75,26 @@ Tags do not exist until an owner is declared for them, and `--advertise-tags` on
 a machine fails with "requested tags are invalid or not permitted" if you skip
 this:
 
-```jsonc
-{
-  "tagOwners": {
-    "tag:robot":     ["autogroup:admin"],
-    "tag:fleet":     ["autogroup:admin"],
-    "tag:inference": ["autogroup:admin"],
-  },
-  // The default policy already allows every device to reach every other, which
-  // is what M0 wants. M7 replaces this with per-tag rules (operators reach
-  // robots; robots reach the broker and their own inference box; robots cannot
-  // reach each other).
-}
-```
+The policy this repo ships is
+[`mote_bringup/tailscale/policy.hujson`](../../mote_bringup/tailscale/policy.hujson):
+the three tags above, plus the rules that say who may open a socket to what.
+Tailscale keeps the policy in its console rather than in a repo, so **the file is
+the source of truth and the console is a copy** — edit here first, then paste:
+
+1. <https://login.tailscale.com/admin/acls/file>
+2. paste the file, **Preview** to see what changes, then **Save**.
+
+Two things it does that the default "everyone reaches everyone" policy does not.
+Operators reach a robot's SSH and Foxglove ports and nothing else on it; a robot
+reaches the fleet server's API and broker and its inference box's two wire ports,
+and **no robot can reach another robot** — there is no robot-to-robot anything in
+v1, so the absence of a rule is the design. The file carries a `tests` block
+asserting exactly that, and Tailscale evaluates it on every save and refuses a
+policy that fails one, so the rule is checked by the thing enforcing it.
+
+Do this before joining any machine: `--advertise-tags` on a tag the policy does
+not declare fails with "requested tags are invalid or not permitted", which is
+the first thing to check if joining a robot fails.
 
 **4. Mint an auth key per robot.** Admin console → **Settings → Keys → Generate
 auth key**. For a robot:
@@ -109,7 +116,7 @@ opens a browser to authenticate you.
 (180 days by default) and needs a human to re-authenticate it, which for a robot
 means it silently drops off the tailnet one day months from now. Tagged devices
 do not expire. That failure mode is the practical argument for `tag:robot`,
-ahead of anything M7 does with it.
+ahead of anything the access policy does with it.
 
 ### 1b. Joining machines
 
@@ -145,9 +152,11 @@ any tagged role are mutually exclusive and the script refuses the combination.
 For one operator at one site, leave the dev machine an untagged workstation that
 happens to run Mosquitto and the inference servers: nothing functional depends on
 the tag (robots reach it by MagicDNS either way, and `inference_host` is just a
-name). What you defer is M7's ACLs — a rule keyed on your user's device rather
-than `tag:fleet`/`tag:inference`. Tag it when a second person or a second machine
-appears and the roles want to outlive your account.
+name). What you defer is the policy's rules — they are keyed on
+`tag:fleet`/`tag:inference`, so an untagged dev box is reachable under
+`autogroup:member` rather than under the rule written for its role. Tag it when a
+second person or a second machine appears and the roles want to outlive your
+account.
 
 **Verify off-LAN** (the M0 acceptance test) — from a device on a *different*
 network, e.g. a laptop tethered to a phone:
@@ -483,13 +492,17 @@ fleet box's MagicDNS name (`fleet-box`), not `localhost` — it is handed out
 verbatim in every enrollment answer. It defaults to the box's hostname. Under
 compose it is `BROKER_HOST` in `.env`, and the stack refuses to start without it.
 
-**Security, plainly:** the broker is anonymous and the API's *read* routes are
-unauthenticated. Dispatch is not — it needs an operator token (§8) — but that is
-one credential on one path, not an auth story. It is proportionate only because
-the tailnet is the boundary: WireGuard authenticates, and nothing here is
-exposed to the internet. Do not put either on a network the robots are not
-already trusted on. Per-robot broker credentials and operator auth everywhere
-are M7; the shape of what changes is in
+**Security, plainly:** every `/v1` route on the API needs an operator token
+(§8), checked by one gate in front of routing rather than by each handler. Four
+things are open and each for a reason: `/healthz`, the static UI, enrollment
+(which carries its own token), and the two robot-facing map routes, which carry
+no credential because robots have none to carry yet. The **broker is still
+anonymous**, so the dashboard's read path and `fleetctl watch` connect to it
+without one. The tailnet is the outer boundary — WireGuard authenticates, the
+policy in §1a says who may reach which port, and nothing here is exposed to the
+internet. Do not put the broker on a network the robots are not already trusted
+on. Per-robot and per-operator broker credentials are still to come; the shape of
+what changes is in
 [`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
 
 ---
@@ -569,6 +582,11 @@ minted against the registry file while you are sitting on the fleet box, never
 over the network; the **name on it is what the audit log records**, which is why
 an unnamed one is refused. `fleetctl operator list|revoke` are the other two
 verbs, and the route contract is [`fleet-api.md`](fleet-api.md).
+
+**`MOTE_FLEET_TOKEN` is now needed for every `fleetctl` verb that talks to the
+API**, not only `dispatch` and `audit`: the roster, the maps and the registry are
+operator-only too. Without it they answer `401` and say so. `watch` is the
+exception, because it reads the broker rather than the API.
 
 **A mission is a capability and a typed input**, not a sentence: the first
 argument is a capability key and the rest are `key=value` pairs (or one `{...}`
@@ -652,11 +670,14 @@ no request/response loop, and no service between the broker and the browser.
 That is the read path in [`fleet.md`](../design/fleet.md) Q5, and it is why the
 broker needs the WebSocket listener from §6.
 
-**Paste an operator token to dispatch.** Without one the page is read-only,
-which is a perfectly good wall display. The token is kept in the browser's local
-storage and sent to the fleet API as a bearer credential; the page holds **no
-broker credential that can publish**, and its MQTT client implements no PUBLISH
-packet at all.
+**Paste an operator token to see anything at all.** `/v1/config` — what the
+page is built out of — is operator-only like every other route, so there is no
+read-only mode: the dashboard is signed in, or it is asking to be, and a wall
+display whose token was revoked shows the gate rather than a stale fleet. Pasting
+a token starts everything without a reload. The token is kept in the browser's
+local storage and sent to the fleet API as a bearer credential; the page holds
+**no broker credential that can publish**, and its MQTT client implements no
+PUBLISH packet at all.
 
 **Each state is said once**, by the strongest idiom the page has. The roster
 row's dot and its state column already read `ok`, so the line under them speaks

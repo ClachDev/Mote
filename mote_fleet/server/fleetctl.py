@@ -23,7 +23,10 @@ publish to it — so ``watch`` and the status half of ``dispatch`` still read
 directly from the broker, which is the cheap, live, no-service-in-the-middle
 read path the design asks for.
 
-The token for that lives in ``--token`` or ``$MOTE_FLEET_TOKEN``.
+The token for that lives in ``--token`` or ``$MOTE_FLEET_TOKEN``, and every
+verb that talks to the API needs it — the roster and the registry are
+operator-only too, not only the writes. ``watch`` is the exception, because it
+reads the broker rather than the API.
 
 ``token``/``operator`` talk to the registry file directly rather than over
 HTTP, because minting a credential is a thing you do while sitting on the fleet
@@ -139,7 +142,7 @@ def cmd_token(args):
 
 
 def cmd_robots(args):
-    robots = _get(args.server, "/v1/robots").get("robots", [])
+    robots = _get(args.server, "/v1/robots", _token(args)).get("robots", [])
     if not robots:
         print("no robots enrolled")
         return
@@ -156,7 +159,7 @@ def cmd_sites(args):
     """The map registry. Without a floor: what every floor is on. With one:
     every candidate revision and whether it could be promoted."""
     if not (args.site and args.floor):
-        floors = _get(args.server, "/v1/sites").get("sites", [])
+        floors = _get(args.server, "/v1/sites", _token(args)).get("sites", [])
         if not floors:
             print("no site bundles on the fleet server")
             return
@@ -168,7 +171,9 @@ def cmd_sites(args):
                 f"{(floor['canonical'] or '-'):18} {candidates}"
             )
         return
-    detail = _get(args.server, f"/v1/sites/{args.site}/floors/{args.floor}")
+    detail = _get(
+        args.server, f"/v1/sites/{args.site}/floors/{args.floor}", _token(args)
+    )
     print(f"{args.site}/{args.floor}  canonical: {detail['canonical'] or 'none'}")
     for revision in detail["revisions"]:
         marker = "*" if revision["canonical"] else " "
@@ -451,7 +456,7 @@ def main(argv=None):
     parser.add_argument(
         "--token",
         default="",
-        help=f"operator token for the write routes (default: ${TOKEN_ENV})",
+        help=f"operator token for the API (default: ${TOKEN_ENV})",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
