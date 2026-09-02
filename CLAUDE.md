@@ -931,8 +931,14 @@ section. Contains:
   reversals — the last two are the buzz check that bounds how high Kp may go),
   writes the trace to `~/.mote/arm_gain_sweeps/`, and restores the gains and
   limpness it started with, so a sweep on its own changes nothing.
-- **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
-  an unresolved mechanical clash, tracked separately, not addressed here.
+- **Physical note (GitHub #2):** the camera and the arm fouled each other, so
+  the arm is mounted **rotated 180 degrees** (option 1 of that issue). The
+  camera clears it, barely, and the cost is forward reach. **`arm_mount_joint`
+  in `mote.urdf.xacro` is still `rpy="0 0 0"`** and so describes the old
+  orientation: joint-space work is unaffected (nothing there asks where the
+  gripper is in the base frame), but TF draws the arm facing the wrong way and
+  anything reasoning in base coordinates — a fetch standoff, an IK stack —
+  would be 180 degrees out.
   The arm *is* part of the mission bringup now (it is in `mote_hardware`), but it
   stays limp until a controller claims it.
 

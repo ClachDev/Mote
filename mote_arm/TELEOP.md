@@ -136,9 +136,10 @@ The action is the *mirror's* output, not the leader's pose, because a policy
 replaces whatever produces goals — and it is read off the trajectory topic
 rather than from the mirror, so a session driven by `arm-jog` records too.
 
-> **The camera does not physically fit with the arm attached** (GitHub #2).
-> Until that is resolved, record state-only with `--no-camera` — the capture,
-> the export and the replay all handle a camera-less dataset.
+> The arm is mounted **rotated 180 degrees** so the camera clears it (GitHub
+> #2), so episodes do record camera frames. Use `--no-camera` for a robot whose
+> camera is off or fouled: the capture, the export and the replay all handle a
+> camera-less dataset.
 
 Captures land in `$MOTE_HOME/episodes/<dataset>/` — per-robot state, alongside
 maps, zones and taught poses. The format is documented in `mote_arm/episode.py`:

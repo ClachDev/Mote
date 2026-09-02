@@ -454,10 +454,19 @@ client-side purely for immediate feedback.
   use in place of its stubs.
 - `controller_manager/switch_controller` — activate to hold, deactivate to limp.
 
-## Physical note (GitHub #2)
+## Physical note: the arm is mounted backwards (GitHub #2)
 
-The camera does not fit when the SO-101 arm is attached. That is an unresolved
-mechanical clash, tracked separately — not addressed here.
+The camera and the arm fouled each other on the top plate. The arm is therefore
+mounted **rotated 180 degrees**, which is option 1 of that issue: the camera
+clears it — only just — and the price is reach in the forward direction.
+
+Two consequences. `arm_mount_joint` in `mote.urdf.xacro` still carries
+`rpy="0 0 0"`, so TF and RViz draw the arm facing the way it used to, not the
+way it does; joint-space work (jog, taught poses, teleop, replay) is unaffected,
+because none of it asks where the gripper is in the base frame, but anything
+that does — a fetch standoff pose, an IK stack — would be 180 degrees out.
+And the clearance is tight rather than comfortable, so re-check it after any
+re-mount.
 
 ## Calibration
 
