@@ -34,7 +34,6 @@ import zlib
 
 import rclpy
 from controller_manager_msgs.srv import SwitchController
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, JointState
 from trajectory_msgs.msg import JointTrajectory
@@ -208,20 +207,18 @@ def main() -> None:
     args = cli.parse(parser)
 
     rclpy.init()
-    node = None
+    node = MockArm(args)
+    # Spun on a worker thread and joined from here, rather than spun in the main
+    # thread, so the teardown is the one in cli.py: shut the context down, join
+    # the spinner, and only then destroy the node. The main thread has nothing
+    # else to do — waiting on the spinner is what gives SIGINT somewhere to land.
+    spinner = cli.spin_background(node)
     try:
-        node = MockArm(args)
-        rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
+        spinner.join()
+    except KeyboardInterrupt:
         pass
-    except Exception:  # noqa: BLE001 - the context is gone, see cli.spin_background
-        if rclpy.ok():
-            raise
     finally:
-        if node is not None:
-            node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        cli.shutdown(node, spinner)
 
 
 if __name__ == "__main__":

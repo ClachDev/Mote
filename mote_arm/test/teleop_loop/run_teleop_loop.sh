@@ -23,12 +23,33 @@ mkdir -p "$LOGS"
 export ROS_DOMAIN_ID=$((RANDOM % 40 + 60))
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 
-PIDS=()
+# `ros2 run` is a wrapper that Popens the real executable and handles no SIGTERM,
+# so killing its pid hands the node to init and leaks it — the exact class of
+# straggler `pixi run sweep` exists to find (CLAUDE.md, "Stray ROS processes").
+# Every job is therefore setsid-ed into a session of its own, and torn down by
+# process group and then by session id: the shell equivalent of
+# sweep_orphans.spawn_reapable/reap_group, and the same scoping the sim smoke
+# test uses.
+NAMES=()
+declare -A PID_OF
+declare -A SID_OF
+OUR_SID="$(ps -o sid= -p $$ | tr -d ' ')"
+
+reap() {
+    local name="$1" pid="${PID_OF[$1]:-}" sid="${SID_OF[$1]:-}"
+    [ -n "$pid" ] || return 0
+    kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    # Backstop for anything that left the group but not the session.
+    [ -n "$sid" ] && pkill -9 -s "$sid" 2>/dev/null
+    unset "PID_OF[$name]"
+    true
+}
+
 cleanup() {
-    for pid in "${PIDS[@]:-}"; do
-        kill "$pid" 2>/dev/null || true
+    for name in "${NAMES[@]:-}"; do
+        [ -n "$name" ] && reap "$name"
     done
-    wait 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -39,19 +60,24 @@ fail() {
     exit 1
 }
 
-declare -A PID_OF
 background() {
     local name="$1"
     shift
-    "$@" >"$LOGS/$name.log" 2>&1 &
-    PID_OF[$name]=$!
-    PIDS+=("$!")
+    setsid "$@" >"$LOGS/$name.log" 2>&1 &
+    local pid=$!
+    NAMES+=("$name")
+    PID_OF[$name]=$pid
+    local sid
+    sid="$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    # If setsid did not detach it, the job shares OUR session and killing that
+    # session would take this script with it — drop the scope instead.
+    [ "$sid" = "$OUR_SID" ] && sid=""
+    SID_OF[$name]="$sid"
 }
 
 stop() {
     for name in "$@"; do
-        kill "${PID_OF[$name]}" 2>/dev/null || true
-        wait "${PID_OF[$name]}" 2>/dev/null || true
+        reap "$name"
     done
 }
 

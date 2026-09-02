@@ -54,15 +54,18 @@ def main() -> int:
             )
 
         if spec.camera is not None:
-            missing = [
-                f for f in frames if not f.image or not (path / f.image).exists()
-            ]
-            if missing:
+            # One reading of "this frame has an image", used by both checks: the
+            # second used to re-test only that a filename was recorded, so a
+            # frame naming a file that is not on disk was reported as missing
+            # and then stat()ed anyway, raising through the whole report.
+            present = [f for f in frames if f.image and (path / f.image).exists()]
+            if len(present) < len(frames):
                 problems.append(
-                    f"{name}: {len(missing)}/{len(frames)} frames have no image"
+                    f"{name}: {len(frames) - len(present)}/{len(frames)} "
+                    "frames have no image"
                 )
-            sizes = {(path / f.image).stat().st_size for f in frames if f.image}
-            if len(sizes) < 2:
+            sizes = {(path / f.image).stat().st_size for f in present}
+            if present and len(sizes) < 2:
                 problems.append(f"{name}: every camera frame is byte-identical")
 
         gridded = resample(frames, spec.fps)
