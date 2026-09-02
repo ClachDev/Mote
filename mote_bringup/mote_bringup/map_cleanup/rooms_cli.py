@@ -90,7 +90,7 @@ def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str
     they name a spot, not the room around it.
     """
     if path.suffix == ".yaml":
-        # A caller that named the old combined file means the floor it is in.
+        # A caller that named the file means the floor it is in.
         path = path.parent
     try:
         floor = bundle.read_floor(path)
@@ -116,11 +116,7 @@ def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str
         entry = zone_entry(room)
         zones[name] = dict(
             bundle.zone_term("segment-map", name, entry),
-            bound=True,
-            # Read off the map by an algorithm rather than driven to, which is
-            # what ``derived`` is for — and what tells an operator, later, that
-            # a re-map invalidates it without a human having done anything.
-            anchor=zone_spec.anchor(zone_spec.DERIVED, by="segment-map"),
+            source=zone_spec.SEGMENT_MAP,
             **{k: entry[k] for k in ("x", "y", "yaw", "polygon") if k in entry},
         )
         added.append(name)

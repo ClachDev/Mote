@@ -128,11 +128,11 @@ def publish(
 ) -> dict:
     """Upload one local revision as a candidate. Returns the server's answer.
 
-    The floor's **binding** is packed *into* the revision: zone coordinates
-    only mean anything in the map frame they were bound in, so they travel
-    with it or they travel wrong. The vocabulary is not — it is a fact about
-    the building rather than about this map, and it is served on its own route
-    to anything that only needs to know what the places are called.
+    The floor's zones are packed *into* the revision. The floor owns them — a
+    zone is a coordinate in the floor's frame and a map revision is an estimate
+    registered into it — but a revision is the vehicle the fleet already has for
+    getting a floor's places to a robot that has never driven there, so a
+    revision carries a copy.
     """
     fdir = sites.floor_dir(site, floor)
     rev_dir = fdir / "maps" / revision
@@ -142,18 +142,15 @@ def publish(
     if not report.ok:
         raise SyncError(f"refusing to publish {revision}: {report.summary()}")
     extra = {}
-    for name in (bundle.BINDING_YAML, bundle.ZONES_YAML):
-        source = fdir / name
-        if source.is_file() and not (rev_dir / name).is_file():
-            extra[name] = source.read_bytes()
-            break
-    # The vocabulary rides along too, unpacked into the floor rather than kept
-    # in the revision: a fleet server holding it can answer "what places are
-    # here" for a floor no robot has published a map of, which is the whole
-    # point of splitting it out.
-    vocabulary = fdir / bundle.VOCABULARY_YAML
-    if vocabulary.is_file():
-        extra[bundle.VOCABULARY_YAML] = vocabulary.read_bytes()
+    if not (rev_dir / bundle.ZONES_YAML).is_file():
+        if (fdir / bundle.ZONES_YAML).is_file():
+            extra[bundle.ZONES_YAML] = (fdir / bundle.ZONES_YAML).read_bytes()
+        else:
+            # A floor still holding zone/v0's two documents: both travel, and
+            # the receiver joins them the same way this robot does.
+            for name in (bundle.VOCABULARY_YAML, bundle.BINDING_YAML):
+                if (fdir / name).is_file():
+                    extra[name] = (fdir / name).read_bytes()
     blob = bundle.pack(rev_dir, extra)
 
     path = (

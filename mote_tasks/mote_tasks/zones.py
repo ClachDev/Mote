@@ -1,65 +1,52 @@
-"""Named places (zones), loaded from a floor's zone/v0 documents.
+"""Named places (zones), loaded from a floor's ``zones.yaml``.
 
-A **zone** is a named pose in a map frame the robot can navigate to — as a
-fetch waypoint (`pickup`/`dropoff`) or a `goto <zone>` target. A zone may also
-carry an **area footprint**, so it can answer "is (x, y) inside this zone?".
-The footprint is optional metadata on the one zone concept, not a separate kind
-of thing: a bare zone is just a pose; a room-like zone adds a footprint. A
-footprint is either a circle (`radius`, the simple taught default) or a
-`polygon` of explicit vertices, which follows the actual room outline — an
-L-shaped ward or a corridor stretch that no circle can describe.
+A **zone** is a named pose the robot can navigate to — as a fetch waypoint
+(`pickup`/`dropoff`) or a `goto <zone>` target. A zone may also carry an **area
+footprint**, so it can answer "is (x, y) inside this zone?". The footprint is
+optional metadata on the one zone concept, not a separate kind of thing: a bare
+zone is just a pose; a room-like zone adds a footprint. A footprint is either a
+circle (`radius`, the simple taught default) or a `polygon` of explicit
+vertices, which follows the actual room outline — an L-shaped ward or a corridor
+stretch that no circle can describe.
 
-**A zone's two halves live in two files** (zone/v0, `mote_bringup.spec.zone`):
-
-    floors/<floor>/vocabulary.yaml   what the places are CALLED. No
-                                     coordinates, so it is safe to share with
-                                     every robot at the site.
-    floors/<floor>/binding.yaml      where geometry says they are, in this
-                                     floor's map frame. Travels only inside
-                                     the revision that frame belongs to.
-
-They are not the same kind of fact. `(2.0, 3.5)` in this map frame is a
-different physical point in the next robot's, so the fleet publishes the
-vocabulary and never the binding on its own. A legacy combined `zones.yaml` is
-still read (`bundle.read_floor` migrates it) and is replaced by the pair the
-first time anything writes.
+**A zone is a coordinate in the floor's frame — a fact about the building.**
+The kitchen does not move. A map revision is an *estimate* of the same layout
+registered into that frame, so re-mapping the floor changes how well the robot
+knows where it is and changes nothing about where the kitchen is; where the two
+disagree it is the map that gets aligned. So the floor holds its zones, in one
+`floors/<floor>/zones.yaml`, and neither a map revision nor one robot owns them.
+A promoted revision carries a copy, which is how a floor's places reach a robot
+that has never driven there.
 
 Geometry reaches a floor three ways, and only the first involves a robot:
 driving there and running `save-zone`, which is the one that also measures an
 approach heading; `segment-map` reading room outlines off a saved map; and the
 fleet dashboard's zone editor, where an operator places and drags zones on a
-candidate revision. A promoted revision then carries the result to every robot
-at the site, so a robot can hold geometry for a floor it has never driven.
+candidate revision.
 
-What the split buys a reader is :data:`unbound`. :func:`load_floor` returns
-every name the floor carries, bound or not, so a name with no geometry in the
-binding this robot holds is answerable as "I know that place, nothing has said
-where it is" rather than as an unknown name — which sent an operator hunting
-for a typo that was not there. :func:`load_zones` is the same minus the unbound
-ones, for every caller that only ever wanted a pose.
-
-**A zone is a place-name**, so the vocabulary is one human name and a free-text
-`note` — nothing else. The mission layer's resolver already knows what a store
-room is; what it cannot know is that this building's store room is where the
-stationery lives, which is what the note is for. A floor written before this
+**A zone is also a place-name**, so the naming half is one human name and a
+free-text `note` — nothing else. The mission layer's resolver already knows what
+a store room is; what it cannot know is that this building's store room is where
+the stationery lives, which is what the note is for. A floor written before this
 carries `kind`, `display_name`, `aliases`, `parent` and `tags`; they still load
 (`kind: keepout` still means non-navigable, and `description` is read as the
 note it was) and they are never written again.
 
-Example (`binding.yaml` alongside):
+Example:
 
-    schema: 1
-    site: acme_hq
-    floor: ground
-    revision: 4
+    frame_id: map
+    vocabulary_revision: 4
     zones:
-      - {name: the kitchen, note: 'the good kettle is in the store room'}
-      - {name: plant, navigable: false}
+      the kitchen:
+        x: 2.0
+        y: 3.5
+        yaw: 0.0
+        note: the good kettle is in the store room
+      plant: {x: 1.0, y: 0.5, radius: 0.4, navigable: false}
 """
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from geometry_msgs.msg import PoseStamped
@@ -98,7 +85,7 @@ class Circle:
 class Polygon:
     """A footprint following an outline of explicit vertices.
 
-    The outline is a simple (non-self-intersecting) polygon in the binding's
+    The outline is a simple (non-self-intersecting) polygon in the floor's
     frame, closed implicitly, in either winding order. Concave outlines are
     supported — membership is a ray cast, not a convex-hull test — so an
     L-shaped room or a corridor stretch is representable.
@@ -131,9 +118,8 @@ Footprint = Circle | Polygon
 class Zone:
     """A named place: a pose to navigate to, plus an optional area footprint.
 
-    ``pose`` and ``footprint`` are the binding — only meaningful in this
-    robot's ``frame_id``. Everything else is the vocabulary, and is the same on
-    every robot at the site.
+    ``pose`` and ``footprint`` are coordinates in the floor's frame. Every robot
+    on the floor holds the same ones, because the floor holds them.
     """
 
     name: str
@@ -148,14 +134,10 @@ class Zone:
     #: cannot supply, and the reason there is no alias list — another name
     #: this place answers to belongs in the sentence a resolver reads.
     note: str = ""
-    #: Whether the binding this robot holds carries geometry for it. A name in
-    #: the vocabulary with no binding is a real place with no pose here — which
-    #: is the whole reason zone/v0 splits the two, and the difference between
-    #: "you typed it wrong" and "nothing has said where that is".
-    bound: bool = True
-    #: A zone this robot holds a binding for that the site's vocabulary does
-    #: not name. Usable here; never advertised as a shared zone.
-    local: bool = False
+    #: What made the zone: ``save-zone``, ``segment-map`` or ``editor``. A note
+    #: about provenance and nothing more — a zone read off a map is as much a
+    #: coordinate in the floor's frame as one a robot was driven to.
+    source: str = ""
 
     @property
     def label(self) -> str:
@@ -192,33 +174,30 @@ def append_zone(
     *,
     site: str = "",
     floor: str = "",
-    platform_id: str | None = None,
 ) -> bool:
-    """Teach one zone into a floor, writing back the zone/v0 pair.
+    """Teach one zone into a floor, writing the floor's ``zones.yaml`` back.
 
     ``radius`` (optional) gives the zone a circular footprint, replacing any
     footprint it had. Re-teaching without one keeps the existing footprint, so
     capturing a better pose for a room does not discard its outline. Returns
     True if an existing zone was replaced.
 
-    Re-teaching is a new *coordinate*, never a new name, so the vocabulary a
-    zone already carries is carried through untouched unless ``note`` or
-    ``navigable`` says otherwise — driving somewhere to capture a better pose
-    must not silently drop what an operator typed in by hand. Under the split
-    that is no longer a rule this function has to remember: the two documents
-    are written separately, and a coordinate cannot reach the one that holds
-    the names.
+    Re-teaching is a new *coordinate*, never a new name: the name, note and
+    ``navigable`` a zone already carries come through untouched unless ``note``
+    or ``navigable`` says otherwise, because driving somewhere to capture a
+    better pose must not silently drop what an operator typed in by hand.
 
-    ``path`` is the floor directory. A legacy combined file is migrated on the
-    way through, so the first ``save-zone`` on an old floor is also what splits
-    it — nobody has to run a migration, and nobody can forget to.
+    ``path`` is the floor directory. A floor still holding zone/v0's two
+    documents is read through and replaced by the single file here, so the
+    first ``save-zone`` on such a floor is also its migration — nobody has to
+    run one, and nobody can forget to.
     """
     path = Path(path).expanduser()
     if path.suffix == ".yaml":
-        # A caller that named the old combined file means the floor it is in.
-        # Matched on the name rather than on ``is_file``, because the file may
-        # not exist yet and creating a *directory* called zones.yaml is the one
-        # outcome nothing recovers from.
+        # A caller that named the file means the floor it is in. Matched on the
+        # name rather than on ``is_file``, because the file may not exist yet
+        # and creating a *directory* called zones.yaml is the one outcome
+        # nothing recovers from.
         path = path.parent
     try:
         floor_zones = bundle.read_floor(path, site, floor)
@@ -226,10 +205,8 @@ def append_zone(
         floor_zones = {
             "site": site,
             "floor": floor,
-            "platform_id": platform_id or "",
             "frame_id": "map",
             "revision": 0,
-            "map_revision": "",
             "zones": {},
         }
     previous = floor_zones["zones"].get(name) or {}
@@ -238,8 +215,7 @@ def append_zone(
         x=round(x, 3),
         y=round(y, 3),
         yaw=round(yaw, 3),
-        bound=True,
-        anchor=zone_spec.anchor(zone_spec.TAUGHT, at=_stamp()),
+        source=zone_spec.SAVE_ZONE,
     )
     if radius is not None:
         entry["radius"] = round(radius, 3)
@@ -253,38 +229,19 @@ def append_zone(
         entry["navigable"] = bool(navigable)
     replaced = name in floor_zones["zones"]
     floor_zones["zones"][name] = entry
-    # The vocabulary revision is what a binding records itself as built
-    # against, so it has to move whenever a name could have.
+    # What a reader compares to tell which of two copies of a floor's zones is
+    # the later one, so it has to move whenever anything here could have.
     floor_zones["revision"] = int(floor_zones.get("revision") or 0) + 1
-    bundle.write_floor(
-        path,
-        floor_zones,
-        site=site,
-        floor=floor,
-        platform_id=platform_id,
-    )
+    bundle.write_floor(path, floor_zones, site=site, floor=floor)
     return replaced
 
 
-def _stamp() -> str:
-    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    return stamp.replace("+00:00", "Z")
+def load_zones(path) -> dict[str, Zone]:
+    """Every zone this floor names.
 
-
-def load_floor(path) -> dict[str, Zone]:
-    """Every zone this floor names, bound or not.
-
-    ``path`` is either a floor directory holding the zone/v0 pair
-    (``vocabulary.yaml`` + ``binding.yaml``) or a legacy combined
-    ``zones.yaml``, which :func:`mote_bringup.bundle.read_floor` migrates on
-    read. Both produce the same structure, so nothing downstream knows which
-    layout is on disk.
-
-    A zone with no binding comes back with ``pose=None`` and ``bound=False``
-    rather than being dropped. That is the point of the split: the robot can
-    then say ``unbound`` — "I know that place, nothing has told me where it
-    is" — where before it could only say the name was unknown, which sent an
-    operator hunting for a typo that was not there.
+    ``path`` is either a floor directory holding ``zones.yaml`` or that file
+    named outright, which is what a sim world's committed zones and the packaged
+    fallback are.
     """
     try:
         floor = bundle.read_floor(path)
@@ -298,21 +255,26 @@ def load_floor(path) -> dict[str, Zone]:
             if "polygon" in spec
             else None
         )
-        pose = None
         footprint = polygon
-        if spec.get("bound"):
+        if "x" in spec:
             x, y = spec["x"], spec["y"]
             pose = pose_from_xy_yaw(frame_id, x, y, float(spec.get("yaw", 0.0)))
             if footprint is None and "radius" in spec:
                 footprint = Circle(x, y, float(spec["radius"]))
+        else:
+            # A polygon with no pose of its own — what ``segment-map`` writes,
+            # since it read a room off a map rather than driving to it. The
+            # point is guaranteed to lie inside the outline, which a centroid
+            # is not for a concave room.
+            x, y = polygon.representative_point()
+            pose = pose_from_xy_yaw(frame_id, x, y, 0.0)
         zones[name] = Zone(
             name,
             pose,
             footprint,
             navigable=spec["navigable"],
             note=spec["note"],
-            bound=bool(spec.get("bound")),
-            local=bool(spec.get("local")),
+            source=spec.get("source", ""),
         )
     # zone/v0: a conforming platform rejects a vocabulary with a collision.
     # Loading one anyway would mean `goto kitchen` picking a winner by dict
@@ -324,26 +286,13 @@ def load_floor(path) -> dict[str, Zone]:
     return zones
 
 
-def load_zones(path) -> dict[str, Zone]:
-    """The zones this robot can actually drive to.
-
-    :func:`load_floor` minus the unbound ones, for every caller that only ever
-    wanted a pose — ``containing``, the dashboard's basemap, ``save-zone``.
-    The task layer uses ``load_floor``, because refusing a mission is where the
-    difference between "unknown" and "unbound" is worth saying.
-    """
-    return {name: zone for name, zone in load_floor(path).items() if zone.bound}
-
-
 class ZoneUnresolved(ValueError):
     """A name this robot cannot act on, with zone/v0's reason for it.
 
-    The reason is the point. "Not found" collapses two different faults an
-    operator does different things about: a name that is not in the vocabulary
-    at all is a mistake in the request, while one that is there and unbound
-    here is a gap in the geometry this robot holds, on a floor where its
-    neighbours may know the place perfectly well. mission/v0 carries it out as
-    ``failure.class: "unresolved_zone"`` with the reason in ``detail``.
+    The reason is the point: a name no zone on the floor answers to is a mistake
+    in the request, while a place marked ``navigable: false`` exists and was
+    drawn on purpose. mission/v0 carries it out as ``failure.class:
+    "unresolved_zone"`` with the reason in ``detail``.
     """
 
     def __init__(self, reason: str, message: str):
@@ -359,8 +308,7 @@ def resolve(zones: dict[str, Zone], query: str) -> Zone | None:
     the matching: a zone has one name, and the other spellings a place answers
     to are a job for the mission layer's resolver reading the ``note``, not for
     a list of aliases an operator has to keep in step by hand. Ambiguity cannot
-    arise here because :func:`load_floor` refuses a vocabulary that contains
-    any.
+    arise here because :func:`load_zones` refuses a floor that contains any.
     """
     if query in zones:
         return zones[query]
@@ -374,17 +322,9 @@ def resolve(zones: dict[str, Zone], query: str) -> Zone | None:
 def resolve_reason(zones: dict[str, Zone], query) -> tuple[Zone | None, str | None]:
     """``(zone, reason)`` — the zone, and why it cannot be driven to.
 
-    Three of zone/v0's six reasons are answerable here, and the split is what
-    made the second one answerable at all:
+    Two of zone/v0's reasons are answerable here:
 
-    * ``unknown_name`` — not in this floor's vocabulary. A mistake in the
-      request.
-    * ``unbound`` — in the vocabulary, and the binding this robot holds carries
-      no geometry for it. Not a typo, so the remedies are the three that put a
-      coordinate there: place it in the dashboard's zone editor on a candidate
-      revision and promote that; pull the revision that already binds it (the
-      robot may be running an older one); or drive there and ``save-zone``,
-      which is the one that measures an approach heading.
+    * ``unknown_name`` — no zone on this floor answers to the query.
     * ``not_navigable`` — a constraint zone used as a destination. It exists
       and an operator drew it on purpose, so saying "unknown" would send them
       hunting for a spelling mistake that is not there.
@@ -392,16 +332,16 @@ def resolve_reason(zones: dict[str, Zone], query) -> tuple[Zone | None, str | No
     ``wrong_floor`` and ``stale_revision`` are the two this robot cannot yet
     answer: it holds one floor at a time, and the map bundle does not declare
     frame continuity — which zone/v0 says is out of its own scope too.
-    ``ambiguous`` cannot arise, because :func:`load_floor` refuses a vocabulary
-    that contains one.
+    ``ambiguous`` cannot arise, because :func:`load_zones` refuses a floor that
+    contains one. ``unbound`` cannot arise either, and Mote never reports it: a
+    zone is a coordinate in the floor's frame, so a name with no coordinate is
+    not a zone on this floor — it is a name nobody has placed.
     """
     zone = resolve(zones, query) if isinstance(query, str) else None
     if zone is None:
         return None, zone_spec.UNKNOWN_NAME
     if not zone.navigable:
         return zone, zone_spec.NOT_NAVIGABLE
-    if not zone.bound:
-        return zone, zone_spec.UNBOUND
     return zone, None
 
 
@@ -414,16 +354,8 @@ def destination(zones: dict[str, Zone], query, where: str = "zone") -> Zone:
             f"{where} {zone.name!r} is not a destination — it is marked "
             "navigable: false",
         )
-    if reason == zone_spec.UNBOUND:
-        raise ZoneUnresolved(
-            reason,
-            f"{where} {zone.name!r} is a place on this floor, but the map "
-            "revision this robot is running has no geometry for it — place it "
-            "in the dashboard's zone editor and promote, pull the revision "
-            "that binds it, or drive there and run save-zone",
-        )
     if reason is not None:
-        known = sorted(name for name, z in zones.items() if z.navigable and z.bound)
+        known = sorted(name for name, z in zones.items() if z.navigable)
         raise ZoneUnresolved(
             reason,
             f"{where} {query!r} is not a place here; "
@@ -439,9 +371,7 @@ def containing(zones: dict[str, Zone], x: float, y: float) -> list[str]:
     """
     hits = []
     for zone in zones.values():
-        # An unbound zone has a footprint only if a binding gave it one, so
-        # `pose is None` here would mean a footprint in no frame.
-        if zone.pose is None or zone.footprint is None:
+        if zone.footprint is None:
             continue
         if zone.footprint.contains(x, y):
             p = zone.pose.pose.position

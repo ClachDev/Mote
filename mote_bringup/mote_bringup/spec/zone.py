@@ -1,26 +1,34 @@
-"""zone/v0 — places are named once for a fleet and located once per robot.
+"""zone/v0 shapes: the two documents a floor's zones are *serialised* into.
 
-**Names are shared. Coordinates are not. Maps are never shared.**
+**A zone is a coordinate in the floor's frame — a fact about the building.**
+The kitchen does not move. A map is an *estimate* of the same layout,
+registered into that frame; a new map is a better or worse estimate and
+changes nothing about where the kitchen is. Where a map and the zones
+disagree it is the map that gets aligned — pose-graph continuation today,
+rigid alignment as the fallback. So a floor's zones are one document,
+``zones.yaml``, belonging to the floor: not to a map revision, and not to one
+robot.
 
-A robot's map frame has its origin wherever that robot's SLAM session happened
-to start, so ``(2.0, 3.5)`` on one robot is a different physical point on the
-one beside it — and no fleet-level transform fixes it, because the discrepancy
-is not a constant offset but two independent estimates of a building drifting
-against each other. Mote has stated that invariant since the site bundles
-landed. What zone/v0 adds is the **split**, and this module is it:
+zone/v0 itself assumes otherwise — "names are shared, coordinates are not,
+maps are never shared" — because it describes a heterogeneous fleet in which
+every platform carries its own SLAM frame. Mote's fleet is neither: M4
+distributes one canonical revision to every robot on a floor, and the frame is
+the floor's. The spec's two documents therefore live here as **views over the
+single record**, built at the wire and never stored:
 
 * a :func:`vocabulary` — site, floor, and what the places are *called*. No
-  coordinates, no frame, no map reference. Safe to broadcast to every robot at
-  the site, and to a dispatcher that has never seen one.
-* a :func:`binding` — one platform's poses and footprints for those names,
-  stamped with the platform id, the frame and the map revision they are only
-  valid against. **It must not be copied to another platform.**
+  coordinates, no frame, no map reference. This is what ``GET /v1/zones``
+  serves to a dispatcher that has never seen a basemap.
+* a :func:`binding` — the poses and footprints, stamped with the
+  ``platform_id``, ``frame_id`` and ``map_revision`` of whoever is serialising
+  them, filled in *at* serialisation because none of the three is a property
+  of the floor.
 
-The split is structural rather than a rule someone has to remember. The
-vocabulary document is **built** from the fields a vocabulary may carry, never
-*stripped* of the ones it may not: stripping holds only until someone adds a
-geometry key and forgets this function exists, and the leak would be a
-plausible-looking coordinate rather than a crash.
+The vocabulary view is **built** from the fields a vocabulary may carry, never
+*stripped* of the ones it may not, and that is the whole safety property:
+stripping holds only until someone adds a geometry key and forgets this
+function exists, and the leak would be a plausible-looking coordinate rather
+than a crash.
 
 **A zone is a place-name**: a human name bound to geometry, and the record
 carries only what a prior cannot guess. The semantics come from the mission
@@ -30,8 +38,8 @@ vocabulary is the :data:`name` and a free-text :data:`note`, and nothing else.
 ``kind``, ``display_name``, ``aliases``, ``parent`` and ``tags`` were a
 taxonomy for a reader that did not need one — five fields to fill in, four ways
 to spell one place, and a machine name beside a human one for a resolver that
-reads either. They are **tolerated on read** so that no floor taught before
-this has to be re-taught, and they are neither written nor served.
+reads either. They are **tolerated on read** so that no floor written before
+this has to be rewritten, and they are neither written nor served.
 
 This module is stdlib-only, like the rest of :mod:`mote_bringup.spec`. Reading
 and writing these documents as YAML is :mod:`mote_bringup.bundle`'s, which
@@ -87,59 +95,36 @@ VOCABULARY_KEYS = (
 #: ``navigable`` default above.
 LEGACY_KEYS = ("kind", "display_name", "aliases", "parent", "tags", "description")
 
-#: How a binding's coordinate came to be, which is what tells a consumer whether
-#: to trust it after the map changes. ``fiducial`` is the only one that survives
-#: re-mapping without re-teaching, and the only one under which two platforms
-#: can independently arrive at the same physical point without sharing a map.
-#: Mote writes three of the four:
-#:
-#: * ``taught`` — a robot was driven there and ``save-zone`` captured its pose.
-#:   A measurement, taken by that platform in that map frame.
-#: * ``derived`` — read off a saved map by an algorithm, which ``by`` names:
-#:   ``segment-map``'s room outlines, and the pose a polygon-only zone gets.
-#: * ``external`` — resolved off the platform. What the fleet dashboard's zone
-#:   editor writes for geometry an operator placed or moved on the map: no
-#:   robot measured it and no algorithm read it off the map, so neither of the
-#:   other two would be true. ``by`` names what did it.
-#:
-#: ``external`` is the closest of zone/v0's four to "a person pointed at the
-#: map" rather than an exact fit — the spec glosses it as an off-platform
-#: localisation system. The enum is closed, so the alternatives were stamping a
-#: click as a measurement or as an algorithm's output, which are the two larger
-#: lies. A successor revision should carry a method for it (mote #616).
-ANCHOR_METHODS = ("taught", "derived", "fiducial", "external")
+#: What made this zone, and nothing beyond that. It is a provenance note for an
+#: operator listing or filtering zones; nothing may read it as a claim about the
+#: coordinate's validity, accuracy or portability, because under this model
+#: there is no such claim to make. A re-map moves the map, not the kitchen.
+SAVE_ZONE = "save-zone"
+SEGMENT_MAP = "segment-map"
+EDITOR = "editor"
+SOURCES = (SAVE_ZONE, SEGMENT_MAP, EDITOR)
 
-TAUGHT = "taught"
-DERIVED = "derived"
-FIDUCIAL = "fiducial"
-EXTERNAL = "external"
-
-#: What the zone editor puts in an ``external`` anchor's ``by``. Shared with
-#: ``server/ui/zone_editor.mjs``, which stamps it, and with the server, which
-#: recognises it in order to record *which* operator was at the keyboard.
-EDITOR = "zone-editor"
+#: zone/v0 requires every binding entry to carry an ``anchor.method``, so the
+#: wire needs an answer to a question this model does not ask. The mapping is
+#: here, once, and is applied only when :func:`bound` serialises — never stored
+#: and never read back. ``taught`` is the fallback because a floor that records
+#: no source was, in every case Mote has, driven to and captured.
+_ANCHOR_METHOD = {SAVE_ZONE: "taught", SEGMENT_MAP: "derived", EDITOR: "external"}
 
 # -- why a name did not resolve -------------------------------------------
 
-UNKNOWN_NAME = "unknown_name"  # not in the vocabulary
-UNBOUND = "unbound"  # in it; this platform's binding has no geometry for it
-WRONG_FLOOR = "wrong_floor"  # bound, but not on the active floor
+UNKNOWN_NAME = "unknown_name"  # no zone on this floor answers to the query
+WRONG_FLOOR = "wrong_floor"  # a zone, but not on the active floor
 STALE_REVISION = "stale_revision"  # bound against a revision with no continuity
 NOT_NAVIGABLE = "not_navigable"  # a constraint zone used as a destination
 AMBIGUOUS = "ambiguous"  # the query matched more than one zone
 
-REASONS = (UNKNOWN_NAME, UNBOUND, WRONG_FLOOR, STALE_REVISION, NOT_NAVIGABLE, AMBIGUOUS)
-
-#: ``unknown_name`` and ``unbound`` are deliberately distinct, and this is the
-#: pair the split exists to make representable. The first is a mistake in the
-#: request: no floor names that place. The second is a name the floor does
-#: carry with no geometry beside it in the binding this platform holds — which
-#: may be because the promoted revision binds it for nobody, because this
-#: platform is running an older revision than the one that binds it, or because
-#: it has simply never been given a coordinate here. An operator does different
-#: things about them, and collapsing both to "not found" hides the fleet's most
-#: common real fault.
-DISTINCT_REASONS = (UNKNOWN_NAME, UNBOUND)
+#: zone/v0 has a sixth, ``unbound``: a name in the vocabulary that this platform
+#: holds no coordinate for. Mote cannot produce it and does not list it. A zone
+#: is a coordinate in the floor's frame, so a name with no coordinate is not a
+#: zone on this floor at all — it is a name nobody has placed, which is what
+#: ``unknown_name`` says.
+REASONS = (UNKNOWN_NAME, WRONG_FLOOR, STALE_REVISION, NOT_NAVIGABLE, AMBIGUOUS)
 
 
 def _place(where: str, value) -> str:
@@ -149,11 +134,11 @@ def _place(where: str, value) -> str:
     return text
 
 
-# -- the vocabulary --------------------------------------------------------
+# -- what a zone is called --------------------------------------------------
 
 
 def term(where: str, name, entry: dict) -> dict:
-    """One zone's naming half: what the place is called, and a note about it.
+    """What one zone is called, and the note beside the name.
 
     Both fields are optional in the file, and a floor taught before place-names
     reads perfectly: its ``kind``/``display_name``/``aliases``/``parent``/
@@ -192,11 +177,12 @@ def _navigable(where: str, name, entry: dict) -> bool:
 
 
 def vocabulary(site: str, floor: str, terms, *, revision: int = 0) -> dict:
-    """The shared document: which places exist here and what they are called.
+    """The names-only view: which places exist here and what they are called.
 
-    Carries no coordinates, no frame and no map reference, because none of those
-    are portable between robots — which is exactly what makes it safe to
-    broadcast to every platform at the site.
+    Carries no coordinates, no frame and no map reference — not because a
+    coordinate would be wrong, but because the caller this is for has no
+    basemap to draw one on, and a number it cannot place is worse than no
+    number. Built from :data:`VOCABULARY_KEYS`, never stripped of the rest.
     """
     return {
         "schema": SCHEMA,
@@ -281,59 +267,34 @@ def ambiguities(terms) -> list:
     return problems
 
 
-# -- the binding -----------------------------------------------------------
+# -- where a zone is -------------------------------------------------------
 
 
-def anchor(
-    method: str = TAUGHT,
-    *,
-    at: str | None = None,
-    by: str = "",
-    fiducial_id: str | None = None,
-    offset: dict | None = None,
-    confidence: float | None = None,
-) -> dict:
-    """How this coordinate came to be.
+#: :data:`_ANCHOR_METHOD` read the other way, for :func:`source_from_anchor`.
+_ANCHOR_SOURCE = {method: name for name, method in _ANCHOR_METHOD.items()}
 
-    ``confidence`` is the platform's own estimate; null is a legitimate answer
-    and means "not estimated", never "certain".
+
+def source_from_anchor(anchor) -> str:
+    """The ``source`` a zone/v0 ``anchor`` implies, for reading an old document.
+
+    The inverse of the mapping :func:`bound` writes, kept beside it so the two
+    cannot drift. ``fiducial``, which Mote never wrote, and anything else
+    unrecognised come back as ``""``.
     """
-    if method not in ANCHOR_METHODS:
-        raise SpecError(f"unknown anchor method {method!r}")
-    if method == "fiducial" and not fiducial_id:
-        # The one anchor that survives re-mapping does so by naming a marker;
-        # without the marker it is a taught pose wearing a better label.
-        raise SpecError("a fiducial anchor must name its fiducial_id")
-    if confidence is not None and not 0.0 <= float(confidence) <= 1.0:
-        raise SpecError("anchor confidence must be between 0 and 1")
-    record = {"method": method, "at": at, "by": by, "confidence": confidence}
-    if fiducial_id:
-        record["fiducial_id"] = fiducial_id
-    if offset is not None:
-        record["offset"] = offset
-    return record
+    method = anchor.get("method") if isinstance(anchor, dict) else None
+    return _ANCHOR_SOURCE.get(method, "")
 
 
-def read_anchor(where: str, value) -> dict:
-    """One anchor as it arrives from a document or a browser, through
-    :func:`anchor` so an unknown method is refused at the edge.
+def read_source(value) -> str:
+    """The ``source`` a document or a browser submitted, or ``""``.
 
-    A submitted anchor is the only part of a zone's provenance the platform
-    does not author, so it is the one part that could claim anything: a caller
-    that copied it straight through would let a browser record a click as a
-    measurement. Refusing here is what stops the claim reaching a stored
-    revision, where nothing afterwards can tell it from a real one.
+    A value outside :data:`SOURCES` is dropped rather than refused. It is a note
+    about what made the zone, nothing reads it to decide anything, and costing an
+    operator a whole floor over a field with no consequences would be the wrong
+    price.
     """
-    if not isinstance(value, dict):
-        raise SpecError(f"{where} anchor is not a mapping")
-    return anchor(
-        value.get("method") or TAUGHT,
-        at=value.get("at"),
-        by=str(value.get("by") or ""),
-        fiducial_id=value.get("fiducial_id"),
-        offset=value.get("offset"),
-        confidence=value.get("confidence"),
-    )
+    text = str(value or "")
+    return text if text in SOURCES else ""
 
 
 def bound(
@@ -343,17 +304,21 @@ def bound(
     yaw: float = 0.0,
     *,
     footprint: dict | None = None,
-    anchored: dict | None = None,
+    source: str = "",
 ) -> dict:
-    """One zone's coordinate half, for a :func:`binding`.
+    """One zone's geometry, as an entry in a :func:`binding` view.
 
-    The name is **not** refused for its spelling. A name is a fact about a
-    floor an operator already has, the map it is bound to is perfectly good,
-    and refusing to read the floor over a spelling would be the wrong price.
+    The name is **not** refused for its spelling. A name is a fact about a floor
+    an operator already has, the map it is drawn on is perfectly good, and
+    refusing to read the floor over a spelling would be the wrong price.
     :func:`check_vocabulary` reports it instead, which is where an operator can
-    act on it, and a binding never leaves this robot anyway. What is refused is
-    a *vocabulary* that cannot be resolved at all — two places called the same
-    thing — because that one has no correct behaviour to fall back on.
+    act on it. What is refused is a *vocabulary* that cannot be resolved at all
+    — two places called the same thing — because that one has no correct
+    behaviour to fall back on.
+
+    ``anchor`` is required by zone/v0 and is filled from ``source`` here, which
+    is the one place the mapping lives. It is a fact about what made the zone,
+    not about what the coordinate is worth.
     """
     if footprint is not None:
         check_footprint(name, footprint)
@@ -365,7 +330,7 @@ def bound(
             "yaw": round(float(yaw), 4),
         },
         "footprint": footprint,
-        "anchor": anchored if anchored is not None else anchor(),
+        "anchor": {"method": _ANCHOR_METHOD.get(source, "taught"), "by": source},
     }
 
 
@@ -402,13 +367,14 @@ def binding(
     map_revision: str = "",
     vocabulary_revision: int = 0,
 ) -> dict:
-    """The private document: where those places are in this map frame.
+    """The geometry view: where the floor's places are, in a named frame.
 
-    ``map_revision`` is not bookkeeping. A binding is valid only against a
-    revision that declares frame continuity with the one it was bound in, and
-    a platform whose active revision is not continuous with its binding must
-    resolve every affected zone as ``stale_revision`` rather than return the old
-    coordinate. Zones, map and pose-graph travel together or not at all.
+    ``platform_id``, ``frame_id`` and ``map_revision`` are supplied by whoever
+    is serialising and are not properties of the floor — a zone is a coordinate
+    in the floor's frame, and the map revision is an estimate registered into
+    it rather than a frame of its own. They are here because zone/v0 requires
+    them, and they say which platform answered and what it was running at the
+    time.
     """
     return {
         "schema": SCHEMA,
@@ -484,10 +450,10 @@ def resolution(
 #
 # The geometry is zone/v0's normative containment semantics and it lives here
 # rather than in the task layer for two reasons. The *server* needs it too — a
-# binding this module writes must carry a pose, and for a zone drawn as an
-# outline that pose has to be derived from the outline — and one
-# implementation of "is this point inside" is the only way two ends of a fleet
-# can agree about a boundary case.
+# zone drawn as an outline still has to say where a mission navigates to, and
+# that point is derived from the outline — and one implementation of "is this
+# point inside" is the only way two ends of a fleet can agree about a boundary
+# case.
 
 
 def edges(vertices):
@@ -551,11 +517,11 @@ def representative_point(vertices) -> tuple:
     interior span of the horizontal line through it — so a U- or L-shaped room
     gets a pose in the room rather than in the notch outside it.
 
-    This is what a polygon-only zone's **binding pose** is, computed once when
-    the binding is written rather than by every reader. zone/v0 requires a
-    binding to carry a pose, and it is right to: a binding is where a mission
-    navigates to, and a zone that could not say where that is would be a
-    footprint pretending to be a destination.
+    This is the pose a polygon-only zone gets — what ``segment-map`` writes,
+    since it read a room off a map rather than driving to it. Derived here, by
+    the one implementation of "inside", so a reader deriving its own would be a
+    second one. A zone that could not say where a mission navigates to would be
+    a footprint pretending to be a destination.
     """
     cx, cy = centroid(vertices)
     if polygon_contains(vertices, cx, cy):
@@ -572,128 +538,11 @@ def representative_point(vertices) -> tuple:
     return (lo + hi) / 2.0, cy
 
 
-# -- the migration ---------------------------------------------------------
+# -- the keys that are geometry -------------------------------------------
 
-#: Geometry keys a legacy combined ``zones.yaml`` entry may carry. Named here
-#: because :func:`split` has to know which half of an entry is which, and
-#: because a key that is in neither list is a key nobody has decided about.
+#: Geometry keys a zone entry may carry. Named here because the tests walk a
+#: serialised :func:`vocabulary` for them — the leak this module exists to
+#: prevent is a coordinate reaching a document that promises none — and because
+#: a key in neither this list nor :data:`VOCABULARY_KEYS` is a key nobody has
+#: decided about.
 GEOMETRY_KEYS = ("x", "y", "yaw", "radius", "polygon")
-
-
-def split(
-    zones: dict, *, site: str, floor: str, platform_id: str, map_revision: str = ""
-):
-    """``(vocabulary, binding)`` from a combined ``zones.yaml``'s parsed form.
-
-    This is the migration, and it is a *split* rather than two filters over the
-    same dict: each document is built from its own key list, so a geometry key
-    added later cannot leak into the vocabulary by being forgotten.
-
-    An entry that carries its own ``anchor`` keeps it. That matters for the one
-    combined file nobody hand-wrote: the zone editor packs its result as a
-    ``zones.yaml`` and it comes back through here, so dropping the anchor would
-    re-stamp every coordinate an operator placed as one a robot drove to.
-    Where an entry says nothing, the binding is anchored ``taught`` with no
-    timestamp — the honest record for a file written before there was a field
-    to say otherwise, which did not say when or by whom either.
-    """
-    terms, bindings = [], []
-    for name, entry in zones["zones"].items():
-        terms.append(term("zones.yaml", name, entry))
-        carried = entry.get("anchor")
-        carried = read_anchor(f"zone {name!r}", carried) if carried else None
-        footprint = None
-        if entry.get("polygon"):
-            footprint = {"type": "polygon", "vertices": entry["polygon"]}
-        elif entry.get("radius") is not None:
-            footprint = {"type": "circle", "radius": entry["radius"]}
-        if "x" in entry and "y" in entry:
-            bindings.append(
-                bound(
-                    name,
-                    entry["x"],
-                    entry["y"],
-                    entry.get("yaw", 0.0),
-                    footprint=footprint,
-                    anchored=carried or anchor(TAUGHT),
-                )
-            )
-            continue
-        if footprint is None or footprint["type"] != "polygon":
-            raise SpecError(f"zone {name!r} has neither a pose nor an outline")
-        # A polygon-only zone — what ``segment-map`` emits, since it is reading
-        # rooms off a map rather than driving to them. The pose is derived from
-        # the outline *here*, once, because zone/v0 requires a binding to carry
-        # one and because a reader deriving its own would be a second
-        # implementation of "inside".
-        px, py = representative_point(footprint["vertices"])
-        bindings.append(
-            bound(
-                name,
-                px,
-                py,
-                footprint=footprint,
-                anchored=carried or anchor(DERIVED, by="polygon"),
-            )
-        )
-    revision = zones.get("revision", 0)
-    return (
-        vocabulary(site, floor, terms, revision=revision),
-        binding(
-            platform_id,
-            site,
-            floor,
-            bindings,
-            frame_id=zones.get("frame_id") or "map",
-            map_revision=map_revision,
-            vocabulary_revision=revision,
-        ),
-    )
-
-
-def merge(vocabulary_doc: dict, binding_doc: dict | None) -> dict:
-    """One combined view, in the shape ``zones.yaml`` parses to.
-
-    What a *reader* wants — the task layer resolving a name, the dashboard
-    drawing a floor — is both halves at once, and rebuilding that join in three
-    places would be three chances to get the unbound case wrong. The join is
-    outer on the vocabulary: a name the binding has no geometry for is present
-    with none, which is what makes ``unbound`` answerable rather than
-    indistinguishable from ``unknown_name``.
-    """
-    bindings = {
-        item["name"]: item for item in ((binding_doc or {}).get("bindings") or ())
-    }
-    zones = {}
-    for item in vocabulary_doc.get("zones") or ():
-        zones[item["name"]] = dict(item, **_geometry(bindings.pop(item["name"], None)))
-    for name, item in bindings.items():
-        # A binding for a name the vocabulary does not have is a *local
-        # extension*: this platform holds a binding for a place nobody has
-        # named for the site. It stays usable here and is never advertised as a shared zone.
-        zones[name] = dict(term("binding", name, {}), **_geometry(item), local=True)
-    return {
-        "site": vocabulary_doc.get("site") or "",
-        "floor": vocabulary_doc.get("floor") or "",
-        "platform_id": (binding_doc or {}).get("platform_id") or "",
-        "frame_id": (binding_doc or {}).get("frame_id") or "map",
-        "revision": vocabulary_doc.get("revision", 0),
-        "map_revision": (binding_doc or {}).get("map_revision") or "",
-        "zones": zones,
-    }
-
-
-def _geometry(item: dict | None) -> dict:
-    if item is None:
-        return {"bound": False}
-    geometry = {"bound": True, "anchor": item.get("anchor") or anchor()}
-    pose = item.get("pose")
-    if pose:
-        geometry.update(x=pose["x"], y=pose["y"], yaw=pose.get("yaw", 0.0))
-    footprint = item.get("footprint")
-    if footprint:
-        if footprint["type"] == "circle":
-            geometry["radius"] = footprint["radius"]
-        else:
-            geometry["polygon"] = footprint["vertices"]
-    return geometry

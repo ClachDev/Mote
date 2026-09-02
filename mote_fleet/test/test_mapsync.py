@@ -116,9 +116,10 @@ def test_a_revision_already_on_disk_is_flipped_rather_than_downloaded(
 def test_zones_arrive_with_the_map_and_the_old_ones_are_kept(
     server, operator, robot_home, tmp_path
 ):
-    """A revision from another mapping session is another map frame, so the
-    zones bound in the old one are wrong the moment it is published — but
-    losing every bound place silently is not acceptable either."""
+    """A revision carries a copy of the floor's zones, and promoting it is how
+    an edit made in the dashboard reaches a robot — so installing one replaces
+    what the floor held. Losing every named place silently is not acceptable
+    either, so the copy it replaces is kept."""
     floor_dir = sites.floor_dir(SITE, FLOOR)
     floor_dir.mkdir(parents=True)
     (floor_dir / "zones.yaml").write_text(
@@ -132,6 +133,43 @@ def test_zones_arrive_with_the_map_and_the_old_ones_are_kept(
     kept = list(floor_dir.glob("zones.*.yaml"))
     assert len(kept) == 1
     assert "old" in bundle.read_zones(kept[0])["zones"]
+
+
+def test_a_revision_from_a_robot_on_the_old_layout_replaces_it_whole(
+    robot_home, tmp_path
+):
+    """A revision written while zone/v0's split stood carries two documents.
+
+    Copying either one in *beside* the floor's `zones.yaml` would be the worst
+    of the three outcomes: `read_floor` prefers the single file, so the geometry
+    just installed would be read by nobody. The revision's layout replaces the
+    floor's, and the floor's is kept.
+    """
+    floor_dir = sites.floor_dir(SITE, FLOOR)
+    floor_dir.mkdir(parents=True)
+    (floor_dir / "zones.yaml").write_text(
+        "frame_id: map\nzones:\n  old: {x: 0, y: 0}\n"
+    )
+    revision = write_revision(tmp_path / "rev", zones=False)
+    (revision / "vocabulary.yaml").write_text(
+        "schema: 1\nsite: home\nfloor: ground\nrevision: 2\n"
+        "zones:\n- {name: galley, note: '', navigable: true}\n"
+    )
+    (revision / "binding.yaml").write_text(
+        "schema: 1\nplatform_id: mote-01\nsite: home\nfloor: ground\n"
+        "frame_id: map\nmap_revision: ''\nvocabulary_revision: 2\n"
+        "bindings:\n- name: galley\n  pose: {x: 4.0, y: 5.0, yaw: 0.0}\n"
+        "  footprint: null\n  anchor: {method: taught}\n"
+    )
+    sites.install_revision(SITE, FLOOR, REVISION, bundle.pack(revision))
+
+    assert not (floor_dir / "zones.yaml").exists()
+    assert (floor_dir / "vocabulary.yaml").is_file()
+    zones = bundle.read_floor(floor_dir, SITE, FLOOR)["zones"]
+    assert set(zones) == {"galley"}
+    assert zones["galley"]["x"] == 4.0
+    kept = list(floor_dir.glob("zones.*.yaml"))
+    assert len(kept) == 1 and "old" in bundle.read_zones(kept[0])["zones"]
 
 
 def test_a_download_that_is_not_what_was_announced_is_refused(
@@ -217,25 +255,22 @@ def test_publishing_packs_the_floors_zones_into_the_revision(
     assert uploaded["zones"] == ["bay"]
 
 
-def test_publishing_a_split_floor_sends_the_binding_in_the_revision(
-    server, robot_home, tmp_path
-):
-    """The zone/v0 layout, end to end.
+def test_publishing_sends_the_floor_zones_in_the_revision(server, robot_home, tmp_path):
+    """A revision carries a copy of the floor's zones, end to end.
 
-    The coordinates go *inside* the revision, because they are only meaningful
-    in that revision's map frame. The names ride along too — but an upload is
-    inert, and that now covers names as well as coordinates: until an operator
-    promotes, ``/v1/zones`` still answers with the floor's published
-    vocabulary. Otherwise a robot could rename every room on a floor its
-    neighbours are driving, by uploading a map nobody accepted.
+    The floor owns them, and the revision is the vehicle the fleet already has
+    for getting them to a robot that has never driven here. An upload is inert,
+    and that covers names as well as coordinates: until an operator promotes,
+    ``/v1/zones`` still answers with what is published. Otherwise a robot could
+    rename every room on a floor its neighbours are driving, by uploading a map
+    nobody accepted.
     """
     enroll(server, "serial:ddd", name="Scout")
     floor_dir = sites.floor_dir(SITE, FLOOR)
     write_revision(floor_dir / "maps" / REVISION, zones=False)
     # Written with `bundle`, not with `mote_tasks.zones`: these tests run in the
     # ROS-free `fleet` environment, and reaching for the task layer's writer
-    # here would be the seam the split exists to keep — the robot's half needs
-    # ROS, the fleet's half must never.
+    # here would cross the seam that lets the fleet box install no ROS.
     bundle.write_floor(
         floor_dir,
         {
@@ -246,7 +281,6 @@ def test_publishing_a_split_floor_sends_the_binding_in_the_revision(
                     "name": "bay",
                     "note": "",
                     "navigable": True,
-                    "bound": True,
                     "x": 1.5,
                     "y": -2.0,
                     "yaw": 0.0,
@@ -255,9 +289,8 @@ def test_publishing_a_split_floor_sends_the_binding_in_the_revision(
         },
         site=SITE,
         floor=FLOOR,
-        platform_id="mote-01",
     )
-    assert (floor_dir / "binding.yaml").is_file()
+    assert (floor_dir / "zones.yaml").is_file()
     sites._publish_revision(floor_dir, REVISION)
 
     mapsync.publish(server.url, SITE, FLOOR, REVISION, "mote-01")

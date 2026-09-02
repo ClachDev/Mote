@@ -162,46 +162,77 @@ def test_a_local_mission_status_conforms(validator_for):
 # -- zone/v0 ---------------------------------------------------------------
 
 
-def a_floor():
-    """One floor's zones, split — the migration a real ``zones.yaml`` takes."""
-    return zone.split(
-        {
-            "frame_id": "map",
-            "revision": 4,
-            "zones": {
-                "kitchen": {
-                    "x": 2.0,
-                    "y": 3.5,
-                    "yaw": 1.57,
-                    "radius": 1.5,
-                    "kind": "room",
-                    "display_name": "Kitchen",
-                    "aliases": ["the kitchen", "galley"],
-                },
-                "ward_a": {"polygon": [[4, 0], [9, 0], [9, 3], [4, 3]], "kind": "room"},
-                "server_room": {"x": 1.0, "y": 1.0, "kind": "keepout"},
-            },
-        },
-        site="acme_hq",
-        floor="ground",
-        platform_id="mote-01",
-        map_revision="2026-07-24T09-12-03",
+def a_floor(directory: Path):
+    """One floor's zones, as the two zone/v0 views the wire is written in.
+
+    Read from a real ``zones.yaml`` through the reader every consumer uses, so
+    what is validated here is what a floor actually produces — retired fields
+    and all — rather than a document written for the test.
+    """
+    from mote_bringup import bundle
+
+    (directory / bundle.ZONES_YAML).write_text(
+        "frame_id: map\n"
+        "vocabulary_revision: 4\n"
+        "zones:\n"
+        "  kitchen:\n"
+        "    {x: 2.0, y: 3.5, yaw: 1.57, radius: 1.5, kind: room,\n"
+        "     display_name: Kitchen, aliases: [the kitchen, galley]}\n"
+        "  ward_a: {polygon: [[4, 0], [9, 0], [9, 3], [4, 3]], kind: room}\n"
+        "  server_room: {x: 1.0, y: 1.0, kind: keepout}\n"
+    )
+    floor = bundle.read_floor(directory, "acme_hq", "ground")
+    return (
+        bundle.vocabulary(floor, "acme_hq", "ground"),
+        bundle.binding(
+            floor,
+            "acme_hq",
+            "ground",
+            "mote-01",
+            map_revision="2026-07-24T09-12-03",
+        ),
     )
 
 
-def test_a_vocabulary_conforms_and_carries_no_coordinates(validator_for):
-    document, _ = a_floor()
-    validator_for("zone/v0/zone-vocabulary.schema.json").validate(document)
-    # The invariant, checked over the whole payload rather than over the keys
-    # someone thought of: a geometry key here is the leak the split exists to
-    # prevent, and it would look like a plausible coordinate rather than a crash.
-    text = json.dumps(document)
+def a_vocabulary(directory: Path) -> dict:
+    """The names-only view as ``GET /v1/zones`` serves it.
+
+    ``problems`` is dropped: it is Mote's own, for an operator reading a floor,
+    and it is not part of the document the spec describes.
+    """
+    document, _ = a_floor(directory)
+    return {key: value for key, value in document.items() if key != "problems"}
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="zone/v0's vocabulary schema still requires `kind`, which mote #609 "
+    "retired: a zone is a place-name, and the taxonomy was five fields for a "
+    "reader that needed none. The successor revision of the spec is outstanding "
+    "(see CLAUDE.md, 'Fleet: zones are place-names'). When it lands this passes "
+    "and the marker comes off.",
+)
+def test_a_vocabulary_conforms(validator_for, tmp_path):
+    validator_for("zone/v0/zone-vocabulary.schema.json").validate(
+        a_vocabulary(tmp_path)
+    )
+
+
+def test_a_vocabulary_carries_no_coordinates(validator_for, tmp_path):
+    """Separate from the schema check, and not expected to fail with it.
+
+    This is the invariant the names-only view exists for, and it is Mote's to
+    hold whatever the spec's schema currently requires — so it is checked over
+    the whole payload rather than over the keys someone thought of, and a
+    failure here is a plausible-looking coordinate rather than a crash.
+    """
+    text = json.dumps(a_vocabulary(tmp_path))
     for key in zone.GEOMETRY_KEYS + ("frame_id", "map_revision", "pose", "footprint"):
-        assert f'"{key}"' not in text, f"{key} leaked into the vocabulary"
+        assert f'"{key}"' not in text, f"{key} leaked into the names-only view"
 
 
-def test_a_binding_conforms(validator_for):
-    _, document = a_floor()
+def test_a_binding_conforms(validator_for, tmp_path):
+    _, document = a_floor(tmp_path)
     validator_for("zone/v0/zone-binding.schema.json").validate(document)
     assert document["platform_id"] == "mote-01"
     assert document["map_revision"] == "2026-07-24T09-12-03"
@@ -225,7 +256,6 @@ def test_every_resolution_reason_conforms(validator_for):
             frame_id="map",
             map_revision="2026-07-24T09-12-03",
             pose={"x": 2.0, "y": 3.5, "yaw": 1.57},
-            kind="room",
             navigable=True,
             anchor_method="taught",
         )
