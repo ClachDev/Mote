@@ -27,6 +27,44 @@ def _resolve_device(port: str) -> str:
     return os.path.realpath(port)
 
 
+def _report_angle_limits(limits: list) -> None:
+    """What the servo itself will accept, against what the config asks for.
+
+    These registers live only in the servo. A joint whose configured band runs
+    past them stops dead at the same angle every time, in one direction, at any
+    load -- indistinguishable from running out of torque, and invisible in
+    robot.yaml, arm.yaml, the URDF and every other tool here.
+    """
+    if not limits:
+        return
+    print("\nservo goal-range limits (EEPROM, registers 9-12):")
+    print(f"{'joint':<14} {'min':>5} {'max':>5}   {'accepts (rad)':>18}   configured")
+    problems = []
+    for joint, band in limits:
+        if band is None:
+            print(f"{joint.name:<14}   ---   ---   (could not read)")
+            continue
+        low, high = band
+        # counts_to_rad honours `invert`, so an inverted joint's low count is
+        # its high angle; order them by angle, not by register.
+        angles = sorted((joint.counts_to_rad(low), joint.counts_to_rad(high)))
+        note = ""
+        if angles[0] > joint.min_rad + 1e-6 or angles[1] < joint.max_rad - 1e-6:
+            note = "  <-- NARROWER THAN CONFIGURED"
+            problems.append(joint.name)
+        print(
+            f"{joint.name:<14} {low:>5} {high:>5}   "
+            f"[{angles[0]:+.3f}, {angles[1]:+.3f}]   "
+            f"[{joint.min_rad:+.3f}, {joint.max_rad:+.3f}]{note}"
+        )
+    if problems:
+        print(
+            f"\n{', '.join(problems)}: the servo will refuse goals outside its own "
+            "band, so the joint stops there whatever robot.yaml and arm.yaml say. "
+            "Widen the register or narrow the configured limits to match."
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="SO-101 arm bus check")
     parser.add_argument("--robot-yaml", default="", help="override robot.yaml path")
@@ -71,6 +109,7 @@ def main() -> None:
             f"\n{'joint':<14} {'id':>3} {'pos':>5} {'rad':>7} "
             f"{'volt':>5} {'temp':>4} {'load':>6}"
         )
+        limits: list = []
         for joint in cfg.joints:
             health = bus.read_health(joint.id) if bus.ping(joint.id) else None
             if health is None:
@@ -83,6 +122,8 @@ def main() -> None:
                 f"{joint.counts_to_rad(health.position):>+7.3f} "
                 f"{health.voltage:>5.1f} {health.temperature:>4} {health.load:>6}"
             )
+            limits.append((joint, bus.read_angle_limits(joint.id)))
+        _report_angle_limits(limits)
     finally:
         bus.close()
 

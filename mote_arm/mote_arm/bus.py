@@ -33,6 +33,13 @@ _KI = 23
 # in the 0-4095 encoder frame. This is what stops a joint's travel straddling
 # the 0/4095 wrap; see mote_arm/calibrate.py.
 _HOMING_OFFSET = 31
+# SMS_STS_MIN_ANGLE_LIMIT_L / _MAX_ANGLE_LIMIT_L, both EEPROM. In position mode
+# the servo refuses a goal outside this band, silently and in one direction —
+# which looks exactly like a joint that has run out of torque. Nothing else in
+# this repo reads or writes them, so a servo that arrived with a restricted
+# range, or was configured with one, is invisible to every tool we have.
+_MIN_ANGLE_LIMIT = 9
+_MAX_ANGLE_LIMIT = 11
 _PRESENT_POSITION = 56
 _PRESENT_LOAD = 60
 _PRESENT_VOLTAGE = 62
@@ -343,6 +350,28 @@ class FeetechBus:
             second = [self._read_gain_reg(servo_id, r) for r in (_KP, _KD, _KI)]
             if None not in first and first == second:
                 return tuple(first)  # type: ignore[return-value]
+            time.sleep(0.1)
+        return None
+
+    def read_angle_limits(self, servo_id: int) -> tuple[int, int] | None:
+        """Return (min, max) goal counts the servo will accept, or None.
+
+        Read twice and trusted only when both agree, for the same reason
+        ``read_gains`` does: these live in EEPROM and a single read on this bus
+        has been seen to come back garbled.
+        """
+        for _ in range(5):
+            first = (
+                self._read(2, servo_id, _MIN_ANGLE_LIMIT),
+                self._read(2, servo_id, _MAX_ANGLE_LIMIT),
+            )
+            time.sleep(0.05)
+            second = (
+                self._read(2, servo_id, _MIN_ANGLE_LIMIT),
+                self._read(2, servo_id, _MAX_ANGLE_LIMIT),
+            )
+            if None not in first and first == second:
+                return first  # type: ignore[return-value]
             time.sleep(0.1)
         return None
 
