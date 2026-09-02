@@ -151,7 +151,7 @@ def test_editing_a_candidate_on_a_floor_with_nothing_published(server, tmp_path,
     assert floor["canonical"] is None  # still nothing published
 
 
-def test_the_vocabulary_revision_advances_from_the_edited_revision(
+def test_the_revision_counter_advances_from_the_edited_revision(
     server, tmp_path, robot
 ):
     """A carry-forward has to be able to tell which naming is newer, so the
@@ -160,11 +160,11 @@ def test_the_vocabulary_revision_advances_from_the_edited_revision(
     token = server.registry.new_operator(name="editor")
     _, body = edit(server, ZONES, token)
     first = body["revision"]
-    assert stored_zones(server, first)[1]["vocabulary_revision"] == 5
+    assert stored_zones(server, first)[1]["revision"] == 5
 
     # Editing the result again continues from *it*, not from the canonical.
     _, body = edit(server, ZONES, token, revision=first)
-    assert stored_zones(server, body["revision"])[1]["vocabulary_revision"] == 6
+    assert stored_zones(server, body["revision"])[1]["revision"] == 6
 
 
 def test_what_made_a_zone_travels_with_it(server):

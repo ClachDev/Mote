@@ -192,7 +192,7 @@ Requirements, in priority order:
   a polygon, and place a pose by clicking the map (`⌖`), which is what replaced
   driving to a goto target — `save-zone` remains for poses that need a real
   approach heading. A save derives a new candidate from the one under review
-  rather than writing into it (bumping `vocabulary_revision`); the source's
+  rather than writing into it (bumping the floor's `revision`); the source's
   bytes never change and the result stays inert until promoted. Still to do:
   accepting or rejecting a proposed carry-forward match.
 - **See the build report.** The scoring diff from stage 2, on the same page

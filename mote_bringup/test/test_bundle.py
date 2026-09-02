@@ -381,8 +381,6 @@ def revision(directory, **kwargs) -> Path:
                 "revision": 1,
                 "zones": {"a": {"name": "a", "x": 0.0, "y": 0.0, "yaw": 0.0}},
             },
-            site="home",
-            floor="ground",
         )
     return directory
 

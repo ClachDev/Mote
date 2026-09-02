@@ -329,9 +329,7 @@ def test_teaching_a_zone_bumps_the_revision(tmp_path):
     the later one, so it has to move whenever anything in them could have."""
 
     def revision():
-        return yaml.safe_load((tmp_path / "zones.yaml").read_text())[
-            "vocabulary_revision"
-        ]
+        return yaml.safe_load((tmp_path / "zones.yaml").read_text())["revision"]
 
     append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.0)
     first = revision()

@@ -270,21 +270,6 @@ def ambiguities(terms) -> list:
 # -- where a zone is -------------------------------------------------------
 
 
-#: :data:`_ANCHOR_METHOD` read the other way, for :func:`source_from_anchor`.
-_ANCHOR_SOURCE = {method: name for name, method in _ANCHOR_METHOD.items()}
-
-
-def source_from_anchor(anchor) -> str:
-    """The ``source`` a zone/v0 ``anchor`` implies, for reading an old document.
-
-    The inverse of the mapping :func:`bound` writes, kept beside it so the two
-    cannot drift. ``fiducial``, which Mote never wrote, and anything else
-    unrecognised come back as ``""``.
-    """
-    method = anchor.get("method") if isinstance(anchor, dict) else None
-    return _ANCHOR_SOURCE.get(method, "")
-
-
 def read_source(value) -> str:
     """The ``source`` a document or a browser submitted, or ``""``.
 

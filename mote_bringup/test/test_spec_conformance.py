@@ -173,7 +173,7 @@ def a_floor(directory: Path):
 
     (directory / bundle.ZONES_YAML).write_text(
         "frame_id: map\n"
-        "vocabulary_revision: 4\n"
+        "revision: 4\n"
         "zones:\n"
         "  kitchen:\n"
         "    {x: 2.0, y: 3.5, yaw: 1.57, radius: 1.5, kind: room,\n"

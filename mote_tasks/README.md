@@ -67,10 +67,7 @@ whatever wrote the file.
 
 A floor stores this in one `zones.yaml`, and the floor owns it: a zone is a
 coordinate in the floor's frame — a fact about the building — where a map
-revision is an estimate registered into that frame. A floor still holding
-zone/v0's `vocabulary.yaml` + `binding.yaml` pair is read through
-`bundle._read_split_pair` and rewritten as one file the first time anything
-writes.
+revision is an estimate registered into that frame.
 
 ```yaml
 frame_id: map

@@ -131,8 +131,7 @@ def resolve_zones() -> str:
     """The active floor's zones directory, or ''.
 
     The directory rather than the file, because that is what
-    ``bundle.read_floor`` takes and because a floor written before the zones
-    were one document again is read out of the same place.
+    ``bundle.read_floor`` takes.
     """
     act = active()
     if act:
@@ -143,12 +142,7 @@ def resolve_zones() -> str:
 
 
 def has_zones(fdir: Path) -> bool:
-    # The pair too, so a floor written before the zones were one document again
-    # is not reported as having none.
-    return any(
-        (fdir / name).exists()
-        for name in (bundle.ZONES_YAML, bundle.VOCABULARY_YAML, bundle.BINDING_YAML)
-    )
+    return (fdir / bundle.ZONES_YAML).exists()
 
 
 def zones_for_write() -> Path:
@@ -250,12 +244,7 @@ def cmd_info():
             notes = [f"{len(zones)} zones"]
             if with_fp:
                 notes.append(f"{with_fp} with a footprint")
-            legacy = (
-                ""
-                if (fdir / bundle.ZONES_YAML).exists()
-                else " (zone/v0 pair — rewritten as one file on next write)"
-            )
-            print(f"  zones        ok ({', '.join(notes)}){legacy}")
+            print(f"  zones        ok ({', '.join(notes)})")
     else:
         print("  zones        missing")
     current = current_revision(fdir)
@@ -533,40 +522,23 @@ def install_revision(site: str, floor: str, revision: str, blob: bytes) -> str:
     return "installed"
 
 
-#: The zone files a revision may carry, newest layout first. All three, because
-#: a robot still writing zone/v0's two documents can publish a revision that a
-#: robot on this one installs.
-_ZONE_FILES = (bundle.ZONES_YAML, bundle.VOCABULARY_YAML, bundle.BINDING_YAML)
-
-
 def _adopt_zones(fdir: Path, rev_dir: Path, previous: str | None):
     """Install a revision's copy of the floor's zones as the floor's.
 
     The floor owns its zones and a revision carries a copy, so promoting a
-    revision is also how an edit made in the dashboard reaches a robot. Whatever
-    the floor held is kept beside it as ``<name>.<old-rev>.yaml``, because
-    losing a map is recoverable and losing every named place silently is not.
-
-    The revision's **layout** replaces the floor's, not just its files: a
-    revision uploaded by a robot still writing zone/v0's two documents leaves
-    the floor holding those two and nothing else. Copying one file in beside a
-    ``zones.yaml`` that stays would be worse than either — ``read_floor``
-    prefers the single file, so the geometry just installed would be read by
-    nobody. The next write here rewrites whichever layout landed as one file.
+    revision is also how an edit made in the dashboard reaches a robot. The copy
+    being replaced is kept as ``zones.<old-rev>.yaml``, because losing a map is
+    recoverable and losing every named place silently is not.
     """
-    carried = [name for name in _ZONE_FILES if (rev_dir / name).is_file()]
-    if not carried:
+    source = rev_dir / bundle.ZONES_YAML
+    target = fdir / bundle.ZONES_YAML
+    if not source.is_file():
         return
-    held = [name for name in _ZONE_FILES if (fdir / name).is_file()]
-    if held == carried and all(
-        (fdir / name).read_bytes() == (rev_dir / name).read_bytes() for name in carried
-    ):
-        return
-    for name in held:
-        stem = Path(name).stem
-        (fdir / name).rename(fdir / f"{stem}.{previous or 'previous'}.yaml")
-    for name in carried:
-        shutil.copyfile(rev_dir / name, fdir / name)
+    if target.is_file():
+        if target.read_bytes() == source.read_bytes():
+            return
+        target.rename(fdir / f"zones.{previous or 'previous'}.yaml")
+    shutil.copyfile(source, target)
 
 
 def use_map(rev: str):

@@ -35,7 +35,7 @@ note it was) and they are never written again.
 Example:
 
     frame_id: map
-    vocabulary_revision: 4
+    revision: 4
     zones:
       the kitchen:
         x: 2.0
@@ -232,7 +232,7 @@ def append_zone(
     # What a reader compares to tell which of two copies of a floor's zones is
     # the later one, so it has to move whenever anything here could have.
     floor_zones["revision"] = int(floor_zones.get("revision") or 0) + 1
-    bundle.write_floor(path, floor_zones, site=site, floor=floor)
+    bundle.write_floor(path, floor_zones)
     return replaced
 
 

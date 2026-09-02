@@ -111,7 +111,7 @@ MAP_YAML = (
 )
 
 ZONES_YAML = (
-    "frame_id: map\nvocabulary_revision: 4\nzones:\n"
+    "frame_id: map\nrevision: 4\nzones:\n"
     "  kitchen: {x: 1.0, y: 2.0, yaw: 0.0, radius: 1.5, kind: room,\n"
     "    display_name: The Kitchen, aliases: [galley]}\n"
     "  ward: {x: 4.0, y: 1.0, yaw: 1.57, kind: room,\n"

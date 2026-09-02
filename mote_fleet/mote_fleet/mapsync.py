@@ -142,15 +142,9 @@ def publish(
     if not report.ok:
         raise SyncError(f"refusing to publish {revision}: {report.summary()}")
     extra = {}
-    if not (rev_dir / bundle.ZONES_YAML).is_file():
-        if (fdir / bundle.ZONES_YAML).is_file():
-            extra[bundle.ZONES_YAML] = (fdir / bundle.ZONES_YAML).read_bytes()
-        else:
-            # A floor still holding zone/v0's two documents: both travel, and
-            # the receiver joins them the same way this robot does.
-            for name in (bundle.VOCABULARY_YAML, bundle.BINDING_YAML):
-                if (fdir / name).is_file():
-                    extra[name] = (fdir / name).read_bytes()
+    floor_zones = fdir / bundle.ZONES_YAML
+    if floor_zones.is_file() and not (rev_dir / bundle.ZONES_YAML).is_file():
+        extra[bundle.ZONES_YAML] = floor_zones.read_bytes()
     blob = bundle.pack(rev_dir, extra)
 
     path = (

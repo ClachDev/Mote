@@ -389,9 +389,9 @@ class BundleStore:
         # The zones the operator was shown, which is what the edit is a delta
         # of: `_zones_file` falls back to the floor's file for a revision
         # carrying none, and so does the review pane that fed the editor. The
-        # `frame_id` and `vocabulary_revision` come from there for the same
-        # reason — an edit that silently reset the vocabulary revision would
-        # make a later carry-forward unable to tell which naming is newer.
+        # `frame_id` and `revision` come from there for the same reason — an
+        # edit that silently reset the revision would make a later
+        # carry-forward unable to tell which of two copies is newer.
         zones_file = self._zones_file(site, floor, revision=source)
         if zones_file is not None:
             try:
@@ -407,7 +407,7 @@ class BundleStore:
             cleaned[name] = entry
         payload = {
             "frame_id": previous.get("frame_id") or "map",
-            "vocabulary_revision": int(previous.get("revision") or 0) + 1,
+            "revision": int(previous.get("revision") or 0) + 1,
             "zones": cleaned,
         }
         blob = bundle.pack(
@@ -455,25 +455,14 @@ class BundleStore:
 
     def _zones_file(self, site: str, floor: str, revision: str = ""):
         """The directory holding the zones of the given revision, else the
-        floor's own.
-
-        A directory rather than a file, because ``bundle.read_floor`` takes one
-        and reads whichever layout is inside it — a floor uploaded by a robot
-        still writing zone/v0's two documents included.
-        """
+        floor's own. A directory rather than a file, because that is what
+        ``bundle.read_floor`` takes."""
         candidates = []
         if revision:
             candidates.append(self.revision_dir(site, floor, revision))
         candidates.append(self.floor_dir(site, floor))
         for directory in candidates:
-            if any(
-                (directory / name).is_file()
-                for name in (
-                    bundle.ZONES_YAML,
-                    bundle.VOCABULARY_YAML,
-                    bundle.BINDING_YAML,
-                )
-            ):
+            if (directory / bundle.ZONES_YAML).is_file():
                 return directory
         return None
 
