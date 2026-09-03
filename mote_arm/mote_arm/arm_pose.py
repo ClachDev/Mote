@@ -133,7 +133,7 @@ def _cmd_save(node: PoseClient, args) -> None:
             held[name] = value
             # DEFAULT_MARGIN rather than the joint's own: arm.yaml records the
             # margin per joint but JointSpec does not carry it, and the two
-            # differ only if someone passed --margin to arm-calibrate.
+            # differ only if someone passed --margin to arm-setup calibrate.
             if abs(clamped[name] - value) > DEFAULT_MARGIN:
                 suspect.append(name)
 
@@ -157,7 +157,7 @@ def _cmd_save(node: PoseClient, args) -> None:
         print(
             f"\n{', '.join(suspect)}: further out than the calibration margin, "
             "so the arm and $MOTE_HOME/arm.yaml disagree about this joint's "
-            "limits. `pixi run arm-calibrate` re-measures them."
+            "limits. `pixi run arm-setup calibrate` re-measures them."
         )
 
 

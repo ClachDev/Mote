@@ -4,22 +4,18 @@ Opens the arm bus directly (no ROS node), pings every configured joint, and
 prints position / voltage / temperature / load. It can also dump a robot.yaml
 ``zero:`` snippet from the arm's current pose (``--save-zero``). That is a
 convenience, not calibration: it measures no range, so the limits stay as they
-were. `pixi run arm-calibrate` is what sets zeros and limits together.
+were. `pixi run arm-setup calibrate` is what sets zeros and limits together.
 
 Read-only: it never enables torque or commands a goal, so it is the safe first
 contact with the arm. Run it with the driver NOT running — the arm shares the
 drive-wheel bus, so only one process may hold the port:
-    pixi run arm-check
-    pixi run arm-check -- --save-zero
+    pixi run arm-setup check
+    pixi run arm-setup check --save-zero
 """
 
 from __future__ import annotations
 
-import argparse
 import os
-
-from mote_arm import config
-from mote_arm.bus import BusError, FeetechBus, port_holders
 
 
 def _resolve_device(port: str) -> str:
@@ -61,14 +57,15 @@ def _report_angle_limits(limits: list) -> None:
         print(
             f"\n{', '.join(problems)}: the servo refuses goals outside its own "
             "band, silently, so the joint stops there whatever robot.yaml and "
-            "arm.yaml say. `pixi run arm-limits clear` hands the whole range "
-            "back; `pixi run arm-limits show` says what is there now."
+            "arm.yaml say. `pixi run arm-setup limits clear` hands the whole range "
+            "back; `pixi run arm-setup limits show` says what is there now."
         )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="SO-101 arm bus check")
-    parser.add_argument("--robot-yaml", default="", help="override robot.yaml path")
+def add_subparser(sub) -> None:
+    parser = sub.add_parser(
+        "check", help="enumerate the servos and report health (read-only)"
+    )
     parser.add_argument(
         "--save-zero",
         "--save-home",
@@ -76,57 +73,34 @@ def main() -> None:
         action="store_true",
         help="print a robot.yaml zero: snippet from the current pose",
     )
-    args = parser.parse_args()
+    parser.set_defaults(func=run)
 
-    cfg = (
-        config.ArmConfig.from_yaml_file(args.robot_yaml)
-        if args.robot_yaml
-        else config.load()
-    )
 
+def run(cfg, bus, args) -> None:
     print(f"arm bus: {cfg.port} (-> {_resolve_device(cfg.port)}) @ {cfg.baud_rate}")
     print(f"expected joints: {cfg.names}")
 
-    holders = port_holders(cfg.port)
-    if holders:
-        print("\nport is already open by:")
-        for pid, cmd in holders:
-            print(f"  pid {pid}: {cmd}")
-        raise SystemExit(
-            "refusing to share the bus — stop the arm driver / robot base first "
-            "(`pixi run kill`)."
-        )
-
-    try:
-        bus = FeetechBus(cfg.port, cfg.baud_rate)
-        bus.open()
-    except BusError as exc:
-        raise SystemExit(f"cannot open bus: {exc}")
-
     zeros: list[tuple[str, int]] = []
     missing = []
-    try:
+    print(
+        f"\n{'joint':<14} {'id':>3} {'pos':>5} {'rad':>7} "
+        f"{'volt':>5} {'temp':>4} {'load':>6}"
+    )
+    limits: list = []
+    for joint in cfg.joints:
+        health = bus.read_health(joint.id) if bus.ping(joint.id) else None
+        if health is None:
+            missing.append(joint)
+            print(f"{joint.name:<14} {joint.id:>3}   --- NO RESPONSE ---")
+            continue
+        zeros.append((joint.name, health.position))
         print(
-            f"\n{'joint':<14} {'id':>3} {'pos':>5} {'rad':>7} "
-            f"{'volt':>5} {'temp':>4} {'load':>6}"
+            f"{joint.name:<14} {joint.id:>3} {health.position:>5} "
+            f"{joint.counts_to_rad(health.position):>+7.3f} "
+            f"{health.voltage:>5.1f} {health.temperature:>4} {health.load:>6}"
         )
-        limits: list = []
-        for joint in cfg.joints:
-            health = bus.read_health(joint.id) if bus.ping(joint.id) else None
-            if health is None:
-                missing.append(joint)
-                print(f"{joint.name:<14} {joint.id:>3}   --- NO RESPONSE ---")
-                continue
-            zeros.append((joint.name, health.position))
-            print(
-                f"{joint.name:<14} {joint.id:>3} {health.position:>5} "
-                f"{joint.counts_to_rad(health.position):>+7.3f} "
-                f"{health.voltage:>5.1f} {health.temperature:>4} {health.load:>6}"
-            )
-            limits.append((joint, bus.read_angle_limits(joint.id)))
-        _report_angle_limits(limits)
-    finally:
-        bus.close()
+        limits.append((joint, bus.read_angle_limits(joint.id)))
+    _report_angle_limits(limits)
 
     if missing:
         print(
@@ -139,12 +113,9 @@ def main() -> None:
 
     if args.save_zero and zeros:
         print(
-            "\nsnapshot of the current pose (this sets no limits — see arm-calibrate):"
+            "\nsnapshot of the current pose (this sets no limits — "
+            "see arm-setup calibrate):"
         )
         print("paste these 'zero:' values into robot.yaml's arm.joints:")
         for name, counts in zeros:
             print(f"    # {name}: zero: {counts}")
-
-
-if __name__ == "__main__":
-    main()

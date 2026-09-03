@@ -37,7 +37,7 @@ class JointSpec:
     id: int
     min_rad: float
     max_rad: float
-    # Raw encoder count that corresponds to 0 rad. Set by `arm-calibrate`;
+    # Raw encoder count that corresponds to 0 rad. Set by `arm-setup calibrate`;
     # defaults to the servo mid-point.
     zero_counts: int = COUNTS_PER_REV // 2
     # True if the joint's positive direction is opposite the servo's.
@@ -84,7 +84,7 @@ class JointSpec:
             f"joint {self.name!r}: soft limits [{self.min_rad:+.3f}, "
             f"{self.max_rad:+.3f}] but zero={self.zero_counts} leaves only "
             f"[{lo:+.3f}, {hi:+.3f}] addressable in the 0-{COUNTS_PER_REV - 1} "
-            "goal register — re-run `pixi run arm-calibrate` to re-centre it"
+            "goal register — re-run `pixi run arm-setup calibrate` to re-centre it"
         )
 
     def counts_to_rad(self, counts: int) -> float:
@@ -106,7 +106,7 @@ class JointSpec:
 class ServoGains:
     """Position-loop gains held in servo EEPROM (registers 21/22/23).
 
-    Recorded in robot.yaml so they survive a servo swap; `arm-gains apply`
+    Recorded in robot.yaml so they survive a servo swap; `arm-setup gains apply`
     writes them to the hardware. kp too low leaves a permanent steady-state
     error under load, since ki=0 never integrates the droop away.
     """

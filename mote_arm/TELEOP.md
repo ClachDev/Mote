@@ -125,7 +125,7 @@ below the mirror's `max_velocity` or the follower is permanently behind.
 commanded and measured rates side by side. A command that keeps moving at
 0.25 rad/s while the arm sits at 0.00 rad/s, at any load, is not the mirror and
 not the deadman: check the servo's own goal-range fence with
-`pixi run arm-limits show` (base stopped). It refuses goals outside its band in
+`pixi run arm-setup limits show` (base stopped). It refuses goals outside its band in
 silence, and reads exactly like a joint out of torque. See
 [README](README.md#the-servos-own-goal-range-limits-which-are-not-the-soft-limits).
 

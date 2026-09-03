@@ -21,12 +21,8 @@ setup(
     entry_points={
         "console_scripts": [
             "jog = mote_arm.jog:main",
-            "arm_check = mote_arm.arm_check:main",
-            "arm_calibrate = mote_arm.arm_calibrate:main",
-            "arm_offsets = mote_arm.arm_offsets:main",
-            "arm_limits = mote_arm.arm_limits:main",
+            "arm_setup = mote_arm.arm_setup:main",
             "arm_pose = mote_arm.arm_pose:main",
-            "arm_gains = mote_arm.arm_gains:main",
             "virtual_leader = mote_arm.virtual_leader:main",
             "arm_mirror = mote_arm.mirror:main",
             "mock_arm = mote_arm.mock_arm:main",

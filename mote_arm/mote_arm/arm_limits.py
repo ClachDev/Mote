@@ -6,9 +6,9 @@ which goal positions a servo will accept. A goal outside the band is refused
 only, at any load — which reads exactly like running out of torque, and appears
 in no config file, no URDF and no log.
 
-    pixi run arm-limits show      # read-only: the band, in counts and radians
-    pixi run arm-limits clear     # hand every joint its whole 0-4095 range back
-    pixi run arm-limits restore   # write the as-found bands back
+    pixi run arm-setup limits show      # read-only: the band, in counts and radians
+    pixi run arm-setup limits clear     # hand every joint its whole 0-4095 range back
+    pixi run arm-setup limits restore   # write the as-found bands back
 
 ``clear`` is the normal state for this arm. The soft limits that matter are in
 ``$MOTE_HOME/arm.yaml``, enforced by ``MoteHardware`` and by ``teleop.py``,
@@ -22,11 +22,9 @@ Opens the bus directly, so run it with the driver stopped (`pixi run kill`).
 
 from __future__ import annotations
 
-import argparse
 from datetime import datetime, timezone
 
-from mote_arm import config
-from mote_arm.bus import COUNTS_PER_TURN, BusError, FeetechBus, port_holders
+from mote_arm.bus import COUNTS_PER_TURN
 from mote_arm.calibrate import (
     limits_backup_path,
     load_limits_backup,
@@ -34,23 +32,6 @@ from mote_arm.calibrate import (
 )
 
 FULL_RANGE = (0, COUNTS_PER_TURN - 1)
-
-
-def _open_bus(cfg) -> FeetechBus:
-    holders = port_holders(cfg.port)
-    if holders:
-        for pid, cmd in holders:
-            print(f"  port held by pid {pid}: {cmd}")
-        raise SystemExit(
-            "refusing to share the bus — stop the arm driver / robot base first "
-            "(`pixi run kill`)."
-        )
-    bus = FeetechBus(cfg.port, cfg.baud_rate)
-    try:
-        bus.open()
-    except BusError as exc:
-        raise SystemExit(f"cannot open bus: {exc}")
-    return bus
 
 
 def cuts(joint, band: tuple[int, int]) -> bool:
@@ -92,7 +73,7 @@ def _cmd_show(cfg, bus, args) -> None:
     if fenced:
         print(
             f"\n{', '.join(fenced)} stop short of their configured range and say "
-            "nothing about it. `pixi run arm-limits clear` hands the whole "
+            "nothing about it. `pixi run arm-setup limits clear` hands the whole "
             "0-4095 range back; the soft limits in arm.yaml still apply."
         )
     backup = load_limits_backup()
@@ -122,7 +103,7 @@ def _write(bus, cfg, wanted: dict[str, tuple[int, int]], args) -> None:
     if failures:
         raise SystemExit(
             f"could not verify the band on: {failures}. "
-            f"`pixi run arm-limits restore` puts the as-found values back."
+            f"`pixi run arm-setup limits restore` puts the as-found values back."
         )
 
 
@@ -181,39 +162,20 @@ def _cmd_restore(cfg, bus, args) -> None:
     _write(bus, cfg, wanted, args)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Servo goal-range limits (EEPROM registers 9 and 11)"
+def add_subparser(sub) -> None:
+    parser = sub.add_parser(
+        "limits", help="the servos' goal-range fence (EEPROM registers 9 and 11)"
     )
-    parser.add_argument("--robot-yaml", default="", help="override robot.yaml path")
-    parser.add_argument("--yes", action="store_true", help="skip confirmation")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser("show", help="read the bands (read-only)").set_defaults(
+    inner = parser.add_subparsers(dest="action", required=True)
+    inner.add_parser("show", help="read the bands (read-only)").set_defaults(
         func=_cmd_show
     )
-    p_clear = sub.add_parser("clear", help="accept the whole 0-4095 range")
+    p_clear = inner.add_parser("clear", help="accept the whole 0-4095 range")
     p_clear.add_argument("--joint", default="", help="one joint (default: all)")
     p_clear.set_defaults(func=_cmd_clear)
-    sub.add_parser("restore", help="write the as-found bands back").set_defaults(
+    inner.add_parser("restore", help="write the as-found bands back").set_defaults(
         func=_cmd_restore
     )
 
-    args = parser.parse_args()
-    cfg = (
-        config.ArmConfig.from_yaml_file(args.robot_yaml)
-        if args.robot_yaml
-        else config.load()
-    )
-    bus = _open_bus(cfg)
-    try:
-        args.func(cfg, bus, args)
-    finally:
-        bus.close()
 
-
-if __name__ == "__main__":
-    main()
-
-
-__all__ = ["main", "cuts", "FULL_RANGE"]
+__all__ = ["add_subparser", "cuts", "FULL_RANGE"]

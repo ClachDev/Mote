@@ -94,7 +94,7 @@ def resolved_arm(cfg):
 
     ``zero``/``min``/``max`` are measurements of one physical arm, so a
     calibrated robot keeps them in ``$MOTE_HOME/arm.yaml`` and robot.yaml
-    carries only conservative placeholders (see `pixi run arm-calibrate`).
+    carries only conservative placeholders (see `pixi run arm-setup calibrate`).
     ``mote_arm.config.load`` is the one implementation of that overlay, so it is
     used here rather than re-read — the alternative is two rules for what this
     robot's limits are, and the one that reached the hardware would be the wrong

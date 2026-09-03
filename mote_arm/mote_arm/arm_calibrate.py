@@ -15,9 +15,9 @@ measurement the sweep is about to take anyway. Taking the centre from the sweep
 gives a better zero for less effort — and it still works for a joint that
 crossed the encoder wrap during the sweep, because the recorder unwraps.
 
-    pixi run arm-calibrate
-    pixi run arm-calibrate -- --skip-homing        # ranges only, writes nothing
-    pixi run arm-calibrate -- --joints wrist_roll  # redo one joint
+    pixi run arm-setup calibrate
+    pixi run arm-setup calibrate --skip-homing        # ranges only, writes nothing
+    pixi run arm-setup calibrate --joints wrist_roll  # redo one joint
 
 It saves what it measured to ``$MOTE_HOME/arm.yaml`` — per-robot state, not the
 repo. The zeros and limits describe one physical arm, so they do not belong in
@@ -47,7 +47,6 @@ and this tool never conflates them.
 
 from __future__ import annotations
 
-import argparse
 import sys
 import threading
 import time
@@ -55,7 +54,7 @@ from datetime import datetime, timezone
 
 
 from mote_arm import config, poses
-from mote_arm.bus import BusError, FeetechBus, port_holders
+from mote_arm.bus import BusError
 from mote_arm.calibrate import (
     DEFAULT_MARGIN,
     CalibrationError,
@@ -75,23 +74,6 @@ from mote_arm.calibrate import (
     zero_shift,
 )
 from mote_arm.config import RAD_PER_COUNT
-
-
-def _open_bus(cfg) -> FeetechBus:
-    holders = port_holders(cfg.port)
-    if holders:
-        for pid, cmd in holders:
-            print(f"  port held by pid {pid}: {cmd}")
-        raise SystemExit(
-            "refusing to share the bus — stop the arm driver / robot base first "
-            "(`pixi run kill`)."
-        )
-    bus = FeetechBus(cfg.port, cfg.baud_rate)
-    try:
-        bus.open()
-    except BusError as exc:
-        raise SystemExit(f"cannot open bus: {exc}")
-    return bus
 
 
 def _confirm(prompt: str, assume_yes: bool) -> bool:
@@ -211,7 +193,7 @@ def _report_fences(joints, bands, calibrated) -> None:
         print(f"{name:<16}{f'{low}..{high}':>13}{f'{want_low}..{want_high}':>13}")
     print(
         "\n--skip-homing writes nothing to the servos, so nothing was changed. "
-        "`pixi run arm-limits clear` hands the range back."
+        "`pixi run arm-setup limits clear` hands the range back."
     )
 
 
@@ -281,10 +263,10 @@ def _phase_centre(bus, joints, recorders, calibrated, args) -> dict[str, int]:
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     ids = {j.name: j.id for j in joints}
     backup = save_offsets_backup(existing, ids, when)
-    print(f"backed up to {backup} (`pixi run arm-offsets restore` undoes this)")
+    print(f"backed up to {backup} (`pixi run arm-setup offsets restore` undoes this)")
     if not limits_backup_path().exists():
         fence_backup = save_limits_backup(bands, ids, when)
-        print(f"backed up to {fence_backup} (`pixi run arm-limits restore`)")
+        print(f"backed up to {fence_backup} (`pixi run arm-setup limits restore`)")
 
     written: list[str] = []
     for joint in joints:
@@ -324,8 +306,8 @@ def _abort_partial(written: list[str], backup, why: str) -> None:
         f"\nSTOPPED: {why}\n"
         f"{len(written)} servo(s) were changed before this: {written or 'none'}.\n"
         f"The arm is part-way through a calibration. Put it back with:\n"
-        f"    pixi run arm-offsets restore     # from {backup}\n"
-        "    pixi run arm-limits restore      # the goal-range bands\n"
+        f"    pixi run arm-setup offsets restore     # from {backup}\n"
+        "    pixi run arm-setup limits restore      # the goal-range bands\n"
         "then investigate before re-running."
     )
 
@@ -483,7 +465,7 @@ def _abort_unsaved(why: str, offsets: dict[str, int]) -> None:
         f"    {config.calibration_path()}\n"
         "Do not run `pixi run arm` until this is re-run and saves, or the\n"
         "servos are put back with:\n"
-        "    pixi run arm-offsets restore"
+        "    pixi run arm-setup offsets restore"
     )
 
 
@@ -505,11 +487,12 @@ def _select(cfg, spec_names: str):
     return [cfg.joint(n) for n in wanted]
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Guided full-range arm calibration (centre, then sweep)"
+def add_subparser(sub) -> None:
+    parser = sub.add_parser(
+        "calibrate",
+        help="guided full-range calibration: sweep, centre the zeros, fence "
+        "the servos (the once-off, and the only one that needs a human)",
     )
-    parser.add_argument("--robot-yaml", default="", help="override robot.yaml path")
     parser.add_argument(
         "--joints",
         default="",
@@ -532,23 +515,16 @@ def main() -> None:
     parser.add_argument(
         "--rate", type=float, default=20.0, help="encoder sample rate, Hz"
     )
-    parser.add_argument("--yes", action="store_true", help="skip confirmations")
-    args = parser.parse_args()
+    parser.set_defaults(func=run)
 
-    cfg = (
-        config.ArmConfig.from_yaml_file(args.robot_yaml)
-        if args.robot_yaml
-        else config.load()
-    )
+
+def run(cfg, bus, args) -> None:
+    """Calibrate the selected joints against an already-open bus."""
     selected = _select(cfg, args.joints)
-
-    bus = _open_bus(cfg)
     try:
         _run(bus, cfg, selected, args)
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
-    finally:
-        bus.close()
 
 
 def _run(bus, cfg, selected, args) -> None:
@@ -556,7 +532,7 @@ def _run(bus, cfg, selected, args) -> None:
     if missing:
         raise SystemExit(
             f"joint(s) {missing} did not respond — fix wiring/IDs before "
-            "calibrating (see `pixi run arm-check`)."
+            "calibrating (see `pixi run arm-setup check`)."
         )
 
     _go_limp(bus, cfg, args)
@@ -681,8 +657,4 @@ def _migrate_poses(cfg, calibrated) -> None:
 
 
 def _next_steps() -> None:
-    print("\n  pixi run arm-check          # rad reads ~0 at mid-travel")
-
-
-if __name__ == "__main__":
-    main()
+    print("\n  pixi run arm-setup check          # rad reads ~0 at mid-travel")

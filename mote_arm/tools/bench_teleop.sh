@@ -61,7 +61,7 @@ rule "0. preconditions"
 cat <<'EOF'
 Before starting, confirm at the arm:
   * it is powered, physically supported, and free to move through its band
-  * `pixi run arm-gains show` reports kp=32 (droop, not stall — see README)
+  * `pixi run arm-setup gains show` reports kp=32 (droop, not stall — see README)
   * the arm is up: `pixi run launch` (with the camera) or `pixi run arm`
   * `pixi run arm-mirror` is running, unless the arm terminal has mirror:=true
   * the TELEOP terminal is running `pixi run arm-teleop` — the one you drive

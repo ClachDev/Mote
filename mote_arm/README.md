@@ -38,7 +38,7 @@ stack). We chose direct Feetech control:
    `lerobot-calibrate` is two phases — write each servo's homing offset so
    mid-travel reads 2048, then record every joint's range in one sweep — and
    both are plain register operations on a bus we already drive. `pixi run
-   arm-calibrate` implements that flow directly (see `BENCH.md`).
+   arm-setup calibrate` implements that flow directly (see `BENCH.md`).
 
 Everything hardware lives in `mote_description/config/robot.yaml` (`arm:`
 section): the single source of truth for the port, baud, servo IDs, per-joint
@@ -100,19 +100,19 @@ documented:
   both sides of the language boundary.
 - **One opener only** — `MoteHardware::on_activate` scans `/proc` for another
   holder of the port and refuses to start, naming the PID; the read-only bench
-  tools (`arm-check`, `arm-gains`) do the same through `mote_arm.bus`. So
+  tools (`arm-setup check`, `arm-setup gains`) do the same through `mote_arm.bus`. So
   whichever starts first wins and the loser says why, instead of two processes
   quietly corrupting each other's traffic.
 
 The bench tools still open the bus directly, so they still need the control
-stack stopped (`pixi run kill`): `arm-check`, `arm-gains`, `arm-calibrate` and
-`arm-offsets`. `jog` and `arm-pose` do not — they command the controller.
+stack stopped (`pixi run kill`): `arm-setup check`, `arm-setup gains`, `arm-setup calibrate` and
+`arm-setup offsets`. `jog` and `arm-pose` do not — they command the controller.
 
 ### Where the calibration enters
 
 `zero`/`min`/`max` are measurements of one physical arm, so they live in
 `$MOTE_HOME/arm.yaml` and robot.yaml carries only conservative placeholders
-(see "`zero` and `home` are different things" below, and `arm-calibrate`).
+(see "`zero` and `home` are different things" below, and `arm-setup calibrate`).
 The hardware enforces the soft limits, and the hardware reads them from the
 URDF — so the URDF has to carry the *calibrated* numbers:
 
@@ -177,9 +177,9 @@ conversions are verified without hardware.
 | `cli.py` | The plumbing every arm CLI shares: strict argument parsing with ROS's own arguments cut out first, and a shutdown that stops spinning before it destroys the node. Both are properties that fail silently otherwise — see "Exits and arguments" below. |
 | `arm_launch.py` (in `mote_bringup`) | Bench bring-up — the same controller_manager, URDF and `controllers.yaml` as a mission, without the lidar/camera/Nav2. `pixi run arm`. |
 | `jog` (CLI) | Interactive per-joint jog. A *client of the controller* — publishes clamped trajectories, never opens the bus. `pixi run arm-jog`. |
-| `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only, but opens the bus: run with the control stack stopped. `pixi run arm-check`. |
-| `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. Owns the bus: control stack stopped. `pixi run arm-calibrate`. |
-| `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-offsets`. |
+| `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only, but opens the bus: run with the control stack stopped. `pixi run arm-setup check`. |
+| `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. Owns the bus: control stack stopped. `pixi run arm-setup calibrate`. |
+| `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-setup offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
 | `mock_arm` (node) | The control stack's interface — trajectory topic and `switch_controller` — with nothing behind it, plus an optional synthetic camera, so teleop, recording and replay run on a workstation. `pixi run arm-mock`. |
 | **teleop + episodes** | Virtual-leader teleoperation and LeRobot-format episode recording — `teleop.py`, `virtual_leader`, `arm_mirror`, `episode_record`, `episode_replay`, `tools/lerobot_export.py`. Its own doc: **[TELEOP.md](TELEOP.md)**. |
@@ -225,13 +225,13 @@ still works and says so), and `pixi run arm-pose go home` moves to the rest pose
 
 ## Where the soft limits come from
 
-**`pixi run arm-calibrate`**, in two phases — the same shape as LeRobot's
+**`pixi run arm-setup calibrate`**, in two phases — the same shape as LeRobot's
 `lerobot-calibrate`:
 
 ```
-pixi run arm-calibrate                        # sweep, then centre the zeros
-pixi run arm-calibrate -- --skip-homing       # ranges only; writes nothing
-pixi run arm-calibrate -- --joints wrist_roll # redo one joint
+pixi run arm-setup calibrate                        # sweep, then centre the zeros
+pixi run arm-setup calibrate --skip-homing       # ranges only; writes nothing
+pixi run arm-setup calibrate --joints wrist_roll # redo one joint
 ```
 
 You sweep the joints; everything else is automatic.
@@ -279,7 +279,7 @@ Offsets are **modular** — `present = (actual - offset) mod 4096`, so an offset
 register's ±2047 is therefore folded, never rejected. (Rejecting one aborted a
 real calibration run before this was understood.)
 
-It opens the serial bus directly, like `arm-check`, so run it with the driver
+It opens the serial bus directly, like `arm-setup check`, so run it with the driver
 stopped: the driver reports radians about the very zero being replaced, and the
 arm has to stay limp throughout. It asks before releasing torque (an unsupported
 arm falls) and again before the EEPROM write.
@@ -311,7 +311,7 @@ write, the existing offsets are snapshotted to `~/.mote/arm_offsets_backup.yaml`
 each servo is then written, verified by read-back, *and* checked to have moved
 its reading by exactly the delta written, before moving to the next. Any failure
 stops immediately, names the servos already changed, and points at
-`pixi run arm-offsets restore`. (An earlier version wrote without a backup and
+`pixi run arm-setup offsets restore`. (An earlier version wrote without a backup and
 died mid-run on a dropped serial read — hence both the snapshot and the guard in
 `FeetechBus._read`, which turns a short reply into `None` instead of an
 `IndexError`.)
@@ -392,7 +392,7 @@ the `homing_offset` values the servos arrived with (2027, -1723, 1772, -1706,
 
 LeRobot writes those registers from the range of motion it records, which is a
 reasonable thing to do and is not what broke. **What broke is that
-`arm-calibrate` then moved the zeros and left the fence where it was**, on
+`arm-setup calibrate` then moved the zeros and left the fence where it was**, on
 2026-07-28: a band in the corrected frame names different physical angles once
 the offset under it changes, so the fence silently drifted onto the middle of
 the joint's travel. Hence this tool writes the fence *and* the offset in one
@@ -406,15 +406,15 @@ min/max `record_ranges_of_motion` yields for a joint whose sweep crosses 0/4095
 — and `shoulder_pan` is one of the two joints here that do.
 
 Two properties made it hard to see. The fence only binds under torque, so
-`arm-calibrate` sweeps straight through it by hand and measures the full travel
+`arm-setup calibrate` sweeps straight through it by hand and measures the full travel
 — the calibration and the arm disagree, and only the arm is wrong. And the band
 is compared against the *corrected* goal, so re-centring a zero moves what it
 fences without changing a number anyone can read.
 
 ```
-pixi run arm-limits show      # read-only: the band, in counts and radians
-pixi run arm-limits clear     # hand every joint its whole 0-4095 range back
-pixi run arm-limits restore   # write the as-found bands back
+pixi run arm-setup limits show      # read-only: the band, in counts and radians
+pixi run arm-setup limits clear     # hand every joint its whole 0-4095 range back
+pixi run arm-setup limits restore   # write the as-found bands back
 ```
 
 **The fence and the zero are now written by one run, and never one without the
@@ -431,15 +431,15 @@ of correcting it.
 **The band written is the measured travel, not the soft limits** — wider by
 `--margin` (0.05 rad) at each end. That is what makes it a backstop rather than
 a second opinion: `arm.yaml` always binds first, so the fence can never be the
-thing that stops the arm in ordinary use, and `arm-limits show` reporting a band
+thing that stops the arm in ordinary use, and `arm-setup limits show` reporting a band
 narrower than the configured one therefore means something is wrong rather than
 meaning Tuesday. What it catches is a soft limit that has gone wrong — a
 hand-edited `arm.yaml`, a URDF that never received one, a servo swapped under a
 stale calibration — where the servo still refuses to drive past its own stops.
 
-There is no `arm-limits set`. A *narrower* envelope belongs in `arm.yaml`, where
+There is no `arm-setup limits set`. A *narrower* envelope belongs in `arm.yaml`, where
 `arm-pose limits` already puts one and where three commands print it;
-`arm-limits clear` exists to take the fence off while diagnosing, and `restore`
+`arm-setup limits clear` exists to take the fence off while diagnosing, and `restore`
 to put back whatever was found.
 
 ### Named poses, and narrowing the envelope
@@ -458,7 +458,7 @@ pixi run arm-pose limits          # emit limits spanning the taught poses
 Poses live in `~/.mote/arm_poses.yaml` (`MOTE_HOME` overrides `~/.mote`) —
 per-robot data, since a pose only means anything for one physical arm and its
 calibration. A pose is recorded in radians about its joint's `zero`, so moving a
-zero changes which physical position each number names — but `arm-calibrate`
+zero changes which physical position each number names — but `arm-setup calibrate`
 applies exactly the shift it computed, so poses survive a recalibration without
 being re-taught. Editing a `zero` by hand does not, and invalidates them.
 
@@ -468,7 +468,7 @@ been, and it never learns where the stops are: a joint that barely moved between
 two poses gets a near-zero band. Its remaining use is the opposite direction —
 **narrowing** to a working envelope on top of calibrated hard-stop limits, when
 a task wants a joint held tighter than the mechanism allows. Take the hard stops
-from `arm-calibrate` first; reach for `limits` only to pull them in.
+from `arm-setup calibrate` first; reach for `limits` only to pull them in.
 
 The values committed in `robot.yaml` today still come from the old envelope
 method, and are flagged as such in that file, pending a calibration pass on the
@@ -486,7 +486,7 @@ setpoint it was given: sustained lag beyond `--max-lag` (0.15 rad) for
 Measured lag on the full swing is a steady 0.07-0.10 rad.
 
 `arm-pose go` and `jog` command `arm_controller`, so they run happily alongside
-a mission. `arm-check`, `arm-gains`, `arm-calibrate` and `arm-offsets` open the
+a mission. `arm-setup check`, `arm-setup gains`, `arm-setup calibrate` and `arm-setup offsets` open the
 bus directly and so still need the control stack stopped — `MoteHardware`'s own
 guard will refuse to start against them, and theirs will refuse to start against
 it.
@@ -604,8 +604,8 @@ rad these joints actually travel.
 
 See `BENCH.md` for the full runbook. In short:
 
-1. `pixi run arm-check` — confirm every joint responds; note IDs.
-2. `pixi run arm-calibrate` — sweep the joints, centre their zeros, save to
+1. `pixi run arm-setup check` — confirm every joint responds; note IDs.
+2. `pixi run arm-setup calibrate` — sweep the joints, centre their zeros, save to
    `~/.mote/arm.yaml`. No rebuild: the file is read at load time, not compiled
    in. This sets `zero` *and* `min`/`max` together, which is the point: limits
    only mean something relative to the zero they were measured about.
@@ -615,7 +615,7 @@ See `BENCH.md` for the full runbook. In short:
    opposite the expected sign. `invert` changes what the limits mean, so
    re-calibrate after changing it.
 
-`arm-check -- --save-zero` still prints a bare `zero:` snapshot of the current
+`arm-setup check --save-zero` still prints a bare `zero:` snapshot of the current
 pose. It is a convenience, not calibration: it measures no range and writes no
 offset, so the limits stay whatever they were.
 
@@ -650,7 +650,7 @@ Run against the real arm on 2026-07-25:
 | Soft-limit clamp | repeated `+` past the limit held at `+0.103` — no further motion |
 | Shutdown | SIGINT exits 0, no traceback, torque off, port released |
 | Pose replay | full `home` <-> `reachy` move (3.19 rad / 183 deg) completed both ways, streamed at 0.5 rad/s, lag steady 0.07-0.10 rad, settling within 0.026-0.041 rad |
-| Servo gains | `arm-gains apply` wrote and verified Kp=32 on all six servos; temps unchanged at 27-30 C after the full move |
+| Servo gains | `arm-setup gains apply` wrote and verified Kp=32 on all six servos; temps unchanged at 27-30 C after the full move |
 
 Gain tuning, on the same arm on 2026-07-28:
 
@@ -673,7 +673,7 @@ completion.
 
 The arm shipped with `Kp = 16` on every servo, which left a permanent
 steady-state error under load: the servo settles where `Kp x error` balances the
-holding torque, and `Ki = 0` never integrates that droop away. `arm-gains sweep`
+holding torque, and `Ki = 0` never integrates that droop away. `arm-setup gains sweep`
 (below) measured it on `elbow_flex`, stepped -0.200 rad from rest:
 
 | Kp | steady error | reached | load (of 1000) | Kp x error | settle | ripple |
@@ -711,12 +711,12 @@ both directions, lag steady at 0.05-0.08 rad, settling within **0.012-0.028 rad*
 (0.7-1.6 deg) — against 0.026-0.041 rad at `Kp = 32`.
 
 Gains live in servo EEPROM, so they are invisible config that a servo swap would
-silently revert. `robot.yaml` is the source of truth and `pixi run arm-gains`
+silently revert. `robot.yaml` is the source of truth and `pixi run arm-setup gains`
 reconciles hardware with it:
 
 ```
-pixi run arm-gains show     # read-only comparison against robot.yaml
-pixi run arm-gains apply    # write and verify (asks first; EEPROM is persistent)
+pixi run arm-setup gains show     # read-only comparison against robot.yaml
+pixi run arm-setup gains apply    # write and verify (asks first; EEPROM is persistent)
 ```
 
 `apply` reports success only when a confirmed read-back matches, because an
@@ -724,14 +724,14 @@ EEPROM read-back races the relock: a single read taken too soon returns a
 garbled value (observed: 250) and makes a successful write look failed. The bus
 layer reads twice and trusts the value only when both agree.
 
-### Measuring a gain instead of guessing it: `arm-gains sweep`
+### Measuring a gain instead of guessing it: `arm-setup gains sweep`
 
 A gain is only defensible against a measurement, so the third subcommand takes
 one and produces the evidence:
 
 ```
-pixi run arm-gains sweep --joint elbow_flex --kp 16,32,64,128
-pixi run arm-gains sweep --joint elbow_flex --kp 32 --ki 0,1,2   # the Ki question
+pixi run arm-setup gains sweep --joint elbow_flex --kp 16,32,64,128
+pixi run arm-setup gains sweep --joint elbow_flex --kp 32 --ki 0,1,2   # the Ki question
 ```
 
 It drives that one joint through the **same** step (`--step`, default -0.2 rad

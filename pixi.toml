@@ -19,10 +19,6 @@ test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_he
 
 # Pi Setup tasks
 setup-ids = "ros2 run mote_hardware setup_ids"
-# SO-101 follower arm bring-up (see mote_arm/README.md, mote_arm/BENCH.md).
-# Opens the servo bus directly, so the control stack must be stopped first
-# (`pixi run kill`); `arm-jog` and `arm-pose` go through the controller instead.
-arm-check = "ros2 run mote_arm arm_check"
 udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
 # Wifi (mote_bringup/wifi/README.md). `wifi-roaming` writes one modprobe option
 # and takes effect at the next reboot; it restarts NetworkManager only on a
@@ -152,20 +148,11 @@ arm = "ros2 launch mote_bringup arm_launch.py"
 arm-jog = "ros2 run mote_arm jog"
 # Teach/replay named arm poses (save is read-only; go asks before moving).
 arm-pose = "ros2 run mote_arm arm_pose"
-# Guided range calibration: sweep each joint to its mechanical stops by hand,
-# centre its zero, and save the measured limits to $MOTE_HOME/arm.yaml. Opens
-# the bus directly, so run it with the arm driver stopped. This is where soft
-# limits come from.
-arm-calibrate = "ros2 run mote_arm arm_calibrate"
-# Read/back up/restore the servos' position-correction offsets (EEPROM). The
-# recovery path if a calibration run is interrupted part-way.
-arm-offsets = "ros2 run mote_arm arm_offsets"
-# Read/clear/restore the servos' goal-range limits (EEPROM registers 9 and 11).
-# A goal outside the band is refused silently, so a fenced joint stops at the
-# same angle every time and reads exactly like a joint out of torque.
-arm-limits = "ros2 run mote_arm arm_limits"
-# Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
-arm-gains = "ros2 run mote_arm arm_gains"
+# Everything that configures the arm's servos, behind one command: check,
+# calibrate, gains, offsets, limits. Opens the bus directly, so run it with the
+# control stack stopped (`pixi run kill`). Once-off work, `check` aside — the
+# arm is *driven* by arm-teleop / arm-pose / arm-record, which never open it.
+arm-setup = "ros2 run mote_arm arm_setup"
 # Virtual-leader teleop (mote_arm/TELEOP.md). No leader arm: the keyboard moves a
 # leader pose, `arm_mirror` rate-limits and clamps it onto arm_controller. Bring
 # the control stack up with the mirror beside it: `pixi run arm mirror:=true`.

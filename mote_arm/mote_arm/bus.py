@@ -129,6 +129,31 @@ def port_holders(path: str) -> list[tuple[int, str]]:
     return holders
 
 
+def open_bus(cfg) -> "FeetechBus":
+    """Open the arm's bus for a setup tool, refusing to share it.
+
+    The arm shares the drive-wheel port, so a second opener interleaves packets
+    with the traffic that moves the robot. Every tool that talks to the servos
+    directly comes through here: this was copied into four of them, byte for
+    byte, which is three chances for one of them to grow a different idea of
+    what "the base is running" means.
+    """
+    holders = port_holders(cfg.port)
+    if holders:
+        for pid, cmd in holders:
+            print(f"  port held by pid {pid}: {cmd}")
+        raise SystemExit(
+            f"refusing to share {cfg.port} — stop the arm driver / robot base "
+            "first (`pixi run kill`)."
+        )
+    bus = FeetechBus(cfg.port, cfg.baud_rate)
+    try:
+        bus.open()
+    except BusError as exc:
+        raise SystemExit(f"cannot open bus: {exc}")
+    return bus
+
+
 class FeetechBus:
     """Position-mode control of Feetech STS servos over one serial bus."""
 

@@ -541,7 +541,7 @@ def calibration_header(recorded: str) -> str:
     """The comment written above the calibration, for whoever opens the file."""
     return (
         "# This robot's measured arm calibration — written by "
-        "`pixi run arm-calibrate`.\n"
+        "`pixi run arm-setup calibrate`.\n"
         "#\n"
         "# Per-robot state, deliberately not in the repo: these are measurements "
         "of one\n"

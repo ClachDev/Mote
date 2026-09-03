@@ -45,14 +45,14 @@ needed. One process owns that port and it is the controller_manager, so the arm
 now comes up with the base rather than instead of it.
 
 Only one thing on this bench still needs the base stopped: the tools that open
-the bus directly — `arm-check` and `arm-gains`. Run `pixi run kill` before
+the bus directly — `arm-setup check` and `arm-setup gains`. Run `pixi run kill` before
 those; they refuse to start otherwise, naming the process that holds the port.
 `arm-jog` and `arm-pose` command the controller and need no such care.
 
 ## Step 2 — enumerate + health check
 
 ```
-pixi run arm-check
+pixi run arm-setup check
 ```
 
 **Expected:** a table with all six joints — `shoulder_pan`, `shoulder_lift`,
@@ -73,7 +73,7 @@ falls. Stop the driver and the robot base first (`pixi run kill`): this tool
 opens the serial bus directly.
 
 ```
-pixi run arm-calibrate
+pixi run arm-setup calibrate
 ```
 
 ### Phase 1 — record the ranges
@@ -122,14 +122,14 @@ we assume and would catch a wrong sign encoding. Success is a count rather than
 a list because a servo that fails stops the run by name, below.
 
 **If it stops partway** it names the servos already changed and points at
-`pixi run arm-offsets restore`, which puts them back from the snapshot taken
+`pixi run arm-setup offsets restore`, which puts them back from the snapshot taken
 before the first write. Do that before re-running.
 
 If a stop reports a position that looks nothing like the expected one, check
 whether the number it read equals the offset just written in sign-magnitude
 form (`abs(offset) | 0x800` for a negative one). That means the read picked up
 the previous register's reply rather than the position — the same
-read-races-the-EEPROM-write hazard documented for `arm-gains`. Reads now clear
+read-races-the-EEPROM-write hazard documented for `arm-setup gains`. Reads now clear
 the input buffer first and the post-write check requires two agreeing reads, so
 this should not recur; if it does, the settle delay needs raising further.
 
@@ -145,7 +145,7 @@ ranges were on screen a moment ago, the limits are those pulled inward by
 
 **If the save fails** — validation rejects the document, or the file cannot be
 written — the servos have already been centred, so the arm is calibrated and the
-file is not. It says so and names `pixi run arm-offsets restore`. Do one or the
+file is not. It says so and names `pixi run arm-setup offsets restore`. Do one or the
 other before `pixi run arm`: until then the soft limits describe a frame the
 servos have stopped using.
 
@@ -155,7 +155,7 @@ outside the new limits is named — that one was taught somewhere the arm cannot
 now reach and needs a decision.
 
 ```
-pixi run arm-check          # rad column reads ~0.000 at the centred pose
+pixi run arm-setup check          # rad column reads ~0.000 at the centred pose
 ```
 
 Nothing in the repo changes — the calibration is per-robot state under
@@ -201,18 +201,18 @@ The as-found bands are snapshotted to `~/.mote/arm_limits_backup.yaml` before
 the first write, so:
 
 ```
-pixi run arm-limits show      # read-only: the band, in counts and radians
-pixi run arm-limits clear     # hand the whole range back, outside a calibration
-pixi run arm-limits restore   # put the as-found bands back
+pixi run arm-setup limits show      # read-only: the band, in counts and radians
+pixi run arm-setup limits clear     # hand the whole range back, outside a calibration
+pixi run arm-setup limits restore   # put the as-found bands back
 ```
 
 ### The offsets themselves
 
 ```
-pixi run arm-offsets show      # read-only: raw register, decoded value, position
-pixi run arm-offsets backup    # snapshot before doing anything risky
-pixi run arm-offsets restore   # put the snapshot back
-pixi run arm-offsets set --joint shoulder_pan --value=2027
+pixi run arm-setup offsets show      # read-only: raw register, decoded value, position
+pixi run arm-setup offsets backup    # snapshot before doing anything risky
+pixi run arm-setup offsets restore   # put the snapshot back
+pixi run arm-setup offsets set --joint shoulder_pan --value=2027
 ```
 
 `show` prints the raw register next to the decoded value deliberately: the
@@ -310,15 +310,15 @@ over calibrated limits expecting to widen them: re-run Step 3 for that.
 ## Step 5c — measure the position-loop gains
 
 Gains live in servo EEPROM, so they are hardware config, not software config:
-`robot.yaml`'s `arm.gains` records them and `arm-gains` reconciles the two.
+`robot.yaml`'s `arm.gains` records them and `arm-setup gains` reconciles the two.
 Choose them from a measurement, not from a datasheet default.
 
-Stop the driver first (`arm-gains` opens the bus itself) and clear the joint's
+Stop the driver first (`arm-setup gains` opens the bus itself) and clear the joint's
 path — this step moves the arm. Park the arm in a pose it holds unsupported:
 each trial drops torque briefly to write the gains, so a raised pose would sag.
 
-1. `pixi run arm-gains show` — what the servos actually hold right now.
-2. `pixi run arm-gains sweep --joint elbow_flex --kp 16,32,64,128` — steps the
+1. `pixi run arm-setup gains show` — what the servos actually hold right now.
+2. `pixi run arm-setup gains sweep --joint elbow_flex --kp 16,32,64,128` — steps the
    joint -0.2 rad under each gain and prints error, load, settling, ripple and
    reversals per trial. **Expected:** error falls as `kp` rises while `kp*err`
    stays roughly constant and load stays far below 1000 (proportional droop);
@@ -326,11 +326,11 @@ each trial drops torque briefly to write the gains, so a raised pose would sag.
    over a few counts, rising `rev`, or an audible buzz is the joint hunting, and
    that gain is too high whatever its error says.
 3. Optional, for the residual droop:
-   `pixi run arm-gains sweep --joint elbow_flex --kp <chosen> --ki 0,1,2`.
+   `pixi run arm-setup gains sweep --joint elbow_flex --kp <chosen> --ki 0,1,2`.
    Do it with the joint **unloaded** first: integral action stores the effort it
    needed to hold a load, so removing that load can produce a lunge.
 4. Put the winner in `robot.yaml`'s `arm.gains`, rebuild, then
-   `pixi run arm-gains apply` to write it to all six servos.
+   `pixi run arm-setup gains apply` to write it to all six servos.
 
 The sweep restores the gains it started with and leaves the joint limp, so a run
 on its own changes nothing — step 4 is what makes a choice stick. Each run writes
@@ -419,12 +419,12 @@ Already verified on the robot (2026-07-25):
 - [x] enabling torque holds the current pose instead of snapping
 - [x] `min`/`max` in `robot.yaml` derived from taught poses, not guessed
       (superseded by the calibration pass below — provisional until it runs)
-- [x] servo gains applied and verified (`pixi run arm-gains`), full
+- [x] servo gains applied and verified (`pixi run arm-setup gains`), full
       home<->reachy move completed both ways
 - [x] gains chosen from a sweep, not a default: Kp=64 applied to all six,
       residual on the full move now 0.012-0.028 rad (2026-07-28)
 
-- [x] **Step 3: one full `pixi run arm-calibrate` pass on the real arm**
+- [x] **Step 3: one full `pixi run arm-setup calibrate` pass on the real arm**
       (2026-07-28), saved to `~/.mote/arm.yaml`; taught poses migrated
       automatically rather than re-taught
 - [x] every servo's homing offset written and confirmed, and no joint reports an

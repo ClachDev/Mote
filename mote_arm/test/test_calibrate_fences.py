@@ -1,10 +1,10 @@
-"""`arm-calibrate` writing the servos' goal-range fence with the zeros.
+"""`arm-setup calibrate` writing the servos' goal-range fence with the zeros.
 
 A fence is compared against the *corrected* goal, so it outlives the frame it
 was measured in: move a zero under one and it goes on refusing the same counts,
 which now name different angles, in silence. That is how this arm broke — a
 LeRobot calibration wrote fence and offset together in May 2026, a later
-`arm-calibrate` moved the offsets and left the fence behind, and five of six
+`arm-setup calibrate` moved the offsets and left the fence behind, and five of six
 joints spent four months stopping short of their own travel at 0% load.
 
 So the properties held here are: the fence is the *measured stops*, wider than
@@ -148,7 +148,7 @@ def test_skip_homing_reports_a_cutting_fence_and_writes_nothing(capsys):
     assert bus.written == []
     out = capsys.readouterr().out
     assert "shoulder_lift" in out and "wrist_roll" not in out
-    assert "arm-limits clear" in out
+    assert "arm-setup limits clear" in out
 
 
 def test_skip_homing_says_nothing_when_no_fence_cuts(capsys):
