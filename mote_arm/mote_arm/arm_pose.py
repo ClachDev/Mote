@@ -9,13 +9,22 @@ the wheels — see ``mote_arm/control.py``.
     pixi run arm-pose go <name>     # move to a taught pose
     pixi run arm-pose delete <name>
 
-``save`` is read-only — pose the limp arm by hand, then capture it. ``go`` is
-the only command that moves the arm, and it leaves the arm *holding* the pose it
-reached (deactivate ``arm_controller``, or run ``arm-jog`` and ``torque off``, to
-make it limp again): it reports the distance each joint will
-travel, requires confirmation unless ``--yes`` is given, and refuses moves whose
-largest single-joint travel exceeds ``--max-travel``. Goals are clamped to the
-robot.yaml soft limits here *and* in the driver.
+``save`` moves nothing — pose the limp arm by hand, then capture it. It stores
+each joint clamped into its soft band and says which ones it held there: posing
+by hand means posing against the mechanical stops, and the soft limits sit a
+margin inside those, so a raw capture is routinely a fraction outside the band
+and could never be replayed. ``go`` is the only command that moves the arm, and
+it leaves the arm *holding* the pose it reached (deactivate ``arm_controller``,
+or run ``arm-jog`` and ``torque off``, to make it limp again): it reports the
+distance each joint will travel, requires confirmation unless ``--yes`` is
+given, and refuses moves whose largest single-joint travel exceeds
+``--max-travel`` — by default the widest travel any joint on this arm has, so it
+fires on an impossible move rather than a merely large one. Goals are clamped to
+the soft limits here *and* in the driver.
+
+The arm is limp whenever no controller holds it, so it falls to rest the moment
+you let go of it. A `go` straight after a `save` therefore starts from the rest
+position and not from the pose just taught, and the travel it reports is real.
 
 ``go`` streams setpoints at a fixed rate rather than commanding the destination
 in one jump, so the arm moves continuously at ``--speed`` instead of lurching,
@@ -38,6 +47,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 from mote_arm import cli, config, poses
+from mote_arm.calibrate import DEFAULT_MARGIN
 from mote_arm.control import ArmControl
 from mote_arm.motion import LagSupervisor, lag_of
 
@@ -84,12 +94,80 @@ def _require_states(node: PoseClient) -> dict[str, float]:
     return node.current()
 
 
+def widest_travel(cfg) -> float:
+    """The largest distance any one joint on this arm can legally be sent.
+
+    The default ceiling for `go`. The 0.35 rad it replaces was chosen when the
+    packaged limits were the old `arm-pose limits` envelope, whose bands were
+    ~0.2 rad -- so 0.35 was wider than a whole joint's configured range and
+    fired on nothing. Calibration then gave the joints their real ~3.5 rad
+    bands and left the guard firing on almost every real move, including the
+    ordinary one: teach a pose, let go of a limp arm, watch it fall to rest,
+    replay. Sized off the arm, it fires only on a move that is impossible.
+
+    What keeps a `go` safe is not this number. Setpoints are streamed at
+    `--speed` so the arm moves continuously rather than lurching, `--max-lag`
+    stops it if the arm falls behind, and every move is confirmed unless
+    `--yes`. This is a sanity check on the arithmetic, not the guard.
+    """
+    return max((j.max_rad - j.min_rad for j in cfg.joints), default=0.0)
+
+
 def _cmd_save(node: PoseClient, args) -> None:
+    """Capture the arm's pose, clamped into the band it can actually be sent to.
+
+    Posing by hand means posing a limp arm against its mechanical stops, and the
+    soft limits sit a margin (0.05 rad) inside those, so a captured position is
+    routinely a fraction past the band. Stored raw, that pose can never be
+    reached: every `go` clamps it and says so, which is a warning the operator
+    receives minutes later and cannot act on. Stored clamped, it is reachable by
+    construction and differs from what was posed by at most the margin.
+
+    A joint further out than the margin is a different matter -- it means the
+    arm and arm.yaml disagree about where that joint's limits are -- so it is
+    called out separately rather than folded into the same quiet clamp.
+    """
     current = _require_states(node)
-    path = poses.save_pose(args.name, current)
+    clamped: dict[str, float] = {}
+    held: dict[str, float] = {}
+    suspect: list[str] = []
+    for name, value in current.items():
+        try:
+            joint = node.cfg.joint(name)
+        except KeyError:
+            clamped[name] = value
+            continue
+        clamped[name] = joint.clamp_rad(value)
+        if clamped[name] != value:
+            held[name] = value
+            # DEFAULT_MARGIN rather than the joint's own: arm.yaml records the
+            # margin per joint but JointSpec does not carry it, and the two
+            # differ only if someone passed --margin to arm-calibrate.
+            if abs(clamped[name] - value) > DEFAULT_MARGIN:
+                suspect.append(name)
+
+    path = poses.save_pose(args.name, clamped)
     print(f"saved pose {args.name!r} to {path}")
     for name in node.cfg.names:
-        print(f"  {name:<14} {current[name]:+.4f} rad")
+        note = (
+            f"  <- held at the soft limit, from {held[name]:+.4f}"
+            if name in held
+            else ""
+        )
+        print(f"  {name:<14} {clamped[name]:+.4f} rad{note}")
+    if held:
+        print(
+            f"\n{len(held)} joint(s) were posed past their soft limits and are "
+            "stored at the limit, so this pose is reachable as saved. Posing a "
+            "limp arm against its stops does this: the soft limits sit a margin "
+            "inside them."
+        )
+    if suspect:
+        print(
+            f"\n{', '.join(suspect)}: further out than the calibration margin, "
+            "so the arm and $MOTE_HOME/arm.yaml disagree about this joint's "
+            "limits. `pixi run arm-calibrate` re-measures them."
+        )
 
 
 def _cmd_list(node: PoseClient, args) -> None:
@@ -185,11 +263,18 @@ def _cmd_go(node: PoseClient, args) -> None:
         goals[joint_name] = clamped
 
     print(f"largest single-joint travel: {largest:.4f} rad")
-    if largest > args.max_travel:
+    ceiling = args.max_travel
+    if ceiling is None:
+        ceiling = widest_travel(node.cfg)
+    if largest > ceiling:
         raise SystemExit(
-            f"refusing: travel {largest:.4f} rad exceeds --max-travel "
-            f"{args.max_travel:.4f}. Re-run with a larger --max-travel if that "
-            "is genuinely intended."
+            f"refusing: travel {largest:.4f} rad exceeds {ceiling:.4f}, the "
+            "widest travel any joint on this arm has. Something disagrees about "
+            "the frame — check `pixi run arm-pose list` and arm.yaml."
+            if args.max_travel is None
+            else f"refusing: travel {largest:.4f} rad exceeds --max-travel "
+            f"{ceiling:.4f}. Re-run with a larger --max-travel if that is "
+            "genuinely intended."
         )
 
     if not args.yes:
@@ -302,8 +387,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_go.add_argument(
         "--max-travel",
         type=float,
-        default=0.35,
-        help="refuse if any joint would move more than this many rad (default 0.35)",
+        default=None,
+        help="refuse if any joint would move more than this many rad. Defaults "
+        "to the widest travel any joint on this arm has, so it fires only on a "
+        "move that is impossible rather than merely large; pass a smaller one "
+        "to keep a bench run tight.",
     )
     p_go.add_argument(
         "--speed",

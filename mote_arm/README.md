@@ -496,6 +496,27 @@ Lag is measured against `/joint_states`, which the hardware refreshes one arm
 joint per control cycle to stay inside the bus budget it shares with the wheels,
 so a stall is caught within a few setpoints rather than instantly.
 
+**A taught pose is stored reachable.** `save` clamps each joint into its soft
+band and names the ones it held there. Posing by hand is posing a limp arm
+against its stops, and the soft limits sit `--margin` (0.05 rad) inside those,
+so a raw capture is routinely a fraction outside the band — measured at the
+bench, `elbow_flex` 0.012 rad past and `gripper` 0.042 rad past. Stored raw,
+such a pose can never be replayed: every `go` clamps it and says so, which is a
+warning that arrives minutes late. A joint further out than the margin is
+reported separately, because that means the arm and `arm.yaml` disagree about
+where the limits are rather than that the operator leaned on a stop.
+
+**`go`'s travel ceiling is sized off the arm.** `--max-travel` defaults to the
+widest travel any joint has, so it refuses an impossible move rather than a
+merely large one. It was 0.35 rad, chosen when the packaged limits were the old
+`arm-pose limits` envelope whose bands were ~0.2 rad — wider than a whole
+joint's range, so it fired on nothing. Calibration gave the joints their real
+~3.5 rad bands and left the guard refusing the ordinary case: teach a pose, let
+go, watch the limp arm fall to rest, replay. What keeps a `go` safe is not that
+number — setpoints are streamed at `--speed` so the arm moves continuously
+rather than lurching, `--max-lag` stops it if the arm falls behind, and every
+move is confirmed unless `--yes`.
+
 ## Torque policy
 
 Nothing moves without an explicit command. The policy did not change when the
