@@ -172,3 +172,53 @@ def test_clearing_panic_lets_the_arm_move_again(stack):
     stack.panic(False)
     stack.run(0.6)
     assert stack.at("elbow_flex") > stopped + 0.05
+
+
+# --- step mode: what `arm-jog` was for, on the path that has the safety rules
+
+
+def test_a_press_advances_the_pose_by_exactly_one_step(stack):
+    stack.teleop.sync()
+    before = stack.teleop.pose["elbow_flex"]
+    assert stack.teleop.nudge("elbow_flex", +1.0, 0.05, 100.0) is True
+    assert stack.teleop.pose["elbow_flex"] == pytest.approx(before + 0.05)
+
+
+def test_a_key_repeat_does_not_step_again(stack):
+    """A terminal cannot tell a repeat from a press, so holding steps once."""
+    stack.teleop.sync()
+    assert stack.teleop.nudge("elbow_flex", +1.0, 0.05, 100.0) is True
+    stepped = stack.teleop.pose["elbow_flex"]
+    for repeat in (100.03, 100.1, 100.3):
+        assert stack.teleop.nudge("elbow_flex", +1.0, 0.05, repeat) is False
+    assert stack.teleop.pose["elbow_flex"] == pytest.approx(stepped)
+
+
+def test_releasing_and_pressing_again_steps_again(stack):
+    stack.teleop.sync()
+    stack.teleop.nudge("elbow_flex", +1.0, 0.05, 100.0)
+    later = 100.0 + stack.teleop.key_timeout + 0.01
+    assert stack.teleop.nudge("elbow_flex", +1.0, 0.05, later) is True
+
+
+def test_a_step_is_clamped_like_any_other_command(stack):
+    stack.teleop.sync()
+    for press in range(50):
+        stack.teleop.nudge("wrist_roll", +1.0, 0.05, 100.0 + press)
+    assert stack.teleop.pose["wrist_roll"] == pytest.approx(0.1)
+
+
+def test_a_step_is_offered_long_enough_for_the_arm_to_walk_it(stack):
+    """Offered once, the deadman would stop the arm short of the increment."""
+    limit = stack.teleop.mirror.limits.max_velocity
+    assert stack.teleop.settle_time(0.05) == pytest.approx(0.05 / limit)
+    assert stack.teleop.settle_time(0.5) > stack.teleop.key_timeout
+
+
+def test_stepping_moves_the_arm_by_about_the_step(stack):
+    start = stack.at("elbow_flex")
+    stack.teleop.sync()
+    stack.teleop.nudge("elbow_flex", +1.0, 0.1, time.monotonic())
+    stack.pose = dict(stack.teleop.pose)
+    stack.run(stack.teleop.settle_time(0.1) + 0.4)
+    assert stack.at("elbow_flex") == pytest.approx(start + 0.1, abs=0.03)

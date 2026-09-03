@@ -20,7 +20,6 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "jog = mote_arm.jog:main",
             "arm_setup = mote_arm.arm_setup:main",
             "arm_pose = mote_arm.arm_pose:main",
             "arm_teleop = mote_arm.arm_teleop:main",

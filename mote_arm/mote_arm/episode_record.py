@@ -10,7 +10,7 @@ so what gets stored is fixed by what a policy needs at inference time:
 The action is what reached ``arm_controller`` — the mirror's output, not the
 leader's pose: a policy replaces the thing that produces goals, so the goals are
 the thing to imitate. It is read off the trajectory topic rather than from the
-mirror, so a session driven by ``arm-jog`` or by anything else records just as
+teleop node, so a session driven by ``arm-pose`` or by anything else records just as
 well. Before the first goal of an episode arrives the action is the measured
 state — "stay where you are" is what the arm was, in fact, being told.
 

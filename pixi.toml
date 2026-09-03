@@ -143,10 +143,9 @@ node-cpu = "python mote_bringup/tools/node_cpu.py"
 # SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
 # the lidar/camera/Nav2. During a mission the arm is already there (it lives in
 # mote_hardware, which owns the shared servo bus) — this is for bench work only.
-# Jog it interactively with `pixi run arm-jog`, in either case.
+# Drive it with `pixi run arm-teleop`, in either case.
 arm = "ros2 launch mote_bringup arm_launch.py"
-arm-jog = "ros2 run mote_arm jog"
-# Teach/replay named arm poses (save is read-only; go asks before moving).
+# Teach/replay named arm poses.
 arm-pose = "ros2 run mote_arm arm_pose"
 # Everything that configures the arm's servos, behind one command: check,
 # calibrate, gains, offsets, limits. Opens the bus directly, so run it with the

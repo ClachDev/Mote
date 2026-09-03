@@ -35,7 +35,7 @@ ICP_ODOM_FRAME = "odom_icp"
 # claims its command interfaces, and for the arm that is what enables servo
 # torque (MoteHardware::perform_command_mode_switch) — so an arm nobody has
 # asked to move stays limp, exactly as it did under the standalone driver.
-# `pixi run arm-jog` (or the task layer) activates it on demand.
+# `pixi run arm-teleop` (or the task layer) activates it on demand.
 INACTIVE_CONTROLLERS = ("arm_controller",)
 
 

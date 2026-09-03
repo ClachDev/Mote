@@ -63,6 +63,8 @@ KEY_PAIRS = [("q", "a"), ("w", "s"), ("e", "d"), ("r", "f"), ("t", "g"), ("y", "
 PANIC_KEY = " "
 CLEAR_KEY = "z"
 SYNC_KEY = "0"
+MODE_KEY = "m"
+DEFAULT_STEP_RAD = 0.05
 QUIT_KEYS = ("x", "\x03", "\x04")
 PUBLISH_RATE_HZ = 20.0
 # Slow enough to read while a joint is moving, fast enough to look continuous.
@@ -151,6 +153,32 @@ class ArmTeleop(Node):
             for j in self.cfg.joints
             if now - self._key_time.get(j.name, -1e9) <= self.key_timeout
         ]
+
+    def nudge(self, name: str, direction: float, size: float, now: float) -> bool:
+        """Advance one joint by exactly ``size`` radians. False if ignored.
+
+        A held key auto-repeats and a terminal cannot tell a repeat from a fresh
+        press, so a repeat inside ``key_timeout`` is ignored: holding the key
+        steps once, and stepping again means releasing and pressing again. That
+        is what `arm-jog` did with a typed step and an Enter, without a second
+        keyboard path that has no rate limit, no deadman and no panic latch.
+        """
+        if now - self._key_time.get(name, -1e9) <= self.key_timeout:
+            return False
+        self._key_time[name] = now
+        joint = self.cfg.joint(name)
+        current = self.pose.get(name, self.measured().get(name, 0.0))
+        self.pose[name] = joint.clamp_rad(current + direction * size)
+        return True
+
+    def settle_time(self, size: float) -> float:
+        """How long the arm needs to walk one step, at the rate limit.
+
+        A step is offered for this long rather than once, because the deadman
+        would otherwise fire mid-travel and stop the arm short of the increment
+        that was asked for.
+        """
+        return abs(size) / max(1e-6, self.mirror.limits.max_velocity)
 
     def step(self, now: float, dt: float) -> bool:
         """Advance the commanded pose; True if an input is being held."""
@@ -323,7 +351,7 @@ def _help(node: ArmTeleop) -> None:
     for problem in node.cfg.problems:
         _out(f"  WARNING {problem}")
     _out("  SPACE panic (torque off)   z clear   0 re-sync   [ ] speed")
-    _out("  p all joint positions   ? this help   x quit")
+    _out("  m hold/step mode   p all joint positions   ? this help   x quit")
 
 
 def _status(node: ArmTeleop, estopped: bool) -> None:
@@ -336,11 +364,16 @@ def _status(node: ArmTeleop, estopped: bool) -> None:
     _out(f"[{state}] {parts}")
 
 
-def _drive(node: ArmTeleop) -> None:
+def _drive(node: ArmTeleop, step_size: float = DEFAULT_STEP_RAD) -> None:
     period = 1.0 / PUBLISH_RATE_HZ
     estopped = False
     idle_since = time.monotonic()
     last_line = 0.0
+    # Hold mode moves while a key is held; step mode moves one increment per
+    # press. Step mode is what `arm-jog` was for, on the one keyboard path that
+    # has the rate limit, the deadman and the panic latch.
+    stepping = False
+    settle_until = 0.0
 
     _out("arm teleop — the arm follows this pose. '?' for keys, 'x' to quit.")
     if not node.wait_for_states():
@@ -359,7 +392,23 @@ def _drive(node: ArmTeleop) -> None:
                 return
             if key in node.keys:
                 name, direction = node.keys[key]
-                node.press(name, direction, now)
+                if stepping:
+                    if node.nudge(name, direction, step_size, now):
+                        settle_until = now + node.settle_time(step_size)
+                        _clear_live()
+                        _out(f"{name} {direction * step_size:+.3f} rad")
+                else:
+                    node.press(name, direction, now)
+            elif key == MODE_KEY:
+                stepping = not stepping
+                node.sync()
+                settle_until = 0.0
+                _clear_live()
+                _out(
+                    f"step mode: one {step_size:.3f} rad increment per press"
+                    if stepping
+                    else "hold mode: moves while a key is held"
+                )
             elif key == PANIC_KEY:
                 estopped = True
                 node.set_estop(True)
@@ -380,13 +429,20 @@ def _drive(node: ArmTeleop) -> None:
             elif key == "]":
                 node.speed = min(1.0, node.speed + 0.05)
                 _out(f"speed {node.speed:.2f} rad/s")
-            elif key in ("?", "h"):
+            elif key == "?":
+                # Not "h" as well: `h` drives joint 6 down, and the joint keys
+                # are matched first, so a help key there could never fire.
                 _help(node)
             elif key == "p":
                 _status(node, estopped)
 
         driving = node.driving(now)
-        live = node.step(now, period) and not estopped
+        if stepping:
+            # Offered until the arm has had time to walk the increment, or the
+            # deadman stops it half a step short of what was asked for.
+            live = now < settle_until and not estopped
+        else:
+            live = node.step(now, period) and not estopped
         if live:
             node.offer()
             idle_since = now
@@ -452,6 +508,13 @@ def main() -> None:
         help="seconds after the last key repeat before it stops (default 0.35)",
     )
     parser.add_argument(
+        "--step",
+        type=float,
+        default=DEFAULT_STEP_RAD,
+        help=f"radians per press in step mode, toggled with 'm' "
+        f"(default {DEFAULT_STEP_RAD})",
+    )
+    parser.add_argument(
         "--demo",
         type=float,
         default=None,
@@ -473,7 +536,7 @@ def main() -> None:
         if args.demo is not None:
             _demo(node, args.demo)
         else:
-            _interactive(node)
+            _interactive(node, args.step)
     except KeyboardInterrupt:
         pass
     finally:
@@ -485,7 +548,7 @@ def main() -> None:
         ticker.join(timeout=2.0)
 
 
-def _interactive(node: ArmTeleop) -> None:
+def _interactive(node: ArmTeleop, step_size: float = DEFAULT_STEP_RAD) -> None:
     """Run the keyboard loop with the terminal in cbreak mode, and restore it."""
     if not sys.stdin.isatty():
         raise SystemExit(
@@ -496,7 +559,7 @@ def _interactive(node: ArmTeleop) -> None:
     settings = termios.tcgetattr(sys.stdin)
     try:
         tty.setcbreak(sys.stdin.fileno())
-        _drive(node)
+        _drive(node, step_size)
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
 

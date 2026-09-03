@@ -116,7 +116,7 @@ def test_a_fresh_client_activates_a_controller_that_is_inactive():
 
 
 def test_a_fresh_client_deactivates_a_controller_another_process_left_holding():
-    """`jog` says it limps on exit; assuming False meant it silently did not."""
+    """A client that says it limps on exit: assuming False meant it silently did not."""
     arm, clients, _ = control(state="active")
     assert arm.set_holding(False) is True
     assert clients[SWITCH_SERVICE].requests[0].deactivate_controllers == [

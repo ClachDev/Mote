@@ -62,10 +62,11 @@ resolved by the executor the callback is blocking.
 
 ### Teleop is not jog
 
-`arm-jog` types a discrete step and presses Enter. Teleop holds a key and the
-arm moves continuously until you let go. That difference is the reason this
-exists: an episode recorded from stop-start hops teaches a policy stop-start
-hops.
+The retired `arm-jog` typed a discrete step and pressed Enter. Teleop holds a
+key and the arm moves continuously until you let go. That difference is the
+reason this exists: an episode recorded from stop-start hops teaches a policy
+stop-start hops. Step mode (`m`) is still there when a measured increment is
+what you want, which is what jog was for.
 
 ## Safety
 
@@ -77,14 +78,14 @@ Everything that decides whether the arm may move lives in one place —
 | **Soft-limit clamping** | A commanded pose outside a joint's soft band is clamped before it becomes a goal. Clamped again in the driver, which is authoritative. |
 | **Rate limiting** | The goal advances towards the commanded pose by at most `max_velocity * dt` (0.5 rad/s). A command that *jumps* — a slider dragged, a frontend restarted at a different pose — produces a ramp, never a lunge. |
 | **Deadman** | The command's liveness *is* the deadman. A frontend offers a pose only while it is being driven, so a released key, a closed window and a dropped SSH session all arrive as the same thing: no fresh pose. One goal then goes out at the arm's *present* position — stopping it there rather than letting it coast to the setpoint it was travelling towards — and then nothing. |
-| **Panic latch** | `SPACE` latches an e-stop. Torque *is* controller activation, so `arm_controller` is deactivated — the same switch `arm-jog` uses — and every goal is refused until `z` clears it. Torque coming back cannot restart the move. The latch no longer has to outlive the process, because the process that set it also holds the arm: exiting drops torque. |
+| **Panic latch** | `SPACE` latches an e-stop. Torque *is* controller activation, so `arm_controller` is deactivated — the same switch `arm-pose` uses — and every goal is refused until `z` clears it. Torque coming back cannot restart the move. The latch no longer has to outlive the process, because the process that set it also holds the arm: exiting drops torque. |
 | **Re-seeding** | Resuming after any hold starts from where the arm *is*, not from the command it was last given. Without that, a pause banks up the difference and pays it out as a jump. |
 
 One structural consequence worth knowing: **the safety loop ticks on its own thread,
 not on a ROS timer.** Taking hold of the arm is a `switch_controller` call, and a
 service call made from inside an executor callback can never complete — the
 future is resolved by the executor that the callback is currently blocking.
-`arm-jog` avoids this by driving from its REPL thread; teleop does the same
+The retired jog CLI avoided this by driving from its REPL thread; teleop does the same
 with a plain loop while `cli.spin_background` spins the node.
 
 Two things the deadman is **not**: it is not a debounce (a single key tap moves
@@ -154,7 +155,7 @@ finishes. Recording samples at 20 Hz:
 
 The action is the *goal sent to the arm*, not the raw commanded pose, because a policy
 replaces whatever produces goals — and it is read off the trajectory topic
-rather than from the teleop node, so a session driven by `arm-jog` records too.
+rather than from the teleop node, so a session driven by `arm-pose` records too.
 
 > The arm is mounted **rotated 180 degrees** so the camera clears it (GitHub
 > #2), so episodes do record camera frames. Use `--no-camera` for a robot whose
@@ -305,7 +306,7 @@ control surface for a remote arm would not be a topic in the first place.
 | `episode_record.py` | `arm-record` — observations and actions into a capture. |
 | `episode_replay.py` | `arm-replay` — a capture back onto the arm, gated. |
 | `motion.py` | Lag supervision, shared with `arm-pose go`. |
-| `control.py` | Shared with `arm-jog`: single-point trajectories, and activation as the torque switch. |
+| `control.py` | Shared with `arm-pose` and replay: single-point trajectories, and activation as the torque switch. |
 | `tools/lerobot_export.py` | Capture → LeRobotDataset, off-board (`-e lerobot`). |
 | `test/teleop_loop/` | The headless end-to-end gate (`arm-teleop-test`). |
 | `tools/bench_teleop.sh` | The guided hardware session (see `BENCH.md`). |

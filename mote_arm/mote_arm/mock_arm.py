@@ -9,7 +9,7 @@ since arm control folded into `MoteHardware` is ros2_control's, not a driver's:
     subscribes arm_controller/joint_trajectory (trajectory_msgs/JointTrajectory)
     serves     controller_manager/switch_controller
 
-so `mote_arm.control.ArmControl` — and therefore the mirror, `arm-jog`,
+so `mote_arm.control.ArmControl` — and therefore `arm-teleop`,
 `arm-pose` and episode replay — cannot tell the difference. It also optionally
 publishes a synthetic `image_raw/compressed` whose content tracks the first
 joint, so a recorded episode has camera frames that actually change and an

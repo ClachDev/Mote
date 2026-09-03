@@ -24,7 +24,7 @@ recalibration. What is still open:
 - **Does the homing offset apply to commanded goals, or only to feedback?**
   The read side is proven — positions moved by exactly the predicted delta on
   every joint, which is what "written and confirmed" checks. The write side
-  shows up on the first `arm-jog` move after calibrating: if a commanded angle
+  shows up on the first `arm-teleop` move after calibrating: if a commanded angle
   lands roughly one offset away from where you asked, `config.rad_to_counts`
   has to compensate. Try this first.
 - **Does `wrist_roll` have real stops?** It swept 5.89 rad, 94% of a turn, and
@@ -47,7 +47,7 @@ now comes up with the base rather than instead of it.
 Only one thing on this bench still needs the base stopped: the tools that open
 the bus directly — `arm-setup check` and `arm-setup gains`. Run `pixi run kill` before
 those; they refuse to start otherwise, naming the process that holds the port.
-`arm-jog` and `arm-pose` command the controller and need no such care.
+`arm-teleop` and `arm-pose` command the controller and need no such care.
 
 ## Step 2 — enumerate + health check
 
@@ -261,15 +261,17 @@ arm is part of the mission stack now, and this step works during a mission).
 Terminal C:
 
 ```
-pixi run arm-jog
+pixi run arm-teleop
 ```
+
+Press `m` for step mode: one 0.05 rad increment per key press, which is what
+this step wants and what `arm-jog` used to give. `?` prints the key map.
 
 For **each** joint in turn (arm supported, ready to cut power):
 
-1. Select it by number (e.g. `0` for `shoulder_pan`). The status line shows its
-   measured position and soft limits.
-2. `step 0.05` to set a small increment.
-3. Jog `+` a few times, then `-` back — watch the joint move a small amount in
+1. Find its key pair in the help (`q`/`a` is joint 1, down to `y`/`h`).
+2. Press the raise key a few times, then the lower key back — watch the joint
+   move a small amount in
    the commanded direction, and `/joint_states` (Terminal B) track it.
    - If the joint moves the **wrong way**, set `invert: true` for it in
      `robot.yaml`, rebuild, and repeat.
@@ -350,8 +352,8 @@ criterion 2.**
 
 ## Step 7 — torque-off on exit, and a clean exit
 
-In `arm-jog`, type `quit`. **Expected:** `limping arm (deactivating
-arm_controller) and exiting...`; the arm goes back-drivable immediately. Stop
+In `arm-teleop`, press `x`. **Expected:** `teleop stopped; the arm is limp.`
+and the arm goes back-drivable immediately. Stop
 `arm` (Ctrl-C) and confirm it also logs a clean shutdown and leaves the arm
 limp. **Nothing should move on startup or shutdown.**
 
@@ -360,7 +362,7 @@ the time the process falls over, so an abort here is invisible unless looked
 for:
 
 ```
-pixi run arm-jog        # 'quit' at the prompt
+pixi run arm-teleop     # 'x' at the prompt
 echo $?                 # expect 0
 pixi run arm-pose list
 echo $?                 # expect 0
@@ -437,15 +439,15 @@ Still open:
 - [ ] `shoulder_pan` can be commanded to 0 rad (its packaged band still excludes
       its own zero; the calibrated band on the arm does not)
 - [ ] the offset applies to commanded goals, not only to feedback — the first
-      `arm-jog` move settles it
+      `arm-teleop` move settles it
 - [ ] **the arm moving under ros2_control on the real robot** — everything
       about the fold is verified against a simulated bus
       (`mote_hardware/test/test_arm_bus.cpp`), not against servos: confirm
-      `arm-jog` still moves `elbow_flex` in the commanded direction, that the
+      `arm-teleop` still moves `elbow_flex` in the commanded direction, that the
       soft limits still hold, and that activating `arm_controller` takes hold
       without a snap
 - [ ] **the arm moving while the wheels are driving** — the point of the fold.
-      `pixi run robot`, drive a short goal, and jog the arm at the same time;
+      `pixi run robot`, drive a short goal, and teleop the arm at the same time;
       watch for wheel-odometry glitches that would mean the bus is oversubscribed
 - [ ] step 8: teleop, record, export/inspect and replay on the arm
       (`pixi run arm-bench-teleop`) — verified headless against the mock

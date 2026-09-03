@@ -106,7 +106,7 @@ documented:
 
 The bench tools still open the bus directly, so they still need the control
 stack stopped (`pixi run kill`): `arm-setup check`, `arm-setup gains`, `arm-setup calibrate` and
-`arm-setup offsets`. `jog` and `arm-pose` do not — they command the controller.
+`arm-setup offsets`. `arm-teleop` and `arm-pose` do not — they command the controller.
 
 ### Where the calibration enters
 
@@ -176,7 +176,6 @@ conversions are verified without hardware.
 | `control.py` | The one place that knows how to talk to `arm_controller`: single-point trajectories, and activation as the torque switch. |
 | `cli.py` | The plumbing every arm CLI shares: strict argument parsing with ROS's own arguments cut out first, and a shutdown that stops spinning before it destroys the node. Both are properties that fail silently otherwise — see "Exits and arguments" below. |
 | `arm_launch.py` (in `mote_bringup`) | Bench bring-up — the same controller_manager, URDF and `controllers.yaml` as a mission, without the lidar/camera/Nav2. `pixi run arm`. |
-| `jog` (CLI) | Interactive per-joint jog. A *client of the controller* — publishes clamped trajectories, never opens the bus. `pixi run arm-jog`. |
 | `arm_check` (tool) | Standalone enumeration + health + zero snapshot. Read-only, but opens the bus: run with the control stack stopped. `pixi run arm-setup check`. |
 | `calibrate.py` / `arm_calibrate` | Two-phase range calibration: sweep every joint at once, centre its zero, save limits to `$MOTE_HOME/arm.yaml`. Owns the bus: control stack stopped. `pixi run arm-setup calibrate`. |
 | `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-setup offsets`. |
@@ -195,7 +194,7 @@ executor is pulled out from under itself and the interpreter calls
 after the tool has already done its work. The fix is ordering — shut the
 context down, *join the spin thread*, and only then destroy — which is what
 `cli.shutdown(node, spinner)` is for. Measured on this arm's CLIs with no
-hardware attached: `jog` (stdin closed) and `arm-pose list` each aborted 3 of 3
+hardware attached: the jog CLI (stdin closed) and `arm-pose list` each aborted 3 of 3
 runs before, and exited 0 on 3 of 3 after. It is not a rare race — with no
 stack running to talk to, it reproduced every time. `test_cli.py` watches a
 child process's exit status, because nothing in-process can catch an abort.
@@ -220,7 +219,7 @@ and it confused an operator at the bench:
 | **zero** | The encoder count that reads 0 rad. After calibration, the *middle of the joint's travel*. | `robot.yaml`, `arm.joints[].zero` |
 | **home** | A taught *pose*, normally the arm's rest position. Nothing to do with 0 rad. | `~/.mote/arm_poses.yaml` |
 
-So `arm-jog`'s command to drive a joint to 0 rad is `zero`, not `home` (`home`
+So the jog CLI's command to drive a joint to 0 rad was `zero`, not `home` (`home`
 still works and says so), and `pixi run arm-pose go home` moves to the rest pose.
 
 ## Where the soft limits come from
@@ -485,7 +484,7 @@ setpoint it was given: sustained lag beyond `--max-lag` (0.15 rad) for
 `--stall-time` means it is no longer keeping up, and the move stops where it is.
 Measured lag on the full swing is a steady 0.07-0.10 rad.
 
-`arm-pose go` and `jog` command `arm_controller`, so they run happily alongside
+`arm-pose go` and `arm-teleop` command `arm_controller`, so they run happily alongside
 a mission. `arm-setup check`, `arm-setup gains`, `arm-setup calibrate` and `arm-setup offsets` open the
 bus directly and so still need the control stack stopped — `MoteHardware`'s own
 guard will refuse to start against them, and theirs will refuse to start against
@@ -503,7 +502,7 @@ treats a STRICT refusal as success when the controller turns out to already be
 in the state requested. Assuming `inactive` at construction made the *second*
 `arm-pose go` of a session fail on every streamed setpoint: `Controller with
 name 'arm_controller' is already active` / `Aborting, no controller is
-switched!`, at 20 Hz. It also made `arm-jog`'s documented limp-on-exit silently
+switched!`, at 20 Hz. It also made the jog CLI's documented limp-on-exit silently
 do nothing when something else had left the arm holding.
 
 **A taught pose is stored reachable.** `save` clamps each joint into its soft
@@ -555,14 +554,14 @@ became a consequence of who holds the command interfaces.
   per control cycle (~120 ms for all six) so no single realtime cycle pays for
   six read-plus-write pairs, and a joint whose position cannot be read stays
   limp rather than being driven against an unknown goal.
-- **Letting go:** deactivating `arm_controller` (`jog`'s `torque off`, or
-  quitting `jog`) drops torque immediately, inside the switch itself rather than
+- **Letting go:** deactivating `arm_controller` (`arm-teleop`'s `SPACE`, or
+  quitting it) drops torque immediately, inside the switch itself rather than
   on the next write — a component being torn down may never write again.
 - **Shutdown:** deactivating the hardware stops the wheels and limps the arm.
 
 Goals are soft-clamped to the per-joint limits from `robot.yaml` **in the
 hardware**, on the far side of every client, so a trajectory controller, the jog
-CLI and the task layer are all held to the same envelope. `jog` clamps again
+CLI and the task layer are all held to the same envelope. `arm-teleop` clamps again
 client-side purely for immediate feedback.
 
 ## Control interfaces
@@ -611,7 +610,7 @@ See `BENCH.md` for the full runbook. In short:
    only mean something relative to the zero they were measured about.
 3. Re-teach only the poses it reported as outside the new limits — the rest are
    migrated for you.
-4. Jog each joint (`pixi run arm-jog`) and flip `invert` for any that moves
+4. Step each joint (`pixi run arm-teleop`, `m` for step mode) and flip `invert` for any that moves
    opposite the expected sign. `invert` changes what the limits mean, so
    re-calibrate after changing it.
 

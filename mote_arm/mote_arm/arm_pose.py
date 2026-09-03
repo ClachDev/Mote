@@ -15,7 +15,7 @@ by hand means posing against the mechanical stops, and the soft limits sit a
 margin inside those, so a raw capture is routinely a fraction outside the band
 and could never be replayed. ``go`` is the only command that moves the arm, and
 it leaves the arm *holding* the pose it reached (deactivate ``arm_controller``,
-or run ``arm-jog`` and ``torque off``, to make it limp again): it reports the
+or press SPACE in ``arm-teleop``, to make it limp again): it reports the
 distance each joint will travel and then moves. There is no confirmation: the
 move is bounded by ``--speed`` and supervised by ``--max-lag``, the destination
 is a pose the operator taught and `save` already clamped into the soft limits,

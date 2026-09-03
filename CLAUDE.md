@@ -23,7 +23,6 @@ pixi run teleop         # Keyboard teleoperation
 pixi run explore        # Autonomous mapping coverage (run beside `pixi run mapping`, on the Pi)
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
 pixi run arm            # SO-101 arm: bench control stack (ros2_control, no mission)
-pixi run arm-jog        # Interactive per-joint jog CLI (needs a stack owning the bus)
 pixi run arm-setup check      # Standalone arm bus enumeration + health (read-only, base stopped)
 pixi run arm-setup calibrate  # Range calibration: centre the joints, sweep, emit limits
 pixi run arm-setup limits     # Servo goal-range fence (EEPROM 9/11): show / clear / restore
@@ -729,16 +728,19 @@ section. Contains:
   `xacro mote.urdf.xacro` falls back to the placeholders — fine for checking
   generation, wrong for driving a calibrated arm, because calibration moves the
   zero and every commanded angle then names a different position.
-- `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client of
-  `arm_controller`* (publishes clamped single-point trajectories, limps on
-  exit). It never opens the bus, so there is no contention to guard against.
+- **`jog` is retired.** It was a second keyboard path to the arm with none of
+  `teleop.py`'s rules — no rate limit, no deadman, no panic latch — for a
+  capability `arm-teleop`'s step mode (`m`, `--step`) now covers on the path
+  that has them. What went with it: a per-joint "drive to 0 rad" command, and a
+  `torque on|off` REPL command that `SPACE`/`z` replace.
 - **Every arm CLI exits and parses through `cli.py`**, because both properties
   fail silently when hand-rolled. `cli.shutdown(node, spinner)` shuts the
   context down, **joins the spin thread, and only then destroys the node**:
   destroying a node `spin()` still holds aborts the interpreter (exit 134,
   "terminate called without an active exception") *after* the tool has done its
-  work, so the run succeeds and the process still crashes — measured on `jog`
-  and `arm-pose list`, 3 of 3 runs each, with no hardware attached. This is not
+  work, so the run succeeds and the process still crashes — measured on the
+  jog CLI (since retired) and `arm-pose list`, 3 of 3 runs each, with no
+  hardware attached. This is not
   a rare race, so a new arm CLI must not hand-roll the teardown.
   `cli.parse(parser)` cuts the `--ros-args ... --` block out and then parses
   strictly: `ros2 run` hands the tool ROS's arguments too, so a plain
@@ -753,7 +755,7 @@ section. Contains:
   `home` is a taught *pose* in `~/.mote/arm_poses.yaml`, normally the arm's rest
   position. Both were spelled "home" until 2026-07-28 and it confused an
   operator at the bench, so the config key is `zero:` (`home:` still parses),
-  `jog`'s command is `zero` (`home` aliases it with a note), and `arm-setup check` has
+  the jog CLI's command was `zero` rather than `home`, and `arm-setup check` has
   `--save-zero`. Do not reintroduce the collision.
 - `calibrate.py` + `arm_calibrate` (`pixi run arm-setup calibrate`) — **where the soft
   limits come from**, in LeRobot's two phases. A bus owner, not a driver client
@@ -927,7 +929,7 @@ section. Contains:
   `MoteHardware`, and both `MoteHardware::on_activate` and `mote_arm.bus` refuse
   a port another process already holds (naming the PID) — so the read-only bench
   tools (`arm-setup check`, `arm-setup gains`), which still open the bus directly, need the
-  control stack stopped (`pixi run kill`). `jog` and `arm-pose` do not.
+  control stack stopped (`pixi run kill`). `arm-teleop` and `arm-pose` do not.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
 - **Keyboard teleop + episode recording** (`mote_arm/TELEOP.md`) — teleop with
@@ -955,7 +957,7 @@ section. Contains:
   up motion. **The safety loop ticks on its own thread, not on a ROS timer**: taking
   hold of the arm is a `switch_controller` call, and a service call made from
   inside an executor callback can never complete, because the future is resolved
-  by the executor the callback is blocking (`arm-jog` avoids this by driving
+  by the executor the callback is blocking (the jog CLI avoided this by driving
   from its REPL thread). `mock_arm` (`pixi run arm-mock`) presents that same
   ros2_control surface — trajectory topic plus `switch_controller` — with no bus
   and an optional pure-zlib synthetic camera, so the whole loop runs on a
@@ -963,7 +965,7 @@ section. Contains:
   pre-bench gate; `pixi run arm-bench-teleop` is the guided hardware session.
   **Episodes**: `episode_record` samples `joint_states` (observation), the
   `arm_controller/joint_trajectory` topic (action — read off the wire rather
-  than from the mirror, so an `arm-jog` session records too) and
+  than from the teleop node, so an `arm-pose` session records too) and
   `/image_raw/compressed` into a **capture** under `$MOTE_HOME/episodes/` — JSON
   lines plus the compressed frames stored byte-for-byte, written with the
   standard library alone, because the Pi carries no parquet or ffmpeg.
