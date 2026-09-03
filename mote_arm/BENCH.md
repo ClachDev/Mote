@@ -296,8 +296,9 @@ came from Step 3.
    `pixi run arm-pose save <name>` (read-only capture).
 3. Repeat for each pose worth reaching.
 4. `pixi run arm-pose go <name>` moves between taught poses. It prints per-joint
-   travel and asks before moving; it refuses any move over `--max-travel`
-   (0.35 rad default).
+   travel and asks before moving. Expect a large travel on the first `go` after
+   a `save`: the arm is limp until a controller claims it, so it falls to rest
+   the moment you let go of it.
 
 `pixi run arm-pose limits` prints a `joints:` block spanning every taught pose
 plus a margin. It is **not** the calibration path — it widens outward from poses

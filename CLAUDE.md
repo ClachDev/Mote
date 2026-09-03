@@ -876,8 +876,22 @@ section. Contains:
   exception.
 - `poses.py` + `arm_pose` (`pixi run arm-pose`) — teach/replay named poses
   (`~/.mote/arm_poses.yaml`, `MOTE_HOME`-overridable), the arm's analogue of
-  `save-zone`. `go` refuses moves over `--max-travel`. Changing `home`
-  invalidates stored poses. `arm-pose limits` is **not** the calibration path:
+  `save-zone`. **`save` stores each joint clamped into its soft band** and names
+  the ones it held there: posing by hand is posing a limp arm against its
+  mechanical stops and the soft limits sit `--margin` inside those, so a raw
+  capture is routinely outside the band and could never be replayed (measured:
+  elbow_flex 0.012 rad past, gripper 0.042). A joint further out than the margin
+  is reported separately — that means the arm and arm.yaml disagree. **`go` has
+  no travel ceiling**: `--max-travel` (0.35 rad) was set when the packaged bands
+  were the ~0.2 rad pose-envelope output, and against real ~3.5 rad calibrated
+  joints it refused the ordinary case — teach, let go, watch the limp arm fall
+  to rest, replay. Sizing it off the arm would have made it fire on nothing
+  again, and distance is not what makes a move risky once setpoints are
+  streamed: `--speed` bounds the rate whatever the distance, `--max-lag` stops a
+  lagging arm, the soft limits bound the destination, and every move is
+  confirmed. `episode-replay` keeps its own `--max-travel` for a different job —
+  a long approach means the arm is not where the recording started. Changing
+  `home` invalidates stored poses. `arm-pose limits` is **not** the calibration path:
   it widens outward from taught poses, so it only describes where the arm has
   been and never finds the stops (which is why the committed limits give barely
   moved joints a near-zero band) — its remaining use is *narrowing* to a working

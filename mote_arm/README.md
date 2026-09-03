@@ -474,10 +474,9 @@ The values committed in `robot.yaml` today still come from the old envelope
 method, and are flagged as such in that file, pending a calibration pass on the
 real arm (`BENCH.md` step 3).
 
-`arm-pose go` refuses any move whose largest single-joint travel exceeds
-`--max-travel` (0.35 rad by default), so a stale pose or a bad limit change
-cannot turn into a large unexpected swing. Raise it deliberately for a known-long
-move (`--max-travel 4.0` for the full `home` <-> `reachy` swing).
+`arm-pose go` prints the travel each joint will make and asks before moving.
+There is no ceiling on the distance — see below for why the one there used to be
+was removed.
 
 It **streams** setpoints at 20 Hz rather than commanding the destination in one
 jump, so the arm moves continuously at `--speed` (0.5 rad/s default) instead of
@@ -506,16 +505,25 @@ warning that arrives minutes late. A joint further out than the margin is
 reported separately, because that means the arm and `arm.yaml` disagree about
 where the limits are rather than that the operator leaned on a stop.
 
-**`go`'s travel ceiling is sized off the arm.** `--max-travel` defaults to the
-widest travel any joint has, so it refuses an impossible move rather than a
-merely large one. It was 0.35 rad, chosen when the packaged limits were the old
-`arm-pose limits` envelope whose bands were ~0.2 rad — wider than a whole
-joint's range, so it fired on nothing. Calibration gave the joints their real
-~3.5 rad bands and left the guard refusing the ordinary case: teach a pose, let
-go, watch the limp arm fall to rest, replay. What keeps a `go` safe is not that
-number — setpoints are streamed at `--speed` so the arm moves continuously
-rather than lurching, `--max-lag` stops it if the arm falls behind, and every
-move is confirmed unless `--yes`.
+**`go` has no travel ceiling, and the one it had is gone.** `--max-travel`
+defaulted to 0.35 rad, chosen when the packaged limits were the old `arm-pose
+limits` envelope whose bands were ~0.2 rad — wider than a whole joint's range,
+so it fired on nothing. Calibration gave the joints their real ~3.5 rad bands
+and left it refusing the ordinary case: teach a pose, let go, watch the limp arm
+fall to rest, replay.
+
+Sizing it off the arm instead would have made it fire on nothing again, which is
+worse than removing it: a flag, a help string and a test that all describe
+nothing. And distance is not what makes a move risky once setpoints are
+streamed. The arm advances at `--speed` whatever the distance, so a long move is
+a slow move and not a violent one; `--max-lag` stops it if the arm falls behind;
+the soft limits bound where it can go; and every move is confirmed unless
+`--yes`. The distance limit was a proxy for the lurch that streaming removed,
+and nobody removed the proxy.
+
+`episode-replay` keeps a `--max-travel`, doing a different job: a long approach
+there means the arm is not where the recording started, so the replay will not
+reproduce it. That is a check on the episode, not on the motion.
 
 ## Torque policy
 

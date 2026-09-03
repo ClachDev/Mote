@@ -239,7 +239,11 @@ def main() -> None:
         "--max-travel",
         type=float,
         default=0.35,
-        help="refuse if the approach would move a joint further than this (default 0.35)",
+        help="refuse if the arm starts further than this from the episode's "
+        "first pose (default 0.35). Not a limit on how fast or how far the arm "
+        "may move -- --speed and --max-lag govern that -- but a check that the "
+        "arm is where the recording began, since a replay from somewhere else "
+        "will not reproduce it.",
     )
     parser.add_argument("--max-lag", type=float, default=0.15)
     parser.add_argument("--stall-time", type=float, default=1.5)

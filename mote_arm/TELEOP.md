@@ -208,7 +208,10 @@ off-board. Three gates, in order:
 1. **Reduced speed** — actions are issued at `fps * --speed-scale`, a quarter of
    the recorded rate by default. The same path, not the same dynamics.
 2. **Approach, then replay** — the arm is walked to the episode's first pose
-   first, and the move is refused if that is further than `--max-travel`.
+   first, and refused if it starts further away than `--max-travel`. That is a
+   check on the recording, not on the motion: a replay begun from somewhere the
+   episode never saw will not reproduce it. (`arm-pose go` has no such limit —
+   it has no expectation about where the arm starts.)
 3. **Lag supervision** — the rule that guards `arm-pose go`: if the arm trails
    its setpoint for `--stall-time`, the replay stops where it is.
 

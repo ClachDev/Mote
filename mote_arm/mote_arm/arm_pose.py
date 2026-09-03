@@ -16,11 +16,18 @@ margin inside those, so a raw capture is routinely a fraction outside the band
 and could never be replayed. ``go`` is the only command that moves the arm, and
 it leaves the arm *holding* the pose it reached (deactivate ``arm_controller``,
 or run ``arm-jog`` and ``torque off``, to make it limp again): it reports the
-distance each joint will travel, requires confirmation unless ``--yes`` is
-given, and refuses moves whose largest single-joint travel exceeds
-``--max-travel`` — by default the widest travel any joint on this arm has, so it
-fires on an impossible move rather than a merely large one. Goals are clamped to
-the soft limits here *and* in the driver.
+distance each joint will travel and requires confirmation unless ``--yes`` is
+given. Goals are clamped to the soft limits here *and* in the driver.
+
+There is no ceiling on how far a `go` may move. Distance is not what makes a
+move risky once setpoints are streamed: the arm advances at ``--speed``
+whatever the distance, so a long move is a slow move rather than a violent one,
+and ``--max-lag`` stops it if the arm falls behind. A distance limit was a proxy
+for the lurch that streaming removed, and with real calibrated joints it refused
+the ordinary case — teach a pose, let go, watch the limp arm fall to rest,
+replay. ``episode-replay`` keeps one for a different job: there a long approach
+means the arm is not where the recording starts, so the replay will not
+reproduce.
 
 The arm is limp whenever no controller holds it, so it falls to rest the moment
 you let go of it. A `go` straight after a `save` therefore starts from the rest
@@ -92,25 +99,6 @@ def _require_states(node: PoseClient) -> dict[str, float]:
             "servo bus running (`pixi run arm`, or `pixi run robot`)?"
         )
     return node.current()
-
-
-def widest_travel(cfg) -> float:
-    """The largest distance any one joint on this arm can legally be sent.
-
-    The default ceiling for `go`. The 0.35 rad it replaces was chosen when the
-    packaged limits were the old `arm-pose limits` envelope, whose bands were
-    ~0.2 rad -- so 0.35 was wider than a whole joint's configured range and
-    fired on nothing. Calibration then gave the joints their real ~3.5 rad
-    bands and left the guard firing on almost every real move, including the
-    ordinary one: teach a pose, let go of a limp arm, watch it fall to rest,
-    replay. Sized off the arm, it fires only on a move that is impossible.
-
-    What keeps a `go` safe is not this number. Setpoints are streamed at
-    `--speed` so the arm moves continuously rather than lurching, `--max-lag`
-    stops it if the arm falls behind, and every move is confirmed unless
-    `--yes`. This is a sanity check on the arithmetic, not the guard.
-    """
-    return max((j.max_rad - j.min_rad for j in cfg.joints), default=0.0)
 
 
 def _cmd_save(node: PoseClient, args) -> None:
@@ -263,19 +251,6 @@ def _cmd_go(node: PoseClient, args) -> None:
         goals[joint_name] = clamped
 
     print(f"largest single-joint travel: {largest:.4f} rad")
-    ceiling = args.max_travel
-    if ceiling is None:
-        ceiling = widest_travel(node.cfg)
-    if largest > ceiling:
-        raise SystemExit(
-            f"refusing: travel {largest:.4f} rad exceeds {ceiling:.4f}, the "
-            "widest travel any joint on this arm has. Something disagrees about "
-            "the frame — check `pixi run arm-pose list` and arm.yaml."
-            if args.max_travel is None
-            else f"refusing: travel {largest:.4f} rad exceeds --max-travel "
-            f"{ceiling:.4f}. Re-run with a larger --max-travel if that is "
-            "genuinely intended."
-        )
 
     if not args.yes:
         reply = input("proceed? [y/N] ").strip().lower()
@@ -384,15 +359,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_go = sub.add_parser("go", help="move to a taught pose")
     p_go.add_argument("name")
     p_go.add_argument("--yes", action="store_true", help="skip confirmation")
-    p_go.add_argument(
-        "--max-travel",
-        type=float,
-        default=None,
-        help="refuse if any joint would move more than this many rad. Defaults "
-        "to the widest travel any joint on this arm has, so it fires only on a "
-        "move that is impossible rather than merely large; pass a smaller one "
-        "to keep a bench run tight.",
-    )
     p_go.add_argument(
         "--speed",
         type=float,

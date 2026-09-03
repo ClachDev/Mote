@@ -1,18 +1,14 @@
-"""A taught pose the arm cannot be sent to, and the ceiling on how far `go` moves.
+"""A taught pose the arm cannot be sent to.
 
-Both were found at the bench in one sitting. Posing by hand means posing a limp
+Found at the bench. Posing by hand means posing a limp
 arm against its mechanical stops, and the soft limits sit a margin inside those,
 so a captured position is routinely a fraction past the band — stored raw, the
 pose can never be reached and every `go` clamps it and says so, minutes later,
-when nothing can be done about it. And `--max-travel` defaulted to 0.35 rad,
-chosen when the packaged limits were the old pose-envelope output whose bands
-were ~0.2 rad; against real calibrated ~3.5 rad joints it refused the ordinary
-move, which is teach a pose, let go, watch the limp arm fall to rest, replay.
+when nothing can be done about it.
 """
 
 import pytest
 
-from mote_arm.arm_pose import widest_travel
 from mote_arm.config import ArmConfig, JointSpec, ServoGains
 
 
@@ -27,26 +23,6 @@ def cfg(*joints):
 
 def joint(name, low, high, invert=False):
     return JointSpec(name=name, id=1, min_rad=low, max_rad=high, invert=invert)
-
-
-def test_the_ceiling_is_the_widest_travel_the_arm_has():
-    arm = cfg(joint("a", -1.7785, 1.7785), joint("b", -2.0331, 2.0331))
-    assert widest_travel(arm) == pytest.approx(4.0662)
-
-
-def test_the_ceiling_admits_the_move_that_the_old_default_refused():
-    """3.33 rad, elbow_flex, from the rest position to a taught `reachy`."""
-    arm = cfg(joint("elbow_flex", -1.6458, 1.6458), joint("pan", -2.0331, 2.0331))
-    assert widest_travel(arm) > 3.3255
-    assert 0.35 < 3.3255  # the number it replaces refused it
-
-
-def test_an_asymmetric_band_is_measured_end_to_end_not_from_zero():
-    assert widest_travel(cfg(joint("a", -1.0, 0.5))) == pytest.approx(1.5)
-
-
-def test_an_armless_config_has_no_travel():
-    assert widest_travel(cfg()) == 0.0
 
 
 # --- what `save` stores ------------------------------------------------------

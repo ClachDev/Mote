@@ -40,13 +40,13 @@ def test_no_ros_block_is_left_alone():
 def test_parse_accepts_a_safety_flag_past_a_ros_block():
     args = cli.parse(
         build_parser(),
-        ["go", "home", "--max-travel", "1.25", "--ros-args", "-p", "x:=1"],
+        ["go", "home", "--max-lag", "1.25", "--ros-args", "-p", "x:=1"],
     )
     assert args.name == "home"
-    assert args.max_travel == 1.25
+    assert args.max_lag == 1.25
 
 
-@pytest.mark.parametrize("flag", ["--max_travel", "--maxtravel", "--speeed"])
+@pytest.mark.parametrize("flag", ["--max_lag", "--maxlag", "--speeed"])
 def test_a_mistyped_safety_flag_is_an_error(flag):
     """Not a warning, and above all not silence: the arm would move anyway."""
     with pytest.raises(SystemExit) as exc:
