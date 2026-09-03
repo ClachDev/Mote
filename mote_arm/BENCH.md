@@ -375,35 +375,48 @@ way out.
 
 ## Step 8 — keyboard teleop, recording and replay
 
-The teleop path has its own guided session, because it needs three terminals
-and because three of its checks are observations no script can make (the arm
-stopping at a limit, halting on a released key, going limp on panic).
-
-**Rehearse it headless first** — the same loop runs against the mock follower
+**Rehearse it headless first** — the whole loop runs against the mock follower
 with no hardware at all, and a failure there is a software bug, not a bench one:
 
 ```
 pixi run arm-teleop-test
 ```
 
-Then, on the arm:
+Then, on the arm, two terminals:
 
 ```
-# terminal A
-pixi run arm mirror:=true
-# terminal B
-pixi run arm-teleop
-# terminal C
-pixi run arm-bench-teleop
+pixi run arm            # or `pixi run launch`, if you want the camera
+pixi run arm-teleop     # '?' prints the keys
 ```
 
-Terminal C walks through the safety demonstrations, records an episode while
-you teleop it, checks the capture holds a real motion, prints the off-board
-export/inspect commands, and replays the episode at quarter speed. It writes
-`$MOTE_HOME/episodes/bench/bench-report.txt` — nothing is recorded as passing
-that you did not say you saw.
+Three of these are observations no test can make — the arm stopping at a limit,
+halting on a released key, going limp on panic — which is the whole reason a
+human is here. Keep a hand near SPACE throughout.
 
-Full workflow and design: [TELEOP.md](TELEOP.md).
+1. **It follows.** Hold one joint's key. The arm moves smoothly, not in steps.
+2. **It stops at the soft limit.** Keep holding past the limit. It stops there
+   and goes no further. Check the angle it stopped at is the limit `?` printed:
+   stopping short of that is the servo's own fence, not the soft limit — see
+   [the goal-range limits](README.md#the-servos-own-goal-range-limits-which-are-not-the-soft-limits).
+3. **Releasing stops it.** Drive, then let go mid-move. It halts within a
+   fraction of a second, and does not coast on to where it was heading.
+4. **Panic drops torque.** Press SPACE. The arm goes limp — back-drivable by
+   hand — and stays limp while you keep pressing joint keys.
+5. **Clearing resumes without a jump.** Press `z`, then drive again. It picks up
+   from where the arm is, not from where the command had got to.
+6. **Step mode.** Press `m`, then tap a joint key: exactly one 0.05 rad
+   increment per press, and *holding* the key steps once rather than repeatedly.
+
+Then record, check, and replay:
+
+```
+pixi run arm-record -- --task "move the arm through a simple motion" --dataset bench
+python3 mote_arm/test/teleop_loop/check_capture.py ~/.mote/episodes/bench
+pixi run arm-replay -- ~/.mote/episodes/bench --episode 0   # stop teleop first
+```
+
+The export is off-board and verifies itself by loading the dataset back through
+LeRobot's own API. Full workflow and design: [TELEOP.md](TELEOP.md).
 
 ---
 
@@ -450,7 +463,7 @@ Still open:
       `pixi run robot`, drive a short goal, and teleop the arm at the same time;
       watch for wheel-odometry glitches that would mean the bus is oversubscribed
 - [ ] step 8: teleop, record, export/inspect and replay on the arm
-      (`pixi run arm-bench-teleop`) — verified headless against the mock
+      (BENCH.md step 8) — verified headless against the mock
       control stack, but not yet on hardware
 - [ ] the other five joints jogged and direction-checked (`invert`)
 - [ ] re-check the gain with a payload on the gripper — the sweep only measures

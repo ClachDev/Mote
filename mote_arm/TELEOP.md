@@ -309,4 +309,3 @@ control surface for a remote arm would not be a topic in the first place.
 | `control.py` | Shared with `arm-pose` and replay: single-point trajectories, and activation as the torque switch. |
 | `tools/lerobot_export.py` | Capture → LeRobotDataset, off-board (`-e lerobot`). |
 | `test/teleop_loop/` | The headless end-to-end gate (`arm-teleop-test`). |
-| `tools/bench_teleop.sh` | The guided hardware session (see `BENCH.md`). |

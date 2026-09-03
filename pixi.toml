@@ -167,9 +167,6 @@ arm-replay = "ros2 run mote_arm episode_replay"
 # The whole teleop -> record -> export -> replay loop against the mock arm; the
 # pre-bench gate for anything that touches the arm's teleop path.
 arm-teleop-test = "bash mote_arm/test/teleop_loop/run_teleop_loop.sh"
-# The same loop on real hardware, guided: prompts for the safety observations a
-# script cannot make, and writes a report (mote_arm/BENCH.md).
-arm-bench-teleop = "bash mote_arm/tools/bench_teleop.sh"
 # Robot-side inference diagnostics (torch-free — run in the default/robot env):
 # probe the inference machine's health/version, or benchmark round-trip latency.
 inference-health = "python -u mote_perception/tools/inference_health.py"

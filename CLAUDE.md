@@ -32,7 +32,6 @@ pixi run arm-mock       # The arm control stack's interface, no hardware (+ --ca
 pixi run arm-record     # Record teleop episodes into $MOTE_HOME/episodes
 pixi run arm-replay     # Replay a recorded episode on the arm, gated
 pixi run arm-teleop-test # Headless teleop->record->replay loop vs the mock arm
-pixi run arm-bench-teleop # Guided hardware teleop session (needs a human)
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -962,7 +961,7 @@ section. Contains:
   ros2_control surface — trajectory topic plus `switch_controller` — with no bus
   and an optional pure-zlib synthetic camera, so the whole loop runs on a
   workstation: `pixi run arm-teleop-test` drives it headless and is the
-  pre-bench gate; `pixi run arm-bench-teleop` is the guided hardware session.
+  pre-bench gate; the hardware checks a test cannot make are BENCH.md step 8.
   **Episodes**: `episode_record` samples `joint_states` (observation), the
   `arm_controller/joint_trajectory` topic (action — read off the wire rather
   than from the teleop node, so an `arm-pose` session records too) and
