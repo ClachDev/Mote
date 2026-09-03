@@ -382,6 +382,22 @@ wrist_roll        5      0   4095  -3.142 .. +3.140   -2.880 .. +2.880
 gripper           6   2047  3510   -0.002 .. +2.243   -1.073 .. +1.073
 ```
 
+**What set it: a LeRobot calibration, before any of this.** The fence spans
+match the travel `arm-calibrate` sweeps to within 1, 3, 5 and 14 counts on
+`gripper`, `shoulder_lift`, `wrist_flex` and `elbow_flex` — so it is a recorded
+range of motion of this arm, not a factory default. The shift between the fence
+and that sweep equals the change in each servo's homing offset since the arm
+arrived, within ~10 counts, so it was recorded while the servos still carried
+the offsets they came with. The two odd joints identify the tool: `wrist_roll`
+is unfenced, which is the one joint LeRobot hard-codes as full-turn and skips;
+and `shoulder_pan`'s band is 760 counts short, which is what LeRobot's
+unwrapped min/max `record_ranges_of_motion` produces for a joint whose travel
+crosses 0/4095 — and `shoulder_pan` is one of the two that do. LeRobot also
+demonstrably writes these registers on this robot: the calibration cached at
+`~/.cache/huggingface/lerobot/` lists the two drive wheels at 0-4095, and the
+wheels read 0-4095. There is no arm entry in that cache, so the arm's run
+happened elsewhere — another machine, or the seller before shipping.
+
 Two properties made it hard to see. The fence only binds under torque, so
 `arm-calibrate` sweeps straight through it by hand and measures the full travel
 — the calibration and the arm disagree, and only the arm is wrong. And the band
