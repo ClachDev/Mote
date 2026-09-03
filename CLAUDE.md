@@ -125,6 +125,43 @@ Milestone M2 of `docs/design/fleet.md`; the operator flow is `docs/fleet/README.
 
 Milestone M3 of `docs/design/fleet.md`, and the end of v0. The **HTTP** wire is specified as its own versioned contract in **`docs/fleet/fleet-api.md`** (M1's MQTT one is `control-plane.md`); the operator flow is `docs/fleet/README.md` §6–9 and the measurements are `m3-verification.md`. **The two directions of the loop take different paths on purpose.** *Reads* ride MQTT: the browser subscribes to `mote/v2/+/{presence,health,pose,capabilities,mission/status}` over WebSockets, and because all of those are retained it has the whole fleet's state within a second of loading — no polling, no service in the middle. *Writes* ride HTTP: `POST /v1/robots/<id>/dispatch` authorizes an operator token (`fleetctl operator new --name <you>`; the name is what the audit row records), writes the audit row, then publishes to the same `mission/command` topic. **The topic tree did not change — only who publishes to it**, and `fleetctl dispatch` moved to the API too, so there is one write path rather than one per client. The mission's `input` is validated only by the robot, against the schema its own capability declared: a copy in the server would be a second contract to keep in step, and it would refuse missions a newer robot understands. **The browser cannot publish**: `server/ui/mqtt.mjs` is a hand-rolled subscribe-only MQTT 3.1.1 client that implements no PUBLISH packet, so the split is enforced by omission (M7 makes it structural with a subscribe-only broker credential). The UI is static ES modules — no bundler, no npm, no vendored library — served by the same stdlib `http.server`; `map.mjs` holds the Q5 world→pixel transform (`px = (wx-origin_x)/res`, `py = height - (wy-origin_y)/res`) and a pan/zoom/follow canvas, and only draws robots on the *same* site+floor as the selected one because a pose from another floor is a different map frame. **Basemaps come from site bundles on the fleet box** (`--maps-dir`, default `$MOTE_FLEET_HOME/sites`, the layout `sites.py` writes, seeded by rsync until **M4** makes the registry canonical behind the same two routes). **M1's websockets blocker is settled**: `pixi run fleet-broker` runs `eclipse-mosquitto` under docker with the repo's own `mosquitto.conf`, because conda-forge's build has none; `pixi run -e fleet fleet-broker-local` is the conda binary for a box without docker, and it strips the WS stanza and says so. Two things that run in the same file (`test_ui.py` → `ui_test.mjs`) are the MQTT codec and the transform, tested under node against the very files the browser loads; `browser_check.mjs` drives a real headless Chrome over CDP against a running stack and is an operator's tool, not a CI test — `pixi run fleet-ui-check` is that stack in one command (broker on ephemeral ports, server, a temp `MOTE_FLEET_HOME`, the sim's `office_world` bundle as the basemap, and `test/fake_robots.py`, which publishes `protocol.py` and `spec/` payloads, imports `mote_tasks`' own capability set rather than writing one, and is *not* a second robot implementation), torn down afterwards; `-- --keep` leaves it up for UI work. It stays out of CI because it needs docker (conda's mosquitto still has no websockets) *and* a chrome, which the arm runner has not — the decision, and what wiring it in would take, are recorded in `m3-verification.md` §2 rather than left looking like coverage. **A fourth pane, `review`, is where a candidate map is looked at and promoted** (`server/ui/review.mjs`; routes and rationale under the map registry below). It is a *mode*, not a column: opening it stands the operations panes down at every width, because two canvases — one canonical with robots on it, one a candidate without — is the confusion a dedicated view exists to remove. **The phone is the realistic off-LAN client**, so below 760 px the panes become one at a time behind a bottom tab bar (`server/ui/layout.mjs`), selecting a robot in the roster navigates to the map — what the desktop layout gets for free by showing both — and the canvas gained pinch-to-zoom (`pinchSpan`/`pinchUpdate` in `map.mjs`, pure and tested, because a division by a zero span puts NaN in the view scale and blanks the map for good) plus a fingertip-sized hit target. The breakpoint is a **silent** seam — CSS decides what is displayed, JS decides when a selection navigates, and disagreement yields a tab bar over stacked panes rather than an error — so it lives in `layout.mjs` and `ui_test.mjs` reads the stylesheet and holds it there, as it does for every pane having a tab and for `touch-action: none` on the canvas (without which the browser eats the drag and the pinch before a single pointer event arrives). Dispatch's form is **generated from the robot's own capability set** (retained on the broker): a select of the keys it offers, one field per input property, and a **zone picker** exactly where a property's schema `$ref`s zone/v0's zone reference — so the page holds no list of capabilities and no list of which inputs are places, and a keyboard is needed only where the schema really wants free text. Three pre-existing bugs fell out, all of which a desk hides: `hidden` does not hide an element whose class sets `display` (the empty promote picker), the canvas backing store was resized on width alone so a height change left the previous frame's scale bar under the new one, and the scale bar was drawn in the dark theme's near-white on a white basemap — a canvas gets no cascade, so it now reads `--dim` off the element. Measurements, including `browser_check.mjs`'s phone pass, are `m3-verification.md` §9; **a real device is still the acceptance** — emulation gets the viewport and the touch points right and the thumb wrong.
 
+## Fleet: reading a robot's state over HTTP
+
+M3's split — reads over MQTT, writes over HTTP — is right for the dashboard,
+which wants a live stream, and wrong for a client that asks once and acts (an
+MCP front door, `fleetctl`, a script): coupling that client to the broker makes
+it track the topic tree, retention semantics and, after M7, a broker
+credential — three contracts where one would do, which is what the abandoned
+July MCP front door was rewritten under twice. So the fleet server now holds
+**its own subscription** to the retained half of the tree (`BrokerFeed` into
+`RobotState` in `fleet_server.py`, `mote/v2/+/{presence,health,pose,
+capabilities,mission/status}`) and `GET /v1/robots/<id>` answers with the
+registry row plus what it last saw; `GET /v1/robots` carries the `presence`
+payload per row, so picking an online robot costs one request rather than N.
+Contract in `docs/fleet/fleet-api.md`, operator flow `README.md` §8. Five things
+are load-bearing. **The payloads are forwarded, never rebuilt** — each is the
+publisher's own document, no field added, renamed or reinterpreted, the rule
+the agent follows so there is one definition of this wire and not a second one
+here. **Absent state is null per field**, and a robot the server has never heard
+from is `200` with every field null rather than `404`, which stays reserved for
+a robot that is not enrolled — so `broker_connected` sits beside them, because
+with the feed down every field is null however healthy the fleet is and null
+alone cannot say which. **Nothing is persisted**: every topic read is retained,
+so a restarted server is repopulated by the broker within a second and a stored
+copy could only be the staler answer — and a cleared retained topic (a
+zero-length payload) clears the field, or this server would assert a state the
+broker has stopped serving. **`mission_status` is the last status, not a
+history**, since one transition is all that is retained; anything wanting every
+transition still subscribes, which is what `watch` and `dispatch` keep the
+broker for. And **the route takes an operator token where the roster does not**,
+because this is where the coordinates are — checked *before* the robot is looked
+up, so an anonymous caller cannot enumerate ids by reading 401 against 404.
+`publisher` and `feed` are injected as a pair in `serve()`, since a live
+subscription beside a stubbed publisher would have a test dialling a broker it
+does not have; the acceptance is `test_e2e_fleet.py`'s
+`test_a_mission_can_be_followed_over_http_alone`, which dispatches and follows a
+real mission to terminal with no MQTT client in the test at all.
+
 ## Fleet: the map registry (M4)
 
 Milestone M4 of `docs/design/fleet.md`: the fleet server becomes the **canonical

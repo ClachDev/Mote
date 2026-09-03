@@ -18,8 +18,8 @@ The contract is ``docs/fleet/fleet-api.md``::
 
     GET  /healthz                            liveness + how many robots
     GET  /v1/config                          what the browser needs to bootstrap
-    GET  /v1/robots                          the roster
-    GET  /v1/robots/<id>                     one row
+    GET  /v1/robots                          the roster + each robot's presence
+    GET  /v1/robots/<id>                     one row + its live state (operator)
     POST /v1/enroll                          allocate (or return) a robot id
     POST /v1/robots/<id>/dispatch            authorize, audit, then publish a
                                              mission (capability + typed input)
@@ -62,6 +62,17 @@ coming back is typed — ``invalid_input`` naming the property, ``busy`` naming
 the mission that holds the lane — so a dispatcher decides what to do without
 reading prose.
 
+**A robot's state is readable without joining the broker.** M3's split — reads
+over MQTT, writes over HTTP — is right for the dashboard, which wants a live
+stream, and wrong for a client that asks once and acts. So this server holds
+its own subscription to the retained half of the topic tree (:class:`BrokerFeed`
+into :class:`RobotState`) and answers ``GET /v1/robots/<id>`` with what it last
+saw: presence, health, pose, capabilities and the last mission status, each
+forwarded as published or null. Such a client then depends on
+``docs/fleet/fleet-api.md`` alone rather than on the topic tree, its retention
+rules and a broker credential — three contracts to track instead of one, which
+is what the abandoned MCP front door was rewritten under twice.
+
 **The registry is the source of truth for maps (M4).** A robot uploads a saved
 revision as a *candidate*, which changes nothing; an operator promotes one, which
 flips the floor's ``map`` symlink and publishes the retained
@@ -83,13 +94,15 @@ accident of where its SLAM session started, so it is true for that robot and
 false for the one beside it; the name is true for both. The binding stays where
 it was, under ``/v1/maps``, served to the client that also has the basemap.
 
-**Security posture for M3:** the read routes are still unauthenticated, exactly
+**Security posture for M3:** most read routes are still unauthenticated, exactly
 as M1 left them, and the broker is still anonymous. What M3 adds is a credential
-on the *write* path and a record of who used it. That stays proportionate only
-while the tailnet is the boundary; M7 is where operator auth reaches the read
-routes, per-robot broker credentials land, and Tailscale ACLs stop robots
-reaching each other. Until then, do not expose this port to a network the robots
-are not already trusted on.
+on the *write* path and a record of who used it. Two reads take one as well —
+the audit log, and one robot's live state — because both carry something an
+anonymous caller has no business with. That stays proportionate only
+while the tailnet is the boundary; M7 is where operator auth reaches the rest of
+the read routes, per-robot broker credentials land, and Tailscale ACLs stop
+robots reaching each other. Until then, do not expose this port to a network the
+robots are not already trusted on.
 """
 
 import argparse
@@ -227,6 +240,181 @@ class BrokerLink:
                 pass
 
 
+#: The leaves this server keeps the last retained payload of — everything the
+#: dashboard subscribes to, so a client that asks once over HTTP is told what a
+#: client following the stream would see.
+STATE_LEAVES = (
+    protocol.PRESENCE,
+    protocol.HEALTH,
+    protocol.POSE,
+    protocol.CAPABILITIES,
+    protocol.STATUS,
+)
+
+#: `mission/status` is not a JSON key. A field name is its topic leaf with the
+#: separator flattened, so the route's payload maps onto the topic tree without
+#: a table to look either up in.
+STATE_FIELDS = {leaf: leaf.replace("/", "_") for leaf in STATE_LEAVES}
+
+
+class RobotState:
+    """The last retained payload this server saw on each robot's topics.
+
+    This is the read half of the control plane held in memory, for the client
+    that asks once and acts rather than following a stream — an MCP front door,
+    ``fleetctl``, a script. Such a client should not have to speak MQTT, track
+    the topic tree, know which topics are retained and, after M7, hold a broker
+    credential, to answer *is this robot online and what is it doing*.
+
+    Payloads are stored and served as published: this server subscribes to the
+    same topics the dashboard does and forwards what it was handed, never
+    adding, renaming or reinterpreting a field. That is the rule the agent
+    follows, for the same reason — there is one definition of these payloads,
+    in ``mission/v0`` and ``control-plane.md``, and a second reading of them
+    here would be a contract nobody declared.
+
+    Nothing is persisted. Every topic it reads is retained, so a restarted
+    server is repopulated by the broker within a second of connecting, and a
+    persisted copy could only ever be the staler answer.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._robots: dict[str, dict] = {}
+        #: Whether the subscription is live. Without it a client cannot tell a
+        #: robot that has said nothing from a server that cannot hear.
+        self.connected = False
+
+    def apply(self, topic: str, raw: bytes) -> bool:
+        """Take one message off the wire. True if it is one this server holds
+        state from — a robot's topic, one of the leaves above, a JSON object or
+        the empty payload that clears one."""
+        parsed = protocol.parse_topic(topic)
+        if parsed is None:
+            return False
+        robot_id, leaf = parsed
+        if leaf not in STATE_LEAVES or not protocol.valid_id(robot_id):
+            return False
+        if not raw:
+            # A zero-length payload is how a publisher *clears* a retained
+            # topic. Keeping the last value would leave this server asserting a
+            # state the broker has stopped serving.
+            with self._lock:
+                self._robots.get(robot_id, {}).pop(leaf, None)
+            return True
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        with self._lock:
+            self._robots.setdefault(robot_id, {})[leaf] = payload
+        return True
+
+    def of(self, robot_id: str) -> dict:
+        """Every state field for one robot, the ones never heard of null.
+
+        Null is the honest answer and the only one available: a payload this
+        server has not been handed cannot be invented, and a robot that has
+        never connected differs from one that has only in that its topics are
+        empty.
+        """
+        with self._lock:
+            held = dict(self._robots.get(robot_id) or {})
+        return {field: held.get(leaf) for leaf, field in STATE_FIELDS.items()}
+
+    def presence(self, robot_id: str):
+        """Just the presence payload — what the roster carries per row."""
+        with self._lock:
+            return (self._robots.get(robot_id) or {}).get(protocol.PRESENCE)
+
+
+class BrokerFeed:
+    """This server's subscription to the fleet's retained state.
+
+    Separate from :class:`BrokerLink` because the two halves fail differently.
+    A publish that does not land must be reported to the operator who asked for
+    it, synchronously; a subscription that drops must reconnect and resubscribe
+    on its own, forever, with nobody asking.
+
+    **The subscribe lives in ``on_connect``.** A broker restart hands the client
+    a clean session, so one that subscribed beside its connect comes back
+    subscribed to nothing: it stays connected and goes silent, which is
+    indistinguishable from a fleet with nothing to say. The agent and
+    ``fleetctl`` are arranged the same way, for the same reason.
+
+    paho is imported on first use, which keeps this module's import surface the
+    standard library plus the wire contract.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        state: RobotState,
+        *,
+        keepalive: int = 30,
+        client_id: str = "mote-fleet-api-feed",
+    ):
+        self.host = host
+        self.port = int(port)
+        self.state = state
+        self.keepalive = keepalive
+        self.client_id = client_id
+        self._client = None
+
+    def start(self) -> bool:
+        """Connect in the background. A broker that is down is not an error
+        here: the API must answer while the robots are unreachable, and say so
+        rather than wait."""
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError as exc:
+            print(f"no MQTT client, robot state unavailable: {exc}", file=sys.stderr)
+            return False
+        try:
+            client = mqtt.Client(
+                mqtt.CallbackAPIVersion.VERSION2, client_id=self.client_id
+            )
+        except AttributeError:  # paho 1.x
+            client = mqtt.Client(client_id=self.client_id)
+        client.on_connect = self._on_connect
+        client.on_disconnect = self._on_disconnect
+        client.on_message = self._on_message
+        client.reconnect_delay_set(min_delay=1, max_delay=30)
+        self._client = client
+        try:
+            client.connect_async(self.host, self.port, keepalive=self.keepalive)
+            client.loop_start()
+        except (OSError, ValueError) as exc:
+            print(f"robot state feed not started: {exc}", file=sys.stderr)
+            self._client = None
+            return False
+        return True
+
+    def _on_connect(self, client, _userdata, *_args):
+        for leaf in STATE_LEAVES:
+            client.subscribe(protocol.any_robot(leaf), qos=protocol.QOS)
+        self.state.connected = True
+
+    def _on_disconnect(self, _client, _userdata, *_args):
+        self.state.connected = False
+
+    def _on_message(self, _client, _userdata, message):
+        self.state.apply(message.topic, bytes(message.payload))
+
+    def close(self):
+        client, self._client = self._client, None
+        self.state.connected = False
+        if client is not None:
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:
+                pass
+
+
 def _describe(capability: str, payload_input) -> str:
     """One line naming a mission, for the audit row and the operator's log.
 
@@ -324,16 +512,9 @@ class FleetHandler(BaseHTTPRequestHandler):
         elif path == "/v1/config":
             self._send(200, self.server.ui_config())
         elif path == "/v1/robots":
-            self._send(
-                200,
-                {"schema": protocol.SCHEMA, "robots": self.server.registry.robots()},
-            )
+            self._roster()
         elif path.startswith("/v1/robots/"):
-            robot = self.server.registry.robot(path.rsplit("/", 1)[-1])
-            if robot is None:
-                self._error(404, "no such robot")
-            else:
-                self._send(200, {"schema": protocol.SCHEMA, **robot})
+            self._robot(path[len("/v1/robots/") :])
         elif path == "/v1/audit":
             self._audit(params)
         elif path == "/v1/maps":
@@ -434,6 +615,67 @@ class FleetHandler(BaseHTTPRequestHandler):
                     "port": self.server.broker_port,
                 },
                 "contract": f"{protocol.ROOT}/{protocol.VERSION}",
+            },
+        )
+
+    # -- the roster and one robot's live state ----------------------------
+
+    def _roster(self):
+        """Every enrolled robot, each with its ``presence`` payload.
+
+        Presence rather than the whole state: a client picking a robot to
+        dispatch to asks one question — which of these is online — and the
+        answer to it should not cost a request per robot. Everything else about
+        one robot is on that robot's own route.
+        """
+        state = self.server.state
+        self._send(
+            200,
+            {
+                "schema": protocol.SCHEMA,
+                "broker_connected": state.connected,
+                "robots": [
+                    {**row, "presence": state.presence(row["robot_id"])}
+                    for row in self.server.registry.robots()
+                ],
+            },
+        )
+
+    def _robot(self, rest: str):
+        """One robot: its registry row, and the retained state as last seen.
+
+        This is the whole of what the dashboard's MQTT subscription gets,
+        answered over HTTP for the client that asks once and acts. What it is
+        not is a stream: ``mission_status`` is the *last* status, one
+        transition, and a caller that wants every transition subscribes to the
+        topic the way the browser does.
+
+        Behind an operator token where the roster is not, because this is where
+        the coordinates are — a pose says where in a building the robot is, and
+        the mission status says what it was told to do there. The token is
+        checked before the robot is looked up, so an unauthenticated caller
+        cannot enumerate ids by reading 401 against 404.
+        """
+        if "/" in rest:
+            self._error(404, f"no route /v1/robots/{rest}")
+            return
+        try:
+            self._operator()
+        except Unauthorized as exc:
+            self._error(401, str(exc))
+            return
+        robot = self.server.registry.robot(rest)
+        if robot is None:
+            self._error(404, "no such robot")
+            return
+        state = self.server.state
+        self._send(
+            200,
+            {
+                "schema": protocol.SCHEMA,
+                **robot,
+                "broker_connected": state.connected,
+                **state.of(rest),
             },
         )
 
@@ -1006,6 +1248,23 @@ class FleetServer(ThreadingHTTPServer):
         self.broker_ws_host = broker_ws_host
         self.broker_ws_port = broker_ws_port
         self.foxglove_url = foxglove_url
+        #: What the fleet's robots last said, for the HTTP read routes. The
+        #: feed that fills it is attached by :func:`serve`, because it
+        #: subscribes on behalf of this object and so cannot exist before it.
+        self.state = RobotState()
+        self.feed = None
+
+    def server_close(self):
+        """Give back the sockets, the subscription and the publisher together.
+
+        The two broker connections outlive ``shutdown()`` — they are paho's own
+        threads, not this server's — so a test that starts a server per case
+        leaks a client per case unless they are closed here.
+        """
+        super().server_close()
+        if self.feed is not None:
+            self.feed.close()
+        self.publisher.close()
 
     # -- what the browser needs to bootstrap ------------------------------
 
@@ -1196,15 +1455,22 @@ def serve(
     publish_port=None,
     id_prefix=ID_PREFIX,
     publisher=None,
+    feed=None,
     maps_dir=None,
     ui_dir=UI_DIR,
     broker_ws_host=None,
     broker_ws_port=9001,
     foxglove_url=FOXGLOVE_URL,
 ) -> FleetServer:
-    """Build a listening server. The caller runs it (or its ``serve_forever``)."""
+    """Build a listening server. The caller runs it (or its ``serve_forever``).
+
+    ``publisher`` and ``feed`` are the two halves of the broker hop and are
+    injected as a pair: supplying a ``publisher`` is what a test does to stand
+    the broker down, and building a live subscription beside a stubbed
+    publisher would have the server dialling a broker the test does not have.
+    """
     broker_host = broker_host or socket.gethostname()
-    return FleetServer(
+    server = FleetServer(
         (host, port),
         Registry(db),
         broker_host=broker_host,
@@ -1218,6 +1484,16 @@ def serve(
         broker_ws_port=broker_ws_port,
         foxglove_url=foxglove_url,
     )
+    if feed is None and publisher is None:
+        feed = BrokerFeed(
+            publish_host or broker_host,
+            publish_port or broker_port,
+            server.state,
+        )
+    if feed is not None:
+        server.feed = feed
+        feed.start()
+    return server
 
 
 def main(argv=None):
@@ -1314,7 +1590,7 @@ def main(argv=None):
         thread.join()
     except KeyboardInterrupt:
         server.shutdown()
-        server.publisher.close()
+        server.server_close()
 
 
 if __name__ == "__main__":

@@ -22,6 +22,15 @@ sees the whole fleet's current state the moment it connects, with no polling and
 no service in the middle. The browser speaks the same protocol as everything
 else, over WebSockets.
 
+**Except for the client that asks once.** A stream is the right shape for a
+dashboard and the wrong one for a tool that reads a robot's state, acts, and
+exits: it would have to speak MQTT, track the topic tree, know which topics are
+retained, and hold a broker credential — three contracts to keep up with where
+one would do. So this server subscribes on such a client's behalf and serves
+what it last saw at [`GET /v1/robots/<id>`](#get-v1robotsrobot_id). The
+distinction is *how often*, not *what*: the payloads are the same documents,
+forwarded, and anything wanting every transition still joins the broker.
+
 **Writes ride HTTP.** A command has to be attributed to somebody, recorded, and
 refusable. Broker ACLs can express "may publish" but not "who did", so dispatch
 is a request to this API, which authorizes the operator, writes the audit row,
@@ -47,7 +56,7 @@ Status codes are part of the contract: a client may switch on them.
 | Route | Credential |
 |---|---|
 | `POST /v1/enroll` | an **enrollment token** in the body (single-use by default) |
-| `POST /v1/robots/<id>/dispatch`, `GET /v1/audit` | an **operator token** as `Authorization: Bearer <token>` |
+| `POST /v1/robots/<id>/dispatch`, `GET /v1/audit`, `GET /v1/robots/<id>` | an **operator token** as `Authorization: Bearer <token>` |
 | `POST …/revisions/<rev>/promote` | an **operator token** |
 | `POST …/revisions/<rev>` (map upload) | none, but the `robot_id` must be enrolled — see [the registry](#the-map-registry-m4) |
 | everything else | none — see the security note below |
@@ -67,13 +76,15 @@ is refused. Revocation keeps the row: who *had* access is part of the record.
 Bearer header only — never a query parameter, which would put the credential in
 every access log between here and the browser.
 
-**Security posture, plainly.** The read routes are unauthenticated and the
+**Security posture, plainly.** Most read routes are unauthenticated and the
 broker is anonymous, exactly as M1 left them. M3 adds a credential on the
-*write* path and a record of who used it, which is the milestone's brief; it is
-proportionate only while the tailnet is the boundary. M7 adds operator auth on
-the read routes, per-robot broker credentials, and the Tailscale ACLs. Until
-then, do not expose this port to a network the robots are not already trusted
-on.
+*write* path and a record of who used it, which is the milestone's brief; since
+then two reads have been gated as well, the audit log and one robot's live
+state, because both carry something an anonymous caller has no business with.
+It is proportionate only while the tailnet is the boundary. M7 adds operator
+auth on the rest of the read routes, per-robot broker credentials, and the
+Tailscale ACLs. Until then, do not expose this port to a network the robots are
+not already trusted on.
 
 ---
 
@@ -82,8 +93,8 @@ on.
 ```
 GET  /healthz                            liveness, contract, robot count
 GET  /v1/config                          what the browser needs to bootstrap
-GET  /v1/robots                          the roster
-GET  /v1/robots/<robot_id>               one row
+GET  /v1/robots                          the roster, each row with its presence
+GET  /v1/robots/<robot_id>               one row + its live state (an operator)
 POST /v1/enroll                          allocate (or return) a robot id
 POST /v1/robots/<robot_id>/dispatch      authorize, audit, publish a command
 GET  /v1/audit[?limit=&robot_id=]        what was dispatched, by whom
@@ -109,6 +120,100 @@ GET  /                                   the operator UI (static files)
 `POST /v1/enroll` is specified in
 [`control-plane.md`](control-plane.md#enrollment--registry-api) and unchanged by
 M3; the rest are below.
+
+### `GET /v1/robots`
+
+Every enrolled robot, each row carrying the **`presence` payload** the server
+last saw on that robot's retained topic.
+
+```json
+{"schema":1,"broker_connected":true,"robots":[
+ {"robot_id":"mote-01","name":"Scout","site":"home","fingerprint":"serial:aaa",
+  "facts":{},"enrolled_at":"2026-07-26T18:41:02Z","last_enrolled_at":"2026-07-26T18:41:02Z",
+  "presence":{"schema":1,"robot_id":"mote-01","online":true,
+              "stamp":"2026-09-02T09:14:03.221Z","version":"0.4.1"}},
+ {"robot_id":"mote-02","name":"Rover","site":"","fingerprint":"serial:bbb",
+  "facts":{},"enrolled_at":"2026-07-26T18:44:10Z","last_enrolled_at":"2026-07-26T18:44:10Z",
+  "presence":null}]}
+```
+
+Presence and nothing more: a client picking a robot to dispatch to asks one
+question — which of these is online — and it should not cost a request per
+robot. Everything else about one robot is on that robot's own route.
+
+**`presence: null` means the server has heard nothing, not that the robot is
+offline.** A robot that is off publishes `online: false` through its Last Will
+and the payload is there, retained, saying so; null is the answer for a robot
+that has never connected — or for a server that cannot hear, which is what
+`broker_connected` distinguishes.
+
+### `GET /v1/robots/<robot_id>`
+
+One robot's registry row **and the retained state as this server last saw it**.
+
+```json
+{"schema":1,"robot_id":"mote-01","name":"Scout","site":"home",
+ "fingerprint":"serial:aaa","facts":{},"enrolled_at":"2026-07-26T18:41:02Z",
+ "last_enrolled_at":"2026-07-26T18:41:02Z","broker_connected":true,
+ "presence":{"schema":1,"robot_id":"mote-01","online":true,"stamp":"…"},
+ "health":{"schema":1,"robot_id":"mote-01","state":"ok","summary":"…","subsystems":[…]},
+ "pose":{"schema":1,"robot_id":"mote-01","frame_id":"map","x":1.5,"y":-2.25,
+         "yaw":0.75,"site":"home","floor":"ground","stamp":"…"},
+ "capabilities":{"schema":1,"platform_id":"mote-01","capabilities":[…]},
+ "mission_status":{"schema":1,"id":"3e99cf44d1294ab5","platform_id":"mote-01",
+                   "capability":"goto","state":"succeeded","terminal":true,
+                   "source":"fleet","stamp":"…"}}
+```
+
+| Field | Source |
+|---|---|
+| the row | the registry: `robot_id`, `name`, `site`, `fingerprint`, `facts`, `enrolled_at`, `last_enrolled_at` |
+| `broker_connected` | whether *this server's* subscription is live |
+| `presence` · `health` · `pose` · `capabilities` | the retained payload on `mote/v2/<id>/<leaf>`, or `null` |
+| `mission_status` | the retained payload on `mote/v2/<id>/mission/status`, or `null` |
+
+| Status | Meaning |
+|---|---|
+| `200` | the row, with whatever state the server holds |
+| `401` | missing, unknown, or revoked operator token |
+| `404` | no such robot in the registry |
+
+**This route exists so a client can discover and follow a mission without
+joining the broker.** M3's split — reads over MQTT, writes over HTTP — is right
+for the dashboard, which wants a live stream. It is wrong for a client that asks
+once and acts: coupling that client to the broker makes it track the topic tree,
+retention semantics and a broker credential, which is three contracts where one
+would do. An HTTP-only client depends on this document alone.
+
+**The payloads are forwarded, not rebuilt.** Each is the publisher's own
+document — `presence`/`health`/`pose` per
+[`control-plane.md`](control-plane.md), `capabilities` per capability/v0,
+`mission_status` per mission/v0 — served with no field added, renamed or
+reinterpreted, which is the rule the agent follows so that there is one
+definition of these payloads and not a second one here. (They are re-serialised,
+so key formatting is JSON's; the fields are the robot's.)
+
+**Absent state is `null`, per field.** A robot the server has never heard from
+answers `200` with the row and every state field null — not `404`, which is
+reserved for a robot that is not enrolled, and not an invented payload. What
+`null` cannot say on its own is *why*, which is why `broker_connected` is
+beside it: with the feed down, every field is null however healthy the fleet is.
+
+**`mission_status` is the last status, not a history.** One transition is all
+that is retained — a status is a snapshot rather than a delta, so the latest one
+is the whole truth about that mission — and a client that wants every transition
+subscribes to `mission/status` the way the dashboard does. Polling this route
+follows a mission perfectly well and will miss intermediate states on a fast
+mission, which is a property of asking rather than of listening.
+
+**Nothing here is persisted.** Every topic it reads is retained, so a restarted
+fleet server is repopulated by the broker within about a second of connecting;
+a stored copy could only ever be the staler answer.
+
+An operator token because this is where the coordinates are: a pose says where
+in a building a robot is and the mission status says what it was told to do
+there. The token is checked *before* the robot is looked up, so an
+unauthenticated caller cannot enumerate ids by reading 401 against 404.
 
 ### `POST /v1/robots/<robot_id>/dispatch`
 

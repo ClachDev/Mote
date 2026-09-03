@@ -19,6 +19,7 @@ from api_harness import (
     get_bytes,
     post,
     post_raw,
+    retain,
 )
 
 from mote_bringup.spec import mission
@@ -74,18 +75,149 @@ def test_the_roster_lists_what_was_enrolled(server):
     assert [r["name"] for r in body["robots"]] == ["Scout", "Rover"]
 
 
-def test_one_robot_can_be_fetched_by_id(server):
+def test_one_robot_can_be_fetched_by_id(server, operator):
     enroll(server, "serial:aaa")
-    status, body = get(server, "/v1/robots/mote-01")
+    status, body = get(server, "/v1/robots/mote-01", token=operator)
     assert (status, body["robot_id"]) == (200, "mote-01")
 
 
-def test_unknown_robot_is_404(server):
-    expect_error(lambda: get(server, "/v1/robots/nope"), 404)
+def test_unknown_robot_is_404(server, operator):
+    expect_error(lambda: get(server, "/v1/robots/nope", token=operator), 404)
 
 
 def test_unknown_route_is_404(server):
     expect_error(lambda: get(server, "/v1/nothing"), 404)
+
+
+# -- one robot's live state, over HTTP --------------------------------------
+#
+# The route exists so a client can discover and follow a mission without
+# joining the broker. What it must never do is invent: a field it has not been
+# handed is null, and a field it has been handed comes back as published.
+
+
+def presence_payload(robot_id="mote-01", online=True):
+    return protocol.presence(robot_id, online, version="test")
+
+
+def status_payload(robot_id="mote-01", state=mission.ACCEPTED, mission_id="abc123"):
+    return mission.status(robot_id, mission_id, "goto", state)
+
+
+def test_a_robot_nothing_has_been_heard_from_has_every_field_null(server, operator):
+    enroll(server, "serial:aaa", name="Scout")
+    status, body = get(server, "/v1/robots/mote-01", token=operator)
+    assert status == 200
+    assert body["name"] == "Scout"
+    assert body["presence"] is None
+    assert body["health"] is None
+    assert body["pose"] is None
+    assert body["capabilities"] is None
+    assert body["mission_status"] is None
+
+
+def test_retained_state_comes_back_verbatim(server, operator, robot):
+    presence = retain(server, robot, protocol.PRESENCE, presence_payload())
+    pose = retain(
+        server,
+        robot,
+        protocol.POSE,
+        protocol.pose(robot, 1.5, -2.25, 0.75, site="home", floor="ground"),
+    )
+    running = retain(server, robot, protocol.STATUS, status_payload())
+
+    status, body = get(server, f"/v1/robots/{robot}", token=operator)
+    assert status == 200
+    # Not "looks like": the whole payload, field for field, as the robot
+    # published it. A server that reinterpreted one would be a second
+    # definition of a wire that already has one.
+    assert body["presence"] == presence
+    assert body["pose"] == pose
+    assert body["mission_status"] == running
+    assert body["health"] is None
+
+
+def test_the_latest_payload_on_a_topic_is_the_one_served(server, operator, robot):
+    retain(server, robot, protocol.STATUS, status_payload(state=mission.ACCEPTED))
+    finished = retain(
+        server, robot, protocol.STATUS, status_payload(state=mission.SUCCEEDED)
+    )
+    _, body = get(server, f"/v1/robots/{robot}", token=operator)
+    assert body["mission_status"] == finished
+    assert body["mission_status"]["terminal"] is True
+
+
+def test_state_is_kept_per_robot(server, operator):
+    enroll(server, "serial:aaa")
+    enroll(server, "serial:bbb")
+    retain(server, "mote-01", protocol.PRESENCE, presence_payload("mote-01", True))
+    retain(server, "mote-02", protocol.PRESENCE, presence_payload("mote-02", False))
+    _, first = get(server, "/v1/robots/mote-01", token=operator)
+    _, second = get(server, "/v1/robots/mote-02", token=operator)
+    assert first["presence"]["online"] is True
+    assert second["presence"]["online"] is False
+
+
+def test_clearing_a_retained_topic_clears_the_field(server, operator, robot):
+    retain(server, robot, protocol.PRESENCE, presence_payload())
+    # A zero-length payload is how MQTT clears retention. Holding the old value
+    # would leave this server asserting a state the broker no longer serves.
+    server.state.apply(protocol.topic(robot, protocol.PRESENCE), b"")
+    _, body = get(server, f"/v1/robots/{robot}", token=operator)
+    assert body["presence"] is None
+
+
+def test_the_route_needs_an_operator_token(server, robot):
+    body = expect_error(lambda: get(server, f"/v1/robots/{robot}"), 401)
+    assert "operator token" in body["error"]
+
+
+def test_an_unknown_robot_without_a_token_is_401_not_404(server):
+    # Otherwise an anonymous caller enumerates the fleet's ids by reading one
+    # status code against the other.
+    expect_error(lambda: get(server, "/v1/robots/mote-99"), 401)
+
+
+def test_the_roster_carries_presence_per_row(server, operator):
+    enroll(server, "serial:aaa", name="Scout")
+    enroll(server, "serial:bbb", name="Rover")
+    retain(server, "mote-01", protocol.PRESENCE, presence_payload("mote-01", True))
+    status, body = get(server, "/v1/robots")
+    assert status == 200
+    assert body["broker_connected"] is True
+    rows = {row["robot_id"]: row for row in body["robots"]}
+    assert rows["mote-01"]["presence"]["online"] is True
+    # Never invented: the second robot has published nothing.
+    assert rows["mote-02"]["presence"] is None
+
+
+def test_a_server_that_cannot_hear_says_so(server, operator, robot):
+    server.state.connected = False
+    _, body = get(server, f"/v1/robots/{robot}", token=operator)
+    # All-null state means "the robot has said nothing" only if the server can
+    # hear; this is the field that separates the two.
+    assert body["broker_connected"] is False
+    assert body["presence"] is None
+
+
+def test_what_the_state_refuses_to_hold(server):
+    # A map announcement is not a robot; a command is not state (it is the
+    # write path, and a retained one would re-fire anyway); a payload that is
+    # not a JSON object cannot go into a JSON envelope.
+    for topic, payload in (
+        ("mote/v2/registry/site/home/floor/ground/current", b"{}"),
+        (protocol.topic("mote-01", protocol.COMMAND), b"{}"),
+        (protocol.topic("mote-01", protocol.POSE), b"not json"),
+        (protocol.topic("mote-01", protocol.POSE), b"[1, 2]"),
+    ):
+        assert not server.state.apply(topic, payload), topic
+    assert server.state.of("mote-01") == {
+        "presence": None,
+        "health": None,
+        "pose": None,
+        "capabilities": None,
+        "mission_status": None,
+    }
 
 
 def test_a_missing_token_is_401(server):
