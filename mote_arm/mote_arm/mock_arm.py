@@ -33,13 +33,19 @@ import struct
 import zlib
 
 import rclpy
-from controller_manager_msgs.srv import SwitchController
+from controller_manager_msgs.msg import ControllerState
+from controller_manager_msgs.srv import ListControllers, SwitchController
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, JointState
 from trajectory_msgs.msg import JointTrajectory
 
 from mote_arm import cli, config
-from mote_arm.control import ARM_CONTROLLER, SWITCH_SERVICE, TRAJECTORY_TOPIC
+from mote_arm.control import (
+    ARM_CONTROLLER,
+    LIST_SERVICE,
+    SWITCH_SERVICE,
+    TRAJECTORY_TOPIC,
+)
 from mote_arm.motion import advance
 
 
@@ -93,6 +99,10 @@ class MockArm(Node):
             JointTrajectory, TRAJECTORY_TOPIC, self._on_trajectory, 10
         )
         self.create_service(SwitchController, SWITCH_SERVICE, self._on_switch)
+        # A command client reads the controller's state rather than assuming
+        # it, so the mock has to answer that too or every read waits out a
+        # service timeout.
+        self.create_service(ListControllers, LIST_SERVICE, self._on_list)
         self._period = 1.0 / args.rate
         self.create_timer(self._period, self._tick)
 
@@ -124,6 +134,14 @@ class MockArm(Node):
             self.goal[name] = target
             travel = abs(target - self.position[name])
             self.rate[name] = min(self.args.speed, travel / max(seconds, self._period))
+
+    def _on_list(self, _request, response):
+        state = ControllerState()
+        state.name = ARM_CONTROLLER
+        state.state = "active" if self.holding else "inactive"
+        state.type = "joint_trajectory_controller/JointTrajectoryController"
+        response.controller = [state]
+        return response
 
     def _on_switch(self, request, response):
         if ARM_CONTROLLER in request.activate_controllers:

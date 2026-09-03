@@ -29,12 +29,17 @@ def test_bare_separator_closes_the_ros_block():
     argparse would read that bare ``--`` as "no more options" and turn a flag
     after it into a positional it cannot place, so it must not survive.
     """
-    argv = ["go", "home", "--ros-args", "-p", "x:=1", "--", "--yes"]
-    assert cli.user_args(argv) == ["go", "home", "--yes"]
+    argv = ["go", "home", "--ros-args", "-p", "x:=1", "--", "--max-lag", "0.2"]
+    assert cli.user_args(argv) == ["go", "home", "--max-lag", "0.2"]
 
 
 def test_no_ros_block_is_left_alone():
-    assert cli.user_args(["go", "home", "--yes"]) == ["go", "home", "--yes"]
+    assert cli.user_args(["go", "home", "--max-lag", "0.2"]) == [
+        "go",
+        "home",
+        "--max-lag",
+        "0.2",
+    ]
 
 
 def test_parse_accepts_a_safety_flag_past_a_ros_block():

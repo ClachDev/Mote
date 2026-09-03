@@ -16,8 +16,11 @@ margin inside those, so a raw capture is routinely a fraction outside the band
 and could never be replayed. ``go`` is the only command that moves the arm, and
 it leaves the arm *holding* the pose it reached (deactivate ``arm_controller``,
 or run ``arm-jog`` and ``torque off``, to make it limp again): it reports the
-distance each joint will travel and requires confirmation unless ``--yes`` is
-given. Goals are clamped to the soft limits here *and* in the driver.
+distance each joint will travel and then moves. There is no confirmation: the
+move is bounded by ``--speed`` and supervised by ``--max-lag``, the destination
+is a pose the operator taught and `save` already clamped into the soft limits,
+and a prompt on every bench move is a keypress that buys none of that. Goals are
+clamped to the soft limits here *and* in the driver.
 
 There is no ceiling on how far a `go` may move. Distance is not what makes a
 move risky once setpoints are streamed: the arm advances at ``--speed``
@@ -252,12 +255,6 @@ def _cmd_go(node: PoseClient, args) -> None:
 
     print(f"largest single-joint travel: {largest:.4f} rad")
 
-    if not args.yes:
-        reply = input("proceed? [y/N] ").strip().lower()
-        if reply not in ("y", "yes"):
-            print("aborted; nothing sent")
-            return
-
     _stream(node, current, goals, args)
 
     final = node.current()
@@ -358,7 +355,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_go = sub.add_parser("go", help="move to a taught pose")
     p_go.add_argument("name")
-    p_go.add_argument("--yes", action="store_true", help="skip confirmation")
     p_go.add_argument(
         "--speed",
         type=float,

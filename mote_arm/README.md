@@ -495,6 +495,17 @@ Lag is measured against `/joint_states`, which the hardware refreshes one arm
 joint per control cycle to stay inside the bus budget it shares with the wheels,
 so a stall is caught within a few setpoints rather than instantly.
 
+**Whether the arm is held is read from the controller manager, not assumed.**
+`go` leaves `arm_controller` active — that is what holding the pose means — so
+the next command client starts against an arm that is already held.
+`ArmControl` therefore asks `list_controllers` before its first switch, and
+treats a STRICT refusal as success when the controller turns out to already be
+in the state requested. Assuming `inactive` at construction made the *second*
+`arm-pose go` of a session fail on every streamed setpoint: `Controller with
+name 'arm_controller' is already active` / `Aborting, no controller is
+switched!`, at 20 Hz. It also made `arm-jog`'s documented limp-on-exit silently
+do nothing when something else had left the arm holding.
+
 **A taught pose is stored reachable.** `save` clamps each joint into its soft
 band and names the ones it held there. Posing by hand is posing a limp arm
 against its stops, and the soft limits sit `--margin` (0.05 rad) inside those,

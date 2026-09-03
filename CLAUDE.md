@@ -701,6 +701,17 @@ section. Contains:
   (ROS-free, unit-tested in `test/`).
 - `bus.py` — `FeetechBus`, a thin `scservo_sdk` wrapper (lazy import so
   build/lint/test stay hardware-free); register map matches `mote_hardware`.
+- **Whether the arm is held is read from the controller manager, never assumed**
+  (`control.py`: `ArmControl.active()` / `held`). `arm-pose go` leaves
+  `arm_controller` active — that *is* holding the pose — so the next command
+  client starts against an already-held arm; assuming `inactive` at construction
+  made the second `arm-pose go` of a session ask for a STRICT switch the manager
+  refuses (`Controller with name 'arm_controller' is already active` /
+  `Aborting, no controller is switched!`) once per streamed setpoint at 20 Hz,
+  and made `arm-jog`'s documented limp-on-exit silently do nothing. A refused
+  switch is re-read before being reported as a failure, since it means success
+  when the controller is already in the state asked for. `mock_arm` answers
+  `list_controllers` for the same reason it answers `switch_controller`.
 - **The arm is part of `mote_hardware`'s ros2_control component**, not a driver
   of its own: `MoteHardware` exports position command interfaces for the six arm
   joints alongside the wheels' velocity ones, from one `open()` of the shared

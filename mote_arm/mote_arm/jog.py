@@ -115,9 +115,7 @@ Commands:
 
 
 def _print_status(node: JogClient, selected: int, step: float) -> None:
-    print(
-        f"\nstep = {step:.3f} rad   arm is {'HOLDING' if node.arm.holding else 'LIMP'}"
-    )
+    print(f"\nstep = {step:.3f} rad   arm is {'HOLDING' if node.arm.held else 'LIMP'}")
     for i, joint in enumerate(node.cfg.joints):
         meas = node.measured(joint.name)
         meas_s = f"{meas:+.3f}" if meas is not None else "  ?  "
