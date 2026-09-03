@@ -1,9 +1,9 @@
-# Virtual-leader teleop and episode recording
+# Keyboard teleop and episode recording
 
 Teleoperating an SO-101 normally takes two arms: an operator moves a **leader**
 and the **follower** mirrors it. We have one arm and no intention of buying a
-second, so the leader here is software — a pose held in a process, moved by the
-keyboard, published for the follower to mirror.
+second, so the pose the arm follows is held in software and moved by the
+keyboard.
 
 The point of teleoperating at all is the **episodes**: recorded demonstrations
 in [LeRobot](https://github.com/huggingface/lerobot)'s dataset format, which is
@@ -11,15 +11,15 @@ what a policy would later be learned from. Teleop without recording is just a
 slower jog CLI.
 
 ```
-  keyboard ─► virtual_leader ─► arm_mirror ─► arm_controller ─► MoteHardware ─► servos
-                    │  leader/joint_states │  arm_controller/joint_trajectory
-                    │                      │
-                    └─────────► episode_record ◄──── /image_raw/compressed
-                                       │
-                                  capture dir
-                                   ╱        ╲
-                       lerobot_export      episode_replay
-                    (off-board, LeRobot)   (back onto the arm)
+  keyboard ─► arm_teleop ─► arm_controller ─► MoteHardware ─► servos
+                  │  arm_controller/joint_trajectory
+                  │
+                  └────► episode_record ◄──── /image_raw/compressed
+                                 │
+                            capture dir
+                             ╱        ╲
+                 lerobot_export      episode_replay
+              (off-board, LeRobot)   (back onto the arm)
 ```
 
 ## Why this shape
@@ -40,11 +40,25 @@ whole design.
 off-the-shelf SO-101 IK we could drop in, and building one is a separate piece
 of work.
 
-**A virtual leader publishing joint targets** is what is built. Concretely it is
-a keyboard frontend, because the bench is reached over SSH and a GUI is not; but
-the frontend is deliberately the replaceable part. `arm_mirror` consumes
-`leader/joint_states` and nothing else, so a slider GUI, a gamepad, or a script
-is a drop-in — see [Other frontends](#other-frontends).
+**A commanded joint pose, moved by the keyboard** is what is built. The frontend
+is the replaceable part, and the seam that makes it replaceable is
+`mote_arm/teleop.py` — the safety rules as a library with no ROS in it, which a
+gamepad or a slider GUI imports. See [Other frontends](#other-frontends).
+
+### One process, and why it was two
+
+This was `virtual_leader` and `arm_mirror`, two nodes with a
+`leader/joint_states` topic between them, on the theory that a different
+frontend would one day publish that topic. Nothing ever did; DDS here is
+loopback-only, so no remote frontend could; and the seam that actually makes a
+different frontend possible is the library, not the topic. What the split bought
+in practice was a second terminal and a second thing to remember to start.
+
+Two loops survive inside the one process, and that part is not incidental: the
+keyboard reads on the main thread and the safety rules tick on their own,
+because taking hold of the arm is a `switch_controller` call and a service call
+made from inside an executor callback can never complete — the future is
+resolved by the executor the callback is blocking.
 
 ### Teleop is not jog
 
@@ -60,17 +74,17 @@ Everything that decides whether the arm may move lives in one place —
 
 | Rule | What it does |
 |------|--------------|
-| **Soft-limit clamping** | A leader pose outside a joint's `robot.yaml` band is clamped before it becomes a goal. Clamped again in the driver, which is authoritative. |
-| **Rate limiting** | The commanded pose advances towards the leader by at most `max_velocity * dt` (0.5 rad/s). A leader that *jumps* — a slider dragged, a frontend restarted at a different pose — produces a ramp, never a lunge. |
-| **Deadman** | The leader's liveness *is* the deadman. A frontend publishes only while it is being driven, so a released key, a closed window and a dropped SSH session all arrive as the same thing: no fresh pose. The mirror then issues one goal at the arm's *present* position — stopping it there rather than letting it coast to the setpoint it was travelling towards — and then sends nothing. |
-| **Panic latch** | `SPACE` publishes a latched e-stop. Torque *is* controller activation, so the mirror deactivates `arm_controller` — the same switch `arm-jog` uses — and refuses every goal until `z` clears it. Torque coming back cannot restart the move; the latch is transient-local, so a mirror restarted mid-panic comes up panicked. |
+| **Soft-limit clamping** | A commanded pose outside a joint's soft band is clamped before it becomes a goal. Clamped again in the driver, which is authoritative. |
+| **Rate limiting** | The goal advances towards the commanded pose by at most `max_velocity * dt` (0.5 rad/s). A command that *jumps* — a slider dragged, a frontend restarted at a different pose — produces a ramp, never a lunge. |
+| **Deadman** | The command's liveness *is* the deadman. A frontend offers a pose only while it is being driven, so a released key, a closed window and a dropped SSH session all arrive as the same thing: no fresh pose. One goal then goes out at the arm's *present* position — stopping it there rather than letting it coast to the setpoint it was travelling towards — and then nothing. |
+| **Panic latch** | `SPACE` latches an e-stop. Torque *is* controller activation, so `arm_controller` is deactivated — the same switch `arm-jog` uses — and every goal is refused until `z` clears it. Torque coming back cannot restart the move. The latch no longer has to outlive the process, because the process that set it also holds the arm: exiting drops torque. |
 | **Re-seeding** | Resuming after any hold starts from where the arm *is*, not from the command it was last given. Without that, a pause banks up the difference and pays it out as a jump. |
 
-One structural consequence worth knowing: **the mirror ticks on its own thread,
+One structural consequence worth knowing: **the safety loop ticks on its own thread,
 not on a ROS timer.** Taking hold of the arm is a `switch_controller` call, and a
 service call made from inside an executor callback can never complete — the
 future is resolved by the executor that the callback is currently blocking.
-`arm-jog` avoids this by driving from its REPL thread; the mirror does the same
+`arm-jog` avoids this by driving from its REPL thread; teleop does the same
 with a plain loop while `cli.spin_background` spins the node.
 
 Two things the deadman is **not**: it is not a debounce (a single key tap moves
@@ -83,22 +97,16 @@ through, and it is bounded at ~0.09 rad by default), and it does not cut torque
 Three terminals. Everything but the third also runs against `arm-mock`, which
 is how you should rehearse it — see [Without hardware](#without-hardware).
 
-### 1. Driver and mirror
+### 1. The control stack
 
 ```bash
-pixi run arm mirror:=true      # bench: controllers only
-pixi run launch mirror:=true   # the whole base, when you need the camera
+pixi run arm       # bench: controllers only
+pixi run launch    # the whole base, when you need the camera
 ```
 
-`mirror:=true` starts `arm_mirror` alongside the control stack — the same switch
-on both, so teleop never costs a terminal just because you also wanted the
-camera. It is off by default because `arm-jog`, `arm-pose` and replay all
-command the same `arm_controller`, and none of them wants a second thing driving
-the arm in the same graph.
-
-During a mission the arm is already up (`pixi run robot` / `mapping` owns the
-bus) and neither takes the switch, so teleop there is `pixi run arm-mirror`
-beside it. That is the one case where it is a process of its own.
+Something has to own the servo bus and offer `arm_controller`. During a mission
+`pixi run robot` / `mapping` already does, so teleop runs beside it unchanged —
+it is only an `arm_controller` client and never opens the bus.
 
 ### 2. Teleop
 
@@ -108,25 +116,25 @@ pixi run arm-teleop
 
 ```
 hold  q/a w/s e/d r/f t/g y/h   move joints 1..6 up/down
-tap   0        re-sync the leader to where the arm is
+tap   0        re-sync the commanded pose to the arm
 tap   SPACE    PANIC: torque off, latched     z  clear it
 tap   [ ]      slower / faster                ?  help    x  quit
 ```
 
-The leader starts synced to the arm, so nothing moves until you press a key, and
-it re-syncs whenever it goes idle — it can never bank up a lead the arm has to
-chase after you have stopped.
+The commanded pose starts synced to the arm, so nothing moves until you press a
+key, and it re-syncs whenever it goes idle — it can never bank up a lead the arm
+has to chase after you have stopped.
 
-`--speed` (default 0.25 rad/s) sets how fast the leader moves; keep it at or
-below the mirror's `max_velocity` or the follower is permanently behind.
+`--speed` (default 0.25 rad/s) sets how fast it moves; keep it at or below
+`max_velocity` or the arm is permanently behind.
 
 **If a joint stops short and stays there**, the live line marks it
-`NOT FOLLOWING` and `arm-mirror --ros-args -p diagnose:=true` prints the
-commanded and measured rates side by side. A command that keeps moving at
-0.25 rad/s while the arm sits at 0.00 rad/s, at any load, is not the mirror and
-not the deadman: check the servo's own goal-range fence with
-`pixi run arm-setup limits show` (base stopped). It refuses goals outside its band in
-silence, and reads exactly like a joint out of torque. See
+`NOT FOLLOWING` and `pixi run arm-teleop --ros-args -p diagnose:=true` prints
+the commanded and measured rates side by side. A command that keeps moving at
+0.25 rad/s while the arm sits at 0.00 rad/s, at any load, is neither the rate
+limit nor the deadman: check the servo's own goal-range fence with
+`pixi run arm-setup limits show` (base stopped). It refuses goals outside its
+band in silence, and reads exactly like a joint out of torque. See
 [README](README.md#the-servos-own-goal-range-limits-which-are-not-the-soft-limits).
 
 ### 3. Record
@@ -144,9 +152,9 @@ finishes. Recording samples at 20 Hz:
 | `observation.images.front` | `/image_raw/compressed`, stored byte-for-byte |
 | `action` | `arm_controller/joint_trajectory` — what it was commanded to reach |
 
-The action is the *mirror's* output, not the leader's pose, because a policy
+The action is the *goal sent to the arm*, not the raw commanded pose, because a policy
 replaces whatever produces goals — and it is read off the trajectory topic
-rather than from the mirror, so a session driven by `arm-jog` records too.
+rather than from the teleop node, so a session driven by `arm-jog` records too.
 
 > The arm is mounted **rotated 180 degrees** so the camera clears it (GitHub
 > #2), so episodes do record camera frames. Use `--no-camera` for a robot whose
@@ -201,7 +209,7 @@ pixi run -e lerobot -- lerobot-dataset-viz \
 pixi run arm-replay -- ~/.mote/episodes/teleop --episode 0
 ```
 
-Stop the virtual leader first — two things commanding `arm_controller` fight
+Stop teleop first — two things commanding `arm_controller` fight
 over the arm. (The stall guard does catch it, which is how that was found, but a
 caught stall is not a passing replay.)
 
@@ -232,8 +240,7 @@ difference.
 
 ```bash
 pixi run arm-mock -- --camera --droop 0.01   # terminal 1
-pixi run arm-mirror                          # terminal 2
-pixi run arm-teleop                          # terminal 3
+pixi run arm-teleop                          # terminal 2
 ```
 
 `--droop` leaves a constant steady-state error, the way a proportional servo
@@ -246,7 +253,7 @@ The whole loop runs headless as one command:
 pixi run arm-teleop-test
 ```
 
-It drives the real nodes (mock follower → mirror → `virtual_leader --demo`),
+It drives the real nodes (mock follower → `arm_teleop --demo`),
 records, checks the capture holds an actual motion, replays it, and plans the
 export. Run it before taking anything here to the bench.
 
@@ -258,45 +265,41 @@ episode — is step 8 of `BENCH.md` and is still open.
 
 | Check | Result |
 |-------|--------|
-| Teleop loop, headless | `pixi run arm-teleop-test`: leader -> mirror -> arm_controller -> arm -> record -> replay -> export plan, all green |
+| Teleop loop, headless | `pixi run arm-teleop-test`: teleop -> arm_controller -> arm -> record -> replay -> export plan, all green |
 | Taking hold | the mock starts with `arm_controller` inactive, as the real stack spawns it; the first commanded goal activates it |
-| Deadman in the loop | the mirror logged `deadman: no leader input, holding position` / `following the leader` on every pause the demo took |
-| Two things commanding one arm | caught by the stall guard before the script learned to stop the leader first — the replay halted at 24/220 with 0.209 rad of lag instead of fighting |
+| Deadman in the loop | logged `deadman: no input, holding position` / `following the keyboard` on every pause the demo took |
+| Two things commanding one arm | caught by the stall guard before the script learned to stop teleop first — the replay halted at 24/220 with 0.209 rad of lag instead of fighting |
 | Recording | 220 frames over 10.9 s at 20 fps, 0 dropped ticks, camera frames all distinct |
 | Replay | 220 setpoints at half speed, lag steady at 0.010 rad (the mock's droop), finished within 0.0000 rad of the last action |
 | Export (camera) | v3.0 dataset: `data/chunk-000/file-000.parquet`, `videos/observation.images.front/chunk-000/file-000.mp4`, `meta/episodes/chunk-000/file-000.parquet` |
 | Export (`--no-camera`) | same, state + action only — the path the arm/camera clash forces today |
 | Loads back through LeRobot | 1 episode, 220 frames, 20 fps, `so101_follower`; sample shapes `observation.state (6,)`, `action (6,)`, `observation.images.front (3, 72, 96)`, task string intact |
 | LeRobot's own viewer | `lerobot-dataset-viz --save 1` read the dataset and wrote a 619 KB `.rrd` |
-| Safety rules | 15 unit tests over `teleop.py` (clamp, rate limit, deadman halt-then-silence, re-seed on resume, panic latch) plus 7 node tests through the mirror against the mock |
+| Safety rules | 15 unit tests over `teleop.py` (clamp, rate limit, deadman halt-then-silence, re-seed on resume, panic latch) plus 7 node tests through `ArmTeleop` against the mock |
 
 The unit tests are the load-bearing ones: every safety rule is decided in
 `teleop.py`, so it can be checked exhaustively without a bus.
 
 ## Other frontends
 
-`arm_mirror` reads `leader/joint_states` and the latched `teleop/estop`, and
-that is the entire contract. Anything that publishes a `JointState` of arm joint
-names is a leader. For a slider GUI in the dev environment:
+The replaceable part is `mote_arm/teleop.py`: `LeaderMirror` holds every safety
+rule — clamping, the rate limit, the deadman, the panic latch — with no ROS in
+it. A gamepad, a slider GUI or a script becomes a frontend by importing that and
+feeding it poses, exactly as `ArmTeleop` does; what it must not do is command
+`arm_controller` around it.
 
-```bash
-pixi run -e dev -- ros2 run joint_state_publisher_gui joint_state_publisher_gui \
-    --ros-args -r joint_states:=leader/joint_states
-```
-
-Two caveats, both handled by the mirror rather than by the frontend: the GUI
-starts at zero rather than at the arm's pose (the rate limit turns that into a
-ramp, but move the sliders to the current pose before it matters), and it
-publishes continuously, so its deadman is the window being open rather than a
-key being held.
+That seam used to be a ROS topic instead, on the theory that a frontend would
+publish `leader/joint_states` from somewhere else. Nothing did, and nothing
+could have from off the robot: DDS here is loopback-only by design, so the
+control surface for a remote arm would not be a topic in the first place.
 
 ## Files
 
 | Piece | What it is |
 |-------|------------|
 | `teleop.py` | The follow rule — clamping, rate limiting, deadman, panic latch. ROS-free, unit-tested. |
-| `virtual_leader.py` | Keyboard frontend (`arm-teleop`). `--demo N` sweeps without a terminal. |
-| `mirror.py` | `arm_mirror` — the only thing that turns a leader pose into arm motion. |
+| `arm_teleop.py` | `arm-teleop`: the keyboard, the safety loop and the arm, in one node. `--demo N` sweeps without a terminal. |
+| `diagnostics.py` | `-p diagnose:=true`: tick rate, command rate, arm rate and lag, per second. |
 | `mock_arm.py` | The control stack's interface with no hardware (`arm-mock`). |
 | `episode.py` | The capture format: writer, reader, fps resampling. ROS-free. |
 | `episode_record.py` | `arm-record` — observations and actions into a capture. |

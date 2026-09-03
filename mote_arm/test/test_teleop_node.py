@@ -1,15 +1,18 @@
-"""Virtual-leader teleop end to end, against a control stack that isn't there.
+"""Keyboard teleop end to end, against a control stack that isn't there.
 
 ``mock_arm`` presents the interface ros2_control does — a trajectory topic and
-``switch_controller`` — with no bus behind it, so the whole path (leader pose ->
-mirror -> arm_controller -> arm) runs in one process and every safety behaviour
-can be checked before anyone stands at the bench.
+``switch_controller`` — with no bus behind it, so the whole path (commanded pose
+-> safety rules -> arm_controller -> arm) runs in one process and every safety
+behaviour can be checked before anyone stands at the bench.
 
 The mirror is driven the way it is in production: the executor spins on a
 worker thread and ``tick()`` is called from this one. That is not a test
 convenience — taking hold of the arm is a ``switch_controller`` call, and a
 service call made from inside an executor callback can never complete, because
 the future is resolved by the executor the callback is blocking.
+
+The keyboard is the one thing stubbed: these set ``pose`` where a held key
+would, which is exactly what ``ArmTeleop.step`` does.
 
 A random ROS_DOMAIN_ID keeps these nodes off a live robot's graph (they command
 ``arm_controller``, which moves a real arm), and a per-process namespace keeps
@@ -27,12 +30,8 @@ os.environ["ROS_DOMAIN_ID"] = str(random.randint(60, 100))
 import pytest  # noqa: E402
 import rclpy  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
-from rclpy.node import Node  # noqa: E402
-from sensor_msgs.msg import JointState  # noqa: E402
-from std_msgs.msg import Bool  # noqa: E402
-
-from mote_arm import config, mirror as mirror_mod, mock_arm as mock_mod  # noqa: E402
-from mote_arm.mirror import latched  # noqa: E402
+from mote_arm import arm_teleop as teleop_mod  # noqa: E402
+from mote_arm import config, mock_arm as mock_mod  # noqa: E402
 
 CFG = config.ArmConfig.from_dict(
     {
@@ -52,42 +51,30 @@ MOCK_ARGS = Namespace(
 )
 
 
-class Leader(Node):
-    """Stands in for the keyboard frontend: publishes a leader pose on demand."""
-
-    def __init__(self):
-        super().__init__("leader_stub")
-        self._pub = self.create_publisher(JointState, "leader/joint_states", 10)
-        self._estop = self.create_publisher(Bool, "teleop/estop", latched())
-        self.pose: dict[str, float] | None = None
-        self.create_timer(0.05, self._tick)
-
-    def _tick(self) -> None:
-        if self.pose is None:
-            return
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = list(self.pose)
-        msg.position = [self.pose[n] for n in msg.name]
-        self._pub.publish(msg)
-
-    def panic(self, engaged: bool) -> None:
-        self._estop.publish(Bool(data=engaged))
-
-
 class Stack:
-    def __init__(self, mock, mirror, leader, executor):
+    """The teleop node, its follower, and the two loops that drive them."""
+
+    def __init__(self, mock, teleop, executor):
         self.mock = mock
-        self.mirror = mirror
-        self.leader = leader
+        self.teleop = teleop
         self._executor = executor
+        self.pose: dict[str, float] | None = None
 
     def run(self, seconds: float) -> None:
-        """Tick the mirror for a while, as its own main loop does."""
+        """Advance both loops, as `main` runs them on two threads."""
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            self.mirror.tick()
-            time.sleep(self.mirror.period)
+            if self.pose is not None:
+                # Where a held key would put it. Offered every pass, because a
+                # pose offered once and then not again is the operator letting
+                # go, which is what the deadman is for.
+                self.teleop.pose = dict(self.pose)
+                self.teleop.offer()
+            self.teleop.tick()
+            time.sleep(self.teleop.period)
+
+    def panic(self, engaged: bool) -> None:
+        self.teleop.set_estop(engaged)
 
     def at(self, joint: str) -> float:
         return self.mock.position[joint]
@@ -98,31 +85,30 @@ def stack(monkeypatch):
     monkeypatch.setattr(config, "load", lambda: CFG)
     rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
     mock = mock_mod.MockArm(MOCK_ARGS)
-    mirror = mirror_mod.ArmMirror()
-    leader = Leader()
+    teleop = teleop_mod.ArmTeleop(speed=0.25, key_timeout=0.35)
 
     executor = SingleThreadedExecutor()
-    for node in (mock, mirror, leader):
+    for node in (mock, teleop):
         executor.add_node(node)
     spinner = threading.Thread(target=executor.spin, daemon=True)
     spinner.start()
 
-    built = Stack(mock, mirror, leader, executor)
-    # Let the mock's first joint_states reach the mirror, which refuses to
-    # command an arm it has not heard from.
+    built = Stack(mock, teleop, executor)
+    # Let the mock's first joint_states arrive: the mirror refuses to command an
+    # arm it has not heard from.
     time.sleep(0.3)
     yield built
 
     executor.shutdown()
     spinner.join(timeout=2.0)
-    for node in (mock, mirror, leader):
+    for node in (mock, teleop):
         node.destroy_node()
     rclpy.shutdown()
 
 
-def test_the_arm_follows_the_virtual_leader(stack):
+def test_the_arm_follows_the_keyboard(stack):
     start = stack.at("elbow_flex")
-    stack.leader.pose = {"elbow_flex": 0.6}
+    stack.pose = {"elbow_flex": 0.6}
     stack.run(0.6)
     assert stack.at("elbow_flex") > start + 0.1
 
@@ -131,23 +117,23 @@ def test_commanding_takes_hold_of_a_limp_arm(stack):
     # The mock starts with arm_controller inactive, exactly as the real stack
     # spawns it; the first command is what makes the hardware take hold.
     assert stack.mock.holding is False
-    stack.leader.pose = {"elbow_flex": 0.4}
+    stack.pose = {"elbow_flex": 0.4}
     stack.run(0.3)
     assert stack.mock.holding is True
 
 
 def test_following_is_rate_limited_not_instant(stack):
-    # A leader that jumps must not become an arm that jumps: the default 0.5
+    # A command that jumps must not become an arm that jumps: the default 0.5
     # rad/s over ~0.5 s is a few tenths of a radian, nowhere near the target.
-    stack.leader.pose = {"elbow_flex": 1.0}
+    stack.pose = {"elbow_flex": 1.0}
     stack.run(0.5)
     assert stack.at("elbow_flex") < 0.45
 
 
 def test_releasing_the_input_halts_the_arm(stack):
-    stack.leader.pose = {"elbow_flex": 1.0}
+    stack.pose = {"elbow_flex": 1.0}
     stack.run(0.6)
-    stack.leader.pose = None  # the operator let go
+    stack.pose = None  # the operator let go
     stack.run(0.6)
 
     halted = stack.at("elbow_flex")
@@ -156,20 +142,20 @@ def test_releasing_the_input_halts_the_arm(stack):
 
 
 def test_goals_are_clamped_to_the_soft_limits(stack):
-    stack.leader.pose = {"wrist_roll": 5.0}
+    stack.pose = {"wrist_roll": 5.0}
     stack.run(1.2)
     assert stack.at("wrist_roll") == pytest.approx(0.1, abs=1e-3)
 
 
 def test_panic_drops_torque_and_the_arm_stops_even_while_driven(stack):
-    stack.leader.pose = {"elbow_flex": 1.0}
+    stack.pose = {"elbow_flex": 1.0}
     stack.run(0.4)
-    stack.leader.panic(True)
+    stack.panic(True)
     stack.run(0.4)
     # Torque is controller activation, so dropping it means deactivating.
     assert stack.mock.holding is False
 
-    # The leader keeps publishing throughout: the latch, not the absence of
+    # The pose keeps being offered throughout: the latch, not the absence of
     # input, is what holds the arm.
     stopped = stack.at("elbow_flex")
     stack.run(0.6)
@@ -177,12 +163,12 @@ def test_panic_drops_torque_and_the_arm_stops_even_while_driven(stack):
 
 
 def test_clearing_panic_lets_the_arm_move_again(stack):
-    stack.leader.pose = {"elbow_flex": 1.0}
+    stack.pose = {"elbow_flex": 1.0}
     stack.run(0.3)
-    stack.leader.panic(True)
+    stack.panic(True)
     stack.run(0.3)
     stopped = stack.at("elbow_flex")
 
-    stack.leader.panic(False)
+    stack.panic(False)
     stack.run(0.6)
     assert stack.at("elbow_flex") > stopped + 0.05

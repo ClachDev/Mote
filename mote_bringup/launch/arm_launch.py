@@ -14,9 +14,9 @@ wheels, and the arm controller is loaded *inactive* — the arm is limp until
 `pixi run arm-jog` (or `switch_controllers --activate arm_controller`) asks it
 to hold.
 
-`mirror:=true` additionally runs `arm_mirror`, so a virtual-leader teleop
-session is two terminals (this one and `pixi run arm-teleop`) rather than
-three. See `mote_arm/TELEOP.md`.
+Teleop is `pixi run arm-teleop` in a second terminal beside this one; it is one
+process holding the keyboard, the safety rules and the arm, so this launch
+starts nothing on its behalf. See `mote_arm/TELEOP.md`.
 """
 
 import os
@@ -32,9 +32,7 @@ from mote_bringup import param_overrides
 from mote_bringup.launch_utils import (
     INACTIVE_CONTROLLERS,
     arm_config_file,
-    arm_mirror_node,
     controller_spawn_handler,
-    declare_mirror_arg,
     joint_params_file,
     resolved_arm,
 )
@@ -84,7 +82,6 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            declare_mirror_arg(),
             SetParameter(name="use_sim_time", value=False),
             robot_state_publisher,
             controller_manager,
@@ -93,6 +90,5 @@ def generate_launch_description():
                 active=("joint_state_broadcaster",),
                 inactive=INACTIVE_CONTROLLERS,
             ),
-            arm_mirror_node(),
         ]
     )

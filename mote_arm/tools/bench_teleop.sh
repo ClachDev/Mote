@@ -9,9 +9,9 @@
 # Three terminals. The first is the robot, the second is what you drive, and
 # the third is this script:
 #
-#   1. pixi run launch mirror:=true   base + camera + the teleop mirror
-#        (`pixi run arm mirror:=true` is the same thing without lidar/camera)
-#   2. pixi run arm-teleop            the virtual leader — YOU DRIVE THIS ONE
+#   1. pixi run launch                base + camera
+#        (`pixi run arm` is the same thing without lidar/camera)
+#   2. pixi run arm-teleop            YOU DRIVE THIS ONE
 #   3. pixi run arm-bench-teleop      <- this script: asks, records, replays
 #
 # It writes a report you can paste into the task; nothing is recorded as passing
@@ -63,7 +63,6 @@ Before starting, confirm at the arm:
   * it is powered, physically supported, and free to move through its band
   * `pixi run arm-setup gains show` reports kp=32 (droop, not stall — see README)
   * the arm is up: `pixi run launch` (with the camera) or `pixi run arm`
-  * `pixi run arm-mirror` is running, unless the arm terminal has mirror:=true
   * the TELEOP terminal is running `pixi run arm-teleop` — the one you drive
 
 This is the last terminal: it asks the questions and records the answers.
@@ -79,17 +78,10 @@ else
     exit 1
 fi
 NODES="$(ros2 node list 2>/dev/null)"
-if grep -q arm_mirror <<<"$NODES"; then
-    note "  PASS  arm_mirror is up"
+if grep -q arm_teleop <<<"$NODES"; then
+    note "  PASS  arm_teleop is up"
 else
-    note "  FAIL  arm_mirror is not running — run \`pixi run arm-mirror\`, or"
-    note "        start the arm terminal with mirror:=true"
-    exit 1
-fi
-if grep -q virtual_leader <<<"$NODES"; then
-    note "  PASS  the virtual leader is up"
-else
-    note "  FAIL  no virtual_leader — every check below asks you to drive the arm"
+    note "  FAIL  no arm_teleop — every check below asks you to drive the arm"
     note "        from it. Open another terminal and run \`pixi run arm-teleop\`."
     exit 1
 fi
@@ -166,12 +158,12 @@ echo
 # about the arm at all.
 echo -n "  waiting for the virtual leader to exit"
 for _ in $(seq 60); do
-    ros2 node list 2>/dev/null | grep -q virtual_leader || break
+    ros2 node list 2>/dev/null | grep -q arm_teleop || break
     echo -n "."
     sleep 2
 done
 echo
-if ros2 node list 2>/dev/null | grep -q virtual_leader; then
+if ros2 node list 2>/dev/null | grep -q arm_teleop; then
     note "  SKIP  replay: the virtual leader is still running after 2 minutes"
     FAILURES=$((FAILURES + 1))
 else

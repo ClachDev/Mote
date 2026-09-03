@@ -153,11 +153,10 @@ arm-pose = "ros2 run mote_arm arm_pose"
 # control stack stopped (`pixi run kill`). Once-off work, `check` aside — the
 # arm is *driven* by arm-teleop / arm-pose / arm-record, which never open it.
 arm-setup = "ros2 run mote_arm arm_setup"
-# Virtual-leader teleop (mote_arm/TELEOP.md). No leader arm: the keyboard moves a
-# leader pose, `arm_mirror` rate-limits and clamps it onto arm_controller. Bring
-# the control stack up with the mirror beside it: `pixi run arm mirror:=true`.
-arm-teleop = "ros2 run mote_arm virtual_leader"
-arm-mirror = "ros2 run mote_arm arm_mirror"
+# Keyboard teleop (mote_arm/TELEOP.md): one process holding the keyboard, the
+# safety rules and the arm. Needs a stack that owns the servo bus beside it —
+# `pixi run arm`, `pixi run launch`, or a mission.
+arm-teleop = "ros2 run mote_arm arm_teleop"
 # The arm control stack's interface (trajectory topic + switch_controller) with
 # no hardware behind it — teleop, recording and replay all run against this on a
 # workstation. `-- --camera` adds a synthetic camera so episodes have frames.

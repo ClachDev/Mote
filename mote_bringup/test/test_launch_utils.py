@@ -13,10 +13,7 @@ from launch_ros.actions import Node
 
 from mote_bringup.launch_utils import (
     CONTROLLERS,
-    MIRROR_ARG,
-    arm_mirror_node,
     controller_spawn_handler,
-    declare_mirror_arg,
     spawn_controllers,
 )
 
@@ -70,23 +67,3 @@ def test_opaque_function_yields_fresh_spawners_on_repeated_execution():
     assert all(isinstance(p, Node) for p in first + second)
     for a, b in zip(first, second):
         assert a is not b
-
-
-def test_the_mirror_switch_is_declared_the_same_way_wherever_it_appears():
-    """One definition, because two launch files disagreeing costs a terminal.
-
-    `mirror:=` was on arm_launch.py alone, so a bench session needing the camera
-    ran `pixi run launch` and then arm_mirror in a window of its own — a third
-    terminal that existed only because the two files differed.
-    """
-    arg = declare_mirror_arg()
-    assert arg.name == MIRROR_ARG == "mirror"
-    # Off by default: arm-jog, arm-pose and episode replay all command
-    # arm_controller too, and none wants a second thing driving the arm.
-    assert arg.default_value[0].text == "false"
-
-
-def test_the_mirror_node_is_the_arm_package_s_own():
-    node = arm_mirror_node()
-    assert node.node_package == "mote_arm"
-    assert node.node_executable == "arm_mirror"

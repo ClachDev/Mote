@@ -1,33 +1,41 @@
-"""The virtual leader: a leader arm that exists only in software.
+"""Keyboard teleoperation of the SO-101 arm.
 
-Leader-follower teleoperation normally needs two arms — an operator moves the
-leader and the follower mirrors it. We have one arm. So the leader is a pose
-held in this process, moved by the keyboard, published on ``leader/joint_states``
-for ``arm_mirror`` to stream to the follower (and for RViz to draw, if you want
-to watch it).
-
-Nothing here talks to the servo bus, or even to the driver: it publishes a pose
-and an e-stop flag, and that is the whole interface. Any other frontend that can
-publish ``leader/joint_states`` is a drop-in replacement — a slider GUI, a
-gamepad, a script — which is why the leader and the mirror are separate nodes.
+One process, one node. The keyboard moves a commanded pose; every safety rule
+in `mote_arm.teleop.LeaderMirror` is applied to it — clamping, rate limiting,
+the deadman, the panic latch — and the result goes to `arm_controller` through
+`mote_arm.control`. Nothing here opens the servo bus.
 
     hold  q/a w/s e/d r/f t/g y/h   move joint 1..6 up/down
-    tap   0                          re-sync the leader to where the arm is
+    tap   0                          re-sync the commanded pose to the arm
     tap   SPACE                      PANIC: torque off, latched
     tap   z                          clear the panic latch
     tap   [ ]                        slower / faster
     tap   ?                          help    x  quit
 
-**The deadman is key repeat.** A held key auto-repeats; the leader moves only
-while those repeats keep arriving and stops within ``--key-timeout`` of the last
-one. Release the key and the leader stops publishing, which is what the mirror
-reads as "the operator let go". A single tap therefore produces a short, bounded
-move (``key_timeout * speed`` radians) rather than nothing — that is the terminal's
-key-repeat behaviour showing through, not a debounce we could tune away without
-losing the ability to run this over SSH.
+**The deadman is key repeat.** A held key auto-repeats; the pose advances only
+while those repeats keep arriving and stops within ``--key-timeout`` of the
+last one. Release the key and it stops advancing, which is what the mirror
+reads as "the operator let go". A single tap therefore produces a short,
+bounded move (``key_timeout * speed`` radians) rather than nothing — that is
+the terminal's key-repeat behaviour showing through, not a debounce we could
+tune away without losing the ability to run this over SSH.
 
-Whenever it goes idle the leader re-syncs to the follower's measured pose, so it
-can never bank up a lead the arm has to chase after the operator has stopped.
+Whenever it goes idle the commanded pose re-syncs to the arm's measured one, so
+it can never bank up a lead the arm has to chase after the operator has
+stopped.
+
+**Two loops, deliberately.** The keyboard reads on the main thread and the
+mirror ticks on its own, because taking hold of the arm is a `switch_controller`
+call and a service call made from inside an executor callback can never
+complete — the future is resolved by the executor the callback is blocking.
+`arm-jog` had the same shape for the same reason.
+
+This was two processes and a `leader/joint_states` topic between them, on the
+theory that a gamepad or a slider GUI would one day publish that topic instead.
+Nothing ever did, DDS here is loopback-only so no remote frontend could, and the
+seam that actually makes a different frontend possible is `teleop.py` being a
+library with no ROS in it. What the split bought in practice was a second
+terminal and a second thing to remember to start.
 """
 
 from __future__ import annotations
@@ -43,11 +51,11 @@ import tty
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Bool
 
 from mote_arm import cli, config, teleop
-from mote_arm.teleop import MirrorLimits
-from mote_arm.mirror import latched
+from mote_arm.control import ArmControl
+from mote_arm.diagnostics import Diagnostics
+from mote_arm.teleop import ESTOPPED, HOLDING, TRACKING, LeaderMirror, MirrorLimits
 
 # Key pairs in joint order: the top row raises a joint, the home row lowers it.
 KEY_PAIRS = [("q", "a"), ("w", "s"), ("e", "d"), ("r", "f"), ("t", "g"), ("y", "h")]
@@ -61,10 +69,18 @@ PUBLISH_RATE_HZ = 20.0
 LIVE_LINE_PERIOD = 0.15
 
 
-class VirtualLeader(Node):
+class ArmTeleop(Node):
+    """The keyboard, the safety rules and the arm, in one node."""
+
     def __init__(self, speed: float, key_timeout: float):
-        super().__init__("virtual_leader")
+        super().__init__("arm_teleop")
         self.declare_parameter("robot_yaml", "")
+        self.declare_parameter("rate", 20.0)
+        self.declare_parameter("max_velocity", MirrorLimits.max_velocity)
+        self.declare_parameter("deadman_timeout", MirrorLimits.deadman_timeout)
+        # `pixi run arm-teleop --ros-args -p diagnose:=true`
+        self.declare_parameter("diagnose", False)
+
         path = self.get_parameter("robot_yaml").get_parameter_value().string_value
         self.cfg = config.ArmConfig.from_yaml_file(path) if path else config.load()
 
@@ -76,15 +92,32 @@ class VirtualLeader(Node):
         # Per joint: which way it is being driven, and when its key last repeated.
         self._direction: dict[str, float] = {}
         self._key_time: dict[str, float] = {}
+        self._estop_requested = False
 
-        self._pub = self.create_publisher(JointState, "leader/joint_states", 10)
-        self._estop_pub = self.create_publisher(Bool, "teleop/estop", latched())
+        self.mirror = LeaderMirror(
+            self.cfg.joints,
+            MirrorLimits(
+                max_velocity=self.get_parameter("max_velocity").value,
+                deadman_timeout=self.get_parameter("deadman_timeout").value,
+            ),
+        )
+        self.arm = ArmControl(self)
         self.create_subscription(JointState, "joint_states", self._on_states, 10)
+
+        self._reported = None
+        self._stalled: list[str] = []
+        self.diagnostics = (
+            Diagnostics(self) if self.get_parameter("diagnose").value else None
+        )
+        self.period = 1.0 / max(1.0, self.get_parameter("rate").value)
 
         self.keys: dict[str, tuple[str, float]] = {}
         for pair, joint in zip(KEY_PAIRS, self.cfg.joints):
             self.keys[pair[0]] = (joint.name, +1.0)
             self.keys[pair[1]] = (joint.name, -1.0)
+
+        for problem in self.cfg.problems:
+            self.get_logger().warn(problem)
 
     def _on_states(self, msg: JointState) -> None:
         with self._lock:
@@ -104,7 +137,7 @@ class VirtualLeader(Node):
         return False
 
     def sync(self) -> None:
-        """Put the leader exactly where the arm is."""
+        """Put the commanded pose exactly where the arm is."""
         self.pose = teleop.sync_pose(self.measured(), self.cfg.joints)
 
     def press(self, name: str, direction: float, now: float) -> None:
@@ -120,7 +153,7 @@ class VirtualLeader(Node):
         ]
 
     def step(self, now: float, dt: float) -> bool:
-        """Advance the leader pose; True if it is live (an input is being held)."""
+        """Advance the commanded pose; True if an input is being held."""
         live = False
         for name, last in list(self._key_time.items()):
             if now - last > self.key_timeout:
@@ -133,15 +166,81 @@ class VirtualLeader(Node):
             )
         return live
 
-    def publish(self) -> None:
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = [j.name for j in self.cfg.joints if j.name in self.pose]
-        msg.position = [self.pose[n] for n in msg.name]
-        self._pub.publish(msg)
+    def offer(self) -> None:
+        """Hand the commanded pose to the safety rules.
+
+        Named for what it does rather than for a topic: this used to be a
+        publish, and the mirror on the other end was free to refuse it. It still
+        is — `LeaderMirror` clamps, rate-limits and may be latched off.
+        """
+        if self.diagnostics is not None:
+            self.diagnostics.on_leader(time.monotonic())
+        self.mirror.on_leader(dict(self.pose), self._now())
 
     def set_estop(self, engaged: bool) -> None:
-        self._estop_pub.publish(Bool(data=engaged))
+        """Latch or clear the panic. Acted on by the tick, never from here.
+
+        Dropping torque deactivates `arm_controller`, which is a service call,
+        and a service call cannot complete on the thread the keyboard loop runs
+        on while the executor is elsewhere. So this records intent and `tick`
+        performs it.
+        """
+        self._estop_requested = engaged
+
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _apply_estop(self) -> None:
+        if self._estop_requested == self.mirror.estopped:
+            return
+        self.mirror.set_estop(self._estop_requested, self._now())
+        if self._estop_requested:
+            self.get_logger().warn("PANIC: dropping torque and refusing goals")
+            if not self.arm.set_holding(False):
+                self.get_logger().error(
+                    "could not deactivate arm_controller — the arm may still be "
+                    "holding; stop the control stack or cut power"
+                )
+        else:
+            self.get_logger().info("panic cleared; following again")
+
+    def tick(self) -> None:
+        if self.diagnostics is not None:
+            self.diagnostics.tick(time.monotonic())
+        self._apply_estop()
+        self.mirror.on_measured(self.measured())
+        goal = self.mirror.update(self._now(), self.period)
+        if goal:
+            # One period to reach the point: the mirror has already rate-limited
+            # the step to what that allows, and a trajectory the arm cannot
+            # finish in time just runs ahead of the hardware.
+            self.arm.send(goal, self.period)
+
+        if self.mirror.stalled != self._stalled:
+            self._stalled = list(self.mirror.stalled)
+            if self._stalled:
+                self.get_logger().warn(
+                    f"not following: {', '.join(self._stalled)} is "
+                    f"{self.mirror.limits.max_lag:.2f} rad behind and not moving — "
+                    "holding the command there rather than driving further ahead"
+                )
+            else:
+                self.get_logger().info("following again")
+
+        if self.mirror.state != self._reported:
+            self._reported = self.mirror.state
+            if self.mirror.state == HOLDING:
+                self.get_logger().info("deadman: no input, holding position")
+            elif self.mirror.state == TRACKING:
+                self.get_logger().info("following the keyboard")
+            elif self.mirror.state == ESTOPPED:
+                self.get_logger().warn("e-stopped")
+
+    def run_mirror(self) -> None:
+        """Tick until the context goes down; runs on its own thread."""
+        while rclpy.ok():
+            self.tick()
+            time.sleep(self.period)
 
 
 # True while a live status line is on screen, waiting to be overwritten in place.
@@ -175,7 +274,7 @@ def _clear_live() -> None:
         _live_line = False
 
 
-def _driving_line(node: VirtualLeader, names: list[str]) -> str:
+def _driving_line(node: ArmTeleop, names: list[str]) -> str:
     """Where the driven joints are, and whether they are against a limit.
 
     "Hold the key past the soft limit and watch it stop" is not something an
@@ -207,7 +306,7 @@ def _driving_line(node: VirtualLeader, names: list[str]) -> str:
     return "  " + "   ".join(parts)
 
 
-def _help(node: VirtualLeader) -> None:
+def _help(node: ArmTeleop) -> None:
     _out()
     _out(f"speed {node.speed:.2f} rad/s   deadman {node.key_timeout:.2f} s")
     for pair, joint in zip(KEY_PAIRS, node.cfg.joints):
@@ -227,7 +326,7 @@ def _help(node: VirtualLeader) -> None:
     _out("  p all joint positions   ? this help   x quit")
 
 
-def _status(node: VirtualLeader, estopped: bool) -> None:
+def _status(node: ArmTeleop, estopped: bool) -> None:
     measured = node.measured()
     state = "PANIC" if estopped else "ready"
     parts = " ".join(
@@ -237,13 +336,13 @@ def _status(node: VirtualLeader, estopped: bool) -> None:
     _out(f"[{state}] {parts}")
 
 
-def _drive(node: VirtualLeader) -> None:
+def _drive(node: ArmTeleop) -> None:
     period = 1.0 / PUBLISH_RATE_HZ
     estopped = False
     idle_since = time.monotonic()
     last_line = 0.0
 
-    _out("virtual leader — the arm mirrors this pose. '?' for keys, 'x' to quit.")
+    _out("arm teleop — the arm follows this pose. '?' for keys, 'x' to quit.")
     if not node.wait_for_states():
         _out("warning: no /joint_states — is `pixi run arm` running?")
     node.sync()
@@ -274,7 +373,7 @@ def _drive(node: VirtualLeader) -> None:
                     _out("panic cleared — the arm will follow again.")
             elif key == SYNC_KEY:
                 node.sync()
-                _out("leader re-synced to the arm's pose")
+                _out("re-synced to the arm's pose")
             elif key == "[":
                 node.speed = max(0.05, node.speed - 0.05)
                 _out(f"speed {node.speed:.2f} rad/s")
@@ -289,14 +388,14 @@ def _drive(node: VirtualLeader) -> None:
         driving = node.driving(now)
         live = node.step(now, period) and not estopped
         if live:
-            node.publish()
+            node.offer()
             idle_since = now
             if now - last_line >= LIVE_LINE_PERIOD:
                 last_line = now
                 _live(_driving_line(node, driving))
         elif now - idle_since > node.key_timeout:
             _clear_live()
-            # Idle: the leader must not sit ahead of the arm, or resuming would
+            # Idle: the command must not sit ahead of the arm, or resuming would
             # pay out the accumulated difference as an unrequested move.
             node.sync()
             idle_since = now
@@ -304,11 +403,11 @@ def _drive(node: VirtualLeader) -> None:
         time.sleep(period)
 
 
-def _demo(node: VirtualLeader, seconds: float) -> None:
+def _demo(node: ArmTeleop, seconds: float) -> None:
     """Drive a canned sweep with no terminal, for tests and unattended checks.
 
     It presses the same keys the operator would, through the same code path, so
-    what it exercises is the real leader — including a deliberate pause in the
+    what it exercises is the real teleop path — including a deliberate pause in
     middle, which is the deadman doing its job rather than a gap in the script.
     """
     period = 1.0 / PUBLISH_RATE_HZ
@@ -332,26 +431,25 @@ def _demo(node: VirtualLeader, seconds: float) -> None:
         if not 0.4 <= phase < 0.6:
             node.press(joint, +1.0 if elapsed < seconds / 2 else -1.0, now)
         if node.step(now, period):
-            node.publish()
+            node.offer()
         time.sleep(period)
     _out("demo finished")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Keyboard virtual leader for the SO-101"
-    )
+    parser = argparse.ArgumentParser(description="Keyboard teleop for the SO-101")
     parser.add_argument(
         "--speed",
         type=float,
         default=0.25,
-        help="radians per second the leader moves while a key is held (default 0.25)",
+        help="radians per second the commanded pose moves while a key is held "
+        "(default 0.25)",
     )
     parser.add_argument(
         "--key-timeout",
         type=float,
         default=0.35,
-        help="seconds after the last key repeat before the leader stops (default 0.35)",
+        help="seconds after the last key repeat before it stops (default 0.35)",
     )
     parser.add_argument(
         "--demo",
@@ -363,9 +461,13 @@ def main() -> None:
     args = cli.parse(parser)
 
     rclpy.init()
-    node = VirtualLeader(args.speed, args.key_timeout)
-
+    node = ArmTeleop(args.speed, args.key_timeout)
     spinner = cli.spin_background(node)
+    # The mirror ticks on a thread of its own: it makes service calls, which
+    # cannot complete on a thread the executor is blocking, and the keyboard
+    # owns the main one.
+    ticker = threading.Thread(target=node.run_mirror, daemon=True)
+    ticker.start()
 
     try:
         if args.demo is not None:
@@ -375,17 +477,21 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        print("\nvirtual leader stopped; the arm holds where it is.")
+        # Leave the arm limp: this process took hold of it, so it gives it back
+        # rather than leaving a torqued arm behind an exited process.
+        node.arm.set_holding(False)
+        print("\nteleop stopped; the arm is limp.")
         cli.shutdown(node, spinner)
+        ticker.join(timeout=2.0)
 
 
-def _interactive(node: VirtualLeader) -> None:
+def _interactive(node: ArmTeleop) -> None:
     """Run the keyboard loop with the terminal in cbreak mode, and restore it."""
     if not sys.stdin.isatty():
         raise SystemExit(
-            "the virtual leader needs a terminal (it reads held keys) — run it "
-            "with `pixi run arm-teleop`, not from a launch file. For an "
-            "unattended sweep, use --demo SECONDS."
+            "arm teleop needs a terminal (it reads held keys) — run it with "
+            "`pixi run arm-teleop`, not from a launch file. For an unattended "
+            "sweep, use --demo SECONDS."
         )
     settings = termios.tcgetattr(sys.stdin)
     try:

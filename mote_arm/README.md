@@ -182,7 +182,7 @@ conversions are verified without hardware.
 | `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-setup offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
 | `mock_arm` (node) | The control stack's interface — trajectory topic and `switch_controller` — with nothing behind it, plus an optional synthetic camera, so teleop, recording and replay run on a workstation. `pixi run arm-mock`. |
-| **teleop + episodes** | Virtual-leader teleoperation and LeRobot-format episode recording — `teleop.py`, `virtual_leader`, `arm_mirror`, `episode_record`, `episode_replay`, `tools/lerobot_export.py`. Its own doc: **[TELEOP.md](TELEOP.md)**. |
+| **teleop + episodes** | Keyboard teleoperation and LeRobot-format episode recording — `teleop.py`, `arm_teleop`, `episode_record`, `episode_replay`, `tools/lerobot_export.py`. Its own doc: **[TELEOP.md](TELEOP.md)**. |
 
 ## Exits and arguments
 

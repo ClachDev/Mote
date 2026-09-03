@@ -15,9 +15,7 @@ from mote_bringup.launch_utils import (
     ICP_ODOM_FRAME,
     INACTIVE_CONTROLLERS,
     arm_config_file,
-    arm_mirror_node,
     controller_spawn_handler,
-    declare_mirror_arg,
     joint_params_file,
     resolved_arm,
 )
@@ -205,7 +203,6 @@ def generate_launch_description():
                 description="Run foxglove_bridge alongside the base. Set false "
                 "when mote-foxglove.service already runs it.",
             ),
-            declare_mirror_arg(),
             SetParameter(name="use_sim_time", value=use_sim_time),
             robot_state_publisher,
             controller_manager,
@@ -222,6 +219,5 @@ def generate_launch_description():
             localization,
             twist_mux,
             foxglove,
-            arm_mirror_node(),
         ]
     )

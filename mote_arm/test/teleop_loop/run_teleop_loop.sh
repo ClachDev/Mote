@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The whole teleop loop against a follower that isn't there.
 #
-#   mock_arm (+ synthetic camera) -> arm_mirror -> virtual_leader --demo
+#   mock_arm (+ synthetic camera) -> arm_teleop --demo
 #                                 -> episode_record -> episode_replay
 #
 # Nothing here needs the arm, the camera, or a terminal, so it is the gate to
@@ -86,11 +86,10 @@ echo "== 1/6  mock follower with a synthetic camera =="
 # so the mock does too. Without it the mock lands exactly on every setpoint and
 # the recorded action would be indistinguishable from the observed state.
 background mock_arm ros2 run mote_arm mock_arm --camera --rate 20 --speed 1.0 --droop 0.01
-background mirror ros2 run mote_arm arm_mirror
 sleep 4
 
-echo "== 2/6  teleop: virtual leader -> mirror -> follower, ${DEMO_SECONDS}s =="
-background leader ros2 run mote_arm virtual_leader -- --demo "$DEMO_SECONDS" --speed 0.3
+echo "== 2/6  teleop -> follower, ${DEMO_SECONDS}s =="
+background teleop ros2 run mote_arm arm_teleop -- --demo "$DEMO_SECONDS" --speed 0.3
 
 echo "== 3/6  record the session =="
 ros2 run mote_arm episode_record -- \
@@ -113,7 +112,7 @@ echo "== 5/6  replay it on the follower at half speed =="
 # arm_controller itself, and two things commanding one arm fight. (The stall
 # guard does catch it — that is how this was found — but a caught stall is not
 # a passing replay.)
-stop leader mirror
+stop teleop
 sleep 1
 ros2 run mote_arm episode_replay -- "$CAPTURE" --episode 0 --yes --speed-scale 0.5 \
     >"$LOGS/replay.log" 2>&1 || fail "replay exited non-zero"

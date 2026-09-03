@@ -28,8 +28,7 @@ pixi run arm-setup check      # Standalone arm bus enumeration + health (read-on
 pixi run arm-setup calibrate  # Range calibration: centre the joints, sweep, emit limits
 pixi run arm-setup limits     # Servo goal-range fence (EEPROM 9/11): show / clear / restore
 pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
-pixi run arm-teleop     # Virtual-leader teleop: keyboard -> leader pose (mote_arm/TELEOP.md)
-pixi run arm-mirror     # Mirror: leader pose -> clamped, rate-limited arm_controller goals
+pixi run arm-teleop     # Keyboard teleop: clamped, rate-limited arm_controller goals
 pixi run arm-mock       # The arm control stack's interface, no hardware (+ --camera)
 pixi run arm-record     # Record teleop episodes into $MOTE_HOME/episodes
 pixi run arm-replay     # Replay a recorded episode on the arm, gated
@@ -931,27 +930,29 @@ section. Contains:
   control stack stopped (`pixi run kill`). `jog` and `arm-pose` do not.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
-- **Virtual-leader teleop + episode recording** (`mote_arm/TELEOP.md`) — teleop
-  with **no leader arm**: a leader pose held in software, moved by the keyboard
-  (`virtual_leader`, `pixi run arm-teleop`), published on `leader/joint_states`,
-  which `arm_mirror` (`pixi run arm mirror:=true`, or `pixi run launch
-  mirror:=true` when the camera is wanted too — one switch on both, so teleop
-  never costs a terminal for wanting a camera; `pixi run arm-mirror` standalone
-  is for beside a running mission, which takes no such switch)
-  turns into `arm_controller` trajectories through `control.py`, like every
-  other command client. **The frontend is deliberately replaceable** — the
-  mirror's whole contract is `leader/joint_states` + a latched `teleop/estop`,
-  so a slider GUI or a gamepad is a drop-in. LeRobot's own teleop was rejected
+- **Keyboard teleop + episode recording** (`mote_arm/TELEOP.md`) — teleop with
+  **no leader arm**: a commanded pose held in software and moved by the keyboard
+  (`arm_teleop`, `pixi run arm-teleop`), turned into `arm_controller`
+  trajectories through `control.py` like every other command client. **One
+  process, one node**: it was `virtual_leader` + `arm_mirror` with a
+  `leader/joint_states` topic between them, on the theory that a gamepad or a
+  slider GUI would publish that topic instead. Nothing ever did, DDS here is
+  loopback-only so no remote frontend could, and **the seam that actually makes
+  a frontend replaceable is `teleop.py` being a ROS-free library** — what the
+  split bought in practice was a second terminal and a second thing to start.
+  Two loops survive inside the process and that part is load-bearing (below).
+  The latched `teleop/estop` topic went with the split: the process that sets
+  the panic is the one holding the arm, so exiting drops torque anyway. LeRobot's own teleop was rejected
   for the reason the bring-up rejected LeRobot on the robot at all: it would put
   torch on the Pi. **Every safety rule lives in `teleop.py`** and nowhere else —
   soft-limit clamping, a 0.5 rad/s rate limit (so a leader that *jumps* becomes
-  a ramp), the deadman (the leader's *liveness* is the deadman: a released key,
+  a ramp), the deadman (the command's *liveness* is the deadman: a released key,
   a closed window and a dropped SSH session all arrive as "no fresh pose", and
-  the mirror then issues one goal at the arm's present position so it stops
+  one goal then goes out at the arm's present position so it stops
   there rather than coasting on), the latched panic (deactivates
   `arm_controller` — torque *is* controller activation — and refuses goals until
   cleared), and re-seeding from measured on every resume so a pause cannot bank
-  up motion. **The mirror ticks on its own thread, not on a ROS timer**: taking
+  up motion. **The safety loop ticks on its own thread, not on a ROS timer**: taking
   hold of the arm is a `switch_controller` call, and a service call made from
   inside an executor callback can never complete, because the future is resolved
   by the executor the callback is blocking (`arm-jog` avoids this by driving
