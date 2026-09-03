@@ -1,14 +1,16 @@
 """Phase 2 end to end against a fake bus: one confirmation, both EEPROM writes.
 
-The zero and the servo's own goal-range fence are written by one run and never
-one without the other, because a fence is compared against the corrected goal
-and so outlives the frame it was measured in. Splitting them is what left this
-arm capped for four months. This drives the whole phase rather than its parts,
+Each joint's fence is written straight after its own zero, because a fence is
+compared against the corrected goal and so outlives the frame it was measured
+in: the pair is what has to agree, and splitting them is what left this arm
+capped for four months. Nothing is unfenced in between — a joint holds either
+its old band or its new one. This drives the whole phase rather than its parts,
 so an ordering mistake — fencing before the offset moves, backing up after the
-first write — fails here rather than on hardware.
+first write, a gap where a joint has no fence — fails here rather than on
+hardware.
 """
 
-from mote_arm import arm_calibrate
+from mote_arm import arm_calibrate, arm_limits
 from mote_arm.calibrate import (
     Sweep,
     calibrate_centred,
@@ -17,7 +19,7 @@ from mote_arm.calibrate import (
 )
 from mote_arm.config import JointSpec
 
-FULL = arm_calibrate.FULL_RANGE
+FULL = arm_limits.FULL_RANGE
 
 
 class FakeBus:
@@ -107,15 +109,25 @@ def run(bus, tmp_path, monkeypatch):
     return arm_calibrate._phase_centre(bus, JOINTS, RECORDERS, calibrated(), Args())
 
 
-def test_the_fence_comes_off_before_any_zero_moves(tmp_path, monkeypatch):
+def test_each_joint_is_fenced_straight_after_its_own_zero(tmp_path, monkeypatch):
+    """The pair is what must agree, so nothing comes between them."""
     bus = fresh_bus()
     run(bus, tmp_path, monkeypatch)
-    kinds = [entry[0] for entry in bus.log]
-    assert kinds.index("fence") < kinds.index("offset")
-    assert [e for e in bus.log if e[0] == "fence"] == [
-        ("fence", 2, 0, 4095),
-        ("fence", 3, 0, 4095),
+    cals = calibrated()
+    assert bus.log == [
+        ("offset", 2, -1107),
+        ("fence", 2, *arm_calibrate.fence_counts(cals["shoulder_lift"])),
+        ("offset", 3, 1557),
+        ("fence", 3, *arm_calibrate.fence_counts(cals["elbow_flex"])),
     ]
+
+
+def test_no_joint_is_ever_left_without_a_fence(tmp_path, monkeypatch):
+    """Unfencing first would cost a write per joint and manufacture the gap."""
+    bus = fresh_bus()
+    run(bus, tmp_path, monkeypatch)
+    fences = [(entry[2], entry[3]) for entry in bus.log if entry[0] == "fence"]
+    assert FULL not in fences
 
 
 def test_both_backups_are_written_before_the_first_write(tmp_path, monkeypatch):
@@ -128,13 +140,11 @@ def test_both_backups_are_written_before_the_first_write(tmp_path, monkeypatch):
     }
 
 
-def test_phase_two_leaves_the_arm_unfenced_for_write_fences_to_finish(
-    tmp_path, monkeypatch
-):
-    """The intermediate state is deliberate: a crash here is recoverable."""
+def test_the_arm_ends_fenced_at_its_measured_stops(tmp_path, monkeypatch):
     bus = fresh_bus()
     run(bus, tmp_path, monkeypatch)
-    assert bus.bands == {2: FULL, 3: FULL}
+    cals = calibrated()
+    assert bus.bands == {j.id: arm_calibrate.fence_counts(cals[j.name]) for j in JOINTS}
 
 
 # A second sweep, taken after a calibration: its centre is already 2048, so the
@@ -178,8 +188,6 @@ def test_a_stale_fence_is_rewritten_even_when_the_zeros_are_already_right(
     )
     monkeypatch.setenv("MOTE_HOME", str(tmp_path))
     arm_calibrate._phase_centre(bus, JOINTS, SETTLED, cals, Args())
-    assert bus.bands == {2: FULL, 3: FULL}  # unfenced in between
-    arm_calibrate._write_fences(bus, JOINTS, cals)
     assert bus.bands == {j.id: arm_calibrate.fence_counts(cals[j.name]) for j in JOINTS}
     # No zero moved: only the fence was wrong.
     assert [e for e in bus.log if e[0] == "offset"] == []

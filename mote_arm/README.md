@@ -418,13 +418,15 @@ pixi run arm-limits restore   # write the as-found bands back
 ```
 
 **The fence and the zero are now written by one run, and never one without the
-other.** Phase 2 unfences every joint, moves the zeros, and then fences each
-joint at the stops it just measured — in that order, so a run that dies in
-between leaves an unfenced arm, which is recoverable, rather than one fenced in
-a frame nothing uses. Both as-found sets are snapshotted first
-(`arm_offsets_backup.yaml`, `arm_limits_backup.yaml`); neither exists anywhere
-else. `--skip-homing` promises to write nothing to the servos, so it reports a
-cutting fence instead of correcting it.
+other.** Phase 2 writes each joint's fence immediately after its own offset —
+after, because the band is compared against the corrected goal and so means the
+wrong angles until the frame has moved; immediately, because the pair is what
+has to agree. Nothing is unfenced in between: a joint holds either its old band
+or its new one, and the window where the two disagree is one bus transaction
+wide. Both as-found sets are snapshotted first (`arm_offsets_backup.yaml`,
+`arm_limits_backup.yaml`); neither exists anywhere else. `--skip-homing`
+promises to write nothing to the servos, so it reports a cutting fence instead
+of correcting it.
 
 **The band written is the measured travel, not the soft limits** — wider by
 `--margin` (0.05 rad) at each end. That is what makes it a backstop rather than

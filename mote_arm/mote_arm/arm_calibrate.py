@@ -55,7 +55,7 @@ from datetime import datetime, timezone
 
 
 from mote_arm import config, poses
-from mote_arm.bus import COUNTS_PER_TURN, BusError, FeetechBus, port_holders
+from mote_arm.bus import BusError, FeetechBus, port_holders
 from mote_arm.calibrate import (
     DEFAULT_MARGIN,
     CalibrationError,
@@ -75,9 +75,6 @@ from mote_arm.calibrate import (
     zero_shift,
 )
 from mote_arm.config import RAD_PER_COUNT
-
-# The whole single-turn goal range, which a centred zero assumes it has.
-FULL_RANGE = (0, COUNTS_PER_TURN - 1)
 
 
 def _open_bus(cfg) -> FeetechBus:
@@ -172,77 +169,22 @@ def _read_fences(bus, joints) -> dict[str, tuple[int, int]]:
     return bands
 
 
-def _show_fences(joints, bands, recorders) -> None:
-    fenced = {n: b for n, b in bands.items() if b != FULL_RANGE}
-    if not fenced:
-        print("\nNo joint is fenced today; one will be written from the sweep.")
+def _show_fences(joints, bands, want_fence) -> None:
+    """What each servo accepts now against what this run will fence it at."""
+    changing = [j for j in joints if bands[j.name] != want_fence.get(j.name)]
+    if not changing:
+        print("\nEvery servo already accepts exactly its measured travel.")
         return
-    print(f"\n{'joint':<16}{'accepts now':>13}{'counts swept':>14}{'refused':>9}")
-    for joint in joints:
-        if joint.name not in fenced:
+    print(f"\n{'joint':<16}{'accepts now':>13}{'->':>4}{'measured stops':>16}")
+    for joint in changing:
+        low, high = bands[joint.name]
+        want = want_fence.get(joint.name)
+        if want is None:
             continue
-        low, high = fenced[joint.name]
-        swept = recorders[joint.name].result().unwrapped_span
         print(
-            f"{joint.name:<16}{f'{low}..{high}':>13}{swept:>14}"
-            f"{max(0, swept - (high - low)):>9}"
+            f"{joint.name:<16}{f'{low}..{high}':>13}{'->':>4}"
+            f"{f'{want[0]}..{want[1]}':>16}"
         )
-    print("'refused' is how many counts of measured travel the servo will not go to.")
-
-
-def _clear_fences(bus, joints, bands, backup) -> None:
-    """Unfence every joint before its zero moves.
-
-    The band is compared against the *corrected* goal, so a fence outlives the
-    frame it was measured in: move the zero under one and it goes on refusing
-    the same counts, which are now different physical angles. That is exactly
-    how this arm broke -- LeRobot wrote fence and offset together in May, and a
-    later `arm-calibrate` moved the offsets and left the fence behind. Clearing
-    first means a run that dies between here and `_write_fences` leaves the arm
-    unfenced, which is recoverable, rather than fenced in a frame nothing uses.
-    """
-    for joint in joints:
-        if bands[joint.name] == FULL_RANGE:
-            continue
-        if not bus.write_angle_limits(joint.id, *FULL_RANGE):
-            raise SystemExit(
-                f"\nSTOPPED: {joint.name}: goal-range write not verified.\n"
-                f"Put the arm back with `pixi run arm-limits restore` "
-                f"(from {backup}), then investigate before re-running."
-            )
-
-
-def _write_fences(bus, joints, calibrated) -> None:
-    """Fence each joint at its measured stops, in the frame just calibrated.
-
-    Written after the offsets, because the band is compared against the
-    corrected goal and so only means anything once the frame has stopped moving.
-    The band is the swept travel, wider than the soft limits by `--margin` at
-    each end: `arm.yaml` always binds first, so this can never be what stops the
-    arm in ordinary use, and `arm-limits show` reporting a band narrower than
-    the configured one therefore means something is wrong rather than meaning
-    Tuesday.
-    """
-    wrote = []
-    for joint in joints:
-        cal = calibrated.get(joint.name)
-        if cal is None:
-            continue
-        low, high = fence_counts(cal)
-        if not bus.write_angle_limits(joint.id, low, high):
-            raise SystemExit(
-                f"\nSTOPPED: {joint.name}: goal-range write not verified. The "
-                "zeros and arm.yaml are correct and the joint is unfenced, so "
-                "the arm is usable -- `pixi run arm-limits show` says which "
-                "joints have a fence, and `arm-limits restore` puts the "
-                "as-found ones back."
-            )
-        wrote.append((joint.name, low, high))
-    if not wrote:
-        return
-    print(f"\n{len(wrote)} joint(s) fenced at their measured stops:")
-    for name, low, high in wrote:
-        print(f"  {name:<16}{low:>7}{high:>7}")
 
 
 def _report_fences(joints, bands, calibrated) -> None:
@@ -314,13 +256,13 @@ def _phase_centre(bus, joints, recorders, calibrated, args) -> dict[str, int]:
         )
 
     bands = _read_fences(bus, joints)
+    want_fence = {n: fence_counts(c) for n, c in calibrated.items()}
     print("\nThe servos' own goal-range limits fence which goals they accept and")
-    print("refuse the rest in silence. Each will be rewritten from the travel")
-    print("just swept, wider than arm.yaml's soft limits by the margin.")
-    _show_fences(joints, bands, recorders)
+    print("refuse the rest in silence. Each is rewritten to the travel just")
+    print("swept, wider than arm.yaml's soft limits by the margin.")
+    _show_fences(joints, bands, want_fence)
 
     stale = {n: v for n, v in wanted.items() if v != existing[n]}
-    want_fence = {n: fence_counts(c) for n, c in calibrated.items()}
     refence = {n: b for n, b in bands.items() if b != want_fence.get(n, b)}
     if not stale and not refence:
         print("\nevery servo is already centred and fenced — nothing to write.")
@@ -344,30 +286,35 @@ def _phase_centre(bus, joints, recorders, calibrated, args) -> dict[str, int]:
         fence_backup = save_limits_backup(bands, ids, when)
         print(f"backed up to {fence_backup} (`pixi run arm-limits restore`)")
 
-    # Unfence before the zeros move, so a run that dies in between leaves the
-    # arm unfenced — recoverable — rather than fenced in a frame nothing uses.
-    _clear_fences(bus, joints, bands, backup)
-
     written: list[str] = []
     for joint in joints:
-        if joint.name not in stale:
-            continue
-        # Read again here rather than reusing the pre-prompt reading: the arm is
-        # limp and may have sagged while the operator answered.
-        was = bus.read_position(joint.id)
-        ok = bus.write_homing_offset(joint.id, wanted[joint.name])
-        if not ok:
-            _abort_partial(written, backup, f"{joint.name}: write not verified")
-        moved = _reading_moved_as_expected(
-            bus, joint, was, existing[joint.name], wanted[joint.name]
-        )
-        if moved is not None:
-            _abort_partial(written, backup, moved)
+        if joint.name in stale:
+            # Read again here rather than reusing the pre-prompt reading: the
+            # arm is limp and may have sagged while the operator answered.
+            was = bus.read_position(joint.id)
+            ok = bus.write_homing_offset(joint.id, wanted[joint.name])
+            if not ok:
+                _abort_partial(written, backup, f"{joint.name}: write not verified")
+            moved = _reading_moved_as_expected(
+                bus, joint, was, existing[joint.name], wanted[joint.name]
+            )
+            if moved is not None:
+                _abort_partial(written, backup, moved)
+        if joint.name in refence:
+            # Immediately after the zero it belongs to, and never before: the
+            # band is compared against the corrected goal, so it means the wrong
+            # angles until the frame has moved. Nothing is unfenced in between —
+            # a joint holds either its old band or its new one, and the window
+            # where those disagree is one bus transaction wide.
+            if not bus.write_angle_limits(joint.id, *want_fence[joint.name]):
+                _abort_partial(
+                    written, backup, f"{joint.name}: fence write not verified"
+                )
         written.append(joint.name)
 
     # One line, not one per joint: every name here succeeded, and a joint that
     # did not has already stopped the run by name with the detail that matters.
-    print(f"{len(written)} joint(s) centred and confirmed.")
+    print(f"{len(written)} joint(s) centred and fenced, confirmed.")
     return wanted
 
 
@@ -378,6 +325,7 @@ def _abort_partial(written: list[str], backup, why: str) -> None:
         f"{len(written)} servo(s) were changed before this: {written or 'none'}.\n"
         f"The arm is part-way through a calibration. Put it back with:\n"
         f"    pixi run arm-offsets restore     # from {backup}\n"
+        "    pixi run arm-limits restore      # the goal-range bands\n"
         "then investigate before re-running."
     )
 
@@ -673,14 +621,8 @@ def _run(bus, cfg, selected, args) -> None:
             print(f"  {name:<16} {reason}")
 
     _save(cfg, calibrated, offsets, recorded)
-    # After the save, because a fence write that fails must leave arm.yaml
-    # already describing the frame the servos are in: an unfenced arm with
-    # correct limits is usable, a calibrated arm with no record of its zeros is
-    # not.
     if args.skip_homing:
         _report_fences(usable, bands, calibrated)
-    else:
-        _write_fences(bus, usable, calibrated)
     _migrate_poses(cfg, calibrated)
     _next_steps()
 

@@ -9,15 +9,15 @@ joints spent four months stopping short of their own travel at 0% load.
 
 So the properties held here are: the fence is the *measured stops*, wider than
 the soft limits by the margin, so `arm.yaml` always binds first and a fence can
-never be what stops the arm in ordinary use; joints are unfenced before their
-zeros move, so a run that dies in between leaves a recoverable arm; the
-as-found bands are snapshotted before the first write; and `--skip-homing`
-reports rather than writes, because it promises to touch no servo.
+never be what stops the arm in ordinary use; and `--skip-homing` reports rather
+than writes, because it promises to touch no servo. The ordering property — a
+joint's fence written straight after its own zero — is in
+`test_calibrate_phase2.py`, which drives the phase that does both.
 """
 
 import pytest
 
-from mote_arm import arm_calibrate
+from mote_arm import arm_calibrate, arm_limits
 from mote_arm.calibrate import (
     JointCalibration,
     Sweep,
@@ -27,7 +27,7 @@ from mote_arm.calibrate import (
 )
 from mote_arm.config import RAD_PER_COUNT, JointSpec
 
-FULL = arm_calibrate.FULL_RANGE
+FULL = arm_limits.FULL_RANGE
 
 
 class FakeBus:
@@ -117,7 +117,7 @@ def test_a_band_running_past_the_encoder_is_clamped_not_wrapped():
     assert high == 100 + round(0.5 / RAD_PER_COUNT) + round(0.05 / RAD_PER_COUNT)
 
 
-# --- the run: unfence, re-frame, re-fence ------------------------------------
+# --- what --skip-homing reports instead of writing ---------------------------
 
 
 def joints():
@@ -133,61 +133,11 @@ def calibrated():
     }
 
 
-def test_every_joint_is_unfenced_before_its_zero_moves():
-    bus = FakeBus({2: (1478, 3859), 5: FULL})
-    arm_calibrate._clear_fences(
-        bus,
-        joints(),
-        {"shoulder_lift": (1478, 3859), "wrist_roll": FULL},
-        "backup.yaml",
-    )
-    # Only the fenced one is rewritten; the open one is already open.
-    assert bus.written == [(2, 0, 4095)]
-
-
-def test_an_unfenced_arm_is_left_entirely_alone():
-    bus = FakeBus({2: FULL, 5: FULL})
-    arm_calibrate._clear_fences(
-        bus, joints(), {"shoulder_lift": FULL, "wrist_roll": FULL}, "backup.yaml"
-    )
-    assert bus.written == []
-
-
 def test_an_unreadable_band_stops_the_run_rather_than_assuming_it_is_open():
     bus = FakeBus({5: FULL})  # servo 2 does not answer
     with pytest.raises(SystemExit) as exc:
         arm_calibrate._read_fences(bus, joints())
     assert "shoulder_lift" in str(exc.value)
-
-
-def test_the_new_fence_is_written_for_every_calibrated_joint(capsys):
-    bus = FakeBus({2: FULL, 5: FULL})
-    cals = calibrated()
-    arm_calibrate._write_fences(bus, joints(), cals)
-    assert bus.written == [
-        (2, *fence_counts(cals["shoulder_lift"])),
-        (5, *fence_counts(cals["wrist_roll"])),
-    ]
-    assert "fenced at their measured stops" in capsys.readouterr().out
-
-
-def test_a_joint_that_did_not_calibrate_is_left_unfenced():
-    """No sweep means no measured stops, and a guessed fence is worse than none."""
-    bus = FakeBus({2: FULL, 5: FULL})
-    cals = calibrated()
-    del cals["wrist_roll"]
-    arm_calibrate._write_fences(bus, joints(), cals)
-    assert [servo for servo, _, _ in bus.written] == [2]
-
-
-def test_a_fence_write_that_cannot_be_verified_stops_the_run():
-    bus = FakeBus({2: FULL, 5: FULL}, writes_take=False)
-    with pytest.raises(SystemExit) as exc:
-        arm_calibrate._write_fences(bus, joints(), calibrated())
-    message = str(exc.value)
-    assert "arm-limits" in message
-    # The arm is usable at this point: zeros and arm.yaml are already correct.
-    assert "usable" in message
 
 
 def test_skip_homing_reports_a_cutting_fence_and_writes_nothing(capsys):

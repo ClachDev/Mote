@@ -846,10 +846,13 @@ section. Contains:
   full-turn and skips it, and `shoulder_pan` 760 counts short because its
   unwrapped min/max `record_ranges_of_motion` mis-records a wrap-crossing joint,
   which shoulder_pan is. So **`arm-calibrate` now writes the fence and the zero
-  in one run and never one without the other**: unfence, move the zeros, fence
-  again at the stops just measured, both as-found sets snapshotted first
-  (`arm_offsets_backup.yaml`, `arm_limits_backup.yaml`), the intermediate state
-  deliberately *unfenced* so a run that dies between them is recoverable.
+  in one run and never one without the other**: each joint's fence goes on
+  immediately after its own offset — *after*, because the band is compared
+  against the corrected goal and means the wrong angles until the frame has
+  moved; *immediately*, because the pair is what has to agree. No joint is ever
+  left unfenced (clearing first would cost a write per joint and manufacture the
+  gap), and both as-found sets are snapshotted first (`arm_offsets_backup.yaml`,
+  `arm_limits_backup.yaml`).
   `--skip-homing` promises to touch no servo, so it reports a cutting fence
   rather than correcting it. **The band written is the measured travel, not the
   soft limits** (`calibrate.fence_counts`) — wider by `--margin` at each end, so

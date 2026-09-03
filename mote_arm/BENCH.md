@@ -191,11 +191,11 @@ straight through it: a fence left behind describes travel the arm will refuse to
 make, silently, stopping at the same angle every time as if it had run out of
 torque. This arm spent four months in exactly that state.
 
-The order is unfence, move the zeros, fence again at the stops just measured.
-The new band is wider than the soft limits in `arm.yaml` by `--margin` at each
-end, so the soft limits always stop the arm first and the fence only acts if
-they have gone wrong. `--skip-homing` writes nothing to the servos, so it
-reports a cutting fence rather than correcting it.
+Each joint's fence is written immediately after its own zero, so no joint is
+ever left without one. The new band is wider than the soft limits in `arm.yaml`
+by `--margin` at each end, so the soft limits always stop the arm first and the
+fence only acts if they have gone wrong. `--skip-homing` writes nothing to the
+servos, so it reports a cutting fence rather than correcting it.
 
 The as-found bands are snapshotted to `~/.mote/arm_limits_backup.yaml` before
 the first write, so:
