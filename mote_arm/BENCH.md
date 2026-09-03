@@ -184,13 +184,18 @@ decided before any EEPROM is touched.
 
 ### The goal-range fence
 
-Between phase 1 and phase 2 the run reads registers 9 and 11 on every joint —
-the band of goal positions the servo will accept — and offers to clear any that
-is narrower than the whole 0-4095 range. Say yes. A fence binds only under
-torque, so the sweep you just did went straight through it: the calibration
-about to be written describes travel the arm will then refuse to make, silently,
-stopping at the same angle every time as if it had run out of torque. This arm
-arrived with five of six joints fenced.
+Phase 2 shows registers 9 and 11 on every joint — the band of goal positions
+the servo will accept — under the same confirmation as the zeros, and then
+rewrites both. A fence binds only under torque, so the sweep you just did went
+straight through it: a fence left behind describes travel the arm will refuse to
+make, silently, stopping at the same angle every time as if it had run out of
+torque. This arm spent four months in exactly that state.
+
+The order is unfence, move the zeros, fence again at the stops just measured.
+The new band is wider than the soft limits in `arm.yaml` by `--margin` at each
+end, so the soft limits always stop the arm first and the fence only acts if
+they have gone wrong. `--skip-homing` writes nothing to the servos, so it
+reports a cutting fence rather than correcting it.
 
 The as-found bands are snapshotted to `~/.mote/arm_limits_backup.yaml` before
 the first write, so:

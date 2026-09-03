@@ -1,19 +1,31 @@
-"""`arm-calibrate` clearing the servos' goal-range fence before it moves a zero.
+"""`arm-calibrate` writing the servos' goal-range fence with the zeros.
 
-The fence binds only under torque, so phase 1 sweeps a limp joint straight
-through it and measures travel the arm will afterwards refuse to make. Leaving
-it in place therefore produces a calibration that describes a range the arm
-stops short of, silently, at the same angle every time. The properties held
-here: a fenced joint is cleared, an unfenced arm is left alone entirely, the
-as-found bands are snapshotted before the first write, and a write that cannot
-be verified stops the run rather than continuing into the offsets.
+A fence is compared against the *corrected* goal, so it outlives the frame it
+was measured in: move a zero under one and it goes on refusing the same counts,
+which now name different angles, in silence. That is how this arm broke — a
+LeRobot calibration wrote fence and offset together in May 2026, a later
+`arm-calibrate` moved the offsets and left the fence behind, and five of six
+joints spent four months stopping short of their own travel at 0% load.
+
+So the properties held here are: the fence is the *measured stops*, wider than
+the soft limits by the margin, so `arm.yaml` always binds first and a fence can
+never be what stops the arm in ordinary use; joints are unfenced before their
+zeros move, so a run that dies in between leaves a recoverable arm; the
+as-found bands are snapshotted before the first write; and `--skip-homing`
+reports rather than writes, because it promises to touch no servo.
 """
 
 import pytest
 
 from mote_arm import arm_calibrate
-from mote_arm.calibrate import Sweep, load_limits_backup
-from mote_arm.config import JointSpec
+from mote_arm.calibrate import (
+    JointCalibration,
+    Sweep,
+    calibrate_centred,
+    fence_counts,
+    load_limits_backup,
+)
+from mote_arm.config import RAD_PER_COUNT, JointSpec
 
 FULL = arm_calibrate.FULL_RANGE
 
@@ -35,75 +47,171 @@ class FakeBus:
         return True
 
 
-class FakeRecorder:
-    def __init__(self, span):
-        self._span = span
-
-    def result(self):
-        return Sweep(
-            name="j",
-            samples=100,
-            min_counts=852,
-            max_counts=3236,
-            wraps=0,
-            unwrapped_min=852,
-            unwrapped_max=852 + self._span,
-        )
+def sweep(low=852, high=3236, name="shoulder_lift"):
+    return Sweep(
+        name=name,
+        samples=1493,
+        min_counts=low,
+        max_counts=high,
+        wraps=0,
+        unwrapped_min=low,
+        unwrapped_max=high,
+    )
 
 
-class Args:
-    yes = True
+def spec(name="shoulder_lift", servo_id=2, invert=False):
+    return JointSpec(
+        name=name, id=servo_id, min_rad=-1.7785, max_rad=1.7785, invert=invert
+    )
+
+
+def calibration(**kw):
+    base = dict(
+        name="shoulder_lift",
+        id=2,
+        invert=False,
+        zero_counts=2048,
+        min_rad=-1.0,
+        max_rad=0.5,
+        zero_source="the middle of the measured travel",
+        margin=0.05,
+        sweep=sweep(),
+    )
+    base.update(kw)
+    return JointCalibration(**base)
+
+
+# --- fence_counts: the band itself ------------------------------------------
+
+
+def test_the_fence_is_the_measured_travel_not_the_soft_limits():
+    """The whole point: arm.yaml binds first, so a fence never stops the arm."""
+    cal = calibrate_centred(spec(), sweep(), margin=0.05)
+    low, high = fence_counts(cal)
+    assert high - low == sweep().unwrapped_span
+    soft_low = cal.zero_counts + round(cal.min_rad / RAD_PER_COUNT)
+    soft_high = cal.zero_counts + round(cal.max_rad / RAD_PER_COUNT)
+    assert low < soft_low and high > soft_high
+
+
+def test_the_margin_is_exactly_what_separates_them():
+    cal = calibrate_centred(spec(), sweep(), margin=0.05)
+    low, high = fence_counts(cal)
+    margin_counts = round(0.05 / RAD_PER_COUNT)
+    assert low == round(cal.zero_counts + cal.min_rad / RAD_PER_COUNT) - margin_counts
+    assert high == round(cal.zero_counts + cal.max_rad / RAD_PER_COUNT) + margin_counts
+
+
+def test_an_inverted_joint_fences_the_mirrored_band():
+    """counts_to_rad flips the sign, so the low angle is the high count."""
+    plain = fence_counts(calibration(invert=False))
+    flipped = fence_counts(calibration(invert=True))
+    assert plain == (1364, 2407)
+    assert flipped == (1689, 2732)
+
+
+def test_a_band_running_past_the_encoder_is_clamped_not_wrapped():
+    """Wrapping here would fence the far side of the encoder — the whole arm."""
+    low, high = fence_counts(calibration(zero_counts=100))
+    assert low == 0
+    assert high == 100 + round(0.5 / RAD_PER_COUNT) + round(0.05 / RAD_PER_COUNT)
+
+
+# --- the run: unfence, re-frame, re-fence ------------------------------------
 
 
 def joints():
-    return [
-        JointSpec(name="shoulder_lift", id=2, min_rad=-1.7785, max_rad=1.7785),
-        JointSpec(name="wrist_roll", id=5, min_rad=-2.88, max_rad=2.88),
-    ]
+    return [spec(), spec(name="wrist_roll", servo_id=5)]
 
 
-def recorders():
-    return {"shoulder_lift": FakeRecorder(2384), "wrist_roll": FakeRecorder(3820)}
+def calibrated():
+    return {
+        "shoulder_lift": calibrate_centred(spec(), sweep(), 0.05),
+        "wrist_roll": calibrate_centred(
+            spec(name="wrist_roll", servo_id=5), sweep(130, 3950), 0.05
+        ),
+    }
 
 
-def test_a_fenced_joint_is_cleared(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
+def test_every_joint_is_unfenced_before_its_zero_moves():
     bus = FakeBus({2: (1478, 3859), 5: FULL})
-    arm_calibrate._clear_fences(bus, joints(), recorders(), Args())
+    arm_calibrate._clear_fences(
+        bus,
+        joints(),
+        {"shoulder_lift": (1478, 3859), "wrist_roll": FULL},
+        "backup.yaml",
+    )
+    # Only the fenced one is rewritten; the open one is already open.
     assert bus.written == [(2, 0, 4095)]
-    assert bus.bands[2] == FULL
-    # The one joint that already accepted its whole range is not rewritten.
-    assert "wrist_roll" not in capsys.readouterr().out.split("=== the servos")[1]
 
 
-def test_the_as_found_bands_are_saved_before_the_first_write(tmp_path, monkeypatch):
-    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
-    bus = FakeBus({2: (1478, 3859), 5: FULL})
-    arm_calibrate._clear_fences(bus, joints(), recorders(), Args())
-    assert load_limits_backup() == {"shoulder_lift": (1478, 3859), "wrist_roll": FULL}
-
-
-def test_an_unfenced_arm_writes_nothing_and_says_nothing(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
+def test_an_unfenced_arm_is_left_entirely_alone():
     bus = FakeBus({2: FULL, 5: FULL})
-    arm_calibrate._clear_fences(bus, joints(), recorders(), Args())
+    arm_calibrate._clear_fences(
+        bus, joints(), {"shoulder_lift": FULL, "wrist_roll": FULL}, "backup.yaml"
+    )
     assert bus.written == []
+
+
+def test_an_unreadable_band_stops_the_run_rather_than_assuming_it_is_open():
+    bus = FakeBus({5: FULL})  # servo 2 does not answer
+    with pytest.raises(SystemExit) as exc:
+        arm_calibrate._read_fences(bus, joints())
+    assert "shoulder_lift" in str(exc.value)
+
+
+def test_the_new_fence_is_written_for_every_calibrated_joint(capsys):
+    bus = FakeBus({2: FULL, 5: FULL})
+    cals = calibrated()
+    arm_calibrate._write_fences(bus, joints(), cals)
+    assert bus.written == [
+        (2, *fence_counts(cals["shoulder_lift"])),
+        (5, *fence_counts(cals["wrist_roll"])),
+    ]
+    assert "fenced at their measured stops" in capsys.readouterr().out
+
+
+def test_a_joint_that_did_not_calibrate_is_left_unfenced():
+    """No sweep means no measured stops, and a guessed fence is worse than none."""
+    bus = FakeBus({2: FULL, 5: FULL})
+    cals = calibrated()
+    del cals["wrist_roll"]
+    arm_calibrate._write_fences(bus, joints(), cals)
+    assert [servo for servo, _, _ in bus.written] == [2]
+
+
+def test_a_fence_write_that_cannot_be_verified_stops_the_run():
+    bus = FakeBus({2: FULL, 5: FULL}, writes_take=False)
+    with pytest.raises(SystemExit) as exc:
+        arm_calibrate._write_fences(bus, joints(), calibrated())
+    message = str(exc.value)
+    assert "arm-limits" in message
+    # The arm is usable at this point: zeros and arm.yaml are already correct.
+    assert "usable" in message
+
+
+def test_skip_homing_reports_a_cutting_fence_and_writes_nothing(capsys):
+    bus = FakeBus({2: (1478, 3859), 5: FULL})
+    arm_calibrate._report_fences(
+        joints(), {"shoulder_lift": (1478, 3859), "wrist_roll": FULL}, calibrated()
+    )
+    assert bus.written == []
+    out = capsys.readouterr().out
+    assert "shoulder_lift" in out and "wrist_roll" not in out
+    assert "arm-limits clear" in out
+
+
+def test_skip_homing_says_nothing_when_no_fence_cuts(capsys):
+    arm_calibrate._report_fences(
+        joints(), {"shoulder_lift": FULL, "wrist_roll": FULL}, calibrated()
+    )
     assert capsys.readouterr().out == ""
 
 
-def test_a_write_that_cannot_be_verified_stops_the_run(tmp_path, monkeypatch):
-    monkeypatch.setenv("MOTE_HOME", str(tmp_path))
-    bus = FakeBus({2: (1478, 3859), 5: FULL}, writes_take=False)
-    with pytest.raises(SystemExit) as exc:
-        arm_calibrate._clear_fences(bus, joints(), recorders(), Args())
-    assert "arm-limits restore" in str(exc.value)
+def test_the_as_found_bands_round_trip_through_the_backup(tmp_path, monkeypatch):
+    from mote_arm.calibrate import save_limits_backup
 
-
-def test_an_unreadable_band_stops_the_run_rather_than_assuming_it_is_open(
-    tmp_path, monkeypatch
-):
     monkeypatch.setenv("MOTE_HOME", str(tmp_path))
-    bus = FakeBus({5: FULL})  # servo 2 does not answer
-    with pytest.raises(SystemExit) as exc:
-        arm_calibrate._clear_fences(bus, joints(), recorders(), Args())
-    assert "shoulder_lift" in str(exc.value)
+    found = {"shoulder_lift": (1478, 3859), "wrist_roll": FULL}
+    save_limits_backup(found, {"shoulder_lift": 2, "wrist_roll": 5}, "now")
+    assert load_limits_backup() == found

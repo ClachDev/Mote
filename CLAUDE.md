@@ -835,13 +835,31 @@ section. Contains:
   the arm will then refuse — the calibration and the arm disagree and only the
   arm is wrong. And the band is compared against the **corrected** goal, so
   moving a zero moves what it fences without changing any number a person can
-  read. `arm-calibrate` therefore clears the fence in phase 2 *before* it writes
-  an offset, snapshotting the as-found bands to `~/.mote/arm_limits_backup.yaml`
-  first; `arm-check` reports the band beside the configured one. **Cleared, not
-  narrowed to match**: the guard is the soft limit in `$MOTE_HOME/arm.yaml`,
-  enforced by `MoteHardware::clamp_rad` and `teleop.py`, which is versioned and
-  printed by three commands — a second copy in EEPROM adds nothing until the two
-  disagree, and then it wins invisibly. Hence no `arm-limits set`.
+  read. **What set it is known**:
+  `lerobot-calibrate` on the workstation, 2026-05-12, and the file is still there
+  (`~/.cache/huggingface/lerobot/calibration/robots/so_follower/so101_follower.json`,
+  whose `range_min`/`range_max` are those six bands to the count, beside the
+  `homing_offset` values the servos arrived with). Writing them was reasonable;
+  **what broke is that `arm-calibrate` then moved the zeros on 2026-07-28 and
+  left the fence behind.** Two of the six were wrong even when written —
+  `wrist_roll` unfenced because LeRobot hard-codes the SO-101's wrist_roll as
+  full-turn and skips it, and `shoulder_pan` 760 counts short because its
+  unwrapped min/max `record_ranges_of_motion` mis-records a wrap-crossing joint,
+  which shoulder_pan is. So **`arm-calibrate` now writes the fence and the zero
+  in one run and never one without the other**: unfence, move the zeros, fence
+  again at the stops just measured, both as-found sets snapshotted first
+  (`arm_offsets_backup.yaml`, `arm_limits_backup.yaml`), the intermediate state
+  deliberately *unfenced* so a run that dies between them is recoverable.
+  `--skip-homing` promises to touch no servo, so it reports a cutting fence
+  rather than correcting it. **The band written is the measured travel, not the
+  soft limits** (`calibrate.fence_counts`) — wider by `--margin` at each end, so
+  `arm.yaml` always binds first and the fence can never be what stops the arm in
+  ordinary use; `arm-limits show` reporting a band narrower than the configured
+  one therefore means something is wrong. What it backstops is a soft limit that
+  has gone wrong — a hand-edited arm.yaml, a URDF that never received one, a
+  servo swapped under a stale calibration. There is deliberately no
+  `arm-limits set`: a *narrower* envelope belongs in arm.yaml, where three
+  commands print it. `arm-check` reports the band beside the configured one.
 - **Reads on this bus are hazardous twice over, and `FeetechBus._read` is the
   single choke point for both.** It clears the input buffer before every read,
   because a late reply is otherwise consumed as the answer to the *next*

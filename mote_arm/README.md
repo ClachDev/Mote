@@ -382,21 +382,28 @@ wrist_roll        5      0   4095  -3.142 .. +3.140   -2.880 .. +2.880
 gripper           6   2047  3510   -0.002 .. +2.243   -1.073 .. +1.073
 ```
 
-**What set it: a LeRobot calibration, before any of this.** The fence spans
-match the travel `arm-calibrate` sweeps to within 1, 3, 5 and 14 counts on
-`gripper`, `shoulder_lift`, `wrist_flex` and `elbow_flex` — so it is a recorded
-range of motion of this arm, not a factory default. The shift between the fence
-and that sweep equals the change in each servo's homing offset since the arm
-arrived, within ~10 counts, so it was recorded while the servos still carried
-the offsets they came with. The two odd joints identify the tool: `wrist_roll`
-is unfenced, which is the one joint LeRobot hard-codes as full-turn and skips;
-and `shoulder_pan`'s band is 760 counts short, which is what LeRobot's
-unwrapped min/max `record_ranges_of_motion` produces for a joint whose travel
-crosses 0/4095 — and `shoulder_pan` is one of the two that do. LeRobot also
-demonstrably writes these registers on this robot: the calibration cached at
-`~/.cache/huggingface/lerobot/` lists the two drive wheels at 0-4095, and the
-wheels read 0-4095. There is no arm entry in that cache, so the arm's run
-happened elsewhere — another machine, or the seller before shipping.
+**What set it: `lerobot-calibrate`, on the workstation, 2026-05-12.** The file
+is still there —
+`~/.cache/huggingface/lerobot/calibration/robots/so_follower/so101_follower.json`
+— and its `range_min`/`range_max` are the six bands above to the count, beside
+the `homing_offset` values the servos arrived with (2027, -1723, 1772, -1706,
+-40, 1317). An earlier attempt sits next to it from the same morning
+(`auldbot_arm.json`, 10:40) with `wrist_flex` still unswept at 0-4095.
+
+LeRobot writes those registers from the range of motion it records, which is a
+reasonable thing to do and is not what broke. **What broke is that
+`arm-calibrate` then moved the zeros and left the fence where it was**, on
+2026-07-28: a band in the corrected frame names different physical angles once
+the offset under it changes, so the fence silently drifted onto the middle of
+the joint's travel. Hence this tool writes the fence *and* the offset in one
+run, and never one without the other.
+
+Two of the six bands were already wrong when LeRobot wrote them, which is worth
+knowing before trusting one. `wrist_roll` is unfenced because LeRobot hard-codes
+the SO-101's `wrist_roll` as full-turn and skips its range. `shoulder_pan`'s
+band is 760 counts narrower than its real travel, which is what an unwrapped
+min/max `record_ranges_of_motion` yields for a joint whose sweep crosses 0/4095
+— and `shoulder_pan` is one of the two joints here that do.
 
 Two properties made it hard to see. The fence only binds under torque, so
 `arm-calibrate` sweeps straight through it by hand and measures the full travel
@@ -410,16 +417,28 @@ pixi run arm-limits clear     # hand every joint its whole 0-4095 range back
 pixi run arm-limits restore   # write the as-found bands back
 ```
 
-`arm-calibrate` now clears them as part of phase 2, before it writes an offset,
-and backs the as-found values up to `$MOTE_HOME/arm_limits_backup.yaml` first —
-they exist nowhere else. `arm-check` reports the band beside the configured one.
+**The fence and the zero are now written by one run, and never one without the
+other.** Phase 2 unfences every joint, moves the zeros, and then fences each
+joint at the stops it just measured — in that order, so a run that dies in
+between leaves an unfenced arm, which is recoverable, rather than one fenced in
+a frame nothing uses. Both as-found sets are snapshotted first
+(`arm_offsets_backup.yaml`, `arm_limits_backup.yaml`); neither exists anywhere
+else. `--skip-homing` promises to write nothing to the servos, so it reports a
+cutting fence instead of correcting it.
 
-**Cleared, not narrowed to match.** The guard that matters is the soft limit in
-`$MOTE_HOME/arm.yaml`, enforced by `MoteHardware::clamp_rad` and by `teleop.py`:
-it is versioned, testable, and printed by three commands. A second copy in
-EEPROM adds nothing until the day the two disagree, and then it wins invisibly.
-So there is no `arm-limits set`; a narrower envelope belongs in `arm.yaml`,
-where `arm-pose limits` already puts one.
+**The band written is the measured travel, not the soft limits** — wider by
+`--margin` (0.05 rad) at each end. That is what makes it a backstop rather than
+a second opinion: `arm.yaml` always binds first, so the fence can never be the
+thing that stops the arm in ordinary use, and `arm-limits show` reporting a band
+narrower than the configured one therefore means something is wrong rather than
+meaning Tuesday. What it catches is a soft limit that has gone wrong — a
+hand-edited `arm.yaml`, a URDF that never received one, a servo swapped under a
+stale calibration — where the servo still refuses to drive past its own stops.
+
+There is no `arm-limits set`. A *narrower* envelope belongs in `arm.yaml`, where
+`arm-pose limits` already puts one and where three commands print it;
+`arm-limits clear` exists to take the fence off while diagnosing, and `restore`
+to put back whatever was found.
 
 ### Named poses, and narrowing the envelope
 

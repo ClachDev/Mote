@@ -67,6 +67,8 @@ from mote_arm.calibrate import (
     homing_offset,
     limits_from_sweep,
     pose_impact,
+    fence_counts,
+    limits_backup_path,
     save_calibration,
     save_limits_backup,
     save_offsets_backup,
@@ -149,20 +151,13 @@ class _LiveTable:
             print(line)
 
 
-def _clear_fences(bus, joints, recorders, args) -> None:
-    """Hand every joint the whole 0-4095 goal range back before moving its zero.
+def _read_fences(bus, joints) -> dict[str, tuple[int, int]]:
+    """Every joint's goal-range band, refusing to continue if one cannot be read.
 
-    Registers 9 and 11 fence which goals a servo will accept, and a goal outside
-    the band is refused in silence: the joint stops at one angle, in one
-    direction, at any load. This arm arrived with five of six joints fenced
-    inside their own travel, and it read as the shoulder running out of torque.
-
-    Cleared here for two reasons. The band is compared against the *corrected*
-    goal, so re-centring a zero moves what it fences without changing a number
-    anyone can see. And the limits this run is about to emit come from travel
-    swept by hand with torque off, where a fence stops nothing -- so a fence
-    left in place would refuse goals inside the very range being written to
-    arm.yaml. The soft limits stay the guard; they are in a file.
+    Registers 9 and 11 fence which goals a servo will accept and refuse the rest
+    in silence: the joint stops at one angle, in one direction, at any load.
+    Continuing blind would emit soft limits without knowing whether the arm can
+    reach them, which is the state this arm spent four months in.
     """
     bands = {}
     for joint in joints:
@@ -174,15 +169,15 @@ def _clear_fences(bus, joints, recorders, args) -> None:
                 "inside the range this run is about to write."
             )
         bands[joint.name] = band
+    return bands
 
+
+def _show_fences(joints, bands, recorders) -> None:
     fenced = {n: b for n, b in bands.items() if b != FULL_RANGE}
     if not fenced:
+        print("\nNo joint is fenced today; one will be written from the sweep.")
         return
-
-    print("\n=== the servos' own goal-range limits ===")
-    print("These fence which goals a servo accepts and refuse the rest in")
-    print("silence. Clearing them leaves arm.yaml's soft limits as the guard.")
-    print(f"\n{'joint':<16}{'accepts':>13}{'counts swept':>14}{'refused':>9}")
+    print(f"\n{'joint':<16}{'accepts now':>13}{'counts swept':>14}{'refused':>9}")
     for joint in joints:
         if joint.name not in fenced:
             continue
@@ -192,40 +187,110 @@ def _clear_fences(bus, joints, recorders, args) -> None:
             f"{joint.name:<16}{f'{low}..{high}':>13}{swept:>14}"
             f"{max(0, swept - (high - low)):>9}"
         )
-    print("\n'refused' is how many counts of measured travel the servo will not go to.")
+    print("'refused' is how many counts of measured travel the servo will not go to.")
 
-    if not _confirm(f"\nclear {len(fenced)} fence(s)? [y/N] ", args.yes):
-        raise SystemExit("aborted; nothing written")
 
-    backup = save_limits_backup(
-        bands,
-        {j.name: j.id for j in joints},
-        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
-    )
-    print(f"backed up to {backup} (`pixi run arm-limits restore` undoes this)")
+def _clear_fences(bus, joints, bands, backup) -> None:
+    """Unfence every joint before its zero moves.
 
-    for name in sorted(fenced):
-        joint = next(j for j in joints if j.name == name)
+    The band is compared against the *corrected* goal, so a fence outlives the
+    frame it was measured in: move the zero under one and it goes on refusing
+    the same counts, which are now different physical angles. That is exactly
+    how this arm broke -- LeRobot wrote fence and offset together in May, and a
+    later `arm-calibrate` moved the offsets and left the fence behind. Clearing
+    first means a run that dies between here and `_write_fences` leaves the arm
+    unfenced, which is recoverable, rather than fenced in a frame nothing uses.
+    """
+    for joint in joints:
+        if bands[joint.name] == FULL_RANGE:
+            continue
         if not bus.write_angle_limits(joint.id, *FULL_RANGE):
             raise SystemExit(
-                f"\nSTOPPED: {name}: goal-range write not verified.\n"
+                f"\nSTOPPED: {joint.name}: goal-range write not verified.\n"
                 f"Put the arm back with `pixi run arm-limits restore` "
                 f"(from {backup}), then investigate before re-running."
             )
-    print(f"{len(fenced)} fence(s) cleared and confirmed.")
 
 
-def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
-    """Move each joint's zero to the middle of the range just swept.
+def _write_fences(bus, joints, calibrated) -> None:
+    """Fence each joint at its measured stops, in the frame just calibrated.
+
+    Written after the offsets, because the band is compared against the
+    corrected goal and so only means anything once the frame has stopped moving.
+    The band is the swept travel, wider than the soft limits by `--margin` at
+    each end: `arm.yaml` always binds first, so this can never be what stops the
+    arm in ordinary use, and `arm-limits show` reporting a band narrower than
+    the configured one therefore means something is wrong rather than meaning
+    Tuesday.
+    """
+    wrote = []
+    for joint in joints:
+        cal = calibrated.get(joint.name)
+        if cal is None:
+            continue
+        low, high = fence_counts(cal)
+        if not bus.write_angle_limits(joint.id, low, high):
+            raise SystemExit(
+                f"\nSTOPPED: {joint.name}: goal-range write not verified. The "
+                "zeros and arm.yaml are correct and the joint is unfenced, so "
+                "the arm is usable -- `pixi run arm-limits show` says which "
+                "joints have a fence, and `arm-limits restore` puts the "
+                "as-found ones back."
+            )
+        wrote.append((joint.name, low, high))
+    if not wrote:
+        return
+    print(f"\n{len(wrote)} joint(s) fenced at their measured stops:")
+    for name, low, high in wrote:
+        print(f"  {name:<16}{low:>7}{high:>7}")
+
+
+def _report_fences(joints, bands, calibrated) -> None:
+    """Say which fences now cut the emitted limits, without writing anything.
+
+    `--skip-homing` writes nothing to the servos, and a fence is servo state, so
+    it stays a report here. A fence narrower than the band being emitted still
+    has to be said out loud: those limits describe travel the arm will refuse.
+    """
+    cutting = []
+    for joint in joints:
+        cal = calibrated.get(joint.name)
+        if cal is None:
+            continue
+        low, high = bands[joint.name]
+        want_low, want_high = fence_counts(cal)
+        if low > want_low or high < want_high:
+            cutting.append((joint.name, low, high, want_low, want_high))
+    if not cutting:
+        return
+    print("\nThese servos refuse part of the range just emitted:")
+    print(f"\n{'joint':<16}{'accepts':>13}{'measured':>13}")
+    for name, low, high, want_low, want_high in cutting:
+        print(f"{name:<16}{f'{low}..{high}':>13}{f'{want_low}..{want_high}':>13}")
+    print(
+        "\n--skip-homing writes nothing to the servos, so nothing was changed. "
+        "`pixi run arm-limits clear` hands the range back."
+    )
+
+
+def _phase_centre(bus, joints, recorders, calibrated, args) -> dict[str, int]:
+    """Move each joint's zero to the middle of the range just swept, and refence.
 
     The centre comes from the sweep, not from a pose the operator has to hold.
     Holding all six joints at mid-travel at once is an awkward, unbalanced
     position, and eyeballing it is less accurate than the measurement already
     taken — so the arm can be left wherever it ended up.
+
+    The zero and the servo's own goal-range fence are written by one run and
+    never one without the other. A fence is compared against the corrected goal,
+    so it outlives the frame it was measured in: moving a zero under an existing
+    fence leaves it refusing counts that now name different angles, silently.
+    That is what happened to this arm.
     """
     print("\n=== 2 of 2: centre the zeros ===")
-    print("Setting each joint's 0 rad to the middle of its swept range. Leave the")
-    print("arm where it is — this changes what the encoders report, not the arm.")
+    print("Setting each joint's 0 rad to the middle of its swept range, and")
+    print("fencing each servo at the stops just measured. Leave the arm where it")
+    print("is — this changes what the encoders report, not the arm.")
 
     existing: dict[str, int] = {}
     for joint in joints:
@@ -248,24 +313,40 @@ def _phase_centre(bus, joints, recorders, args) -> dict[str, int]:
             f"{existing[joint.name]:>8}{'->':>4}{wanted[joint.name]:>7}"
         )
 
+    bands = _read_fences(bus, joints)
+    print("\nThe servos' own goal-range limits fence which goals they accept and")
+    print("refuse the rest in silence. Each will be rewritten from the travel")
+    print("just swept, wider than arm.yaml's soft limits by the margin.")
+    _show_fences(joints, bands, recorders)
+
     stale = {n: v for n, v in wanted.items() if v != existing[n]}
-    if not stale:
-        print("\nevery servo is already centred — nothing to write.")
+    want_fence = {n: fence_counts(c) for n, c in calibrated.items()}
+    refence = {n: b for n, b in bands.items() if b != want_fence.get(n, b)}
+    if not stale and not refence:
+        print("\nevery servo is already centred and fenced — nothing to write.")
         return wanted
 
-    print(f"\nWrites servo EEPROM on {len(stale)} joint(s) — a persistent change.")
+    print(
+        f"\nWrites servo EEPROM: {len(stale)} zero(s), {len(refence)} fence(s) "
+        "— a persistent change."
+    )
     if not _confirm("write? [y/N] ", args.yes):
         raise SystemExit("aborted; nothing written")
 
     # Snapshot before the first write. These values exist nowhere but the
     # servos, so without this a run that dies partway leaves an arm that cannot
     # be put back — which is exactly what happened once.
-    backup = save_offsets_backup(
-        existing,
-        {j.name: j.id for j in joints},
-        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
-    )
+    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    ids = {j.name: j.id for j in joints}
+    backup = save_offsets_backup(existing, ids, when)
     print(f"backed up to {backup} (`pixi run arm-offsets restore` undoes this)")
+    if not limits_backup_path().exists():
+        fence_backup = save_limits_backup(bands, ids, when)
+        print(f"backed up to {fence_backup} (`pixi run arm-limits restore`)")
+
+    # Unfence before the zeros move, so a run that dies in between leaves the
+    # arm unfenced — recoverable — rather than fenced in a frame nothing uses.
+    _clear_fences(bus, joints, bands, backup)
 
     written: list[str] = []
     for joint in joints:
@@ -559,10 +640,12 @@ def _run(bus, cfg, selected, args) -> None:
     if not usable:
         raise SystemExit("\nno joint produced a usable sweep — nothing to emit")
 
-    _clear_fences(bus, usable, recorders, args)
-
+    # The calibration is computed before phase 2 writes anything: it depends only
+    # on the sweep and the spec, and phase 2 needs to show the fence it is about
+    # to write alongside the offsets, under one confirmation.
     offsets: dict[str, int] = {}
     calibrated: dict = {}
+    bands: dict = {}
     if args.skip_homing:
         print("\n--skip-homing: keeping the zeros already in robot.yaml.")
         for joint in usable:
@@ -573,12 +656,13 @@ def _run(bus, cfg, selected, args) -> None:
                 args.margin,
                 "kept from robot.yaml",
             )
+        bands = _read_fences(bus, usable)
     else:
-        offsets = _phase_centre(bus, usable, recorders, args)
         for joint in usable:
             calibrated[joint.name] = calibrate_centred(
                 joint, recorders[joint.name].result(), args.margin
             )
+        offsets = _phase_centre(bus, usable, recorders, calibrated, args)
 
     recorded = datetime.now(timezone.utc).strftime("measured %Y-%m-%d")
 
@@ -589,6 +673,14 @@ def _run(bus, cfg, selected, args) -> None:
             print(f"  {name:<16} {reason}")
 
     _save(cfg, calibrated, offsets, recorded)
+    # After the save, because a fence write that fails must leave arm.yaml
+    # already describing the frame the servos are in: an unfenced arm with
+    # correct limits is usable, a calibrated arm with no record of its zeros is
+    # not.
+    if args.skip_homing:
+        _report_fences(usable, bands, calibrated)
+    else:
+        _write_fences(bus, usable, calibrated)
     _migrate_poses(cfg, calibrated)
     _next_steps()
 
