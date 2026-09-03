@@ -45,7 +45,7 @@ class Diagnostics:
         self._measured0 = self._node.mirror.measured
         self.leader_stamps = []
 
-    def on_leader(self, now: float) -> None:
+    def on_command(self, now: float) -> None:
         self.leader_stamps.append(now)
 
     def tick(self, now: float) -> None:

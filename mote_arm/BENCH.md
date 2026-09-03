@@ -373,7 +373,7 @@ exception` on stderr. A `134` is the destroy-while-spinning abort (see README,
 "Exits and arguments"); it means the tool did its job and then crashed on the
 way out.
 
-## Step 8 — virtual-leader teleop, recording and replay
+## Step 8 — keyboard teleop, recording and replay
 
 The teleop path has its own guided session, because it needs three terminals
 and because three of its checks are observations no script can make (the arm

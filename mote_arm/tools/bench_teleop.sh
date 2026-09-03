@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guided bench session for virtual-leader teleop: teleop -> record -> inspect
+# Guided bench session for keyboard teleop: teleop -> record -> inspect
 # -> replay, with the safety behaviours demonstrated on the way.
 #
 # This is the hardware counterpart of `pixi run arm-teleop-test`, which runs the
@@ -53,7 +53,7 @@ check() {
 FAILURES=0
 mkdir -p "$CAPTURE"
 : >"$REPORT"
-note "mote_arm virtual-leader bench session"
+note "mote_arm keyboard teleop bench session"
 note "date:    $(date -Is)"
 note "capture: $CAPTURE"
 
@@ -156,7 +156,7 @@ echo
 # is not gets a replay that loses to the mirror and reports a stall — which
 # reads exactly like the arm failing, and is the one failure here that is not
 # about the arm at all.
-echo -n "  waiting for the virtual leader to exit"
+echo -n "  waiting for teleop to exit"
 for _ in $(seq 60); do
     ros2 node list 2>/dev/null | grep -q arm_teleop || break
     echo -n "."
@@ -164,10 +164,10 @@ for _ in $(seq 60); do
 done
 echo
 if ros2 node list 2>/dev/null | grep -q arm_teleop; then
-    note "  SKIP  replay: the virtual leader is still running after 2 minutes"
+    note "  SKIP  replay: teleop is still running after 2 minutes"
     FAILURES=$((FAILURES + 1))
 else
-    note "  the virtual leader has exited; replaying"
+    note "  teleop has exited; replaying"
     ros2 run mote_arm episode_replay "$CAPTURE" --episode 0 --speed-scale 0.25 2>&1 | tee -a "$REPORT"
     ask "the arm retraced the recorded motion"
 fi

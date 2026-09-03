@@ -283,7 +283,7 @@ The unit tests are the load-bearing ones: every safety rule is decided in
 
 ## Other frontends
 
-The replaceable part is `mote_arm/teleop.py`: `LeaderMirror` holds every safety
+The replaceable part is `mote_arm/teleop.py`: `PoseFollower` holds every safety
 rule — clamping, the rate limit, the deadman, the panic latch — with no ROS in
 it. A gamepad, a slider GUI or a script becomes a frontend by importing that and
 feeding it poses, exactly as `ArmTeleop` does; what it must not do is command

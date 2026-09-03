@@ -1,7 +1,7 @@
 """Keyboard teleoperation of the SO-101 arm.
 
 One process, one node. The keyboard moves a commanded pose; every safety rule
-in `mote_arm.teleop.LeaderMirror` is applied to it — clamping, rate limiting,
+in `mote_arm.teleop.PoseFollower` is applied to it — clamping, rate limiting,
 the deadman, the panic latch — and the result goes to `arm_controller` through
 `mote_arm.control`. Nothing here opens the servo bus.
 
@@ -55,7 +55,7 @@ from sensor_msgs.msg import JointState
 from mote_arm import cli, config, teleop
 from mote_arm.control import ArmControl
 from mote_arm.diagnostics import Diagnostics
-from mote_arm.teleop import ESTOPPED, HOLDING, TRACKING, LeaderMirror, MirrorLimits
+from mote_arm.teleop import ESTOPPED, HOLDING, TRACKING, PoseFollower, FollowLimits
 
 # Key pairs in joint order: the top row raises a joint, the home row lowers it.
 KEY_PAIRS = [("q", "a"), ("w", "s"), ("e", "d"), ("r", "f"), ("t", "g"), ("y", "h")]
@@ -78,8 +78,8 @@ class ArmTeleop(Node):
         super().__init__("arm_teleop")
         self.declare_parameter("robot_yaml", "")
         self.declare_parameter("rate", 20.0)
-        self.declare_parameter("max_velocity", MirrorLimits.max_velocity)
-        self.declare_parameter("deadman_timeout", MirrorLimits.deadman_timeout)
+        self.declare_parameter("max_velocity", FollowLimits.max_velocity)
+        self.declare_parameter("deadman_timeout", FollowLimits.deadman_timeout)
         # `pixi run arm-teleop --ros-args -p diagnose:=true`
         self.declare_parameter("diagnose", False)
 
@@ -96,9 +96,9 @@ class ArmTeleop(Node):
         self._key_time: dict[str, float] = {}
         self._estop_requested = False
 
-        self.mirror = LeaderMirror(
+        self.mirror = PoseFollower(
             self.cfg.joints,
-            MirrorLimits(
+            FollowLimits(
                 max_velocity=self.get_parameter("max_velocity").value,
                 deadman_timeout=self.get_parameter("deadman_timeout").value,
             ),
@@ -199,11 +199,11 @@ class ArmTeleop(Node):
 
         Named for what it does rather than for a topic: this used to be a
         publish, and the mirror on the other end was free to refuse it. It still
-        is — `LeaderMirror` clamps, rate-limits and may be latched off.
+        is — `PoseFollower` clamps, rate-limits and may be latched off.
         """
         if self.diagnostics is not None:
-            self.diagnostics.on_leader(time.monotonic())
-        self.mirror.on_leader(dict(self.pose), self._now())
+            self.diagnostics.on_command(time.monotonic())
+        self.mirror.on_command(dict(self.pose), self._now())
 
     def set_estop(self, engaged: bool) -> None:
         """Latch or clear the panic. Acted on by the tick, never from here.
@@ -328,7 +328,7 @@ def _driving_line(node: ArmTeleop, names: list[str]) -> str:
             # The arm is being asked for something it is not doing. Saying so
             # here is the difference between "why is nothing happening" and
             # knowing the command is fine and the joint is not moving.
-            if now == now and abs(target - now) > MirrorLimits.max_lag:
+            if now == now and abs(target - now) > FollowLimits.max_lag:
                 line += "  NOT FOLLOWING"
             parts.append(line)
     return "  " + "   ".join(parts)

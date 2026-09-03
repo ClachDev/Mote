@@ -22,7 +22,7 @@ Every action is clamped to the robot.yaml soft limits here and again in the
 hardware, so an episode recorded before a limit was tightened cannot replay
 outside the current envelope.
 
-Stop the virtual leader before replaying — two things commanding
+Stop teleop before replaying — two things commanding
 ``arm_controller`` would fight over the arm.
 """
 

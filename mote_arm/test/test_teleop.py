@@ -1,6 +1,6 @@
 """The follow rule: clamping, rate limiting, the deadman, and the panic latch.
 
-Every safety property of virtual-leader teleop is decided in ``LeaderMirror``,
+Every safety property of keyboard teleop is decided in ``PoseFollower``,
 so it is all checked here — with no bus, no driver and no terminal.
 """
 
@@ -12,8 +12,8 @@ from mote_arm.teleop import (
     HOLDING,
     TRACKING,
     WAITING,
-    LeaderMirror,
-    MirrorLimits,
+    PoseFollower,
+    FollowLimits,
     sync_pose,
 )
 
@@ -21,30 +21,30 @@ JOINTS = (
     JointSpec(name="elbow_flex", id=3, min_rad=-1.0, max_rad=1.0),
     JointSpec(name="wrist_roll", id=5, min_rad=-0.1, max_rad=0.1),
 )
-LIMITS = MirrorLimits(max_velocity=1.0, deadman_timeout=0.4)
+LIMITS = FollowLimits(max_velocity=1.0, deadman_timeout=0.4)
 DT = 0.05
 
 
-def mirror(**kwargs) -> LeaderMirror:
-    return LeaderMirror(JOINTS, MirrorLimits(**{**LIMITS.__dict__, **kwargs}))
+def mirror(**kwargs) -> PoseFollower:
+    return PoseFollower(JOINTS, FollowLimits(**{**LIMITS.__dict__, **kwargs}))
 
 
 def drive(
-    m: LeaderMirror, leader: dict, seconds: float, start: float = 0.0
+    m: PoseFollower, leader: dict, seconds: float, start: float = 0.0
 ) -> dict | None:
     """Feed a steady leader pose for ``seconds`` and return the last goal."""
     goal = None
     ticks = int(round(seconds / DT))
     for i in range(ticks):
         now = start + i * DT
-        m.on_leader(leader, now)
+        m.on_command(leader, now)
         goal = m.update(now, DT)
     return goal
 
 
 def test_nothing_is_commanded_before_the_arm_reports():
     m = mirror()
-    m.on_leader({"elbow_flex": 0.5}, 0.0)
+    m.on_command({"elbow_flex": 0.5}, 0.0)
     assert m.update(0.0, DT) is None
     assert m.state == WAITING
 
@@ -52,7 +52,7 @@ def test_nothing_is_commanded_before_the_arm_reports():
 def test_goal_advances_at_the_rate_limit():
     m = mirror(max_velocity=1.0)
     m.on_measured({"elbow_flex": 0.0, "wrist_roll": 0.0})
-    m.on_leader({"elbow_flex": 1.0}, 0.0)
+    m.on_command({"elbow_flex": 1.0}, 0.0)
     # One tick of 50 ms at 1 rad/s is 0.05 rad, however far away the leader is.
     assert m.update(0.0, DT)["elbow_flex"] == pytest.approx(0.05)
     assert m.update(DT, DT)["elbow_flex"] == pytest.approx(0.10)
@@ -152,9 +152,9 @@ def test_sync_pose_clamps_a_drooping_arm_into_the_band():
 
 def test_limits_must_be_positive():
     with pytest.raises(ValueError):
-        MirrorLimits(max_velocity=0.0)
+        FollowLimits(max_velocity=0.0)
     with pytest.raises(ValueError):
-        MirrorLimits(deadman_timeout=-1.0)
+        FollowLimits(deadman_timeout=-1.0)
 
 
 def test_the_command_never_runs_away_from_an_arm_that_is_not_moving():
@@ -171,7 +171,7 @@ def test_the_command_never_runs_away_from_an_arm_that_is_not_moving():
     goal = None
     for i in range(60):  # 3 s of a held key, with the arm never moving
         now = i * DT
-        m.on_leader({"elbow_flex": 1.0}, now)
+        m.on_command({"elbow_flex": 1.0}, now)
         goal = m.update(now, DT)
         m.on_measured({"elbow_flex": 0.0})
 
@@ -184,7 +184,7 @@ def test_a_following_arm_is_never_reported_as_stalled():
     m.on_measured({"elbow_flex": 0.0})
     for i in range(40):
         now = i * DT
-        m.on_leader({"elbow_flex": 1.0}, now)
+        m.on_command({"elbow_flex": 1.0}, now)
         goal = m.update(now, DT)
         # The arm keeps up, trailing by the ordinary droop.
         m.on_measured({"elbow_flex": goal["elbow_flex"] - 0.02})
@@ -196,7 +196,7 @@ def test_the_command_resumes_once_the_arm_moves_again():
     m = mirror(max_velocity=1.0, max_lag=0.15)
     m.on_measured({"elbow_flex": 0.0})
     for i in range(40):
-        m.on_leader({"elbow_flex": 1.0}, i * DT)
+        m.on_command({"elbow_flex": 1.0}, i * DT)
         m.update(i * DT, DT)
     assert m.stalled == ["elbow_flex"]
 
@@ -206,7 +206,7 @@ def test_the_command_resumes_once_the_arm_moves_again():
     for i in range(10):
         now = 3.0 + i * DT
         m.on_measured({"elbow_flex": m.commanded["elbow_flex"] - 0.02})
-        m.on_leader({"elbow_flex": 1.0}, now)
+        m.on_command({"elbow_flex": 1.0}, now)
         goal = m.update(now, DT)
     assert goal["elbow_flex"] > 0.5
     assert m.stalled == []
