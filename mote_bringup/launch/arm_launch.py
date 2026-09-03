@@ -24,9 +24,7 @@ import os
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -34,7 +32,9 @@ from mote_bringup import param_overrides
 from mote_bringup.launch_utils import (
     INACTIVE_CONTROLLERS,
     arm_config_file,
+    arm_mirror_node,
     controller_spawn_handler,
+    declare_mirror_arg,
     joint_params_file,
     resolved_arm,
 )
@@ -84,12 +84,7 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument(
-                "mirror",
-                default_value="false",
-                description="also run arm_mirror, for virtual-leader teleop "
-                "(see mote_arm/TELEOP.md)",
-            ),
+            declare_mirror_arg(),
             SetParameter(name="use_sim_time", value=False),
             robot_state_publisher,
             controller_manager,
@@ -98,15 +93,6 @@ def generate_launch_description():
                 active=("joint_state_broadcaster",),
                 inactive=INACTIVE_CONTROLLERS,
             ),
-            # Off by default: `arm-jog`, `arm-pose` and episode replay all
-            # command arm_controller too, and none of them wants a second
-            # thing driving the arm in the same graph.
-            Node(
-                package="mote_arm",
-                executable="arm_mirror",
-                name="arm_mirror",
-                output="screen",
-                condition=IfCondition(LaunchConfiguration("mirror")),
-            ),
+            arm_mirror_node(),
         ]
     )

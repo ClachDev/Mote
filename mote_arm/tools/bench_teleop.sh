@@ -6,14 +6,13 @@
 # same loop headless against the mock follower. Run that first — this script
 # assumes the software already works and is here to check the *arm* does.
 #
-# Four terminals. The first two are the robot, the third is what you drive, and
-# the fourth is this script:
+# Three terminals. The first is the robot, the second is what you drive, and
+# the third is this script:
 #
-#   1. pixi run launch          base: controllers (arm included) + camera
-#        or, with no camera needed: pixi run arm mirror:=true, which folds in 2
-#   2. pixi run arm-mirror      leader pose -> arm_controller
-#   3. pixi run arm-teleop      the virtual leader — YOU DRIVE THIS ONE
-#   4. pixi run arm-bench-teleop     <- this script: asks, records, replays
+#   1. pixi run launch mirror:=true   base + camera + the teleop mirror
+#        (`pixi run arm mirror:=true` is the same thing without lidar/camera)
+#   2. pixi run arm-teleop            the virtual leader — YOU DRIVE THIS ONE
+#   3. pixi run arm-bench-teleop      <- this script: asks, records, replays
 #
 # It writes a report you can paste into the task; nothing is recorded as passing
 # that you did not say you saw.

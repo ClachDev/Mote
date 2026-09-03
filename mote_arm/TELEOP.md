@@ -86,16 +86,19 @@ is how you should rehearse it — see [Without hardware](#without-hardware).
 ### 1. Driver and mirror
 
 ```bash
-pixi run arm mirror:=true
+pixi run arm mirror:=true      # bench: controllers only
+pixi run launch mirror:=true   # the whole base, when you need the camera
 ```
 
-`mirror:=true` starts `arm_mirror` alongside the control stack. It is off by
-default because `arm-jog`, `arm-pose` and replay all command the same
-`arm_controller`, and none of them wants a second thing driving the arm in the
-same graph.
+`mirror:=true` starts `arm_mirror` alongside the control stack — the same switch
+on both, so teleop never costs a terminal just because you also wanted the
+camera. It is off by default because `arm-jog`, `arm-pose` and replay all
+command the same `arm_controller`, and none of them wants a second thing driving
+the arm in the same graph.
 
 During a mission the arm is already up (`pixi run robot` / `mapping` owns the
-bus), so teleop there is just `pixi run arm-mirror` beside it.
+bus) and neither takes the switch, so teleop there is `pixi run arm-mirror`
+beside it. That is the one case where it is a process of its own.
 
 ### 2. Teleop
 

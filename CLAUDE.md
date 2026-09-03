@@ -934,7 +934,10 @@ section. Contains:
 - **Virtual-leader teleop + episode recording** (`mote_arm/TELEOP.md`) — teleop
   with **no leader arm**: a leader pose held in software, moved by the keyboard
   (`virtual_leader`, `pixi run arm-teleop`), published on `leader/joint_states`,
-  which `arm_mirror` (`pixi run arm-mirror`, or `pixi run arm mirror:=true`)
+  which `arm_mirror` (`pixi run arm mirror:=true`, or `pixi run launch
+  mirror:=true` when the camera is wanted too — one switch on both, so teleop
+  never costs a terminal for wanting a camera; `pixi run arm-mirror` standalone
+  is for beside a running mission, which takes no such switch)
   turns into `arm_controller` trajectories through `control.py`, like every
   other command client. **The frontend is deliberately replaceable** — the
   mirror's whole contract is `leader/joint_states` + a latched `teleop/estop`,

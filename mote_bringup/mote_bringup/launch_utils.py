@@ -7,8 +7,10 @@ logic worth testing lives here in the package instead.
 import tempfile
 
 import yaml
-from launch.actions import OpaqueFunction, RegisterEventHandler
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessStart
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from mote_arm import config as arm_config
@@ -37,6 +39,41 @@ ICP_ODOM_FRAME = "odom_icp"
 # asked to move stays limp, exactly as it did under the standalone driver.
 # `pixi run arm-jog` (or the task layer) activates it on demand.
 INACTIVE_CONTROLLERS = ("arm_controller",)
+
+
+MIRROR_ARG = "mirror"
+
+
+def declare_mirror_arg():
+    """The `mirror:=` switch, declared identically wherever the arm comes up.
+
+    Off by default everywhere: `arm-jog`, `arm-pose` and episode replay all
+    command `arm_controller` too, and none of them wants a second thing driving
+    the arm in the same graph.
+    """
+    return DeclareLaunchArgument(
+        MIRROR_ARG,
+        default_value="false",
+        description="also run arm_mirror, for virtual-leader teleop "
+        "(see mote_arm/TELEOP.md)",
+    )
+
+
+def arm_mirror_node():
+    """`arm_mirror`, conditioned on `mirror:=`.
+
+    Shared so that every way of bringing the arm up offers teleop the same way.
+    It was on `arm_launch.py` alone, which meant a session needing the camera
+    had to run `pixi run launch` and then the mirror in a terminal of its own —
+    a third window that existed only because two launch files disagreed.
+    """
+    return Node(
+        package="mote_arm",
+        executable="arm_mirror",
+        name="arm_mirror",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration(MIRROR_ARG)),
+    )
 
 
 def arm_on_wheel_bus(cfg):
