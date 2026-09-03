@@ -17,6 +17,17 @@ from mote_arm.episode import list_episodes, load_dataset_spec, load_episode, res
 
 def main() -> int:
     capture = Path(sys.argv[1])
+    # A recorder that was quit before its first episode leaves no dataset.json
+    # at all, so this runs before anything reads one: "you recorded nothing" is
+    # a verdict, and a traceback under it says only that the check crashed.
+    if not (capture / "dataset.json").exists():
+        print(
+            f"nothing was recorded: {capture} holds no episodes.\n"
+            "Re-run and press ENTER at the record prompt to capture one, "
+            "driving the arm in the teleop terminal while it runs.",
+            file=sys.stderr,
+        )
+        return 1
     spec = load_dataset_spec(capture)
     episodes = list_episodes(capture)
     if not episodes:

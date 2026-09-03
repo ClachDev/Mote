@@ -116,15 +116,31 @@ check "press z to clear the latch, then drive again" \
 rule "3. record an episode"
 echo "Drive a simple motion in the TELEOP terminal while this records."
 echo "The ENTER prompts below are read HERE, not there."
+echo "Press ENTER to start the recording; 'q' ends the step, so pressing it"
+echo "first leaves nothing to check, export or replay."
 ros2 run mote_arm episode_record --task "${TASK:-move the arm through a simple motion}" \
     --dataset "$DATASET" --episodes 1 2>&1 | tee -a "$REPORT"
 
 rule "4. check the capture"
 if python3 "$HERE/../test/teleop_loop/check_capture.py" "$CAPTURE" 2>&1 | tee -a "$REPORT"; then
     note "  PASS  capture holds a real motion"
+    RECORDED=1
 else
     note "  FAIL  capture check"
     FAILURES=$((FAILURES + 1))
+    RECORDED=0
+fi
+
+# Steps 5 and 6 export and replay the episode step 3 recorded. With no episode
+# they can only ask about work nobody can do, and a FAIL for each would bury
+# the one thing that went wrong.
+if [ "$RECORDED" -eq 0 ]; then
+    rule "5-6. export and replay"
+    note "  SKIPPED  there is no episode to export or replay"
+    rule "result"
+    note "$FAILURES check(s) failed. Record an episode in step 3 and re-run."
+    note "report: $REPORT"
+    exit 1
 fi
 
 rule "5. export and inspect (off-board)"
