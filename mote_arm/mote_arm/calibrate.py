@@ -396,6 +396,39 @@ def centred_limits(
     return (lo, hi) if not invert else (-hi, -lo)
 
 
+def fence_counts(cal: JointCalibration) -> tuple[int, int]:
+    """The goal-range fence to write for a calibrated joint: its measured stops.
+
+    Deliberately the swept travel and not the soft limits -- wider by ``margin``
+    at each end, so the soft limit in ``arm.yaml`` always binds first and the
+    servo's own band can never be the thing that stops the arm in ordinary use.
+    It is the backstop for a soft limit that has gone wrong: a hand-edited
+    arm.yaml, a URDF that never received one, a servo swapped under a stale
+    calibration. A fence that binds before the soft limit is the failure this
+    exists to prevent, not a stricter version of it.
+
+    Computed from the calibration's own zero and band rather than from the raw
+    sweep, so it lands in whatever frame that calibration describes -- which is
+    the property the arm lost when a later run moved a zero and left a fence
+    from an earlier one behind.
+    """
+    sign = -1 if cal.invert else 1
+    edges = sorted(
+        cal.zero_counts + sign * rad / RAD_PER_COUNT
+        for rad in (cal.min_rad, cal.max_rad)
+    )
+    margin = cal.margin / RAD_PER_COUNT
+    low = max(0, round(edges[0] - margin))
+    high = min(COUNTS_PER_REV - 1, round(edges[1] + margin))
+    if low >= high:
+        raise CalibrationError(
+            f"{cal.name}: measured travel {low}..{high} counts leaves no goal "
+            "range to fence.",
+            reason="measured travel too short to fence",
+        )
+    return low, high
+
+
 def _reject_continuous(sweep: Sweep) -> None:
     if sweep.unwrapped_span >= COUNTS_PER_REV:
         # No homing offset can rescue this: the joint simply does not fit in a
@@ -508,7 +541,7 @@ def calibration_header(recorded: str) -> str:
     """The comment written above the calibration, for whoever opens the file."""
     return (
         "# This robot's measured arm calibration — written by "
-        "`pixi run arm-calibrate`.\n"
+        "`pixi run arm-setup calibrate`.\n"
         "#\n"
         "# Per-robot state, deliberately not in the repo: these are measurements "
         "of one\n"
@@ -587,4 +620,50 @@ def load_offsets_backup(path: Path | str | None = None) -> dict[str, int]:
     return {
         str(name): int(entry["offset"])
         for name, entry in (data.get("offsets") or {}).items()
+    }
+
+
+def limits_backup_path() -> Path:
+    return mote_home() / "arm_limits_backup.yaml"
+
+
+def save_limits_backup(
+    limits: dict[str, tuple[int, int]],
+    ids: dict[str, int],
+    when: str,
+    path: Path | str | None = None,
+) -> Path:
+    """Record the goal-range registers as found, *before* any are overwritten.
+
+    Same rule as ``save_offsets_backup``, for the same reason: registers 9 and
+    11 live only in the servo. This arm arrived with five of six joints fenced
+    to a band narrower than their travel, which nothing here had ever read, so
+    the value being overwritten may be the only record of how a servo shipped.
+    """
+    p = Path(path) if path is not None else limits_backup_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "saved": when,
+                "limits": {
+                    name: {"id": ids[name], "min": int(low), "max": int(high)}
+                    for name, (low, high) in sorted(limits.items())
+                },
+            },
+            sort_keys=True,
+        )
+    )
+    return p
+
+
+def load_limits_backup(path: Path | str | None = None) -> dict[str, tuple[int, int]]:
+    """Return {joint: (min, max)} from the backup, or empty if there is none."""
+    p = Path(path) if path is not None else limits_backup_path()
+    if not p.exists():
+        return {}
+    data = yaml.safe_load(p.read_text()) or {}
+    return {
+        str(name): (int(entry["min"]), int(entry["max"]))
+        for name, entry in (data.get("limits") or {}).items()
     }

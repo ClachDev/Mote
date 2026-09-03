@@ -9,13 +9,32 @@ the wheels — see ``mote_arm/control.py``.
     pixi run arm-pose go <name>     # move to a taught pose
     pixi run arm-pose delete <name>
 
-``save`` is read-only — pose the limp arm by hand, then capture it. ``go`` is
-the only command that moves the arm, and it leaves the arm *holding* the pose it
-reached (deactivate ``arm_controller``, or run ``arm-jog`` and ``torque off``, to
-make it limp again): it reports the distance each joint will
-travel, requires confirmation unless ``--yes`` is given, and refuses moves whose
-largest single-joint travel exceeds ``--max-travel``. Goals are clamped to the
-robot.yaml soft limits here *and* in the driver.
+``save`` moves nothing — pose the limp arm by hand, then capture it. It stores
+each joint clamped into its soft band and says which ones it held there: posing
+by hand means posing against the mechanical stops, and the soft limits sit a
+margin inside those, so a raw capture is routinely a fraction outside the band
+and could never be replayed. ``go`` is the only command that moves the arm, and
+it leaves the arm *holding* the pose it reached (deactivate ``arm_controller``,
+or press SPACE in ``arm-teleop``, to make it limp again): it reports the
+distance each joint will travel and then moves. There is no confirmation: the
+move is bounded by ``--speed`` and supervised by ``--max-lag``, the destination
+is a pose the operator taught and `save` already clamped into the soft limits,
+and a prompt on every bench move is a keypress that buys none of that. Goals are
+clamped to the soft limits here *and* in the driver.
+
+There is no ceiling on how far a `go` may move. Distance is not what makes a
+move risky once setpoints are streamed: the arm advances at ``--speed``
+whatever the distance, so a long move is a slow move rather than a violent one,
+and ``--max-lag`` stops it if the arm falls behind. A distance limit was a proxy
+for the lurch that streaming removed, and with real calibrated joints it refused
+the ordinary case — teach a pose, let go, watch the limp arm fall to rest,
+replay. ``episode-replay`` keeps one for a different job: there a long approach
+means the arm is not where the recording starts, so the replay will not
+reproduce.
+
+The arm is limp whenever no controller holds it, so it falls to rest the moment
+you let go of it. A `go` straight after a `save` therefore starts from the rest
+position and not from the pose just taught, and the travel it reports is real.
 
 ``go`` streams setpoints at a fixed rate rather than commanding the destination
 in one jump, so the arm moves continuously at ``--speed`` instead of lurching,
@@ -38,7 +57,9 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 from mote_arm import cli, config, poses
+from mote_arm.calibrate import DEFAULT_MARGIN
 from mote_arm.control import ArmControl
+from mote_arm.motion import LagSupervisor, lag_of
 
 
 class PoseClient(Node):
@@ -84,11 +105,60 @@ def _require_states(node: PoseClient) -> dict[str, float]:
 
 
 def _cmd_save(node: PoseClient, args) -> None:
+    """Capture the arm's pose, clamped into the band it can actually be sent to.
+
+    Posing by hand means posing a limp arm against its mechanical stops, and the
+    soft limits sit a margin (0.05 rad) inside those, so a captured position is
+    routinely a fraction past the band. Stored raw, that pose can never be
+    reached: every `go` clamps it and says so, which is a warning the operator
+    receives minutes later and cannot act on. Stored clamped, it is reachable by
+    construction and differs from what was posed by at most the margin.
+
+    A joint further out than the margin is a different matter -- it means the
+    arm and arm.yaml disagree about where that joint's limits are -- so it is
+    called out separately rather than folded into the same quiet clamp.
+    """
     current = _require_states(node)
-    path = poses.save_pose(args.name, current)
+    clamped: dict[str, float] = {}
+    held: dict[str, float] = {}
+    suspect: list[str] = []
+    for name, value in current.items():
+        try:
+            joint = node.cfg.joint(name)
+        except KeyError:
+            clamped[name] = value
+            continue
+        clamped[name] = joint.clamp_rad(value)
+        if clamped[name] != value:
+            held[name] = value
+            # DEFAULT_MARGIN rather than the joint's own: arm.yaml records the
+            # margin per joint but JointSpec does not carry it, and the two
+            # differ only if someone passed --margin to arm-setup calibrate.
+            if abs(clamped[name] - value) > DEFAULT_MARGIN:
+                suspect.append(name)
+
+    path = poses.save_pose(args.name, clamped)
     print(f"saved pose {args.name!r} to {path}")
     for name in node.cfg.names:
-        print(f"  {name:<14} {current[name]:+.4f} rad")
+        note = (
+            f"  <- held at the soft limit, from {held[name]:+.4f}"
+            if name in held
+            else ""
+        )
+        print(f"  {name:<14} {clamped[name]:+.4f} rad{note}")
+    if held:
+        print(
+            f"\n{len(held)} joint(s) were posed past their soft limits and are "
+            "stored at the limit, so this pose is reachable as saved. Posing a "
+            "limp arm against its stops does this: the soft limits sit a margin "
+            "inside them."
+        )
+    if suspect:
+        print(
+            f"\n{', '.join(suspect)}: further out than the calibration margin, "
+            "so the arm and $MOTE_HOME/arm.yaml disagree about this joint's "
+            "limits. `pixi run arm-setup calibrate` re-measures them."
+        )
 
 
 def _cmd_list(node: PoseClient, args) -> None:
@@ -184,18 +254,6 @@ def _cmd_go(node: PoseClient, args) -> None:
         goals[joint_name] = clamped
 
     print(f"largest single-joint travel: {largest:.4f} rad")
-    if largest > args.max_travel:
-        raise SystemExit(
-            f"refusing: travel {largest:.4f} rad exceeds --max-travel "
-            f"{args.max_travel:.4f}. Re-run with a larger --max-travel if that "
-            "is genuinely intended."
-        )
-
-    if not args.yes:
-        reply = input("proceed? [y/N] ").strip().lower()
-        if reply not in ("y", "yes"):
-            print("aborted; nothing sent")
-            return
 
     _stream(node, current, goals, args)
 
@@ -233,27 +291,20 @@ def _stream(node: PoseClient, start: dict, goals: dict, args) -> None:
         f"({args.speed:.2f} rad/s), stopping if lag exceeds {args.max_lag:.2f} rad"
     )
 
-    lagging = 0.0
+    supervisor = LagSupervisor(args.max_lag, args.stall_time)
     report_every = max(1, len(stream) // 8)
     for i, setpoint in enumerate(stream, 1):
         node.send(setpoint, period)
         time.sleep(period)
         now = node.current()
-        lag = max(
-            (abs(now.get(n, setpoint[n]) - setpoint[n]) for n in setpoint),
-            default=0.0,
-        )
-        if lag > args.max_lag:
-            lagging += period
-            if lagging >= args.stall_time:
-                print(
-                    f"\nSTOPPED at setpoint {i}/{len(stream)}: the arm trailed by "
-                    f"{lag:.3f} rad for {args.stall_time:.1f}s. Holding here rather "
-                    "than driving against a load it is not overcoming."
-                )
-                return
-        else:
-            lagging = 0.0
+        lag = lag_of(setpoint, now)
+        if not supervisor.update(lag, period):
+            print(
+                f"\nSTOPPED at setpoint {i}/{len(stream)}: the arm trailed by "
+                f"{lag:.3f} rad for {args.stall_time:.1f}s. Holding here rather "
+                "than driving against a load it is not overcoming."
+            )
+            return
         if i % report_every == 0 or i == len(stream):
             print(
                 f"  {i:>4}/{len(stream)}  lag {lag:.4f} rad   "
@@ -304,13 +355,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_go = sub.add_parser("go", help="move to a taught pose")
     p_go.add_argument("name")
-    p_go.add_argument("--yes", action="store_true", help="skip confirmation")
-    p_go.add_argument(
-        "--max-travel",
-        type=float,
-        default=0.35,
-        help="refuse if any joint would move more than this many rad (default 0.35)",
-    )
     p_go.add_argument(
         "--speed",
         type=float,

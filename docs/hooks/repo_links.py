@@ -51,6 +51,7 @@ MOUNTS = {
     "perception/camera-calibration.md": "mote_perception/config/README.md",
     "perception/benchmarks.md": "mote_perception/benchmarks/README.md",
     "arm/index.md": "mote_arm/README.md",
+    "arm/teleop.md": "mote_arm/TELEOP.md",
     "arm/bench.md": "mote_arm/BENCH.md",
     "fleet/package.md": "mote_fleet/README.md",
     "simulation/benchmark.md": "mote_simulation/tools/benchmark/README.md",

@@ -11,8 +11,12 @@ It starts the same controller_manager against the same URDF and the same
 `controllers.yaml` the mission uses — including this robot's own arm
 calibration — so what you jog on the bench is what runs on the robot. No diff_drive_controller is loaded, so nothing here can drive the
 wheels, and the arm controller is loaded *inactive* — the arm is limp until
-`pixi run arm-jog` (or `switch_controllers --activate arm_controller`) asks it
+`pixi run arm-teleop` (or `switch_controllers --activate arm_controller`) asks it
 to hold.
+
+Teleop is `pixi run arm-teleop` in a second terminal beside this one; it is one
+process holding the keyboard, the safety rules and the arm, so this launch
+starts nothing on its behalf. See `mote_arm/TELEOP.md`.
 """
 
 import os
