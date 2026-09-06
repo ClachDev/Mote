@@ -29,19 +29,14 @@ def test_yaw_from_quaternion_round_trip():
 
 
 def test_append_zone_creates_replaces_and_loads(tmp_path):
-    """Teaching writes the zone/v0 pair, and reading joins it back."""
+    """Teaching writes the floor's one document, and reading gives it back."""
     assert append_zone(tmp_path, "bin", 1.0, -2.0, 0.5) is False
     assert append_zone(tmp_path, "sofa", 0.25, 0.0, -1.0) is False
     assert append_zone(tmp_path, "bin", 1.5, -2.5, 0.5) is True
 
-    # The names went one way and the coordinates the other. This is the whole
-    # split, checked over the text rather than over the keys someone thought
-    # of: a coordinate in the shared document is the leak it exists to stop.
-    shared = (tmp_path / "vocabulary.yaml").read_text()
-    assert "bin" in shared and "sofa" in shared
-    for leak in ("x:", "y:", "yaw:", "radius:", "polygon:", "frame_id:"):
-        assert leak not in shared, f"{leak} leaked into the vocabulary"
-    assert "x: 1.5" in (tmp_path / "binding.yaml").read_text()
+    written = (tmp_path / "zones.yaml").read_text()
+    assert "bin" in written and "sofa" in written
+    assert "x: 1.5" in written
 
     zones = load_zones(tmp_path)
     assert sorted(zones) == ["bin", "sofa"]
@@ -178,12 +173,9 @@ def test_append_zone_keeps_a_polygon_but_radius_replaces_it(tmp_path):
     path.write_text(
         "zones:\n  ward: {x: 1.0, y: 1.0, polygon: [[0, 0], [2, 0], [2, 2], [0, 2]]}\n"
     )
-    # Re-capturing the pose must not silently un-room the zone. It is also the
-    # first write to a combined file, so it is the migration: nobody runs one,
-    # and nobody can forget to.
+    # Re-capturing the pose must not silently un-room the zone.
     append_zone(path, "ward", 1.5, 0.5, 0.0)
-    assert (tmp_path / "vocabulary.yaml").exists()
-    assert not (tmp_path / "zones.yaml").exists()
+    assert (tmp_path / "zones.yaml").exists()
     ward = load_zones(tmp_path)["ward"]
     assert isinstance(ward.footprint, Polygon)
     assert ward.pose.pose.position.x == pytest.approx(1.5)
@@ -204,15 +196,10 @@ def test_save_zone_output_is_readable_by_the_bundle_validator(tmp_path):
 
     append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.5, radius=1.5)
     append_zone(tmp_path, "ward_east", 4.0, 1.0, 0.0)
-    binding = yaml.safe_load((tmp_path / "binding.yaml").read_text())
-    for item in binding["bindings"]:
-        if item["name"] == "ward_east":
-            item["footprint"] = {
-                "type": "polygon",
-                "vertices": [[3.0, 0.0], [5.0, 0.0], [5.0, 2.0]],
-            }
-    (tmp_path / "binding.yaml").write_text(
-        yaml.safe_dump(binding, sort_keys=False, default_flow_style=None)
+    document = yaml.safe_load((tmp_path / "zones.yaml").read_text())
+    document["zones"]["ward_east"]["polygon"] = [[3.0, 0.0], [5.0, 0.0], [5.0, 2.0]]
+    (tmp_path / "zones.yaml").write_text(
+        yaml.safe_dump(document, sort_keys=False, default_flow_style=None)
     )
     append_zone(tmp_path, "ward_east", 4.1, 1.1, 0.0)  # recapture: keeps the outline
 
@@ -337,37 +324,49 @@ def test_re_capturing_a_pose_keeps_the_vocabulary(tmp_path):
     assert zone.pose.pose.position.x == 1.2
 
 
-def test_binding_a_zone_bumps_the_vocabulary_revision(tmp_path):
-    """A binding elsewhere records which vocabulary it was built against, so
-    the counter has to move whenever a name could have."""
+def test_teaching_a_zone_bumps_the_revision(tmp_path):
+    """What a reader compares to tell which of two copies of a floor's zones is
+    the later one, so it has to move whenever anything in them could have."""
 
     def revision():
-        return yaml.safe_load((tmp_path / "vocabulary.yaml").read_text())["revision"]
+        return yaml.safe_load((tmp_path / "zones.yaml").read_text())["revision"]
 
     append_zone(tmp_path, "kitchen", 1.0, 2.0, 0.0)
     first = revision()
     append_zone(tmp_path, "ward", 3.0, 4.0, 0.0)
     assert revision() > first
-    # The binding says which vocabulary it was built against, which is what
-    # makes a stale one detectable rather than merely wrong.
-    binding = yaml.safe_load((tmp_path / "binding.yaml").read_text())
-    assert binding["vocabulary_revision"] == revision()
 
 
 def test_marking_a_place_a_robot_may_not_go_writes_the_flag(tmp_path):
     """`--no-navigable` is what `--kind keepout` was: the fact, rather than a
     taxonomy the fact had to be inferred from."""
     append_zone(tmp_path, "sluice", 1.0, 2.0, 0.0, navigable=False)
-    document = yaml.safe_load((tmp_path / "vocabulary.yaml").read_text())
-    assert document["zones"][0]["navigable"] is False
+    document = yaml.safe_load((tmp_path / "zones.yaml").read_text())
+    assert document["zones"]["sluice"]["navigable"] is False
     assert load_zones(tmp_path)["sluice"].navigable is False
 
 
-def test_a_note_travels_in_the_vocabulary_and_not_the_binding(tmp_path):
-    """The note is a fact about the building, so it is shared; the pose is a
-    coordinate in this robot's frame, so it is not."""
+def test_a_note_is_written_and_read_back(tmp_path):
+    """The one field a prior cannot supply: what this building's store room is
+    for, as against what a store room is."""
     append_zone(tmp_path, "store room", 1.0, 2.0, 0.0, note="stationery lives here")
-    vocabulary = yaml.safe_load((tmp_path / "vocabulary.yaml").read_text())
-    assert vocabulary["zones"][0]["note"] == "stationery lives here"
-    binding = yaml.safe_load((tmp_path / "binding.yaml").read_text())
-    assert "note" not in binding["bindings"][0]
+    document = yaml.safe_load((tmp_path / "zones.yaml").read_text())
+    assert document["zones"]["store room"]["note"] == "stationery lives here"
+    assert load_zones(tmp_path)["store room"].note == "stationery lives here"
+
+
+def test_the_names_only_view_carries_no_coordinates(tmp_path):
+    """``GET /v1/zones`` serves this: what places exist and what they are
+    called, for a dispatcher with no basemap to draw a coordinate on. Checked
+    over the whole payload rather than over the keys someone thought of,
+    because a leak here is a plausible-looking coordinate rather than a crash.
+    """
+    from mote_bringup import bundle
+    from mote_bringup.spec import zone as zone_spec
+
+    append_zone(tmp_path, "store room", 1.0, 2.0, 0.7, radius=1.5, note="stationery")
+    view = bundle.vocabulary(bundle.read_floor(tmp_path), "acme_hq", "ground")
+    text = yaml.safe_dump(view)
+    assert "stationery" in text
+    for leak in zone_spec.GEOMETRY_KEYS + ("frame_id", "map_revision", "pose"):
+        assert f"{leak}:" not in text, f"{leak} leaked into the names-only view"

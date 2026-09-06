@@ -27,8 +27,8 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET  /v1/maps                            basemaps this server can serve
     GET  /v1/maps/<site>/<floor>/map.json    resolution + origin (the Q5 transform)
     GET  /v1/maps/<site>/<floor>/map.png     the basemap image
-    GET  /v1/maps/<site>/<floor>/zones.json  the floor's zone *binding*
-    GET  /v1/zones                           every floor's zone *vocabulary*
+    GET  /v1/maps/<site>/<floor>/zones.json  the floor's zones, with poses
+    GET  /v1/zones                           every floor's zone *names*
     GET  /v1/zones/<site>/<floor>            one floor's, as a zone/v0 document
     GET  /v1/sites                           the registry: floors + canonical rev
     GET  /v1/sites/<site>/floors/<floor>     revisions, validated, with provenance
@@ -36,7 +36,7 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET      .../revisions/<rev>/bundle.tar.gz   pull one (robot)
     GET      .../revisions/<rev>/map.json    that revision's own Q5 transform
     GET      .../revisions/<rev>/map.png     that revision's own image
-    GET      .../revisions/<rev>/zones.json  that revision's own zone binding
+    GET      .../revisions/<rev>/zones.json  the zones that revision carries
     POST     .../revisions/<rev>/promote     make it canonical (operator)
     POST /v1/sites/<site>/floors/<floor>/zones  edited zones of a revision ->
                                              a new candidate (operator)
@@ -67,21 +67,20 @@ revision as a *candidate*, which changes nothing; an operator promotes one, whic
 flips the floor's ``map`` symlink and publishes the retained
 ``registry/site/<site>/floor/<floor>/current`` every agent pulls from. Two robots
 mapping one floor therefore end with two candidates and no merge — a map frame's
-origin is an accident of where SLAM started, so merging frames would break every
-bound zone (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
+origin is an accident of where SLAM started, so merging frames would put the
+floor's zones somewhere nobody put them (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
 validate with the *same* ROS-free module the robot writes with
 (``mote_bringup.bundle``).
 
-**Names are served; coordinates are not (zone/v0).** The same site bundles hold
-the answer to the question a dispatcher actually asks — *what places can I
-name?* — and until now the only ways to get it were an out-of-band document or
-scraping the list a robot prints when it refuses an unknown zone. ``/v1/zones``
-answers it directly, and answers it with a **vocabulary**: the name of each
-place and a note about it, no coordinates, no frame. That restraint is what
-makes publishing it safe. A zone's pose is a coordinate in one robot's map frame, whose origin is an
-accident of where its SLAM session started, so it is true for that robot and
-false for the one beside it; the name is true for both. The binding stays where
-it was, under ``/v1/maps``, served to the client that also has the basemap.
+**Two routes, two views of one file.** The site bundles hold the answer to the
+question a dispatcher asks — *what places can I name?* — and ``/v1/zones``
+answers it with the **names** and nothing else: what each place is called and a
+note about it, no coordinates. Not because a coordinate would be wrong — a zone
+is a coordinate in the floor's frame and every robot on the floor holds the same
+one — but because a caller with no basemap has nothing to draw one on, and being
+handed a number it cannot place is worse than not being handed it. The poses
+stay under ``/v1/maps``, gated on there being a published map, served to the
+client that also has the basemap to put them on.
 
 **Security posture for M3:** the read routes are still unauthenticated, exactly
 as M1 left them, and the broker is still anonymous. What M3 adds is a credential
@@ -627,12 +626,12 @@ class FleetHandler(BaseHTTPRequestHandler):
     def _vocabulary(self, rest: str):
         """``/v1/zones/<site>/<floor>`` — what places can be named here.
 
-        The split zone/v0 asks for is expressed by the route, which is why this
-        is not another leaf under ``/v1/maps``. Everything under that prefix is
-        bound to a basemap and is only true against that basemap's frame; this
-        is bound to nothing, and is true for every robot at the site. A caller
-        that must never be handed a map — an MCP front door turning "take it to
-        the kitchen" into ``goto kitchen`` — can be given this and only this.
+        Its own prefix rather than another leaf under ``/v1/maps``, because
+        everything under that one is served beside a basemap and gated on there
+        being one. This is gated on nothing and needs nothing to make sense of,
+        so a caller that must never be handed a map — an MCP front door turning
+        "take it to the kitchen" into ``goto kitchen`` — can be given this and
+        only this.
         """
         parts = rest.split("/")
         if len(parts) != 2:

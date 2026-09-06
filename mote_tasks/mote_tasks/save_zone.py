@@ -36,8 +36,6 @@ from mote_bringup import bundle, sites
 from rclpy.node import Node
 from rclpy.time import Time
 
-from mote_bringup import identity
-
 from mote_tasks.zones import append_zone, yaw_from_quaternion
 
 LOOKUP_TIMEOUT = 10.0
@@ -115,7 +113,6 @@ def main():
         navigable,
         site=site,
         floor=floor,
-        platform_id=identity.robot_id() or "",
     )
     verb = "replaced" if replaced else "added"
     extra = f" radius={radius:.3f}" if radius is not None else ""

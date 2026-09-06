@@ -1076,10 +1076,12 @@ holds, ignores the rest of the fleet's, downloads the revision, checks its
 digest, stages it in a temporary directory, renames it into `maps/<rev>/` and
 flips its local `map` symlink. A half-transferred revision is never visible.
 
-**Zones travel with the map.** A revision from a different mapping session is a
-different map frame, so the zones bound in the old one are wrong the moment the
-new map is published — the bundle's `binding.yaml` therefore replaces the floor's,
-and the one it replaces is kept beside it as `zones.<old-rev>.yaml`.
+**A revision carries a copy of the floor's zones.** The floor owns them — a zone
+is a coordinate in the floor's frame and a revision is an estimate registered
+into it — but the revision is how a floor's places reach a robot that has never
+driven there, and the copy inside the revision an operator promoted is the
+fleet's current answer. Installing one therefore replaces the floor's
+`zones.yaml`, keeping the one it replaces beside it as `zones.<old-rev>.yaml`.
 
 **The running navigation stack keeps the map it loaded.** Nav2's `map_server`
 reads the map at startup, so the flip takes effect on the next `pixi run robot`
@@ -1143,10 +1145,10 @@ curl -s http://fleet-box:8080/v1/zones/home/ground | python -m json.tool
 ```
 
 This is what to point a dispatcher at — anything turning "take it to the
-kitchen" into `goto kitchen`. It is safe to hand out precisely because it
-carries no coordinates: a vocabulary is portable, a binding is not. The route
-that *does* carry coordinates is `/v1/maps/<site>/<floor>/zones.json`, and it
-is for the thing drawing zones on the basemap, which already has the basemap.
+kitchen" into `goto kitchen`. It carries no coordinates because a caller of this
+route has nothing to draw one on, not because a coordinate would be wrong. The
+route that *does* carry them is `/v1/maps/<site>/<floor>/zones.json`, and it is
+for the thing drawing zones on the basemap, which already has the basemap.
 
 ### Teaching the vocabulary
 
@@ -1171,7 +1173,7 @@ where a hand-maintained list of spellings was one more thing to keep in step.
 
 `pixi run segment-map` gives every candidate it proposes a footprint and nothing
 else; the names it invents (`zone_01`…) are placeholders for you to replace, in
-the dashboard's zone editor or by hand in `vocabulary.yaml`:
+the dashboard's zone editor or by hand in the floor's `zones.yaml`:
 
 ```yaml
 zones:
