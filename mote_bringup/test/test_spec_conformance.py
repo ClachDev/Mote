@@ -166,8 +166,9 @@ def a_floor(directory: Path):
     """One floor's zones, as the two zone/v0 views the wire is written in.
 
     Read from a real ``zones.yaml`` through the reader every consumer uses, so
-    what is validated here is what a floor actually produces — retired fields
-    and all — rather than a document written for the test.
+    what is validated here is what a floor actually produces — including the
+    fields nothing writes but everything accepts — rather than a document
+    written for the test.
     """
     from mote_bringup import bundle
 
@@ -206,11 +207,10 @@ def a_vocabulary(directory: Path) -> dict:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="zone/v0's vocabulary schema still requires `kind`, which mote #609 "
-    "retired: a zone is a place-name, and the taxonomy was five fields for a "
-    "reader that needed none. The successor revision of the spec is outstanding "
-    "(see CLAUDE.md, 'Fleet: zones are place-names'). When it lands this passes "
-    "and the marker comes off.",
+    reason="zone/v0's vocabulary schema requires `kind`, and Mote's vocabulary "
+    "is a name, a note and `navigable` — so this payload does not validate. A "
+    "successor revision of the spec is outstanding (mote #616); when it lands "
+    "this passes and the marker comes off.",
 )
 def test_a_vocabulary_conforms(validator_for, tmp_path):
     validator_for("zone/v0/zone-vocabulary.schema.json").validate(

@@ -314,12 +314,11 @@ a map, `editor` for a click — and the editor stamps `EDITOR_SOURCE` (through
 `sourced` in `zone_editor.mjs`) on every zone whose geometry it moves, pose,
 vertex or body, leaving an untouched one carrying what it arrived with. It is a
 note and nothing decides anything from it: a zone is a coordinate in the floor's
-frame however it got there, which is why the field it replaced — zone/v0's
-`anchor`, whose whole purpose was to say whether a coordinate survives a re-map
-— is gone. What it buys is an operator being able to see which zones somebody
-drew. It travels the ordinary way: into the derived candidate's `zones.yaml`,
-through `bundle.parse_zones`, and out to the wire as an `anchor.method` that
-zone/v0 still requires (`zone.bound`, one mapping in `_ANCHOR_METHOD`).
+frame however it got there. What it buys is an operator being able to see which
+zones somebody drew. It travels the ordinary way: into the derived candidate's
+`zones.yaml`, through `bundle.parse_zones`, and out to the wire as the
+`anchor.method` zone/v0 requires (`zone.bound`, one mapping in
+`_ANCHOR_METHOD`).
 
 **Geometry is a property, not a type**, so the row says `point <x>, <y>` or
 `area · <n> corners` and there is no kind to declare. `add zone` makes an area
@@ -531,12 +530,6 @@ enclosure with walls round it is all it found; the dashboard's editor has no kin
 select. The sim worlds' committed `<world>.zones.yaml` and
 `mote_tasks/config/zones.default.yaml` were re-emitted without `kind`, and
 `gen_hospital.py` with them.
-
-`anchor` went the same way afterwards, for the same reason one step further out:
-it existed to say whether a coordinate survives a re-map, and under the model in
-"Fleet: a zone is the floor's coordinate" every coordinate does. `source` —
-`save-zone`, `segment-map` or `editor` — is what a record now says about its own
-history, and it says only what made it.
 
 Files: `mote_bringup/spec/zone.py` (the record and its rules), `bundle.py`
 (re-exports; `ZONE_KINDS`/`POINT_KINDS` are gone, `CONSTRAINT_KINDS` survives as

@@ -80,10 +80,9 @@ ZONES_YAML = "zones.yaml"
 
 #: What a floor outside a site bundle calls itself. zone/v0 requires a
 #: vocabulary to name its site and floor, and it is right to — a document with
-#: no place is a document nobody can file. Mote still has floors with no site:
-#: the legacy ``~/.mote/zones.yaml`` a robot used before site bundles existed,
-#: and a bench directory. Naming them ``local/default`` says so, and is a
-#: better answer than an empty string that would only be discovered on upload.
+#: no place is a document nobody can file. A floor read from a bare path has
+#: neither, so it is served as ``local/default`` rather than as an empty string
+#: that would only be discovered on upload.
 LOCAL_SITE = "local"
 LOCAL_FLOOR = "default"
 POSEGRAPH = "map.posegraph"
@@ -310,9 +309,9 @@ def read_zones(path) -> dict:
 def parse_zones(raw: dict, where: str = "zones") -> dict:
     """:func:`read_zones` over a document already in memory.
 
-    The zone editor submits one rather than writing a file first, and it must
-    go through the same reader: a second parser for "the shape a combined
-    zones file has" is the thing whose two implementations disagreed last time.
+    The zone editor submits one rather than writing a file first, and goes
+    through this reader so that there is one answer to what a zones document
+    means whether it arrives as bytes or as a browser's JSON.
     """
     zones = raw.get("zones") or {}
     if not isinstance(zones, dict):

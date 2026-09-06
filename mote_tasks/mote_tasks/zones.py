@@ -27,10 +27,10 @@ candidate revision.
 **A zone is also a place-name**, so the naming half is one human name and a
 free-text `note` — nothing else. The mission layer's resolver already knows what
 a store room is; what it cannot know is that this building's store room is where
-the stationery lives, which is what the note is for. A floor written before this
-carries `kind`, `display_name`, `aliases`, `parent` and `tags`; they still load
-(`kind: keepout` still means non-navigable, and `description` is read as the
-note it was) and they are never written again.
+the stationery lives, which is what the note is for. A floor may carry `kind`,
+`display_name`, `aliases`, `parent` and `tags` as well; nothing here writes
+them, they load and are dropped, and the two that carry meaning are read for it
+(`description` into the note, `kind: keepout` into `navigable: false`).
 
 Example:
 
@@ -143,10 +143,9 @@ class Zone:
     def label(self) -> str:
         """What to call it when talking to a human — which is its name.
 
-        Kept as a property because a zone is *labelled* in half a dozen places
-        and the split between a machine name and a human one was exactly the
-        thing place-names removed; a caller that asks for a label should not
-        have to know that the answer is now the same field.
+        A property rather than the bare attribute because a zone is *labelled*
+        in half a dozen places, and none of them should have to know which
+        field the answer comes from.
         """
         return self.name
 
@@ -187,10 +186,7 @@ def append_zone(
     or ``navigable`` says otherwise, because driving somewhere to capture a
     better pose must not silently drop what an operator typed in by hand.
 
-    ``path`` is the floor directory. A floor still holding zone/v0's two
-    documents is read through and replaced by the single file here, so the
-    first ``save-zone`` on such a floor is also its migration — nobody has to
-    run one, and nobody can forget to.
+    ``path`` is the floor directory, or the ``zones.yaml`` in it.
     """
     path = Path(path).expanduser()
     if path.suffix == ".yaml":

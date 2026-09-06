@@ -72,14 +72,12 @@ floor's zones somewhere nobody put them (fleet.md Q4). The bytes live in :mod:`b
 validate with the *same* ROS-free module the robot writes with
 (``mote_bringup.bundle``).
 
-**Two routes, two views of one file.** The same site bundles hold the answer to
-the question a dispatcher actually asks — *what places can I name?* — and until
-``/v1/zones`` the only ways to get it were an out-of-band document or scraping
-the list a robot prints when it refuses an unknown zone. That route answers it
-with the **names** and nothing else: what each place is called and a note about
-it, no coordinates. Not because a coordinate would be wrong — a zone is a
-coordinate in the floor's frame and every robot on the floor holds the same one
-— but because a caller with no basemap has nothing to draw one on, and being
+**Two routes, two views of one file.** The site bundles hold the answer to the
+question a dispatcher asks — *what places can I name?* — and ``/v1/zones``
+answers it with the **names** and nothing else: what each place is called and a
+note about it, no coordinates. Not because a coordinate would be wrong — a zone
+is a coordinate in the floor's frame and every robot on the floor holds the same
+one — but because a caller with no basemap has nothing to draw one on, and being
 handed a number it cannot place is worse than not being handed it. The poses
 stay under ``/v1/maps``, gated on there being a published map, served to the
 client that also has the basemap to put them on.

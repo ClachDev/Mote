@@ -1,28 +1,22 @@
-"""zone/v0 shapes: the two documents a floor's zones are *serialised* into.
+"""zone/v0 shapes: the documents a floor's zones are serialised into.
 
-**A zone is a coordinate in the floor's frame — a fact about the building.**
-The kitchen does not move. A map is an *estimate* of the same layout,
-registered into that frame; a new map is a better or worse estimate and
-changes nothing about where the kitchen is. Where a map and the zones
-disagree it is the map that gets aligned — pose-graph continuation today,
-rigid alignment as the fallback. So a floor's zones are one document,
-``zones.yaml``, belonging to the floor: not to a map revision, and not to one
-robot.
+A zone is a coordinate in the floor's frame — a fact about the building. The
+kitchen does not move. A map revision is an *estimate* of that layout,
+registered into the frame, so where a map and the zones disagree it is the map
+that gets aligned: pose-graph continuation today, rigid alignment as the
+fallback. A floor's zones are therefore one document, ``zones.yaml``, held by
+the floor rather than by a map revision or by one robot.
 
-zone/v0 itself assumes otherwise — "names are shared, coordinates are not,
-maps are never shared" — because it describes a heterogeneous fleet in which
-every platform carries its own SLAM frame. Mote's fleet is neither: M4
-distributes one canonical revision to every robot on a floor, and the frame is
-the floor's. The spec's two documents therefore live here as **views over the
-single record**, built at the wire and never stored:
+zone/v0 specifies two documents, and both are **views over that single record**
+— built here at the wire, never stored:
 
 * a :func:`vocabulary` — site, floor, and what the places are *called*. No
   coordinates, no frame, no map reference. This is what ``GET /v1/zones``
-  serves to a dispatcher that has never seen a basemap.
+  serves to a dispatcher that has no basemap to draw a coordinate on.
 * a :func:`binding` — the poses and footprints, stamped with the
   ``platform_id``, ``frame_id`` and ``map_revision`` of whoever is serialising
-  them, filled in *at* serialisation because none of the three is a property
-  of the floor.
+  them. None of the three is a property of the floor, so each is supplied by
+  the caller at serialisation.
 
 The vocabulary view is **built** from the fields a vocabulary may carry, never
 *stripped* of the ones it may not, and that is the whole safety property:
@@ -30,23 +24,18 @@ stripping holds only until someone adds a geometry key and forgets this
 function exists, and the leak would be a plausible-looking coordinate rather
 than a crash.
 
-**A zone is a place-name**: a human name bound to geometry, and the record
-carries only what a prior cannot guess. The semantics come from the mission
-layer's resolver, which already knows what a store room is; what it cannot know
-is that *this* building's store room is where the stationery lives. So the
-vocabulary is the :data:`name` and a free-text :data:`note`, and nothing else.
-``kind``, ``display_name``, ``aliases``, ``parent`` and ``tags`` were a
-taxonomy for a reader that did not need one — five fields to fill in, four ways
-to spell one place, and a machine name beside a human one for a resolver that
-reads either. They are **tolerated on read** so that no floor written before
-this has to be rewritten, and they are neither written nor served.
+**A zone is a place-name**: a human name bound to geometry, carrying only what
+a prior cannot guess. The mission layer's resolver already knows what a store
+room is; what it cannot know is that *this* building's store room is where the
+stationery lives. So the vocabulary is the :data:`name` and a free-text
+:data:`note`, and nothing else.
 
 This module is stdlib-only, like the rest of :mod:`mote_bringup.spec`. Reading
 and writing these documents as YAML is :mod:`mote_bringup.bundle`'s, which
 already owns the site bundle's files and already imports PyYAML; what lives
-here is the shapes and the rules — which are needed identically by the robot
-that resolves a name, the ``save-map`` that validates a floor, and the fleet
-server that serves a vocabulary to a dispatcher.
+here is the shapes and the rules — needed identically by the robot that
+resolves a name, the ``save-map`` that validates a floor, and the fleet server
+that serves a vocabulary to a dispatcher.
 """
 
 import math
@@ -57,19 +46,15 @@ from mote_bringup.spec import SpecError
 SCHEMA = 1
 VERSION = "v0"
 
-#: Kinds a **retired** ``kind`` field used to give a zone to say that a robot
-#: may not or should not go there. The taxonomy is gone; this pair is kept
-#: because it is the only record an already-written floor has that a zone is a
-#: keepout, and dropping it on read would turn a barrier into a destination —
-#: silently, on the first load after an upgrade. :func:`term` reads it to seed
-#: ``navigable`` and writes ``navigable`` back, which is the migration.
+#: ``kind`` values that say a robot may not or should not be sent to a zone.
+#: A floor may carry one; :func:`term` reads it to seed ``navigable`` and writes
+#: ``navigable`` back, so a barrier reads as a barrier rather than as somewhere
+#: to drive to.
 CONSTRAINT_KINDS = frozenset(("keepout", "slow"))
 
 #: A place-name: what an operator calls the room, and what a dispatcher types.
-#: One field, so there is one answer to "what is this place called" — the
-#: machine name beside a display name was two fields for one fact, and the
-#: resolver reads the human one anyway. Any printable text, with no leading or
-#: trailing space to make two names look identical and resolve differently.
+#: Any printable text, with no leading or trailing space — two names differing
+#: only by one look identical on screen and resolve differently.
 ZONE_NAME_RE = re.compile(r"^(?!\s)[^\x00-\x1f\x7f]+(?<!\s)$")
 
 #: A site or floor name — a directory name at both ends of the wire.
@@ -89,26 +74,24 @@ VOCABULARY_KEYS = (
     "navigable",
 )
 
-#: Fields a zone entry may still carry from before place-names, read so that an
-#: old floor loads and dropped on the way out. ``description`` is ``note``'s
-#: former spelling and is read *into* it; the rest are read only for the
-#: ``navigable`` default above.
+#: Fields a zone entry may carry that nothing here writes. They are accepted
+#: and dropped, with two exceptions: ``description`` is read into ``note``, and
+#: a ``kind`` in :data:`CONSTRAINT_KINDS` seeds ``navigable``.
 LEGACY_KEYS = ("kind", "display_name", "aliases", "parent", "tags", "description")
 
-#: What made this zone, and nothing beyond that. It is a provenance note for an
-#: operator listing or filtering zones; nothing may read it as a claim about the
-#: coordinate's validity, accuracy or portability, because under this model
-#: there is no such claim to make. A re-map moves the map, not the kitchen.
+#: What made this zone. A provenance note for an operator listing or filtering
+#: zones; nothing may read it as a claim about the coordinate's validity,
+#: accuracy or portability, because a re-map moves the map and not the kitchen.
 SAVE_ZONE = "save-zone"
 SEGMENT_MAP = "segment-map"
 EDITOR = "editor"
 SOURCES = (SAVE_ZONE, SEGMENT_MAP, EDITOR)
 
 #: zone/v0 requires every binding entry to carry an ``anchor.method``, so the
-#: wire needs an answer to a question this model does not ask. The mapping is
-#: here, once, and is applied only when :func:`bound` serialises — never stored
-#: and never read back. ``taught`` is the fallback because a floor that records
-#: no source was, in every case Mote has, driven to and captured.
+#: wire needs an answer where the record keeps only a :data:`SOURCES` value.
+#: The mapping lives here alone and is applied when :func:`bound` serialises;
+#: nothing stores it or reads it back. A zone with no ``source`` serialises as
+#: ``taught``.
 _ANCHOR_METHOD = {SAVE_ZONE: "taught", SEGMENT_MAP: "derived", EDITOR: "external"}
 
 # -- why a name did not resolve -------------------------------------------
@@ -119,11 +102,10 @@ STALE_REVISION = "stale_revision"  # bound against a revision with no continuity
 NOT_NAVIGABLE = "not_navigable"  # a constraint zone used as a destination
 AMBIGUOUS = "ambiguous"  # the query matched more than one zone
 
-#: zone/v0 has a sixth, ``unbound``: a name in the vocabulary that this platform
-#: holds no coordinate for. Mote cannot produce it and does not list it. A zone
-#: is a coordinate in the floor's frame, so a name with no coordinate is not a
-#: zone on this floor at all — it is a name nobody has placed, which is what
-#: ``unknown_name`` says.
+#: zone/v0 lists a sixth, ``unbound``: a name in the vocabulary the platform
+#: holds no coordinate for. Mote never reports it, so it is not here. A zone is
+#: a coordinate in the floor's frame, so a name with no coordinate is not a zone
+#: on this floor — it is a name nobody has placed, which is ``unknown_name``.
 REASONS = (UNKNOWN_NAME, WRONG_FLOOR, STALE_REVISION, NOT_NAVIGABLE, AMBIGUOUS)
 
 
@@ -140,10 +122,8 @@ def _place(where: str, value) -> str:
 def term(where: str, name, entry: dict) -> dict:
     """What one zone is called, and the note beside the name.
 
-    Both fields are optional in the file, and a floor taught before place-names
-    reads perfectly: its ``kind``/``display_name``/``aliases``/``parent``/
-    ``tags`` are accepted and dropped, and its ``description`` is read as the
-    ``note`` it was.
+    Both fields are optional in the file. :data:`LEGACY_KEYS` are accepted and
+    dropped, ``description`` being read into ``note``.
     """
     return {
         "name": str(name),
@@ -153,14 +133,12 @@ def term(where: str, name, entry: dict) -> dict:
 
 
 def _navigable(where: str, name, entry: dict) -> bool:
-    """Whether a robot may be dispatched here — stated, or read off a legacy kind.
+    """Whether a robot may be dispatched here — stated, or read off a ``kind``.
 
-    A zone says nothing about this and is a destination. The exception is a
-    floor written before place-names, where ``kind: keepout`` is the only place
-    the fact was recorded: reading it here is what carries a barrier across the
-    change rather than turning it into somewhere to drive to. The contradiction
-    (a keepout that says it is navigable) is still refused, because the flag
-    would otherwise mean whichever of the two the file mentioned last.
+    A zone that says nothing is a destination. A zone whose only record of the
+    fact is a :data:`CONSTRAINT_KINDS` ``kind`` is not. A zone that says both —
+    a keepout claiming ``navigable: true`` — is refused, because the flag would
+    otherwise mean whichever of the two the file mentioned last.
     """
     constraint = str(entry.get("kind") or "") in CONSTRAINT_KINDS
     navigable = entry.get("navigable")
@@ -248,8 +226,8 @@ def ambiguities(terms) -> list:
     name is hard to type is still a zone it can be told to drive to, but two
     zones answering to one query means ``goto`` has no single answer, and
     guessing between them is the one thing zone/v0 says a resolver must not do.
-    Now that a zone has one name and no aliases, the only way to make one is to
-    call two places the same thing — which is worth saying plainly.
+    A zone has one name, so the only way to make one is to call two places the
+    same thing — which the message says plainly.
     """
     problems = []
     claimed = {}
