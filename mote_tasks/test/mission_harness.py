@@ -71,6 +71,13 @@ def send(publisher, capability, payload_input, **kwargs) -> dict:
     return payload
 
 
+def cancel(publisher, mission_id, **kwargs) -> dict:
+    """A mission/v0 cancel, on ``task/cancel``, as the agent forwards one."""
+    payload = mission.cancel(PLATFORM, mission_id, **kwargs)
+    publisher.publish(String(data=json.dumps(payload)))
+    return payload
+
+
 def states(statuses) -> list:
     return [status["state"] for status in statuses]
 

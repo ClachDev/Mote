@@ -15,7 +15,13 @@ class DriveTo(py_trees.behaviour.Behaviour):
     RUNNING while the goal is in flight, SUCCESS when Nav2 reports the goal
     succeeded, FAILURE on rejection, abortion, or if the action server never
     appears within ``server_timeout`` seconds. A goal still in flight is
-    cancelled when the behaviour is preempted.
+    cancelled when the behaviour is preempted — including one Nav2 has not
+    yet answered, which is cancelled the moment it is accepted.
+
+    Stopping is asynchronous: the cancel goes out when the behaviour is halted,
+    and Nav2 ends the goal some time after. :meth:`halting` says whether that
+    has happened, which is what lets the task server report a mission
+    ``cancelled`` only once the robot has actually stopped being driven.
 
     Each of those three failures leaves a *typed* reason for the task server
     (``trees.common.report_failure``), because they are three different things
@@ -37,11 +43,20 @@ class DriveTo(py_trees.behaviour.Behaviour):
     def setup(self, **kwargs):
         self.node = kwargs["node"]
         self.client = ActionClient(self.node, NavigateToPose, "navigate_to_pose")
+        self.send_future = None
+        self.goal_handle = None
+        self.result_future = None
+        #: The goal-send a halt caught unanswered, until Nav2 answers it.
+        self.unanswered = None
+        #: The result of a goal this behaviour cancelled, until Nav2 ends it.
+        self.stopping = None
 
     def initialise(self):
         self.send_future = None
         self.goal_handle = None
         self.result_future = None
+        self.unanswered = None
+        self.stopping = None
         self.server_deadline = self.node.get_clock().now() + Duration(
             seconds=self.server_timeout
         )
@@ -91,6 +106,13 @@ class DriveTo(py_trees.behaviour.Behaviour):
         return py_trees.common.Status.FAILURE
 
     def terminate(self, new_status):
+        if self.send_future is not None and self.goal_handle is None:
+            # Sent and not yet answered. Dropping it here would let Nav2 accept
+            # it a moment later and drive a mission nobody holds any more.
+            self.node.get_logger().info(f"{self.name}: cancelling unanswered goal")
+            self.unanswered = self.send_future
+            self.unanswered.add_done_callback(self._cancel_once_answered)
+            return
         in_flight = (
             self.goal_handle is not None
             and self.result_future is not None
@@ -99,3 +121,27 @@ class DriveTo(py_trees.behaviour.Behaviour):
         if in_flight:
             self.node.get_logger().info(f"{self.name}: cancelling in-flight goal")
             self.goal_handle.cancel_goal_async()
+            self.stopping = self.result_future
+
+    def _cancel_once_answered(self, future):
+        """Runs on the executor once Nav2 answers a goal a halt caught in flight."""
+        try:
+            handle = future.result()
+        except Exception as exc:  # the send itself failed: nothing to stop
+            self.node.get_logger().warning(f"{self.name}: goal send failed: {exc}")
+            handle = None
+        if handle is not None and handle.accepted:
+            handle.cancel_goal_async()
+            self.stopping = handle.get_result_async()
+        self.unanswered = None
+
+    def halting(self) -> bool:
+        """Whether a goal this behaviour sent is still alive after a halt.
+
+        True from the halt until Nav2 has ended the goal — which, for a
+        ``NavigateToPose`` goal, is after its controller has been stopped and
+        has published a zero velocity. False when there was nothing to stop.
+        """
+        if self.unanswered is not None:
+            return True
+        return self.stopping is not None and not self.stopping.done()

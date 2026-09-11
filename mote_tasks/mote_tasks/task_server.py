@@ -36,6 +36,19 @@ bench script published it. The agent knows, because it knows which ids it
 dispatched, and rewrites the field on the way out. So the honest answer here is
 the one that claims least.
 
+**A cancel is a separate topic, not another command.** ``task/cancel`` carries
+a mission/v0 cancel naming a mission id, and it bypasses everything
+``on_command`` checks — the lane most of all, since the mission a cancel is
+for is by definition the one holding it. What a cancel does is halt the active
+tree, whose behaviours stop what they started (``DriveTo`` cancels its Nav2
+goal), and report ``cancelled`` — but only once the halted behaviours say they
+*have* stopped, because the spec's ``cancelled`` means it stopped, not that
+stopping was asked for. Until then the mission keeps its lane. A cancel naming
+any other id is a no-op: the caller's goal, that mission not running, is
+already met. If Nav2 has not ended its goal within ``cancel_timeout`` the
+mission is failed ``internal`` instead, which says what is known — the tree let
+go and Nav2 did not confirm it.
+
 Preconditions are evaluated, not merely declared. ``localized`` is a fresh
 ``map``->``base_link`` transform: without one Nav2 cannot drive anyway, and
 rejecting at dispatch tells the dispatcher *why* where flailing in Nav2 for two
@@ -118,6 +131,7 @@ class TaskServer(Node):
         self.localization_timeout = self.declare_parameter(
             "localization_timeout", 5.0
         ).value
+        self.cancel_timeout = self.declare_parameter("cancel_timeout", 5.0).value
 
         if not zones_file:
             zones_file = os.path.join(
@@ -183,6 +197,9 @@ class TaskServer(Node):
         )
         self.capabilities_pub.publish(String(data=json.dumps(self.capabilities)))
         self.create_subscription(String, "task/command", self.on_command, 1)
+        # Depth 10 rather than 1: a cancel must not be dropped because a
+        # command arrived beside it, and every one of them is idempotent.
+        self.create_subscription(String, "task/cancel", self.on_cancel, 10)
         self.create_service(Trigger, map_reload.IDLE_SERVICE, self.on_idle)
         self.create_subscription(
             String, map_reload.SERVING_TOPIC, self.on_map_serving, LATCHED
@@ -426,6 +443,8 @@ class TaskServer(Node):
             "lane": lane,
             "summary": summary,
             "deadline": self._deadline(declared, command),
+            # Set by on_cancel: who asked, and when the halt must be confirmed.
+            "cancel": None,
         }
         self._set_tick_rate(active=True)
         self._status(
@@ -439,9 +458,9 @@ class TaskServer(Node):
         """When this mission must have finished, on the node's own clock.
 
         The capability's ``max_duration_s``, or the command's ``deadline`` if
-        the dispatcher named an earlier one. Enforced rather than advertised:
-        the capability declares ``cancellable: false``, and the spec is right
-        that something unbounded which cannot be stopped is not dispatchable.
+        the dispatcher named an earlier one. Enforced even though both
+        capabilities are cancellable: a cancel needs somebody to send it, and a
+        dispatcher that dispatched and went away has left nobody who will.
         """
         started = self._now()
         bound = started + float(declared["execution"]["max_duration_s"])
@@ -457,6 +476,75 @@ class TaskServer(Node):
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
+
+    # -- cancelling -------------------------------------------------------
+
+    def on_cancel(self, msg: String):
+        try:
+            cancel = spec_mission.check(json.loads(msg.data), "cancel")
+        except (ValueError, SpecError) as exc:
+            self.get_logger().warning(f"ignoring a malformed cancel: {exc}")
+            return
+        if cancel["platform_id"] != self.platform_id:
+            self.get_logger().warning(
+                f"ignoring a cancel addressed to {cancel['platform_id']!r}; "
+                f"this platform is {self.platform_id!r}"
+            )
+            return
+        if self.mission is None or self.mission["id"] != cancel["id"]:
+            # Unknown, finished, or never ours: the spec makes each a no-op,
+            # and there is no status to publish because there is no mission
+            # this node could honestly say anything about.
+            running = self.mission["id"] if self.mission else "nothing"
+            self.get_logger().info(
+                f"cancel for {cancel['id']} is a no-op; {running} is in flight"
+            )
+            return
+        if self.mission["cancel"] is not None:
+            return  # a redelivery, or a second click: already stopping
+        self.mission["cancel"] = {
+            "by": cancel.get("issued_by") or "",
+            "reason": cancel.get("reason") or "",
+            "deadline": self._now() + self.cancel_timeout,
+        }
+        self.get_logger().info(f"cancelling {self.mission['id']}")
+        # Halt first, so WaitForTask is what the next tick finds, then let go
+        # of the task. stop(INVALID) runs terminate() on every behaviour that
+        # has started — which is where each one stops what it began.
+        self.active.root.stop(py_trees.common.Status.INVALID)
+        self.blackboard.set(TASK_KEY, None)
+        self._settle_cancel()
+
+    def _halting(self) -> list:
+        """The behaviours of the active tree still stopping something."""
+        return [
+            behaviour.name
+            for behaviour in self.active.root.iterate()
+            if getattr(behaviour, "halting", None) and behaviour.halting()
+        ]
+
+    def _settle_cancel(self):
+        """Report the cancel once nothing is left moving, or give up on it."""
+        request = self.mission["cancel"]
+        halting = self._halting()
+        by = f" by {request['by']}" if request["by"] else ""
+        why = f": {request['reason']}" if request["reason"] else ""
+        if not halting:
+            self._finish(
+                spec_mission.CANCELLED,
+                detail=f"{self.mission['summary']} — cancelled{by}{why}",
+            )
+        elif self._now() > request["deadline"]:
+            self._finish(
+                spec_mission.FAILED,
+                failure=spec_mission.failure(
+                    spec_mission.INTERNAL,
+                    f"cancel requested{by}, but {', '.join(halting)} had not "
+                    f"stopped within {self.cancel_timeout:.0f}s; the robot may "
+                    "still be moving",
+                    at=spec_mission.ACCEPTED,
+                ),
+            )
 
     # -- preconditions ----------------------------------------------------
 
@@ -551,6 +639,10 @@ class TaskServer(Node):
     # -- the tick ---------------------------------------------------------
 
     def tick(self):
+        if self.mission is not None and self.mission["cancel"] is not None:
+            # The tree is already halted; ticking it would only restart it.
+            self._settle_cancel()
+            return
         self.active.tick()
         root = self.active.root
         tip = root.tip()
@@ -599,7 +691,7 @@ class TaskServer(Node):
             at=spec_mission.ACCEPTED,
         )
 
-    def _finish(self, state: str, failure: dict | None = None):
+    def _finish(self, state: str, failure: dict | None = None, detail: str = ""):
         mission, self.mission = self.mission, None
         self.blackboard.set(TASK_KEY, None)
         self.blackboard.set(FAILURE_KEY, None)
@@ -612,7 +704,7 @@ class TaskServer(Node):
                 state,
                 lane=mission["lane"],
                 source=spec_mission.SOURCE_LOCAL,
-                detail=mission["summary"],
+                detail=detail or mission["summary"],
                 failure=failure,
             )
         )

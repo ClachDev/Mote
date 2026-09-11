@@ -10,6 +10,7 @@ the reverse.
     ros2 run mote_tasks mission goto target=kitchen
     ros2 run mote_tasks mission fetch target=red_box destination=dropoff
     ros2 run mote_tasks mission --list          # what this robot offers
+    ros2 run mote_tasks mission --cancel <id>   # stop a mission in flight
 
 It is *not* a second dispatcher. There is no correlation-id bookkeeping, no
 retention and no single-inflight rule here: the task server enforces the lane
@@ -30,6 +31,11 @@ from mote_bringup.spec import SpecError
 from mote_bringup.spec import mission as spec_mission
 
 from mote_tasks.task_server import LATCHED, UNENROLLED
+
+#: How long ``--cancel`` follows the mission. A cancel the task server honours
+#: ends in ``cancelled`` within its ``cancel_timeout`` (5 s) or in ``failed``
+#: at it; one naming a mission that is not in flight gets no answer at all.
+CANCEL_WAIT_S = 15.0
 
 
 def parse_input(words) -> dict:
@@ -76,6 +82,7 @@ class Dispatcher(Node):
         self.capabilities = None
         self.statuses = []
         self.publisher = self.create_publisher(String, "task/command", 1)
+        self.cancel_publisher = self.create_publisher(String, "task/cancel", 10)
         self.create_subscription(
             String, "task/capabilities", self._on_capabilities, LATCHED
         )
@@ -112,6 +119,46 @@ def report(status: dict) -> None:
         print(f"{' ' * 26}! {warning}", flush=True)
 
 
+def follow(node, mission_id: str, wait: float) -> dict | None:
+    """Print ``mission_id``'s statuses as they arrive; the terminal one, or None."""
+    seen = 0
+
+    def terminal():
+        nonlocal seen
+        for status in node.statuses[seen:]:
+            if status["id"] == mission_id:
+                report(status)  # anything else is another mission's
+        seen = len(node.statuses)
+        return any(s["id"] == mission_id and s["terminal"] for s in node.statuses)
+
+    node.spin(wait, until=terminal)
+    final = [s for s in node.statuses if s["id"] == mission_id and s["terminal"]]
+    return final[-1] if final else None
+
+
+def cancel(node, mission_id: str, reason: str) -> int:
+    payload = spec_mission.cancel(
+        node.platform_id, mission_id, issued_by="mission-cli", reason=reason
+    )
+    node.spin(2.0, until=lambda: node.cancel_publisher.get_subscription_count() > 0)
+    if not node.cancel_publisher.get_subscription_count():
+        print("nothing is subscribed to task/cancel — is `pixi run tasks` up?")
+        return 1
+    node.cancel_publisher.publish(String(data=json.dumps(payload)))
+    print(f"-> {node.platform_id}: cancel {mission_id}")
+    final = follow(node, mission_id, CANCEL_WAIT_S)
+    if final is None:
+        # The spec makes a cancel for an id that is not in flight a no-op, so
+        # silence is also the answer for one that has already finished.
+        print(
+            f"no status for {mission_id} within {CANCEL_WAIT_S:.0f}s: it was not "
+            "in flight here",
+            file=sys.stderr,
+        )
+        return 1
+    return 0 if final["state"] == spec_mission.CANCELLED else 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="mission", description=__doc__.split("\n\n")[0]
@@ -122,6 +169,10 @@ def main(argv=None):
         "--list", action="store_true", help="print this robot's capability set"
     )
     parser.add_argument("--platform-id", default="", help="override this robot's id")
+    parser.add_argument(
+        "--cancel", metavar="ID", default="", help="cancel the mission with this id"
+    )
+    parser.add_argument("--reason", default="", help="why, for --cancel")
     parser.add_argument(
         "--wait", type=float, default=300.0, help="seconds to follow the mission"
     )
@@ -137,6 +188,8 @@ def main(argv=None):
         # Latched, so this is a discovery wait rather than a poll: the set is
         # already published if the task server is up.
         node.spin(3.0, until=lambda: node.capabilities is not None)
+        if args.cancel:
+            return cancel(node, args.cancel, args.reason)
         if args.list or not args.capability:
             print(describe(node.capabilities or {}))
             return 0 if node.capabilities else 1
@@ -154,25 +207,20 @@ def main(argv=None):
             f"(id {payload['id']})"
         )
 
-        seen = 0
-
-        def terminal():
-            nonlocal seen
-            for status in node.statuses[seen:]:
-                if status["id"] != payload["id"]:
-                    continue  # another mission, most likely the fleet's
-                report(status)
-            seen = len(node.statuses)
-            return any(
-                s["id"] == payload["id"] and s["terminal"] for s in node.statuses
+        try:
+            final = follow(node, payload["id"], args.wait)
+        except KeyboardInterrupt:
+            # Stopping watching is not stopping the robot; say what does.
+            print(
+                "\nstill in flight — stop it with: "
+                f"ros2 run mote_tasks mission --cancel {payload['id']}",
+                file=sys.stderr,
             )
-
-        node.spin(args.wait, until=terminal)
-        final = [s for s in node.statuses if s["id"] == payload["id"] and s["terminal"]]
-        if not final:
+            return 130
+        if final is None:
             print(f"no terminal status within {args.wait:.0f}s", file=sys.stderr)
             return 1
-        return 0 if final[-1]["state"] == spec_mission.SUCCEEDED else 1
+        return 0 if final["state"] == spec_mission.SUCCEEDED else 1
     except KeyboardInterrupt:
         return 130
     finally:

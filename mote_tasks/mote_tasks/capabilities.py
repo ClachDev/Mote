@@ -16,13 +16,12 @@ The one place Mote narrows the registry is ``additionalProperties: false``: an
 input the registry admits is still admitted, and a dispatcher's typo becomes a
 rejection instead of a silently ignored field.
 
-Everything a *dispatcher* needs is declared and nothing else is. In particular
-``execution.cancellable`` is **false** for both, because the task layer has no
-cancel: there is a twist_mux pause lock an operator can assert, and that is not
-the same thing, and saying ``true`` here would promise a message nothing
-handles. ``max_duration_s`` is therefore non-null and ``task_server`` enforces
-it — the spec makes an unbounded, uncancellable capability undispatchable, and
-it is right to.
+Everything a *dispatcher* needs is declared and nothing else is. Both declare
+``execution.cancellable: true``, and it is a promise ``task_server`` keeps: a
+mission/v0 cancel on ``mission/cancel`` halts the tree, cancels the Nav2 goal,
+and reports ``cancelled`` once the goal has ended. ``max_duration_s`` stays
+non-null and enforced all the same — a cancel needs somebody to send it, and a
+bound holds when nobody does.
 
 ``goto`` is ``idempotency: natural`` — driving somewhere twice ends in the same
 place. ``fetch`` is ``none``: every run picks something up and puts it down, so
@@ -35,7 +34,7 @@ from mote_bringup.spec import capability as cap
 #: Bumped when anything in :func:`capability_set`'s output changes, so a
 #: consumer holding a higher revision can ignore a lower one and an
 #: out-of-order redelivery is harmless rather than a downgrade.
-REVISION = 1
+REVISION = 2
 
 PLATFORM_TYPE = "amr"
 
@@ -64,7 +63,7 @@ def goto(max_speed_mps: float | None = None) -> dict:
         },
         execution=cap.execution(
             mode="mission",
-            cancellable=False,
+            cancellable=True,
             idempotency="natural",
             max_duration_s=600.0,
         ),
@@ -107,7 +106,7 @@ def fetch(max_speed_mps: float | None = None) -> dict:
         },
         execution=cap.execution(
             mode="mission",
-            cancellable=False,
+            cancellable=True,
             idempotency="none",
             max_duration_s=900.0,
         ),
