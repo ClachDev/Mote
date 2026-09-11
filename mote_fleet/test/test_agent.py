@@ -530,6 +530,39 @@ def test_health_carries_the_mission_the_robot_is_busy_with(fleet):
     assert running["lane"] == spec_mission.DEFAULT_LANE
 
 
+def test_health_follows_the_mission_without_waiting_for_its_period(fleet):
+    """health.mission is what the dashboard's cancel button reads, so a
+    mission's start and end reach it with the status, not a period later.
+    The periodic health is stopped first: with nothing else publishing, its
+    next tick would follow every status too, and prove nothing."""
+    protocol = fleet.protocol
+    for timer in fleet.agent.timers:
+        if timer.callback == fleet.agent.publish_health:
+            timer.cancel()
+    fleet.mqtt.connect()
+    payload = send(fleet)
+    fleet.peer.say(payload["id"], spec_mission.ACCEPTED)
+    fleet.spin(0.3)
+    fleet.peer.say(payload["id"], spec_mission.CANCELLED)
+    fleet.spin(0.3)
+
+    leaves = [protocol.parse_topic(m.topic)[1] for m in fleet.mqtt.published]
+    for state, mission in (
+        (spec_mission.DISPATCHED, spec_mission.DISPATCHED),
+        (spec_mission.ACCEPTED, spec_mission.ACCEPTED),
+        (spec_mission.CANCELLED, None),
+    ):
+        at = next(
+            i
+            for i, message in enumerate(fleet.mqtt.published)
+            if leaves[i] == protocol.STATUS
+            and json.loads(message.payload)["state"] == state
+        )
+        assert leaves[at + 1] == protocol.HEALTH, (state, leaves[at : at + 3])
+        reported = json.loads(fleet.mqtt.published[at + 1].payload)["mission"]
+        assert (reported or {}).get("state") == mission, reported
+
+
 def test_health_goes_unknown_again_if_the_monitor_stops(fleet):
     fleet.agent.diagnostics_timeout = 0.1
     fleet.mqtt.connect()

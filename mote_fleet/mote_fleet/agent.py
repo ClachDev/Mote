@@ -185,6 +185,8 @@ class MoteAgent(Node):
         self.version = repo_version()
         self.tracker = dispatch.CommandTracker(accept_timeout=command_timeout)
         self.capabilities = None
+        #: The mission the last health payload named, to republish on change.
+        self._reported_mission = None
         self._inbound = queue.Queue()
         self._snapshot_due = False
         self._diagnostics = None
@@ -440,6 +442,12 @@ class MoteAgent(Node):
 
     def _publish_status(self, payload: dict):
         self._publish(protocol.STATUS, payload)
+        # health.mission is what a dashboard reads to know what the robot is
+        # busy with, and to offer to cancel it. It changes exactly when a
+        # status does, so it goes out now rather than up to a health period
+        # later.
+        if self.tracker.summary() != self._reported_mission:
+            self.publish_health()
 
     # ---- the map registry -----------------------------------------------
 
@@ -642,7 +650,9 @@ class MoteAgent(Node):
     def publish_health(self):
         if self.robot_id is None:
             return
-        self._publish(protocol.HEALTH, self.health_payload())
+        payload = self.health_payload()
+        self._reported_mission = payload["mission"]
+        self._publish(protocol.HEALTH, payload)
 
     def pose_payload(self) -> dict | None:
         try:

@@ -402,6 +402,10 @@ def main(argv=None):
                 args.floor,
                 "--revision",
                 published_revision(maps, args.site, args.floor),
+                # Long enough that the browser can find and press the cancel
+                # button on a mission still in flight.
+                "--task-seconds",
+                "20",
                 *sum(
                     (
                         ["--robot", f"{name}:{profile}"]

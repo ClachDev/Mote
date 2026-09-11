@@ -427,6 +427,19 @@ main {
   color: var(--dim);
 }
 
+/* At the end of the line it acts on. A refusal is a `.note`, whose full width
+   wraps it onto a line of its own under the button. */
+.mission-cancel {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.mission-cancel:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
 /* One line at the foot of the pane, under a rule. `margin-top: auto` in the
    pane's flex column is what pins it there when the pane is short; when the
    pane scrolls it simply follows the last section. */
