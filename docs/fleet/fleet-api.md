@@ -111,6 +111,7 @@ GET  /v1/robots                          the roster, each row with its presence
 GET  /v1/robots/<robot_id>               one row + its live state (an operator)
 POST /v1/enroll                          allocate (or return) a robot id
 POST /v1/robots/<robot_id>/dispatch      authorize, audit, publish a command
+POST /v1/robots/<robot_id>/cancel        authorize, audit, publish a cancel
 GET  /v1/audit[?limit=&robot_id=]        what was dispatched, by whom
 GET  /v1/maps                            basemaps this server can serve
 GET  /v1/maps/<site>/<floor>/map.json    resolution + origin + size
@@ -288,6 +289,49 @@ layer, not here. Two operators dispatching at once both get `202`; the second
 robot-side answer is `rejected` with `failure.class: "busy"`, naming the mission
 that holds the lane.
 
+### `POST /v1/robots/<robot_id>/cancel`
+
+Stop one mission on one robot. The same three steps as a dispatch: authorize,
+write the audit row, publish, this time to
+[`mission/cancel`](control-plane.md#missioncancel).
+
+```json
+{"schema": 1, "id": "3e99cf44d1294ab5", "reason": "wrong room"}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `schema` | int | `1` |
+| `id` | string | the correlation id of the mission to stop |
+| `reason` | string, *optional* | ≤300 characters; written to the audit row and carried to the robot |
+| `issued_by` | string, *optional* | free text for audit; defaults to `ui:<operator name>` |
+
+```json
+{"schema":1,"robot_id":"mote-01","id":"3e99cf44d1294ab5","reason":"wrong room",
+ "issued_at":"2026-09-11T12:50:14.201Z","issued_by":"ui:michael","audit_id":8,
+ "status_topic":"mote/v2/mote-01/mission/status"}
+```
+
+**`202` means published, exactly as for a dispatch.** The server holds no
+mission state, so it does not check that the mission is in flight, and the
+specification makes a cancel for an unknown or finished id a no-op rather than
+an error. Whether the mission stopped is the robot's `cancelled` status on
+`status_topic`, published once Nav2 has ended the goal. A robot that could not
+confirm the stop within 5 s answers `failed` with class `internal` instead.
+
+| Status | Meaning |
+|---|---|
+| `202` | published to `mission/cancel` and recorded |
+| `400` | no `id`, an `id` that is not a correlation id, or an invalid robot id |
+| `401` | missing, unknown, or revoked operator token |
+| `404` | no such robot in the registry |
+| `503` | the broker could not be reached; nothing was published |
+
+To cancel whatever a robot is doing without copying an id: its retained
+`mission/status` names the last mission, and a non-terminal one is the mission
+in flight. `fleetctl cancel <robot>` reads it from there; the dashboard reads
+`health.mission`.
+
 ### `GET /v1/audit`
 
 ```json
@@ -301,7 +345,9 @@ Newest first, `limit` defaults to 100 (max 1000), optional `robot_id` filter.
 
 `command` is a readable description of the mission, for a human reading the log.
 The machine-readable record of what was dispatched is `command_id` beside it,
-which every status the robot publishes carries back.
+which every status the robot publishes carries back. A cancel is a row of its
+own with `action: "cancel"`, `command` reading `cancel <id> (<reason>)`, and
+`command_id` naming the mission it asked to stop.
 
 `result` is one of `published` · `error` (the broker refused or was unreachable,
 with `detail`) · `rejected` (the API refused, e.g. no such robot) ·

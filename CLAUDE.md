@@ -69,8 +69,8 @@ Milestones and rationale: `docs/design/fleet.md`. Built: M0 (overlay + identity)
 ### Wire contracts
 
 - **Two versioned contracts**: MQTT in `docs/fleet/control-plane.md`, HTTP in `docs/fleet/fleet-api.md`. Read the relevant one before touching a payload or route. `protocol.py`, `schema/*.schema.json` and `control-plane.md` are held together by `test_protocol.py`.
-- Topic tree: `mote/v2/<robot_id>/{presence,health,pose,capabilities,mission/command,mission/status}`, plus `mote/v2/registry/site/<site>/floor/<floor>/current`. `registry` is therefore a reserved robot id. Every payload carries `schema: 1`.
-- **Everything is retained except `mission/command`** — a retained command would re-fire on every reconnect. `presence` is also the MQTT Last Will.
+- Topic tree: `mote/v2/<robot_id>/{presence,health,pose,capabilities,mission/command,mission/cancel,mission/status}`, plus `mote/v2/registry/site/<site>/floor/<floor>/current`. `registry` is therefore a reserved robot id. Every payload carries `schema: 1`.
+- **Everything is retained except `mission/command` and `mission/cancel`** — a retained command would re-fire on every reconnect. `presence` is also the MQTT Last Will.
 - **Payloads are forwarded, never rebuilt.** The agent forwards task-server JSON byte for byte; the fleet server forwards what it last saw. No field is added, renamed or reinterpreted. There is one definition of each payload.
 - `robot_id` is a lowercase DNS label: it is a MagicDNS hostname, an MQTT topic level and a directory name at once. It is not the hostname. Enrollment is idempotent on the hardware fingerprint and allocates `mote-NN` inside a `BEGIN IMMEDIATE` transaction.
 - **A v1 robot and a v2 server do not interoperate**, deliberately: a translating shim would be a third definition of the wire.
@@ -89,11 +89,17 @@ Mote is the reference implementation of the Augere specs. Contracts live in `mot
 - The agent is **a bridge and reporter, never in the control loop**. It runs as its own `mote-agent.service` (installed, not enabled), not inside `pixi run robot`, so a robot that cannot reach the fleet still boots and navigates.
 - **The lane belongs to the executor** (`task_server`): one mission at a time, `busy` names the holder. `dispatch.py` keeps only what the agent alone can answer: dedup of a redelivered id, one-hour terminal retention, the 20 s no-verdict timeout, and `source` (`local` for a mission the agent did not dispatch).
 - Health is `/diagnostics_agg` forwarded, not recomputed; `state: unknown` with no monitor. `battery` is always null — nothing measures it.
-- There is **no cancel**. `mission/cancel` is a reserved leaf with no publisher and both capabilities declare `cancellable: false`. The operator's tool is the `/pause_navigation` lock.
+- **Cancel** rides `mission/cancel` (ROS `task/cancel`), never retained, and names a mission id. It is not a command: a command meets the held lane and is refused `busy`. A cancel for any other id is a no-op with no status. Wire: `control-plane.md` §mission/cancel; flow: `docs/fleet/README.md` §8; timing: `mote_simulation/test/sim_cancel/` (sim env).
+  - **`cancelled` means it stopped**: published off the Nav2 goal's end, not the request. `task_server.on_cancel` halts the tree with `root.stop(INVALID)` — py_trees 2.4's `BehaviourTree.interrupt()` only stops tick-tocking. The mission holds its lane while any behaviour's `halting()` is true; past `cancel_timeout` (5 s) it ends `failed [internal]`.
+  - Nav2 ends the goal when the controller *accepts* the cancel, not when it acts on it, so the zero velocity can trail `cancelled` by part of a controller period (sim: zero command 16–48 ms after the cancel, `cancelled` 28–84 ms). Waiting for the wheels would cost an odometry subscription.
+  - `DriveTo.terminate` must cancel a goal Nav2 has not yet answered, once accepted; acting only on an existing handle leaves a goal driven with no mission holding the lane. `test_cancel.py` hits that window in ordinary runs.
+  - The two topics carry no ordering, so the agent holds a cancel for a mission still `dispatched` until `accepted` arrives (`CommandTracker.cancels_due`). Otherwise it forwards every cancel byte for byte and drops only one for a mission it knows has ended.
+  - The agent publishes health whenever the mission it reports changes, not only on its 5 s timer: the dashboard's cancel button reads `health.mission`.
+  - `fleetctl cancel <robot>` takes the id from the retained `mission/status`. `POST /v1/robots/<id>/cancel` mirrors dispatch: authorize, audit (`action: cancel`, `command_id` = the mission), publish.
 
 ### Fleet server and API
 
-- **Reads ride MQTT, writes ride HTTP.** The dashboard subscribes to retained topics over WebSockets. Every write to `mission/command`, from CLI or browser, goes through `POST /v1/robots/<id>/dispatch`, which authorizes and audits.
+- **Reads ride MQTT, writes ride HTTP.** The dashboard subscribes to retained topics over WebSockets. Every write to `mission/command` or `mission/cancel`, from CLI or browser, goes through `POST /v1/robots/<id>/dispatch` or `.../cancel`, which authorize and audit.
 - **`fleet_server.ROUTES` is the route table and the auth gate.** A new route is authenticated by default and must opt out on its own line. Anonymous callers are refused before existence is checked, so a 404 reveals nothing. `test_fleet_server.py` walks the table; a route with a new path variable needs a `SAMPLES` entry. The open entries are `/healthz`, `POST /v1/enroll`, and the robot's map upload and `bundle.tar.gz` pull; the static UI is served to unmatched GETs.
 - The server holds its own subscription (`BrokerFeed` → `RobotState`) so `GET /v1/robots[/<id>]` can answer without the client touching MQTT. Absent state is null per field; a never-heard-from robot is `200` with nulls, `404` means not enrolled. Nothing is persisted; a cleared retained topic clears the field.
 - In `serve()`, `publisher` and `feed` are injected as a pair.

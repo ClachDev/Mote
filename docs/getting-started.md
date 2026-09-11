@@ -152,8 +152,8 @@ pixi run tasks     # the behaviour-tree task layer, alongside `pixi run robot`
 ```
 
 ```bash
-pixi run -- ros2 topic pub --once /task/command std_msgs/msg/String \
-  "{data: goto kitchen}"
+pixi run -- ros2 run mote_tasks mission goto target=kitchen
+pixi run -- ros2 run mote_tasks mission --cancel <id>   # stop it; the id is printed above
 ```
 
 See [Missions](robot/missions.md) for the `fetch` and `goto` grammar.

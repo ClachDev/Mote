@@ -89,7 +89,12 @@ that is going wrong.
 component, and cancelling a goal from it would wire velocity arbitration into the
 action layer — a nudge to straighten the robot in a doorway would destroy a fetch
 mission halfway through. So a takeover suppresses Nav2 for as long as the
-operator is driving, and the goal is still there afterwards.
+operator is driving, and the goal is still there afterwards. Ending the mission
+is the mission layer's act, and it has one: a mission/v0 cancel on
+`task/cancel` (the dashboard's **cancel** button, `fleetctl cancel <robot>`, or
+`ros2 run mote_tasks mission --cancel <id>` at the robot) halts the task tree,
+which cancels the Nav2 goal, and the mission ends `cancelled` once Nav2 has
+ended the goal.
 
 **Letting go stops the robot before Nav2 gets it back.** That is what the teleop
 input's 1.0 s timeout buys, against the controller's `cmd_vel_timeout` of 0.5 s
@@ -117,7 +122,8 @@ what a long pause does to the *mission*: Nav2's `SimpleProgressChecker` gives th
 robot `movement_time_allowance` (10 s) to move `required_movement_radius`, so a
 goal held off the wheels while the robot sits still aborts itself, and the task
 reports failed. Driving under teleop keeps it alive, since the checker watches
-the robot's pose and not who commanded it.
+the robot's pose and not who commanded it. The lock holds autonomy off without
+ending anything; to end the mission, cancel it.
 
 Cost is one process and **one DDS participant** (measured with
 `pixi run dds-check`), putting the full robot stack at ~26 of 33.
