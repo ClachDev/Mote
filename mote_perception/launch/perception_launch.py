@@ -45,7 +45,7 @@ def generate_launch_description():
         package="mote_perception",
         executable="camera_monitor",
         name="camera_monitor",
-        remappings=[("image", "/image_raw")],
+        remappings=[("image/compressed", "/image_raw/compressed")],
         output="screen",
     )
 

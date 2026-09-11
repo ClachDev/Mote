@@ -1,0 +1,11 @@
+[INFO] [camera_monitor-1]: process started with pid [679266]
+[camera_monitor-1] [WARN] [1789129916.568849818] [camera_monitor]: No frames received in the last 5 s
+[camera_monitor-1] [INFO] [1789129920.112344624] [camera_monitor]: 21.2 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[camera_monitor-1] [INFO] [1789129925.179558216] [camera_monitor]: 30.4 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[camera_monitor-1] [INFO] [1789129930.231139348] [camera_monitor]: 30.2 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[camera_monitor-1] [INFO] [1789129935.276746021] [camera_monitor]: 30.4 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[camera_monitor-1] [INFO] [1789129940.323721383] [camera_monitor]: 30.2 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[camera_monitor-1] [INFO] [1789129945.361555521] [camera_monitor]: 30.4 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[camera_monitor-1] [INFO] [1789129950.416046671] [camera_monitor]: 30.2 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[camera_monitor-1] [INFO] [1789129955.466831056] [camera_monitor]: 30.4 FPS, 640x480, format=rgb8; jpeg compressed bgr8
+[INFO] [camera_monitor-1]: process has finished cleanly [pid 679266]

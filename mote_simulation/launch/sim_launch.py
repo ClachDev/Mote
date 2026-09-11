@@ -131,6 +131,22 @@ def generate_launch_description():
         ],
     )
 
+    # The real camera driver publishes /image_raw/compressed through
+    # image_transport, and every perception consumer reads that rather than the
+    # raw stream; the gz bridge publishes raw only. The republisher is lazy — it
+    # subscribes to /image_raw only while something subscribes to its output —
+    # so a sim run with no camera consumer pays nothing for it.
+    compressed_camera = Node(
+        package="image_transport",
+        executable="republish",
+        name="image_republisher",
+        parameters=[{"in_transport": "raw", "out_transport": "compressed"}],
+        remappings=[
+            ("in", "/image_raw"),
+            ("out/compressed", "/image_raw/compressed"),
+        ],
+    )
+
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -287,6 +303,7 @@ def generate_launch_description():
             robot_state_publisher,
             spawn_robot,
             bridge,
+            compressed_camera,
             RegisterEventHandler(
                 event_handler=OnProcessExit(
                     target_action=spawn_robot,

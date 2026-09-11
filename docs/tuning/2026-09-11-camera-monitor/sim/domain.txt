@@ -1,0 +1,3 @@
+domain=33 partition=mote-cm-33 (claimed)
+sim_launch from: /home/michael/Projects/mote/.claude/worktrees/camera-monitor-compressed/install/mote_simulation
+camera_monitor from: /home/michael/Projects/mote/.claude/worktrees/camera-monitor-compressed/install/mote_perception

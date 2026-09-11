@@ -1,0 +1,54 @@
+[WARN] [1789129681.279184021] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129686.264863780] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129691.264416446] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129696.264821734] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129701.264736181] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129706.265183935] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129711.264973580] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129716.264786929] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129721.264760363] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129726.264855385] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129731.264899111] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129736.264545339] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129741.264556209] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129746.264661348] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129751.265090654] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129756.265042402] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129761.264669006] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129766.264673933] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129771.264664943] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129776.264906027] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129781.264822318] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129786.264672957] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129791.265154936] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129796.265081076] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129801.265271627] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129806.264908918] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129811.265326896] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129816.264665052] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129821.264548767] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129826.265230283] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129831.264582894] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129836.265060795] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129841.264680119] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129846.264715542] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129851.264717013] [cm_idle]: No frames received in the last 5 s
+[WARN] [1789129856.265213860] [cm_idle]: No frames received in the last 5 s
+Traceback (most recent call last):
+  File "/tmp/tmp.dwqWAz3j7q/cm_idle.py", line 55, in <module>
+    main()
+  File "/tmp/tmp.dwqWAz3j7q/cm_idle.py", line 46, in main
+    rclpy.spin(node)
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/__init__.py", line 247, in spin
+    executor.spin_once()
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 926, in spin_once
+    self._spin_once_impl(timeout_sec)
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 907, in _spin_once_impl
+    handler, entity, node = self.wait_for_ready_callbacks(
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 877, in wait_for_ready_callbacks
+    return next(self._cb_iter)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 785, in _wait_for_ready_callbacks
+    raise ExternalShutdownException()
+rclpy.executors.ExternalShutdownException

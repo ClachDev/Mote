@@ -1,0 +1,34 @@
+{
+  "csv": "/tmp/tmp.dwqWAz3j7q/cm_idle/overhead.csv",
+  "samples_total": 36,
+  "loaded": {
+    "samples": 36,
+    "span_s": 175.5,
+    "procs": {
+      "mean": 1.0,
+      "median": 1.0,
+      "max": 1.0
+    },
+    "cpu_pct": {
+      "mean": 0.2,
+      "median": 0.2,
+      "max": 0.6
+    },
+    "rss_mb": {
+      "mean": 57.0,
+      "median": 57.0,
+      "max": 57.0
+    },
+    "ctxt_per_s": {
+      "mean": 22233.9,
+      "median": 21559.5,
+      "max": 38850.7
+    },
+    "intr_per_s": {
+      "mean": 14988.7,
+      "median": 14372.3,
+      "max": 28321.2
+    }
+  },
+  "idle": null
+}

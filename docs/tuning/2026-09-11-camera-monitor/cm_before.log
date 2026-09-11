@@ -1,0 +1,54 @@
+[INFO] [1789129681.276909062] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129686.259045881] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129691.258492330] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129696.258830123] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129701.258683897] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129706.259078692] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129711.258665651] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129716.258608962] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129721.259096099] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129726.258433506] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129731.258606661] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129736.258698777] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129741.258633886] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129746.258615717] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129751.258609745] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129756.258654896] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129761.259041851] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129766.258431847] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129771.258477188] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129776.258925376] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129781.258606461] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129786.258779507] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129791.258614808] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129796.259054800] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129801.258896664] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129806.258579319] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129811.258662928] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129816.258710359] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129821.258589917] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129826.258881029] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129831.258595521] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129836.258639407] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129841.258590265] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129846.258606343] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129851.258743405] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+[INFO] [1789129856.258576902] [cm_before]: 30.0 FPS, 640x480, encoding=rgb8
+Traceback (most recent call last):
+  File "/tmp/tmp.dwqWAz3j7q/cm_before.py", line 55, in <module>
+    main()
+  File "/tmp/tmp.dwqWAz3j7q/cm_before.py", line 46, in main
+    rclpy.spin(node)
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/__init__.py", line 247, in spin
+    executor.spin_once()
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 926, in spin_once
+    self._spin_once_impl(timeout_sec)
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 907, in _spin_once_impl
+    handler, entity, node = self.wait_for_ready_callbacks(
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 877, in wait_for_ready_callbacks
+    return next(self._cb_iter)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael/Projects/mote/.pixi/envs/default/lib/python3.12/site-packages/rclpy/executors.py", line 785, in _wait_for_ready_callbacks
+    raise ExternalShutdownException()
+rclpy.executors.ExternalShutdownException
