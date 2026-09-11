@@ -141,15 +141,26 @@ def rewrite(markdown: str, source: str, page: str) -> str:
     return "\n".join(out)
 
 
+def _github_slug(text, sep):
+    # GitHub keeps the word inside a `<placeholder>` and drops the brackets;
+    # pymdownx would strip it as a tag. Real tags never reach here — the toc
+    # extension has already reduced them to text.
+    return _slugify(text.replace("<", "").replace(">", ""), sep)
+
+
+_slugify = slugify(case="lower")
+
+
 def on_config(config):
     """Slug headings the way GitHub does.
 
     Every heading link already written in the repo was written against a file
     rendered on GitHub, and the two sluggers disagree — an em dash leaves
-    GitHub a double hyphen where Python-Markdown leaves a single one. Matching
-    GitHub is what lets those links keep working here unchanged.
+    GitHub a double hyphen where Python-Markdown leaves a single one, and a
+    `<placeholder>` survives on GitHub but not in pymdownx. Matching GitHub is
+    what lets those links keep working here unchanged.
     """
-    config.mdx_configs.setdefault("toc", {})["slugify"] = slugify(case="lower")
+    config.mdx_configs.setdefault("toc", {})["slugify"] = _github_slug
     return config
 
 
