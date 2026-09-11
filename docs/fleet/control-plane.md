@@ -298,8 +298,14 @@ command would meet the lane the mission holds and be refused `busy`.
 
 The mission is not cancelled until its status says `cancelled`, and until then
 it holds its lane. The robot publishes `cancelled` once the halted behaviours
-have stopped what they started: for a drive, once Nav2 has ended the goal,
-which is after its controller has published a zero velocity. If Nav2 has not
+have stopped what they started: for a drive, once Nav2 has ended the goal. Nav2
+ends it when its controller has *accepted* the cancel, and the controller's
+zero velocity follows within one 50 ms period. Measured in the sim over five
+runs, cancelling at 0.22 m/s: the drive command was zero 16–48 ms after the
+cancel, `cancelled` arrived 28–84 ms after it (once 16 ms ahead of the zero
+command), and the wheels were at rest 0.36–0.43 s after it, under the drive
+controller's 1.0 m/s² limit
+(`mote_simulation/test/sim_cancel/run_sim_cancel.sh`). If Nav2 has not
 ended the goal within 5 s (`task_server`'s `cancel_timeout`), the mission ends
 `failed` with class `internal` instead, because `cancelled` means it stopped
 and the robot cannot say that it did. A cancel naming an id that is unknown or

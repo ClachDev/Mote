@@ -138,9 +138,12 @@ class DriveTo(py_trees.behaviour.Behaviour):
     def halting(self) -> bool:
         """Whether a goal this behaviour sent is still alive after a halt.
 
-        True from the halt until Nav2 has ended the goal — which, for a
-        ``NavigateToPose`` goal, is after its controller has been stopped and
-        has published a zero velocity. False when there was nothing to stop.
+        True from the halt until Nav2 has ended the goal: bt_navigator has
+        halted its tree and the controller has accepted the cancel. The
+        controller's zero velocity follows within one of its periods, and can
+        land just after the goal ends (measured in the sim over five runs:
+        16-48 ms after the cancel, once 16 ms after the goal ended). False
+        when there was nothing to stop.
         """
         if self.unanswered is not None:
             return True

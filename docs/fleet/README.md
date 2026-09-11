@@ -654,8 +654,9 @@ writes an audit row (`action: cancel`), and it follows the mission to its end:
 2026-09-11T12:50:14.388Z  cancelled  (goto kitchen — cancelled by fleetctl: wrong room)
 ```
 
-`cancelled` arrives once Nav2 has ended the goal, which is after the robot has
-been told to stop. From then the lane is free and the next mission is taken, not
+`cancelled` arrives once Nav2 has ended the goal, within about 0.1 s of the
+cancel; the robot's drive command is zero within one 50 ms controller period,
+and the wheels are at rest about 0.4 s later. From then the lane is free and the next mission is taken, not
 refused `busy`. `cancel` exits 0 only for `cancelled`. A mission that finished
 before the cancel landed ends as it would have, and a robot that could not
 confirm the stop within 5 s answers `failed [internal]`. A cancel for a mission
