@@ -22,6 +22,15 @@ sees the whole fleet's current state the moment it connects, with no polling and
 no service in the middle. The browser speaks the same protocol as everything
 else, over WebSockets.
 
+**Except for the client that asks once.** A stream is the right shape for a
+dashboard and the wrong one for a tool that reads a robot's state, acts, and
+exits: it would have to speak MQTT, track the topic tree, know which topics are
+retained, and hold a broker credential — three contracts to keep up with where
+one would do. So this server subscribes on such a client's behalf and serves
+what it last saw at [`GET /v1/robots/<id>`](#get-v1robotsrobot_id). The
+distinction is *how often*, not *what*: the payloads are the same documents,
+forwarded, and anything wanting every transition still joins the broker.
+
 **Writes ride HTTP.** A command has to be attributed to somebody, recorded, and
 refusable. Broker ACLs can express "may publish" but not "who did", so dispatch
 is a request to this API, which authorizes the operator, writes the audit row,
@@ -98,8 +107,8 @@ trusted on.
 ```
 GET  /healthz                            liveness, contract, robot count
 GET  /v1/config                          what the browser needs to bootstrap
-GET  /v1/robots                          the roster
-GET  /v1/robots/<robot_id>               one row
+GET  /v1/robots                          the roster, each row with its presence
+GET  /v1/robots/<robot_id>               one row + its live state (an operator)
 POST /v1/enroll                          allocate (or return) a robot id
 POST /v1/robots/<robot_id>/dispatch      authorize, audit, publish a command
 GET  /v1/audit[?limit=&robot_id=]        what was dispatched, by whom
@@ -125,6 +134,99 @@ GET  /                                   the operator UI (static files)
 `POST /v1/enroll` is specified in
 [`control-plane.md`](control-plane.md#enrollment--registry-api) and unchanged by
 M3; the rest are below.
+
+### `GET /v1/robots`
+
+Every enrolled robot, each row carrying the **`presence` payload** the server
+last saw on that robot's retained topic.
+
+```json
+{"schema":1,"broker_connected":true,"robots":[
+ {"robot_id":"mote-01","name":"Scout","site":"home","fingerprint":"serial:aaa",
+  "facts":{},"enrolled_at":"2026-07-26T18:41:02Z","last_enrolled_at":"2026-07-26T18:41:02Z",
+  "presence":{"schema":1,"robot_id":"mote-01","online":true,
+              "stamp":"2026-09-02T09:14:03.221Z","version":"0.4.1"}},
+ {"robot_id":"mote-02","name":"Rover","site":"","fingerprint":"serial:bbb",
+  "facts":{},"enrolled_at":"2026-07-26T18:44:10Z","last_enrolled_at":"2026-07-26T18:44:10Z",
+  "presence":null}]}
+```
+
+Presence and nothing more: a client picking a robot to dispatch to asks one
+question — which of these is online — and it should not cost a request per
+robot. Everything else about one robot is on that robot's own route.
+
+**`presence: null` means the server has heard nothing, not that the robot is
+offline.** A robot that is off publishes `online: false` through its Last Will
+and the payload is there, retained, saying so; null is the answer for a robot
+that has never connected — or for a server that cannot hear, which is what
+`broker_connected` distinguishes.
+
+### `GET /v1/robots/<robot_id>`
+
+One robot's registry row **and the retained state as this server last saw it**.
+
+```json
+{"schema":1,"robot_id":"mote-01","name":"Scout","site":"home",
+ "fingerprint":"serial:aaa","facts":{},"enrolled_at":"2026-07-26T18:41:02Z",
+ "last_enrolled_at":"2026-07-26T18:41:02Z","broker_connected":true,
+ "presence":{"schema":1,"robot_id":"mote-01","online":true,"stamp":"…"},
+ "health":{"schema":1,"robot_id":"mote-01","state":"ok","summary":"…","subsystems":[…]},
+ "pose":{"schema":1,"robot_id":"mote-01","frame_id":"map","x":1.5,"y":-2.25,
+         "yaw":0.75,"site":"home","floor":"ground","stamp":"…"},
+ "capabilities":{"schema":1,"platform_id":"mote-01","capabilities":[…]},
+ "mission_status":{"schema":1,"id":"3e99cf44d1294ab5","platform_id":"mote-01",
+                   "capability":"goto","state":"succeeded","terminal":true,
+                   "source":"fleet","stamp":"…"}}
+```
+
+| Field | Source |
+|---|---|
+| the row | the registry: `robot_id`, `name`, `site`, `fingerprint`, `facts`, `enrolled_at`, `last_enrolled_at` |
+| `broker_connected` | whether *this server's* subscription is live |
+| `presence` · `health` · `pose` · `capabilities` | the retained payload on `mote/v2/<id>/<leaf>`, or `null` |
+| `mission_status` | the retained payload on `mote/v2/<id>/mission/status`, or `null` |
+
+| Status | Meaning |
+|---|---|
+| `200` | the row, with whatever state the server holds |
+| `401` | missing, unknown, or revoked operator token |
+| `404` | no such robot in the registry |
+
+**This route exists so a client can discover and follow a mission without
+joining the broker.** M3's split — reads over MQTT, writes over HTTP — is right
+for the dashboard, which wants a live stream. It is wrong for a client that asks
+once and acts: coupling that client to the broker makes it track the topic tree,
+retention semantics and a broker credential, which is three contracts where one
+would do. An HTTP-only client depends on this document alone.
+
+**The payloads are forwarded, not rebuilt.** Each is the publisher's own
+document — `presence`/`health`/`pose` per
+[`control-plane.md`](control-plane.md), `capabilities` per capability/v0,
+`mission_status` per mission/v0 — served with no field added, renamed or
+reinterpreted, which is the rule the agent follows so that there is one
+definition of these payloads and not a second one here. (They are re-serialised,
+so key formatting is JSON's; the fields are the robot's.)
+
+**Absent state is `null`, per field.** A robot the server has never heard from
+answers `200` with the row and every state field null — not `404`, which is
+reserved for a robot that is not enrolled, and not an invented payload. What
+`null` cannot say on its own is *why*, which is why `broker_connected` is
+beside it: with the feed down, every field is null however healthy the fleet is.
+
+**`mission_status` is the last status, not a history.** One transition is all
+that is retained — a status is a snapshot rather than a delta, so the latest one
+is the whole truth about that mission — and a client that wants every transition
+subscribes to `mission/status` the way the dashboard does. Polling this route
+follows a mission perfectly well and will miss intermediate states on a fast
+mission, which is a property of asking rather than of listening.
+
+**Nothing here is persisted.** Every topic it reads is retained, so a restarted
+fleet server is repopulated by the broker within about a second of connecting;
+a stored copy could only ever be the staler answer.
+
+**The operator token hides less than it looks.** The gate takes it before the
+robot is looked up, so an unauthenticated request gets `401` whatever id it
+names. The same payloads are on the broker, which is still anonymous.
 
 ### `POST /v1/robots/<robot_id>/dispatch`
 
@@ -291,29 +393,28 @@ with no map frame to be in is not an answer.
 
 ## The zone vocabulary
 
-**Names are shared; coordinates are not.** This is the half of a zone that is
-portable between robots, served so that the question a dispatcher most needs to
-ask — *what places can I name?* — has an answer in the API rather than out of
-band. The shape is [zone/v0](https://spec.augereai.com/zone/v0/).
+**The names, and nothing else**, served so that the question a dispatcher most
+needs to ask — *what places can I name?* — has an answer in the API rather than
+out of band. The shape is [zone/v0](https://spec.augereai.com/zone/v0/).
 
-A zone's pose is a coordinate in one robot's map frame, and that frame's origin
-is an accident of where its SLAM session happened to start. `(2.0, 3.5)` on
-`mote-01` is a different physical point from `(2.0, 3.5)` on `mote-02`, and
-there is no fleet-level transform that fixes it — the two are independent
-estimates of the same building, drifting apart. The name, by contrast, is true
-for both. So the vocabulary travels and the binding does not, and the split is
-in the route: everything under `/v1/maps` is bound to a basemap, everything
-under `/v1/zones` is bound to nothing.
+Not because a coordinate would be wrong. A zone is a coordinate in the floor's
+frame — a fact about the building — and every robot on the floor holds the same
+one. It is that a caller of this route has no basemap to draw a coordinate on,
+and being handed a number it cannot place is worse than not being handed it. So
+the division is in the prefix: everything under `/v1/maps` is served beside a
+basemap and gated on there being one, everything under `/v1/zones` is gated on
+nothing.
 
 A caller that must never be handed a map can be given `/v1/zones` and only
 `/v1/zones`.
 
-**The split is now also in the files.** A floor is two documents —
-`vocabulary.yaml` and `binding.yaml` — rather than one `zones.yaml` filtered two
-ways, so this route serves a document rather than a projection of one, and the
-kind of leak a filter permits (a geometry key added later that nobody remembers
-to strip) is not representable. A map revision carries the *binding*, because
-coordinates travel with the frame they mean something in; the vocabulary sits at
+**The payload is built, never stripped.** A floor's zones are one file, and this
+route is a *view* over it assembled from the fields a vocabulary may carry —
+never that file with the geometry keys filtered out. The difference is the leak
+a filter permits: a geometry key added later that nobody remembers to strip,
+arriving as a plausible-looking coordinate rather than as a crash. A map
+revision carries a copy of the whole file, because that is how a floor's places
+reach a robot that has never driven there; the names sit at
 floor level, which is why this route answers for a floor with no published map
 at all. A candidate produced by the zone editor carries **both** halves, and
 promotion is what lifts its vocabulary to the floor: uploading is not
@@ -339,7 +440,7 @@ where the stationery lives.
 | `name` | What the place is called, which is also what a dispatcher types. Printable text with no leading or trailing space; unique within a **floor**, not within a site — two floors may each have a `reception`. Matched exactly, then case-insensitively and whitespace-normalised. |
 | `note` | Free text for where reality diverges from what the name implies. The other names a place answers to belong here: a resolver reads the sentence, and there is no alias list to keep in step by hand. |
 | `navigable` | Whether it is a legal destination. Not vocabulary — it is the planner's contract — but it travels with the names because it is not a coordinate. |
-| `revision` | Bumped every time a zone's vocabulary is written, so a binding can record which vocabulary it was built against. |
+| `revision` | Bumped every time a floor's zones are written, so a reader can tell which of two copies is the later one. |
 | `problems` | Empty when the vocabulary is well-formed; see below. |
 
 `kind`, `display_name`, `aliases`, `parent` and `tags` were part of this
@@ -352,11 +453,11 @@ served.
 There are **no coordinates, no `frame_id` and no map reference**, by
 construction: the payload is built from the fields a vocabulary may carry
 rather than filtered of the ones it may not, so a geometry key added to
-`zones.yaml` later cannot leak into it. `test_zone_vocabulary.py` asserts this
-by walking the whole payload for geometry-shaped keys rather than checking the
-ones it happens to know about.
+`zones.yaml` later cannot leak into it. The tests assert this by walking the
+whole payload for geometry-shaped keys rather than checking the ones they
+happen to know about.
 
-Unlike the binding, this is **not** gated on a published map. A floor someone
+Unlike the routes under `/v1/maps`, this is **not** gated on a published map. A floor someone
 has named but no robot has mapped still answers here — names are a fact about
 the building and do not wait on a SLAM session. `404` only when the floor has
 no `zones.yaml` at all.
@@ -544,17 +645,15 @@ which looks entirely convincing and is the exact failure this route removes.
 ```
 
 `source` is `revision` when the revision carries its own `zones.yaml` and
-`floor` when it inherits the floor's. The difference matters and the coordinates
-cannot express it: inherited zones were bound in a *previous* SLAM session's
-frame, so they draw perfectly over this map and are wrong by however far the two
-origins differ.
+`floor` when it inherits the floor's. An operator reviewing a candidate is
+entitled to know that what is drawn came from beside it rather than from inside
+it, and the coordinates cannot say.
 
 Unlike `read_zones` on the canonical route, this is **not gated on there being a
 published map** — the review that matters most is the first candidate on a floor
-with nothing published at all. That does not loosen the vocabulary/binding
-split: these are still coordinates, still served under a path bound to a
-basemap, and still never over `/v1/zones`. Naming a revision is naming a map
-frame.
+with nothing published at all. It stays under a `/v1/maps`-shaped path and never
+over `/v1/zones`, because it is served beside a basemap and that is what the two
+prefixes divide.
 
 All three are reads, and like every other `/v1` route they need an operator
 token.
@@ -607,15 +706,16 @@ frame they were drawn in: the operator is looking at that revision's own map.
 Omitted, the canonical revision is edited, which is the same thing for a floor
 whose published map is what is on screen.
 
-**An entry's `anchor` is carried, not re-invented.** zone/v0's
-`anchor.method` says how a coordinate came to be — `taught` for a pose a robot
-was driven to, `derived` for one an algorithm read off a map — and a submitted
-entry keeps whatever it names, so a zone this edit did not touch keeps its
-provenance. The dashboard's editor sends `{"method": "external", "by":
-"zone-editor"}` on geometry it placed or moved, because neither of the other
-two is true of a click; the server fills in `at` from its own clock and
-rewrites `by` to name the operator holding the token, which is the half a
-browser cannot be trusted for. A method outside zone/v0's four is a `422`.
+**An entry's `source` is carried, not re-invented.** It says what made the
+zone — `save-zone` for a pose a robot was driven to, `segment-map` for a room an
+algorithm read off a map, `editor` for a click — and a submitted entry keeps
+whatever it names, so a zone this edit did not touch keeps what it arrived with.
+The dashboard's editor sends `editor` on geometry it placed or moved. Nothing
+decides anything from the field: a zone is a coordinate in the floor's frame
+however it got there, and what the field buys is an operator being able to see
+which zones somebody drew. A value outside the three is dropped rather than
+refused, for the same reason — it costs nothing to ignore and a `422` would cost
+the whole save.
 
 **The bar is the source's, not the upload's.** A revision with no posegraph is
 one mapping cannot be continued from — an error for a robot's upload, where the

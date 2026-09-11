@@ -19,10 +19,6 @@ test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_he
 
 # Pi Setup tasks
 setup-ids = "ros2 run mote_hardware setup_ids"
-# SO-101 follower arm bring-up (see mote_arm/README.md, mote_arm/BENCH.md).
-# Opens the servo bus directly, so the control stack must be stopped first
-# (`pixi run kill`); `arm-jog` and `arm-pose` go through the controller instead.
-arm-check = "ros2 run mote_arm arm_check"
 udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
 # Wifi (mote_bringup/wifi/README.md). `wifi-roaming` writes one modprobe option
 # and takes effect at the next reboot; it restarts NetworkManager only on a
@@ -147,21 +143,30 @@ node-cpu = "python mote_bringup/tools/node_cpu.py"
 # SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
 # the lidar/camera/Nav2. During a mission the arm is already there (it lives in
 # mote_hardware, which owns the shared servo bus) — this is for bench work only.
-# Jog it interactively with `pixi run arm-jog`, in either case.
+# Drive it with `pixi run arm-teleop`, in either case.
 arm = "ros2 launch mote_bringup arm_launch.py"
-arm-jog = "ros2 run mote_arm jog"
-# Teach/replay named arm poses (save is read-only; go asks before moving).
+# Teach/replay named arm poses.
 arm-pose = "ros2 run mote_arm arm_pose"
-# Guided range calibration: sweep each joint to its mechanical stops by hand,
-# centre its zero, and save the measured limits to $MOTE_HOME/arm.yaml. Opens
-# the bus directly, so run it with the arm driver stopped. This is where soft
-# limits come from.
-arm-calibrate = "ros2 run mote_arm arm_calibrate"
-# Read/back up/restore the servos' position-correction offsets (EEPROM). The
-# recovery path if a calibration run is interrupted part-way.
-arm-offsets = "ros2 run mote_arm arm_offsets"
-# Show/apply the arm servos' position-loop gains from robot.yaml (EEPROM).
-arm-gains = "ros2 run mote_arm arm_gains"
+# Everything that configures the arm's servos, behind one command: check,
+# calibrate, gains, offsets, limits. Opens the bus directly, so run it with the
+# control stack stopped (`pixi run kill`). Once-off work, `check` aside — the
+# arm is *driven* by arm-teleop / arm-pose / arm-record, which never open it.
+arm-setup = "ros2 run mote_arm arm_setup"
+# Keyboard teleop (mote_arm/TELEOP.md): one process holding the keyboard, the
+# safety rules and the arm. Needs a stack that owns the servo bus beside it —
+# `pixi run arm`, `pixi run launch`, or a mission.
+arm-teleop = "ros2 run mote_arm arm_teleop"
+# The arm control stack's interface (trajectory topic + switch_controller) with
+# no hardware behind it — teleop, recording and replay all run against this on a
+# workstation. `-- --camera` adds a synthetic camera so episodes have frames.
+arm-mock = "ros2 run mote_arm mock_arm"
+# Record teleop episodes (observations + actions) into $MOTE_HOME/episodes, and
+# replay one on the arm at reduced speed. Export them with `arm-export` below.
+arm-record = "ros2 run mote_arm episode_record"
+arm-replay = "ros2 run mote_arm episode_replay"
+# The whole teleop -> record -> export -> replay loop against the mock arm; the
+# pre-bench gate for anything that touches the arm's teleop path.
+arm-teleop-test = "bash mote_arm/test/teleop_loop/run_teleop_loop.sh"
 # Robot-side inference diagnostics (torch-free — run in the default/robot env):
 # probe the inference machine's health/version, or benchmark round-trip latency.
 inference-health = "python -u mote_perception/tools/inference_health.py"
@@ -445,6 +450,29 @@ test-fleet = "pytest mote_fleet/test -q"
 # M2's teleop path against the real bridge; needs the dev env's WebSocket client.
 test-foxglove = "pytest mote_bringup/test/test_foxglove_teleop.py -q"
 
+# Off-board LeRobot env: converts on-robot episode captures into a LeRobotDataset
+# and inspects it with LeRobot's own tooling. Its own env, no-default-feature and
+# linux-64 only, for the same reason `inference` has one — lerobot brings torch,
+# ffmpeg and the HuggingFace stack, none of which belongs on the aarch64 Pi that
+# does the recording. The robot writes a plain capture directory; this converts
+# it (see mote_arm/tools/lerobot_export.py).
+[feature.lerobot]
+platforms = ["linux-64"]
+
+[feature.lerobot.dependencies]
+python = "3.12.*"
+numpy = ">=1.26,<3"
+pillow = ">=10,<13"
+# The video path LeRobot encodes MP4 shards with.
+ffmpeg = ">=6"
+
+[feature.lerobot.pypi-dependencies]
+# v3.0 datasets (aggregated parquet/mp4 shards) land in lerobot >= 0.4.
+lerobot = ">=0.4"
+
+[feature.lerobot.tasks]
+arm-export = "python -u mote_arm/tools/lerobot_export.py"
+
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
 
@@ -472,6 +500,8 @@ fleet = { features = ["fleet"], no-default-feature = true }
 sim = { features = ["sim"] }
 inference = { features = ["inference"], no-default-feature = true }
 inference-rocm = { features = ["inference-rocm"], no-default-feature = true }
+# Off-board episode export + LeRobot's dataset viewer. Own solve, no ROS.
+lerobot = { features = ["lerobot"], no-default-feature = true }
 # ^ GPU sibling of `inference`; own solve (no solve-group) so the ROCm torch wheel
 # can never perturb any other env.
 # Minimal env (no ROS) so 'pixi run lint' is fast to solve and install

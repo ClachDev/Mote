@@ -33,6 +33,13 @@ _KI = 23
 # in the 0-4095 encoder frame. This is what stops a joint's travel straddling
 # the 0/4095 wrap; see mote_arm/calibrate.py.
 _HOMING_OFFSET = 31
+# SMS_STS_MIN_ANGLE_LIMIT_L / _MAX_ANGLE_LIMIT_L, both EEPROM. In position mode
+# the servo refuses a goal outside this band, silently and in one direction —
+# which looks exactly like a joint that has run out of torque. Nothing else in
+# this repo reads or writes them, so a servo that arrived with a restricted
+# range, or was configured with one, is invisible to every tool we have.
+_MIN_ANGLE_LIMIT = 9
+_MAX_ANGLE_LIMIT = 11
 _PRESENT_POSITION = 56
 _PRESENT_LOAD = 60
 _PRESENT_VOLTAGE = 62
@@ -120,6 +127,31 @@ def port_holders(path: str) -> list[tuple[int, str]]:
             holders.append((pid, cmd or "?"))
             break
     return holders
+
+
+def open_bus(cfg) -> "FeetechBus":
+    """Open the arm's bus for a setup tool, refusing to share it.
+
+    The arm shares the drive-wheel port, so a second opener interleaves packets
+    with the traffic that moves the robot. Every tool that talks to the servos
+    directly comes through here: this was copied into four of them, byte for
+    byte, which is three chances for one of them to grow a different idea of
+    what "the base is running" means.
+    """
+    holders = port_holders(cfg.port)
+    if holders:
+        for pid, cmd in holders:
+            print(f"  port held by pid {pid}: {cmd}")
+        raise SystemExit(
+            f"refusing to share {cfg.port} — stop the arm driver / robot base "
+            "first (`pixi run kill`)."
+        )
+    bus = FeetechBus(cfg.port, cfg.baud_rate)
+    try:
+        bus.open()
+    except BusError as exc:
+        raise SystemExit(f"cannot open bus: {exc}")
+    return bus
 
 
 class FeetechBus:
@@ -345,6 +377,56 @@ class FeetechBus:
                 return tuple(first)  # type: ignore[return-value]
             time.sleep(0.1)
         return None
+
+    def read_angle_limits(self, servo_id: int) -> tuple[int, int] | None:
+        """Return (min, max) goal counts the servo will accept, or None.
+
+        Read twice and trusted only when both agree, for the same reason
+        ``read_gains`` does: these live in EEPROM and a single read on this bus
+        has been seen to come back garbled.
+        """
+        for _ in range(5):
+            first = (
+                self._read(2, servo_id, _MIN_ANGLE_LIMIT),
+                self._read(2, servo_id, _MAX_ANGLE_LIMIT),
+            )
+            time.sleep(0.05)
+            second = (
+                self._read(2, servo_id, _MIN_ANGLE_LIMIT),
+                self._read(2, servo_id, _MAX_ANGLE_LIMIT),
+            )
+            if None not in first and first == second:
+                return first  # type: ignore[return-value]
+            time.sleep(0.1)
+        return None
+
+    def write_angle_limits(self, servo_id: int, low: int, high: int) -> bool:
+        """Write the goal-range registers to EEPROM and verify they took.
+
+        ``low``/``high`` are raw counts in the same frame as a goal position, so
+        0 and 4095 hand the joint its whole single-turn range back. Returns True
+        only once a confirmed read-back matches, for the reason
+        ``write_homing_offset`` does: this is persistent servo config with no
+        copy anywhere else, and reporting an unverified write would leave the
+        arm silently capped.
+        """
+        if not 0 <= low <= high <= COUNTS_PER_TURN - 1:
+            raise ValueError(
+                f"angle limits {low}..{high} outside 0..{COUNTS_PER_TURN - 1}"
+            )
+        for _ in range(4):
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 0)
+            time.sleep(0.05)
+            self._packet.write2ByteTxRx(self._port, servo_id, _MIN_ANGLE_LIMIT, low)
+            time.sleep(0.05)
+            self._packet.write2ByteTxRx(self._port, servo_id, _MAX_ANGLE_LIMIT, high)
+            time.sleep(0.05)
+            self._packet.write1ByteTxRx(self._port, servo_id, _LOCK, 1)
+            # The read-back races the relock; give the servo time to settle.
+            time.sleep(0.15)
+            if self.read_angle_limits(servo_id) == (low, high):
+                return True
+        return False
 
     def _read_gain_reg(self, servo_id: int, addr: int) -> int | None:
         return self._read(1, servo_id, addr)

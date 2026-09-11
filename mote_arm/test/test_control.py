@@ -6,9 +6,7 @@ and a start time of zero — which is what tells the controller "start now" on t
 robot's clock rather than on the operator's.
 """
 
-from mote_arm.config import JointSpec
 from mote_arm.control import ARM_CONTROLLER, TRAJECTORY_TOPIC, duration_msg, trajectory
-from mote_arm.jog import MIN_MOVE_TIME_S, move_time, next_target
 
 
 def test_trajectory_names_the_joints_it_moves():
@@ -43,19 +41,3 @@ def test_trajectory_carries_the_move_time():
 
 def test_topic_is_the_controller_s_own():
     assert TRAJECTORY_TOPIC == f"{ARM_CONTROLLER}/joint_trajectory"
-
-
-def test_move_time_scales_with_distance():
-    # A jog must not ask the arm to travel further in the same time; the servos
-    # have their own speed cap and a trajectory faster than it just runs ahead.
-    assert move_time(2.0) > move_time(0.5)
-
-
-def test_move_time_has_a_floor():
-    assert move_time(0.0) == MIN_MOVE_TIME_S
-    assert move_time(-0.001) == MIN_MOVE_TIME_S
-
-
-def test_jog_step_is_still_clamped_before_it_is_sent():
-    j = JointSpec("j", 1, min_rad=-1.0, max_rad=1.0)
-    assert next_target(0.98, 0.05, j) == 1.0

@@ -23,10 +23,15 @@ pixi run teleop         # Keyboard teleoperation
 pixi run explore        # Autonomous mapping coverage (run beside `pixi run mapping`, on the Pi)
 pixi run tasks          # Task layer: behaviour-tree task_server (see mote_tasks)
 pixi run arm            # SO-101 arm: bench control stack (ros2_control, no mission)
-pixi run arm-jog        # Interactive per-joint jog CLI (needs a stack owning the bus)
-pixi run arm-check      # Standalone arm bus enumeration + health (read-only, base stopped)
-pixi run arm-calibrate  # Range calibration: centre the joints, sweep, emit limits
+pixi run arm-setup check      # Standalone arm bus enumeration + health (read-only, base stopped)
+pixi run arm-setup calibrate  # Range calibration: centre the joints, sweep, emit limits
+pixi run arm-setup limits     # Servo goal-range fence (EEPROM 9/11): show / clear / restore
 pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
+pixi run arm-teleop     # Keyboard teleop: clamped, rate-limited arm_controller goals
+pixi run arm-mock       # The arm control stack's interface, no hardware (+ --camera)
+pixi run arm-record     # Record teleop episodes into $MOTE_HOME/episodes
+pixi run arm-replay     # Replay a recorded episode on the arm, gated
+pixi run arm-teleop-test # Headless teleop->record->replay loop vs the mock arm
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi + systemd (needs sudo)
 pixi run udev           # Install udev rules + dialout group (needs sudo)
@@ -77,6 +82,12 @@ pixi run test           # colcon test for mote_hardware (gtest)
 pixi run -e fleet fleet-server     # fleet API + dashboard on the fleet box
 pixi run -e dev test-fleet      # mote_fleet tests incl. the real-broker e2e run
 
+# LeRobot environment only (`lerobot`: torch + ffmpeg + the HuggingFace stack, no
+# ROS; linux-64 only. Off-board, for the same reason `inference` is — the aarch64
+# Pi records episodes but must not carry this.)
+pixi run -e lerobot arm-export -- --capture ~/.mote/episodes/<name>  # capture -> LeRobotDataset
+pixi run -e lerobot -- lerobot-dataset-viz --repo-id <id> --root <out> --episode-index 0
+
 # Lint environment only (pre-commit; minimal env, no ROS — auto-selected)
 pixi run lint           # run all pre-commit hooks across the tree (~1 s cached)
 pixi run lint-install   # wire pre-commit into .git/hooks (one time per clone)
@@ -113,6 +124,45 @@ Milestone M2 of `docs/design/fleet.md`; the operator flow is `docs/fleet/README.
 ## Fleet: the operator view + dispatch API (M3)
 
 Milestone M3 of `docs/design/fleet.md`, and the end of v0. The **HTTP** wire is specified as its own versioned contract in **`docs/fleet/fleet-api.md`** (M1's MQTT one is `control-plane.md`); the operator flow is `docs/fleet/README.md` §6–9 and the measurements are `m3-verification.md`. **The two directions of the loop take different paths on purpose.** *Reads* ride MQTT: the browser subscribes to `mote/v2/+/{presence,health,pose,capabilities,mission/status}` over WebSockets, and because all of those are retained it has the whole fleet's state within a second of loading — no polling, no service in the middle. *Writes* ride HTTP: `POST /v1/robots/<id>/dispatch` authorizes an operator token (`fleetctl operator new --name <you>`; the name is what the audit row records), writes the audit row, then publishes to the same `mission/command` topic. **The topic tree did not change — only who publishes to it**, and `fleetctl dispatch` moved to the API too, so there is one write path rather than one per client. The mission's `input` is validated only by the robot, against the schema its own capability declared: a copy in the server would be a second contract to keep in step, and it would refuse missions a newer robot understands. **The browser cannot publish**: `server/ui/mqtt.mjs` is a hand-rolled subscribe-only MQTT 3.1.1 client that implements no PUBLISH packet, so the split is enforced by omission (a subscribe-only broker credential would make it structural, and waits on the broker having credentials at all). The UI is static ES modules — no bundler, no npm, no vendored library — served by the same stdlib `http.server`; `map.mjs` holds the Q5 world→pixel transform (`px = (wx-origin_x)/res`, `py = height - (wy-origin_y)/res`) and a pan/zoom/follow canvas, and only draws robots on the *same* site+floor as the selected one because a pose from another floor is a different map frame. **Basemaps come from site bundles on the fleet box** (`--maps-dir`, default `$MOTE_FLEET_HOME/sites`, the layout `sites.py` writes, seeded by rsync until **M4** makes the registry canonical behind the same two routes). **M1's websockets blocker is settled**: `pixi run fleet-broker` runs `eclipse-mosquitto` under docker with the repo's own `mosquitto.conf`, because conda-forge's build has none; `pixi run -e fleet fleet-broker-local` is the conda binary for a box without docker, and it strips the WS stanza and says so. Two things that run in the same file (`test_ui.py` → `ui_test.mjs`) are the MQTT codec and the transform, tested under node against the very files the browser loads; `browser_check.mjs` drives a real headless Chrome over CDP against a running stack and is an operator's tool, not a CI test — `pixi run fleet-ui-check` is that stack in one command (broker on ephemeral ports, server, a temp `MOTE_FLEET_HOME`, the sim's `office_world` bundle as the basemap, and `test/fake_robots.py`, which publishes `protocol.py` and `spec/` payloads, imports `mote_tasks`' own capability set rather than writing one, and is *not* a second robot implementation), torn down afterwards; `-- --keep` leaves it up for UI work. It stays out of CI because it needs docker (conda's mosquitto still has no websockets) *and* a chrome, which the arm runner has not — the decision, and what wiring it in would take, are recorded in `m3-verification.md` §2 rather than left looking like coverage. **A fourth pane, `review`, is where a candidate map is looked at and promoted** (`server/ui/review.mjs`; routes and rationale under the map registry below). It is a *mode*, not a column: opening it stands the operations panes down at every width, because two canvases — one canonical with robots on it, one a candidate without — is the confusion a dedicated view exists to remove. **The phone is the realistic off-LAN client**, so below 760 px the panes become one at a time behind a bottom tab bar (`server/ui/layout.mjs`), selecting a robot in the roster navigates to the map — what the desktop layout gets for free by showing both — and the canvas gained pinch-to-zoom (`pinchSpan`/`pinchUpdate` in `map.mjs`, pure and tested, because a division by a zero span puts NaN in the view scale and blanks the map for good) plus a fingertip-sized hit target. The breakpoint is a **silent** seam — CSS decides what is displayed, JS decides when a selection navigates, and disagreement yields a tab bar over stacked panes rather than an error — so it lives in `layout.mjs` and `ui_test.mjs` reads the stylesheet and holds it there, as it does for every pane having a tab and for `touch-action: none` on the canvas (without which the browser eats the drag and the pinch before a single pointer event arrives). Dispatch's form is **generated from the robot's own capability set** (retained on the broker): a select of the keys it offers, one field per input property, and a **zone picker** exactly where a property's schema `$ref`s zone/v0's zone reference — so the page holds no list of capabilities and no list of which inputs are places, and a keyboard is needed only where the schema really wants free text. Three pre-existing bugs fell out, all of which a desk hides: `hidden` does not hide an element whose class sets `display` (the empty promote picker), the canvas backing store was resized on width alone so a height change left the previous frame's scale bar under the new one, and the scale bar was drawn in the dark theme's near-white on a white basemap — a canvas gets no cascade, so it now reads `--dim` off the element. Measurements, including `browser_check.mjs`'s phone pass, are `m3-verification.md` §9; **a real device is still the acceptance** — emulation gets the viewport and the touch points right and the thumb wrong.
+
+## Fleet: reading a robot's state over HTTP
+
+M3's split — reads over MQTT, writes over HTTP — is right for the dashboard,
+which wants a live stream, and wrong for a client that asks once and acts (an
+MCP front door, `fleetctl`, a script): coupling that client to the broker makes
+it track the topic tree, retention semantics and, after M7, a broker
+credential — three contracts where one would do, which is what the abandoned
+July MCP front door was rewritten under twice. So the fleet server now holds
+**its own subscription** to the retained half of the tree (`BrokerFeed` into
+`RobotState` in `fleet_server.py`, `mote/v2/+/{presence,health,pose,
+capabilities,mission/status}`) and `GET /v1/robots/<id>` answers with the
+registry row plus what it last saw; `GET /v1/robots` carries the `presence`
+payload per row, so picking an online robot costs one request rather than N.
+Contract in `docs/fleet/fleet-api.md`, operator flow `README.md` §8. Five things
+are load-bearing. **The payloads are forwarded, never rebuilt** — each is the
+publisher's own document, no field added, renamed or reinterpreted, the rule
+the agent follows so there is one definition of this wire and not a second one
+here. **Absent state is null per field**, and a robot the server has never heard
+from is `200` with every field null rather than `404`, which stays reserved for
+a robot that is not enrolled — so `broker_connected` sits beside them, because
+with the feed down every field is null however healthy the fleet is and null
+alone cannot say which. **Nothing is persisted**: every topic read is retained,
+so a restarted server is repopulated by the broker within a second and a stored
+copy could only be the staler answer — and a cleared retained topic (a
+zero-length payload) clears the field, or this server would assert a state the
+broker has stopped serving. **`mission_status` is the last status, not a
+history**, since one transition is all that is retained; anything wanting every
+transition still subscribes, which is what `watch` and `dispatch` keep the
+broker for. And **both routes take an operator token**, from the gate in front
+of every `/v1` route (see "Fleet: the API auth gate" below), before the robot is
+looked up — so an unauthenticated answer does not depend on the id. It hides
+less than it looks: the same payloads are on the broker, which is still
+anonymous.
+`publisher` and `feed` are injected as a pair in `serve()`, since a live
+subscription beside a stubbed publisher would have a test dialling a broker it
+does not have; the acceptance is `test_e2e_fleet.py`'s
+`test_a_mission_can_be_followed_over_http_alone`, which dispatches and follows a
+real mission to terminal with no MQTT client in the test at all.
 
 ## Fleet: the map registry (M4)
 
@@ -154,11 +204,11 @@ holds where the design does put it: `protocol.py`.
 refused while the mapping session is still up. On the robot, `mote_fleet/
 mapsync.py` + a worker thread in the agent stage a pulled revision in a temp
 directory, verify the announced sha256, rename it into `maps/<rev>/` and flip the
-local symlink; **the binding travels inside the revision** and replaces the
-floor's (the old one is kept as `binding.<old-rev>.yaml`), because a different
-session's map makes previously taught coordinates wrong. The **vocabulary does
-not** — the names of the rooms did not change when the robot re-mapped the
-floor, which is the practical dividend of the zone/v0 split. Three deliberate consequences:
+local symlink; **a copy of the floor's zones travels inside the revision** and
+replaces the floor's (the old one is kept as `zones.<old-rev>.yaml`), which is
+how the places an operator named in the dashboard reach a robot that has never
+driven there. The floor owns them either way — a zone is a coordinate in the
+floor's frame and a revision is an estimate registered into it. Three deliberate consequences:
 the flip and the announcement are reported separately (a broker that is down must
 not half-promote a floor; the server re-announces every floor at startup, which
 repairs it), an **upload carries no operator credential** — it names an enrolled
@@ -179,13 +229,12 @@ revision-aware**, because a transform from the revision and pixels from
 and wrong, which is the exact failure being removed. The zones read is
 **revision-scoped and deliberately not gated on a published map** where
 `read_zones` is (the review that matters most is the first candidate on a floor
-with nothing published), which does not loosen the vocabulary/binding split:
-naming a revision is naming a map frame, and these stay under `/v1/maps`-shaped
-paths and never under `/v1/zones`. And it reports **`source: revision|floor`**,
-because `_zones_file` falls back to the floor's `zones.yaml` and inherited zones
-were taught in a *previous* session's frame — they draw perfectly over the new
-map and are wrong by however far the two origins differ, which no coordinate can
-say. One UI ordering bug fell out and is fixed in both panes: the floor's
+with nothing published); it stays under a `/v1/maps`-shaped path and never under
+`/v1/zones`, because it is served beside a basemap and that is what the two
+prefixes divide. And it reports **`source: revision|floor`**, because
+`_zones_file` falls back to the floor's `zones.yaml` and an operator reviewing a
+candidate is entitled to know that what is drawn came from beside it rather than
+from inside it. One UI ordering bug fell out and is fixed in both panes: the floor's
 revisions were fetched only *after* its basemap loaded, behind an early return,
 so a floor whose only revisions were candidates listed none of them and **the
 first promotion on any floor could never be made from a browser**.
@@ -309,23 +358,17 @@ details column is not snapped either, for the same reason shift-drag is not: a
 number somebody wrote is already the number they meant, and the grid exists to
 stop a *drag* claiming precision the map does not have.
 
-**An edit says who placed it.** zone/v0's `anchor.method` is how a later reader
-decides whether to trust a coordinate once the map moves, and the three ways
-geometry reaches a floor answer differently: `taught` was measured by driving a
-robot there, `derived` was read off a map by `segment-map`, and a click is
-neither. The editor stamps `external` (`EDITOR_ANCHOR`, through `reanchored` in
-`zone_editor.mjs`) on every zone whose geometry it moves — pose, vertex or body — and leaves an
-untouched one carrying whatever it arrived with, so a `segment-map` room stays
-`derived` until someone reshapes it. `external` is zone/v0's closest fit rather
-than an exact one (the spec glosses it as an off-platform localisation system);
-the enum is closed, and the alternatives were recording a click as a
-measurement or as an algorithm's output. A successor revision should carry a
-method for it (#616). The browser says only the method and `by: zone-editor`;
-`bundle_store._stamp_anchor` fills in `at` and which operator held the token,
-because a browser's clock is the operator's laptop. The anchor then travels: the
-editor packs it into the derived candidate's `zones.yaml`, `bundle.parse_zones`
-carries it through the reader instead of dropping it, and `zone.split` honours
-it instead of stamping `taught` over the top.
+**An edit says what placed it.** `source` records what made a zone —
+`save-zone` for a pose a robot was driven to, `segment-map` for a room read off
+a map, `editor` for a click — and the editor stamps `EDITOR_SOURCE` (through
+`sourced` in `zone_editor.mjs`) on every zone whose geometry it moves, pose,
+vertex or body, leaving an untouched one carrying what it arrived with. It is a
+note and nothing decides anything from it: a zone is a coordinate in the floor's
+frame however it got there. What it buys is an operator being able to see which
+zones somebody drew. It travels the ordinary way: into the derived candidate's
+`zones.yaml`, through `bundle.parse_zones`, and out to the wire as the
+`anchor.method` zone/v0 requires (`zone.bound`, one mapping in
+`_ANCHOR_METHOD`).
 
 **Geometry is a property, not a type**, so the row says `point <x>, <y>` or
 `area · <n> corners` and there is no kind to declare. `add zone` makes an area
@@ -408,106 +451,90 @@ present (`$AUGEREAI_SPEC`, or a sibling `augereai-spec/`) and skips where it is
 not. **A v1 robot and a v2 server do not interoperate**, deliberately: a
 translating shim would be a third definition of the wire.
 
-## Fleet: the zone vocabulary/binding split (zone/v0)
+## Fleet: a zone is the floor's coordinate
 
-`zones.yaml` held names and coordinates in one file. zone/v0 pulls them apart,
-and the split is what the whole spec is for: **names are shared, coordinates
-are not, maps are never shared.** A floor is now two documents —
-`floors/<floor>/vocabulary.yaml` (site, floor, and what the places are
-*called*: `name`, `note`, `navigable` — see "Fleet: zones are place-names") and
-`floors/<floor>/binding.yaml` (this robot's poses, footprints and `anchor`,
-stamped with `platform_id`, `frame_id` and `map_revision`). Both are built by
-**`mote_bringup/spec/zone.py`**, which also holds the containment geometry, so
-the robot and the fleet server give the same answer on a boundary case; the
-vocabulary rules moved there out of `bundle.py`, which re-exports them.
+**A zone is a coordinate in the floor's frame — a fact about the building.**
+The kitchen does not move. A map is an *estimate* of the same layout,
+registered into that frame; a new map is a better or worse estimate and changes
+nothing about where the kitchen is. Where a map and the zones disagree it is
+the **map** that gets aligned — pose-graph continuation today, rigid alignment
+as the fallback. So a floor's zones are one document, `floors/<floor>/
+zones.yaml`, belonging to the floor: `name`, `note`, `navigable`, `x`/`y`/`yaw`,
+an optional footprint (`radius` or `polygon`), and `source`. Not to a map
+revision, and not to one robot.
 
-**The split is structural, not a rule to remember.** The vocabulary is *built*
-from the fields a vocabulary may carry, never stripped of the ones it may not —
-stripping holds only until someone adds a geometry key and forgets, and the
-leak would be a plausible-looking coordinate rather than a crash. Tests assert
-it by walking the whole document for geometry-shaped keys.
+zone/v0 says otherwise — "names are shared, coordinates are not, maps are
+never shared" — because it describes a heterogeneous fleet in which every
+platform carries its own SLAM frame. Mote's is neither: M4 distributes one
+canonical revision to every robot on a floor, and the frame is the floor's. So
+**the spec's two documents are *views*** built by `mote_bringup/spec/zone.py`
+from the single record, at the wire and never stored: `vocabulary()` is what
+`GET /v1/zones` serves, `binding()` is the geometry with the
+`platform_id`/`frame_id`/`map_revision` of whoever is serialising filled in
+there. That module also holds the containment geometry, so the robot and the
+fleet server give the same answer on a boundary case. The argument the spec is
+owed is #629.
 
-**What it buys is a distinction the robot could not draw.** A name in the
-vocabulary that the binding this robot holds carries no geometry for now
-resolves `unbound` — "I know that place, nothing has said where it is" — where
-before it was `unknown_name`, which sent an operator hunting for a typo that
-was not there. `unbound` is a fact about the revision, not about where the
-robot has been: the promoted revision may bind it for nobody, this robot may be
-running an older one, or it may be a name nothing has ever placed. So the
-refusal names all three remedies — place it in the dashboard's zone editor and
-promote, pull the revision that binds it, or drive there and `save-zone` — and
-not just the last.
-`task_server` loads with `zones.load_floor` (vocabulary ∪ binding) rather than
-`load_zones` (bound only) for exactly that. A binding whose name the vocabulary
-does not carry is a **local extension**: usable here, never advertised, because
-one robot must not invent shared vocabulary for its neighbours.
+**The names-only view is *built*, never stripped.** Stripping holds only until
+someone adds a geometry key and forgets, and the leak would be a
+plausible-looking coordinate rather than a crash. Tests walk the whole payload
+for geometry-shaped keys rather than the ones somebody thought of.
 
-**Migration is a side effect of writing, never a step.** `bundle.read_floor`
-accepts a floor directory *or* a legacy combined file, and reads the latter
-through `zone.split` so both paths produce the same structure by construction;
-the first `save-zone` or `segment-map --write` on an old floor writes the pair
-and keeps the original as `zones.yaml.premigration`. The sim worlds' committed
-`<world>.zones.yaml` files stay combined on purpose — one file is the right
-shape for a fixture with one robot in it — and are migrated on read.
+**A name with no coordinate is not a zone on this floor** — it is a name nobody
+has placed, which is what `unknown_name` says. `mission/v0`'s
+`unresolved_zone` therefore carries `unknown_name` and `ambiguous` only, and
+zone/v0's `unbound` is a reason Mote cannot produce. `wrong_floor` and
+`stale_revision` are unanswerable for a different reason: the robot holds one
+floor at a time, and the bundle declares no frame continuity (which zone/v0 says
+is out of its own scope too).
 
-**Which half travels where.** A map revision carries the **binding**, because a
-coordinate means nothing without the frame beside it; installing a pulled
-revision replaces the floor's binding and leaves the vocabulary alone, so
-re-mapping a floor no longer costs an operator the names they typed. The
-**vocabulary** is floor-level and is what `/v1/zones` serves — and, from the
-dashboard's zone editor, a candidate carries *both* halves and promotion is
-what lifts its vocabulary to floor level: uploading is not publishing, applied
-to names as well as to coordinates. A polygon-only zone gets its binding pose
-**derived once, on write** (`zone.representative_point`), because zone/v0
-requires a binding to carry a pose and it is right to — a footprint alone
-cannot say where a mission navigates to.
+**A zone carries `source`, not an `anchor`.** zone/v0's `anchor` answers "does
+this coordinate survive a re-map?", and here every coordinate does, because the
+floor's frame does not move. `source` — `save-zone`, `segment-map` or `editor` —
+says what *made* the zone and nothing more; reading it to list or filter zones
+is fine, and nothing may treat it as a claim about the coordinate. zone/v0 still
+requires an `anchor.method` on a binding entry, so `zone.bound` fills one in
+from `source` at the wire and `_ANCHOR_METHOD` is the one place that mapping
+lives.
 
-Still unanswerable here: `wrong_floor` (the robot holds one floor at a time)
-and `stale_revision` (the bundle declares no frame continuity — which zone/v0
-says is out of its own scope too). Broadcasting the vocabulary over the retained
-registry subtree, so a second robot at a site learns the names before it has
-driven a metre, is M6's and is the thing this split was the prerequisite for.
+**How a zone reaches another robot.** A revision carries a copy of
+the floor's zones at pack time, promotion is what publishes an edit, and
+`mapsync.install` copies the revision's copy to the floor's `zones.yaml`,
+keeping the one it replaces as `zones.<old-rev>.yaml`. A polygon-only zone gets
+its pose derived at the wire (`zone.representative_point`) rather than stored,
+so nothing has to keep it in step with the outline. Broadcasting the names over
+the retained registry subtree, so a second robot at a site learns them before it
+has driven a metre, is still M6's.
 
-## Fleet: the zone vocabulary
-
-The API served the roster, the basemaps and dispatch, but not the one thing a
-dispatcher most needs — *what places can I name?* — so an MCP front door had to
+**The two routes are two views of one file.** `GET /v1/zones` and
+`/v1/zones/<site>/<floor>` answer the question a dispatcher actually asks —
+*what places can I name?* — which the API did not, so an MCP front door had to
 work around it out of band or by scraping the list a robot prints when it
-refuses an unknown zone, which is an accident of an error message rather than a
-contract. `GET /v1/zones` and `/v1/zones/<site>/<floor>` answer it from the site
-bundles the server already reads for maps, in the shape of **zone/v0**
-(`docs/fleet/fleet-api.md`, operator flow `README.md` §12; the spec's own
-`spec/zone/v0/README.md`). **The whole design is one rule: names travel,
-coordinates do not.** A zone's pose is a coordinate in one robot's map frame,
-whose origin is an accident of where its SLAM session started, so `(2.0, 3.5)`
-is a different physical point on the robot beside it and no fleet-level
-transform fixes that; the *name* is true for both. So the **vocabulary** —
-the `name` of each place, a free-text `note`, and `navigable` — is published and
-the **binding** is not. The split is expressed by the route rather
-than by a rule someone has to remember: everything under `/v1/maps` is bound to
-a basemap and served to the client that already has one, everything under
-`/v1/zones` is bound to nothing. Four things are load-bearing. The payload is
-**built** from the fields a vocabulary may carry, never *stripped* of the ones
-it may not — stripping holds only until someone adds a geometry key to
-`zones.yaml` and never reads this code, and the leak would be a
-plausible-looking coordinate rather than a crash (`test_zone_vocabulary.py`
-walks the whole payload for geometry-shaped keys rather than checking the ones
-it thought of). The vocabulary is deliberately **not gated on a published map**
-where the binding rightly is: names are a fact about the building, so a floor
-someone has named but no robot has mapped still answers, which is the
-portability the split buys. `problems` is **reported, not enforced** — two places
-called the same thing, or a name with a stray space at one end, leave the map
-perfectly good, and refusing to serve a floor's basemap over it would be the
-wrong price; the name is served verbatim, because inventing one is a rename
-nobody asked for. But the *robot* refuses an ambiguous vocabulary at
+refuses an unknown zone (`docs/fleet/fleet-api.md`, operator flow `README.md`
+§12). It serves the names and nothing else. Not because a coordinate would be
+*wrong* — every robot on the floor holds the same one — but because a caller
+with no basemap has nothing to draw one on, and being handed a number it cannot
+place is worse than not being handed it. That is what the two prefixes say:
+everything under `/v1/maps` is served beside a basemap and gated on there being
+one, everything under `/v1/zones` is gated on nothing, so a floor someone has
+named but no robot has mapped still answers. `problems` is **reported, not
+enforced** — two places called the same thing, or a name with a stray space at
+one end, leave the map perfectly good, and refusing to serve a floor's basemap
+over it would be the wrong price; the name is served verbatim, because inventing
+one is a rename nobody asked for. But the *robot* refuses an ambiguous set at
 `load_zones`, since it could not honour `goto` unambiguously. Contradictions
 with no reading at all — a legacy `keepout` marked `navigable: true`, a
 `navigable` that is neither true nor false — are refused at the parse by the
 shared `mote_bringup/bundle.py`, so `save-map` catches them locally and the
-server catches them on upload. `save-zone` teaches the name and `--note`;
-`segment-map` emits geometry and nothing else, because an enclosure with walls
-round it is all it found. Related: mote #249 (the rest of spec v0 — capability
-set and typed failures).
+server catches them on upload.
+
+**Two things Mote and zone/v0 now disagree about**, both outstanding against the
+spec's own repository, which is not in this checkout. Its premise — one SLAM
+frame per platform — is #629. Its vocabulary schema still requires `kind`,
+retired here by #609, which is #616 and is why
+`test_spec_conformance.py::test_a_vocabulary_conforms` carries a strict `xfail`:
+Mote's `/v1/zones` payload does not validate against it, and the marker is what
+makes that fail loudly the moment a successor revision lands.
 
 ## Fleet: zones are place-names
 
@@ -560,7 +587,9 @@ the legacy `navigable` seed), `mote_tasks/zones.py` (`Zone`, `resolve`,
 `append_zone`), `mote_fleet/server/ui/` (the review pane, per the "Zone
 Gazetteer" design), `docs/fleet/fleet-api.md` §the zone vocabulary. **The
 specification's own `spec/zone/v0/README.md` is not in this repo** and still
-describes the seven-field vocabulary; a successor revision there is outstanding.
+describes the seven-field vocabulary; a successor revision there is outstanding,
+and `test_spec_conformance.py` carries a strict `xfail` that will fail loudly
+when it lands.
 
 ## Fleet: the API auth gate, the tailnet policy, locked installs (M7, part)
 
@@ -639,7 +668,7 @@ Milestone Ms of `docs/design/fleet.md`: how the two **non-robot** machines are b
 
 ## Sites (maps & zones)
 
-Everything that is only meaningful relative to one mapped place — the Nav2 map pair, the slam_toolbox posegraph, and named zones — lives together as a **site bundle** under `~/.mote/sites/<site>/floors/<floor>/`, managed by `mote_bringup/sites.py` (CLI: `pixi run site`, docs in the module docstring). A floor is one SLAM session (one map frame); a site groups floors sharing a location. `~/.mote/active.yaml` selects the active site/floor per robot; launch files resolve the map (`nav2_launch.py`, `robot_launch.py`) and zones (`tasks_launch.py`) from it at launch time (zones fall back to the committed default). `MOTE_HOME` overrides `~/.mote` for tests/experiments. What a revision must *contain* — and how it validates, packs and travels — is `mote_bringup/bundle.py` (ROS-free, shared with the fleet server; see the map registry section above). Map artifacts are immutable **revisions** under `floors/<floor>/maps/<rev>/`, published by atomically flipping the `floors/<floor>/map` symlink once the revision is complete — a half-written save or interrupted transfer is never visible, and `site use-map <rev>` rolls back. `save-map` stores the posegraph alongside the map so mapping can be *continued* in the same frame later (extend, don't remap — remapping breaks zone coordinates). Mapping runs also record the `mapping` rosbag stream by default (`mapping_launch.py record:=true`; the sim passes false), and `save-map` stamps the session's bag into the revision's `meta.yaml` for provenance (`site info` shows it). Zones get their geometry three ways, and only the first needs a robot: `pixi run save-zone <name> [--note TEXT]` captures the pose the robot is standing at (the one way that also measures an approach heading), `segment-map` reads room outlines off a saved map, and the fleet dashboard's zone editor places and drags them on a candidate revision. A zone is a named pose (a fetch waypoint or a `goto <zone>` target) that may optionally carry an area **footprint** — a taught `--radius` circle, or a `polygon` outline that follows the actual room walls — so it reads as a room and answers "am I in it"; `site info` shows the zone/footprint counts and how many names the binding carries no geometry for. A floor's zones are **two files, not one** (zone/v0): `vocabulary.yaml` holds what the places are called and `binding.yaml` holds where geometry says they are — stored apart because only the names are portable off the map frame they were measured in; the binding travels inside the revision that names that frame. A legacy combined `zones.yaml` is still read and is migrated the first time anything writes. See "Fleet: the zone vocabulary/binding split" and "Fleet: zones are place-names". Maps are saved as PNG (map_server reads it natively; browsers can render it directly). `save-map` automatically runs an FFT structure-extraction **cleaning pass** (`mote_bringup/map_cleanup`, `sites._promote_cleaned`): it keeps the untouched map_saver output as `map_raw.png` and promotes the decluttered image to the served `map.png` (plus a `diagnostics.png`), so navigation always consumes the cleaned map while the raw is retained for provenance/audit. The `map.yaml` frame is identical for both, so zones/localization are unaffected; a cleaning failure falls back to serving the raw. The posegraph belongs to the raw map — mapping continuation extends from raw, never the cleaned image. **Zones no longer have to be taught one at a time**: `pixi run segment-map` (`map_cleanup/room_segmentation.py`, the ROSE² second stage the declutter pass left open) carves a saved map's free space into rooms and proposes one polygon zone per room, `--write` merging them into the floor's zones for the operator to rename — additive over zones already bound (a candidate covering an already-footprinted zone is dropped as named, so re-running is a byte-identical no-op) and written at floor level, never into the immutable map revision. A proposed room is anchored `derived`, not `taught`: it was read off a map by an algorithm, which is what tells an operator later that a re-map invalidates it. The method is one physical assumption — a doorway is narrow — applied to a grid the wall lines cut into faces: faces merge wherever their shared boundary has a clear span wider than a door, so it is indifferent to room size where a distance-transform threshold is not. Two consequences: a **corridor network is not proposed at all** (a footprint is a single outline, so a region encircling a block of rooms would claim them; those are dropped, taking with them any room wrongly absorbed into the corridor), and the geometry is **Manhattan after rotation** — an arbitrarily rotated map frame is fine, a building with wings at 30° to each other is not. Scored against ground-truth room rectangles on the sim ladder by `pixi run segment-eval` (30/33 mapped hospital rooms, 10/10 office, 1/1 mote, **zero merges**, unchanged with the map turned 17° or -31°); results in `docs/tuning/2026-07-27-room-segmentation.md`.
+Everything that is only meaningful relative to one mapped place — the Nav2 map pair, the slam_toolbox posegraph, and named zones — lives together as a **site bundle** under `~/.mote/sites/<site>/floors/<floor>/`, managed by `mote_bringup/sites.py` (CLI: `pixi run site`, docs in the module docstring). A floor is one frame — the building's, which the zones are coordinates in — and each map revision is one SLAM session registered into it; a site groups floors sharing a location. `~/.mote/active.yaml` selects the active site/floor per robot; launch files resolve the map (`nav2_launch.py`, `robot_launch.py`) and zones (`tasks_launch.py`) from it at launch time (zones fall back to the committed default). `MOTE_HOME` overrides `~/.mote` for tests/experiments. What a revision must *contain* — and how it validates, packs and travels — is `mote_bringup/bundle.py` (ROS-free, shared with the fleet server; see the map registry section above). Map artifacts are immutable **revisions** under `floors/<floor>/maps/<rev>/`, published by atomically flipping the `floors/<floor>/map` symlink once the revision is complete — a half-written save or interrupted transfer is never visible, and `site use-map <rev>` rolls back. `save-map` stores the posegraph alongside the map so mapping can be *continued* in the same frame later (extend, don't remap — continuation is what keeps a new map registered into the floor's frame, and there is no rigid-alignment fallback yet). Mapping runs also record the `mapping` rosbag stream by default (`mapping_launch.py record:=true`; the sim passes false), and `save-map` stamps the session's bag into the revision's `meta.yaml` for provenance (`site info` shows it). Zones get their geometry three ways, and only the first needs a robot: `pixi run save-zone <name> [--note TEXT]` captures the pose the robot is standing at (the one way that also measures an approach heading), `segment-map` reads room outlines off a saved map, and the fleet dashboard's zone editor places and drags them on a candidate revision. A zone is a named pose (a fetch waypoint or a `goto <zone>` target) that may optionally carry an area **footprint** — a taught `--radius` circle, or a `polygon` outline that follows the actual room walls — so it reads as a room and answers "am I in it"; `site info` shows the zone/footprint counts. A floor's zones are **one file**, `floors/<floor>/zones.yaml`, and the floor owns it: a zone is a coordinate in the floor's frame — a fact about the building — and a map revision is an estimate registered into that frame, so a revision carries a *copy* (which is how a floor's places reach a robot that has never driven there) and never owns them. See "Fleet: a zone is the floor's coordinate" and "Fleet: zones are place-names". Maps are saved as PNG (map_server reads it natively; browsers can render it directly). `save-map` automatically runs an FFT structure-extraction **cleaning pass** (`mote_bringup/map_cleanup`, `sites._promote_cleaned`): it keeps the untouched map_saver output as `map_raw.png` and promotes the decluttered image to the served `map.png` (plus a `diagnostics.png`), so navigation always consumes the cleaned map while the raw is retained for provenance/audit. The `map.yaml` frame is identical for both, so zones/localization are unaffected; a cleaning failure falls back to serving the raw. The posegraph belongs to the raw map — mapping continuation extends from raw, never the cleaned image. **Zones no longer have to be taught one at a time**: `pixi run segment-map` (`map_cleanup/room_segmentation.py`, the ROSE² second stage the declutter pass left open) carves a saved map's free space into rooms and proposes one polygon zone per room, `--write` merging them into the floor's zones for the operator to rename — additive over the zones already there (a candidate covering an already-footprinted zone is dropped as named, so re-running is a byte-identical no-op) and written at floor level, never into the immutable map revision. A proposed room records `source: segment-map` — what made it, and nothing about what the coordinate is worth. The method is one physical assumption — a doorway is narrow — applied to a grid the wall lines cut into faces: faces merge wherever their shared boundary has a clear span wider than a door, so it is indifferent to room size where a distance-transform threshold is not. Two consequences: a **corridor network is not proposed at all** (a footprint is a single outline, so a region encircling a block of rooms would claim them; those are dropped, taking with them any room wrongly absorbed into the corridor), and the geometry is **Manhattan after rotation** — an arbitrarily rotated map frame is fine, a building with wings at 30° to each other is not. Scored against ground-truth room rectangles on the sim ladder by `pixi run segment-eval` (30/33 mapped hospital rooms, 10/10 office, 1/1 mote, **zero merges**, unchanged with the map turned 17° or -31°); results in `docs/tuning/2026-07-27-room-segmentation.md`.
 
 ## Drive path (who gets the wheels)
 
@@ -730,7 +759,7 @@ Home for camera-derived perception. Runs on the robot (feeds Nav2), so unlike `m
 The task layer: py_trees behaviour trees on top of Nav2 (synced to the Pi). py_trees is a pixi *PyPI* dependency (not packaged on robostack/conda-forge); the ROS glue is first-party and small — no py_trees_ros. Contains:
 - `capabilities.py` — what this robot can be asked to do, as a capability/v0 document: `goto` with `{target}` and `fetch` with `{target, destination}`, both standard-registry keys with the registry's own property names. See "Fleet: adopting spec v0" above.
 - `task_server.py` — node hosting the mission trees. Three `std_msgs/String` topics carrying JSON: it publishes its capability set on `task/capabilities` (latched), takes mission/v0 commands on `task/command` and answers with mission/v0 statuses on `task/status`. A command names a capability key and carries a typed `input` validated against that capability's `input_schema`; the failures it publishes are typed (`unknown_capability`, `invalid_input`, `busy`, `precondition`, `unresolved_zone`, and on the way out `obstructed`/`unreachable`/`timeout`/`internal`). **It owns the lane** — one mission at a time, rejected with `busy` naming the holder — and evaluates the blocking preconditions before accepting. Zone names → map poses come from a zones YAML resolved via Sites (active floor, then legacy `~/.mote/zones.yaml`, then the committed `config/zones.default.yaml` whose poses match `mote_world.sdf`; in the sim, `sim_launch.py` passes the loaded world's own zones file instead). `save_zone` (`pixi run save-zone <name> [--radius R]`) teaches zones from the live robot pose; `mission.py` (`ros2 run mote_tasks mission`) dispatches one from a terminal, which is what a JSON seam took away from `ros2 topic pub`.
-- `zones.py` — the one named-place concept: `load_zones` returns `{name: Zone(name, pose, footprint)}` from the `zones:` section. A **zone** is a pose the robot navigates to (both fetch waypoints *and* goto targets resolve against this single table); it *optionally* carries an area **footprint** — a `radius` circle or a `polygon` of explicit vertices — that's just optional metadata, not a second type. `zones.containing(zones, x, y)` is the "which zone am I in" membership query (nearest-pose first) over zones that have a footprint; `goto` itself only needs the pose. A polygon may be concave (ray-cast membership, so an L-shaped ward or a corridor stretch works where a circle can only under- or over-cover: the hospital wards are 4.7x5.6 m, of which a `radius: 1.5` circle claimed 7.1 m² of 26.5 m²), wins over a `radius` if a zone carries both, and — since polygons come from post-processing a map or from the dashboard's editor rather than from driving — may omit `x`/`y`, in which case the loader derives a pose guaranteed to lie inside the outline. `save-zone` therefore preserves an existing footprint when it re-teaches a pose; `--radius` is the explicit way to replace one. Polygon zones no longer have to be hand-written either: `pixi run segment-map` proposes one per room of a saved map (see Sites). A `Zone` also carries the **vocabulary** half — `note` and `navigable` (zone/v0; see "Fleet: zones are place-names") — both optional, so no existing `zones.yaml` needed rewriting and a zone that says nothing but its name is somewhere a robot may drive to. Three consequences here. `resolve(zones, query)` is what `goto`/`fetch` match on: the name exactly, then case-insensitively and whitespace-normalised, which is what makes `store room` typeable; both then refuse a **non-navigable** zone rather than driving to it — `fetch` explicitly, because falling through to its label branch would send the detector hunting for an object called "server room". `load_zones` **refuses a vocabulary with a collision** (two zones answering one query), because loading it would resolve `goto` by dict order — silently, once per boot, differently after an edit; the rules live once in `mote_bringup.bundle` (`zone_term`, `ambiguities`, `check_vocabulary`) so the robot, `save-map` and the fleet server cannot disagree about what a vocabulary means. And `append_zone` carries the vocabulary through a re-teach and bumps `vocabulary_revision`: a better coordinate is not a rename.
+- `zones.py` — the one named-place concept: `load_zones` returns `{name: Zone(name, pose, footprint)}` from the `zones:` section. A **zone** is a pose the robot navigates to (both fetch waypoints *and* goto targets resolve against this single table); it *optionally* carries an area **footprint** — a `radius` circle or a `polygon` of explicit vertices — that's just optional metadata, not a second type. `zones.containing(zones, x, y)` is the "which zone am I in" membership query (nearest-pose first) over zones that have a footprint; `goto` itself only needs the pose. A polygon may be concave (ray-cast membership, so an L-shaped ward or a corridor stretch works where a circle can only under- or over-cover: the hospital wards are 4.7x5.6 m, of which a `radius: 1.5` circle claimed 7.1 m² of 26.5 m²), wins over a `radius` if a zone carries both, and — since polygons come from post-processing a map or from the dashboard's editor rather than from driving — may omit `x`/`y`, in which case the loader derives a pose guaranteed to lie inside the outline. `save-zone` therefore preserves an existing footprint when it re-teaches a pose; `--radius` is the explicit way to replace one. Polygon zones no longer have to be hand-written either: `pixi run segment-map` proposes one per room of a saved map (see Sites). A `Zone` also carries `note`, `navigable` and `source` (see "Fleet: zones are place-names"), all optional, so no existing `zones.yaml` needed rewriting and a zone that says nothing but its name is somewhere a robot may drive to. Three consequences here. `resolve(zones, query)` is what `goto`/`fetch` match on: the name exactly, then case-insensitively and whitespace-normalised, which is what makes `store room` typeable; both then refuse a **non-navigable** zone rather than driving to it — `fetch` explicitly, because falling through to its label branch would send the detector hunting for an object called "server room". `load_zones` **refuses a vocabulary with a collision** (two zones answering one query), because loading it would resolve `goto` by dict order — silently, once per boot, differently after an edit; the rules live once in `mote_bringup.bundle` (`zone_term`, `ambiguities`, `check_vocabulary`) so the robot, `save-map` and the fleet server cannot disagree about what a floor's names mean. And `append_zone` carries the name, note and `navigable` through a re-teach and bumps the floor's `revision`: a better coordinate is not a rename.
 - `behaviours/` — `DriveTo` (Nav2 NavigateToPose action client as a behaviour; cancels in-flight goals on preemption), `AcquireObject` (label missions: publishes the label to `detect/labels`, waits for a matching `detected_objects` detection, writes a standoff goal — 0.4 m short of the object, facing it — to `object_pose`; zone missions pass through), and `TimedStub` (placeholder pick/place until the SO-101 arm is actuated).
 - `trees/` — `common.py` (shared `WaitForTask` + the `task` blackboard key), `fetch.py` (wait → acquire object → drive to object → pick stub → drive to drop → place stub; blackboard keys `task`/`object_pose`/`object_label`/`drop_pose` are the seam between the command grammar and perception), and `goto.py` (wait → drive to the zone's pose; success == Nav2 success).
 - `test/` — mock-`navigate_to_pose` tree ticks (`test_fetch_tree.py`, `test_fetch_object.py` against a mock detector, `test_goto_tree.py`) plus pure parser/loader tests (`test_parse_command.py`, `test_goto_command.py`, `test_zones.py` — which covers zone footprints and `containing`), no Gazebo/Nav2 needed, run by `pixi run test`.
@@ -743,7 +772,7 @@ The fleet control plane — one package for both ends of one wire, the same spli
 - `enroll.py` (`pixi run enroll`) + `facts.py` — the robot side of enrollment and the hardware fingerprint it is idempotent on. `fleet_config.py` owns `$MOTE_HOME/fleet.yaml`.
 - `server/` — ROS-free scripts for the fleet box: `fleet_server.py` (stdlib `http.server`: enrollment, roster, dispatch, audit, basemaps, and the UI), `registry.py` (SQLite rows — robots, enrollment tokens, operators, the audit log; state under `$MOTE_FLEET_HOME`, default `~/.mote-fleet`), `fleetctl.py` (`pixi run fleetctl`: token/operator/robots/dispatch/audit/watch), `ui/` (the dashboard: static ES modules, a subscribe-only MQTT client, the Q5 map transform), `mosquitto.conf` + `broker.sh` (conda or container, the latter for WebSockets). Every write to `mission/command` — CLI or browser — goes through the API, so dispatch is authorized and audited in one place.
 - `mapsync.py` + `publish.py` (`pixi run publish-map`) — the map registry's robot side (M4): pull the canonical revision announced on the retained topic, or offer a saved one as a candidate. ROS-free, so the whole distribution flow is testable as function calls.
-- `server/bundle_store.py` — the registry's byte store: candidate revisions, validation on the way in (via `mote_bringup.bundle`), and the atomic symlink flip that publishes one. The filesystem is the truth about what is canonical; the database records who promoted it. It is also where the vocabulary/binding split is enforced in reads: `read_zones` (the binding) is gated on a published map, `read_vocabulary`/`vocabularies` are not, and only the latter go out over `/v1/zones`.
+- `server/bundle_store.py` — the registry's byte store: candidate revisions, validation on the way in (via `mote_bringup.bundle`), and the atomic symlink flip that publishes one. The filesystem is the truth about what is canonical; the database records who promoted it. One floor read backs three views: `read_zones` (poses, gated on a published map because it is served beside one), `read_revision_zones` (a candidate's, ungated) and `read_vocabulary`/`vocabularies` (names only, ungated) — and only the last go out over `/v1/zones`.
 - `test/` — four tiers: contract (payloads, schema files, and every HTTP route over a real socket, including the registry's — `api_harness.py` is the live server they share), bridge (fake MQTT client; plus `test_mapsync.py`, the robot's map staging against a real server with no ROS), browser (`ui_test.mjs` under node — the MQTT codec, the map transform and zone placement, skipped without node), and the end-to-end pair `test_e2e_fleet.py` / `test_e2e_map_registry.py`, which run a real mosquitto and the real fleet server — the first with the actual `mote_tasks` tree against a mock Nav2 including a dispatch through the API, the second publishing and promoting a map and starting a *second* robot's agent afterwards, so only a retained message can have told it. Those skip without a broker, so `pixi run test` covers the rest and `pixi run -e dev test-fleet` covers all four.
 
 ### `mote_arm` (Python/ament)
@@ -758,6 +787,17 @@ section. Contains:
   (ROS-free, unit-tested in `test/`).
 - `bus.py` — `FeetechBus`, a thin `scservo_sdk` wrapper (lazy import so
   build/lint/test stay hardware-free); register map matches `mote_hardware`.
+- **Whether the arm is held is read from the controller manager, never assumed**
+  (`control.py`: `ArmControl.active()` / `held`). `arm-pose go` leaves
+  `arm_controller` active — that *is* holding the pose — so the next command
+  client starts against an already-held arm; assuming `inactive` at construction
+  made the second `arm-pose go` of a session ask for a STRICT switch the manager
+  refuses (`Controller with name 'arm_controller' is already active` /
+  `Aborting, no controller is switched!`) once per streamed setpoint at 20 Hz,
+  and made `arm-jog`'s documented limp-on-exit silently do nothing. A refused
+  switch is re-read before being reported as a failure, since it means success
+  when the controller is already in the state asked for. `mock_arm` answers
+  `list_controllers` for the same reason it answers `switch_controller`.
 - **The arm is part of `mote_hardware`'s ros2_control component**, not a driver
   of its own: `MoteHardware` exports position command interfaces for the six arm
   joints alongside the wheels' velocity ones, from one `open()` of the shared
@@ -776,16 +816,19 @@ section. Contains:
   `xacro mote.urdf.xacro` falls back to the placeholders — fine for checking
   generation, wrong for driving a calibrated arm, because calibration moves the
   zero and every commanded angle then names a different position.
-- `jog` (CLI, `pixi run arm-jog`) — interactive per-joint jog; a *client of
-  `arm_controller`* (publishes clamped single-point trajectories, limps on
-  exit). It never opens the bus, so there is no contention to guard against.
+- **`jog` is retired.** It was a second keyboard path to the arm with none of
+  `teleop.py`'s rules — no rate limit, no deadman, no panic latch — for a
+  capability `arm-teleop`'s step mode (`m`, `--step`) now covers on the path
+  that has them. What went with it: a per-joint "drive to 0 rad" command, and a
+  `torque on|off` REPL command that `SPACE`/`z` replace.
 - **Every arm CLI exits and parses through `cli.py`**, because both properties
   fail silently when hand-rolled. `cli.shutdown(node, spinner)` shuts the
   context down, **joins the spin thread, and only then destroys the node**:
   destroying a node `spin()` still holds aborts the interpreter (exit 134,
   "terminate called without an active exception") *after* the tool has done its
-  work, so the run succeeds and the process still crashes — measured on `jog`
-  and `arm-pose list`, 3 of 3 runs each, with no hardware attached. This is not
+  work, so the run succeeds and the process still crashes — measured on the
+  jog CLI (since retired) and `arm-pose list`, 3 of 3 runs each, with no
+  hardware attached. This is not
   a rare race, so a new arm CLI must not hand-roll the teardown.
   `cli.parse(parser)` cuts the `--ros-args ... --` block out and then parses
   strictly: `ros2 run` hands the tool ROS's arguments too, so a plain
@@ -793,16 +836,16 @@ section. Contains:
   usual workaround — silently discards a mistyped `--max-travel` or `--speed`
   and drives on the default. `test_cli.py` pins both, the abort via a child
   process's exit status since nothing in-process can catch it.
-- `arm_check` (`pixi run arm-check`) — standalone read-only enumeration/health
+- `arm_check` (`pixi run arm-setup check`) — standalone read-only enumeration/health
   + `--save-zero` calibration snapshot. Run with the driver stopped (same port).
 - **`zero` is not `home`.** `robot.yaml`'s `arm.joints[].zero` is the encoder
   count reading 0 rad — after calibration, the *middle* of the joint's travel.
   `home` is a taught *pose* in `~/.mote/arm_poses.yaml`, normally the arm's rest
   position. Both were spelled "home" until 2026-07-28 and it confused an
   operator at the bench, so the config key is `zero:` (`home:` still parses),
-  `jog`'s command is `zero` (`home` aliases it with a note), and `arm-check` has
+  the jog CLI's command was `zero` rather than `home`, and `arm-setup check` has
   `--save-zero`. Do not reintroduce the collision.
-- `calibrate.py` + `arm_calibrate` (`pixi run arm-calibrate`) — **where the soft
+- `calibrate.py` + `arm_calibrate` (`pixi run arm-setup calibrate`) — **where the soft
   limits come from**, in LeRobot's two phases. A bus owner, not a driver client
   (the driver reports radians about the very zero under replacement, and the arm
   must stay limp). **Phase 1** records every joint at once in one live table (not one at a time).
@@ -865,9 +908,9 @@ section. Contains:
   encoder, not the joint) and such a joint simply reads `low` above `high`.
   `--skip-homing` re-measures ranges without writing anything. The maths is
   ROS-free and unit-tested (`test_calibrate.py`).
-- `arm_offsets` (`pixi run arm-offsets show|backup|restore|set`) — the offset
+- `arm_offsets` (`pixi run arm-setup offsets show|backup|restore|set`) — the offset
   register is the **only arm state with no copy outside the servo**, so
-  overwriting it destroys the previous value. `arm-calibrate` snapshots the
+  overwriting it destroys the previous value. `arm-setup calibrate` snapshots the
   existing offsets to `~/.mote/arm_offsets_backup.yaml` before its first write,
   writes/verifies/confirms each servo one at a time, and on any failure stops
   and points here — *including* a failure to save `arm.yaml` afterwards, which
@@ -877,6 +920,49 @@ section. Contains:
   way back. **Servos can
   arrive with non-zero offsets** (this arm: 2027, -1723, 1772, -1706, -40,
   1317), so the existing value is always read and folded in.
+- `arm_limits` (`pixi run arm-setup limits show|clear|restore`) — **a fourth place a
+  limit can live, and the only one not in a file.** EEPROM registers 9 and 11
+  (`Min_Angle_Limit`/`Max_Angle_Limit`) fence which goals a servo accepts and
+  refuse the rest **in silence**: no error, no status bit, no log line, so the
+  joint stops at the same angle every time, in one direction, at any load —
+  indistinguishable from running out of torque. This arm arrived with five of
+  six joints fenced *inside their own travel*, and it presented as teleop being
+  "stuttery and not going its full range": `shoulder_lift` stopped at -0.865 rad
+  against a configured -1.7785, at 0% load, with the command running 0.8 rad
+  past it, and its `Min_Angle_Limit` read 1478 = -0.874 rad about zero 2048.
+  Two properties hid it. The fence binds **only under torque**, so
+  `arm-setup calibrate` sweeps a limp joint straight through it and measures travel
+  the arm will then refuse — the calibration and the arm disagree and only the
+  arm is wrong. And the band is compared against the **corrected** goal, so
+  moving a zero moves what it fences without changing any number a person can
+  read. **What set it is known**:
+  `lerobot-calibrate` on the workstation, 2026-05-12, and the file is still there
+  (`~/.cache/huggingface/lerobot/calibration/robots/so_follower/so101_follower.json`,
+  whose `range_min`/`range_max` are those six bands to the count, beside the
+  `homing_offset` values the servos arrived with). Writing them was reasonable;
+  **what broke is that `arm-setup calibrate` then moved the zeros on 2026-07-28 and
+  left the fence behind.** Two of the six were wrong even when written —
+  `wrist_roll` unfenced because LeRobot hard-codes the SO-101's wrist_roll as
+  full-turn and skips it, and `shoulder_pan` 760 counts short because its
+  unwrapped min/max `record_ranges_of_motion` mis-records a wrap-crossing joint,
+  which shoulder_pan is. So **`arm-setup calibrate` now writes the fence and the zero
+  in one run and never one without the other**: each joint's fence goes on
+  immediately after its own offset — *after*, because the band is compared
+  against the corrected goal and means the wrong angles until the frame has
+  moved; *immediately*, because the pair is what has to agree. No joint is ever
+  left unfenced (clearing first would cost a write per joint and manufacture the
+  gap), and both as-found sets are snapshotted first (`arm_offsets_backup.yaml`,
+  `arm_limits_backup.yaml`).
+  `--skip-homing` promises to touch no servo, so it reports a cutting fence
+  rather than correcting it. **The band written is the measured travel, not the
+  soft limits** (`calibrate.fence_counts`) — wider by `--margin` at each end, so
+  `arm.yaml` always binds first and the fence can never be what stops the arm in
+  ordinary use; `arm-setup limits show` reporting a band narrower than the configured
+  one therefore means something is wrong. What it backstops is a soft limit that
+  has gone wrong — a hand-edited arm.yaml, a URDF that never received one, a
+  servo swapped under a stale calibration. There is deliberately no
+  `arm-setup limits set`: a *narrower* envelope belongs in arm.yaml, where three
+  commands print it. `arm-setup check` reports the band beside the configured one.
 - **Reads on this bus are hazardous twice over, and `FeetechBus._read` is the
   single choke point for both.** It clears the input buffer before every read,
   because a late reply is otherwise consumed as the answer to the *next*
@@ -890,8 +976,22 @@ section. Contains:
   exception.
 - `poses.py` + `arm_pose` (`pixi run arm-pose`) — teach/replay named poses
   (`~/.mote/arm_poses.yaml`, `MOTE_HOME`-overridable), the arm's analogue of
-  `save-zone`. `go` refuses moves over `--max-travel`. Changing `home`
-  invalidates stored poses. `arm-pose limits` is **not** the calibration path:
+  `save-zone`. **`save` stores each joint clamped into its soft band** and names
+  the ones it held there: posing by hand is posing a limp arm against its
+  mechanical stops and the soft limits sit `--margin` inside those, so a raw
+  capture is routinely outside the band and could never be replayed (measured:
+  elbow_flex 0.012 rad past, gripper 0.042). A joint further out than the margin
+  is reported separately — that means the arm and arm.yaml disagree. **`go` has
+  no travel ceiling**: `--max-travel` (0.35 rad) was set when the packaged bands
+  were the ~0.2 rad pose-envelope output, and against real ~3.5 rad calibrated
+  joints it refused the ordinary case — teach, let go, watch the limp arm fall
+  to rest, replay. Sizing it off the arm would have made it fire on nothing
+  again, and distance is not what makes a move risky once setpoints are
+  streamed: `--speed` bounds the rate whatever the distance, `--max-lag` stops a
+  lagging arm, the soft limits bound the destination, and every move is
+  confirmed. `episode-replay` keeps its own `--max-travel` for a different job —
+  a long approach means the arm is not where the recording started. Changing
+  `home` invalidates stored poses. `arm-pose limits` is **not** the calibration path:
   it widens outward from taught poses, so it only describes where the arm has
   been and never finds the stops (which is why the committed limits give barely
   moved joints a near-zero band) — its remaining use is *narrowing* to a working
@@ -916,11 +1016,59 @@ section. Contains:
   an arm ID colliding with a wheel ID is rejected in `config.py` *and* in
   `MoteHardware`, and both `MoteHardware::on_activate` and `mote_arm.bus` refuse
   a port another process already holds (naming the PID) — so the read-only bench
-  tools (`arm-check`, `arm-gains`), which still open the bus directly, need the
-  control stack stopped (`pixi run kill`). `jog` and `arm-pose` do not.
+  tools (`arm-setup check`, `arm-setup gains`), which still open the bus directly, need the
+  control stack stopped (`pixi run kill`). `arm-teleop` and `arm-pose` do not.
 - Torque policy, control interfaces, and calibration in `mote_arm/README.md`;
   the human bench runbook in `mote_arm/BENCH.md`.
-- `arm_gains` (`pixi run arm-gains show|apply|sweep`) — the servos' position-loop
+- **Keyboard teleop + episode recording** (`mote_arm/TELEOP.md`) — teleop with
+  **no leader arm**: a commanded pose held in software and moved by the keyboard
+  (`arm_teleop`, `pixi run arm-teleop`), turned into `arm_controller`
+  trajectories through `control.py` like every other command client. **One
+  process, one node**: it was `virtual_leader` + `arm_mirror` with a
+  `leader/joint_states` topic between them, on the theory that a gamepad or a
+  slider GUI would publish that topic instead. Nothing ever did, DDS here is
+  loopback-only so no remote frontend could, and **the seam that actually makes
+  a frontend replaceable is `teleop.py` being a ROS-free library** — what the
+  split bought in practice was a second terminal and a second thing to start.
+  Two loops survive inside the process and that part is load-bearing (below).
+  The latched `teleop/estop` topic went with the split: the process that sets
+  the panic is the one holding the arm, so exiting drops torque anyway. LeRobot's own teleop was rejected
+  for the reason the bring-up rejected LeRobot on the robot at all: it would put
+  torch on the Pi. **Every safety rule lives in `teleop.py`** and nowhere else —
+  soft-limit clamping, a 0.5 rad/s rate limit (so a leader that *jumps* becomes
+  a ramp), the deadman (the command's *liveness* is the deadman: a released key,
+  a closed window and a dropped SSH session all arrive as "no fresh pose", and
+  one goal then goes out at the arm's present position so it stops
+  there rather than coasting on), the latched panic (deactivates
+  `arm_controller` — torque *is* controller activation — and refuses goals until
+  cleared), and re-seeding from measured on every resume so a pause cannot bank
+  up motion. **The safety loop ticks on its own thread, not on a ROS timer**: taking
+  hold of the arm is a `switch_controller` call, and a service call made from
+  inside an executor callback can never complete, because the future is resolved
+  by the executor the callback is blocking (the jog CLI avoided this by driving
+  from its REPL thread). `mock_arm` (`pixi run arm-mock`) presents that same
+  ros2_control surface — trajectory topic plus `switch_controller` — with no bus
+  and an optional pure-zlib synthetic camera, so the whole loop runs on a
+  workstation: `pixi run arm-teleop-test` drives it headless and is the
+  pre-bench gate; the hardware checks a test cannot make are BENCH.md step 8.
+  **Episodes**: `episode_record` samples `joint_states` (observation), the
+  `arm_controller/joint_trajectory` topic (action — read off the wire rather
+  than from the teleop node, so an `arm-pose` session records too) and
+  `/image_raw/compressed` into a **capture** under `$MOTE_HOME/episodes/` — JSON
+  lines plus the compressed frames stored byte-for-byte, written with the
+  standard library alone, because the Pi carries no parquet or ffmpeg.
+  `tools/lerobot_export.py` (`pixi run -e lerobot arm-export`) converts a
+  capture into a real `LeRobotDataset` **through LeRobot's own API**
+  (`create`/`add_frame`/`save_episode`/`finalize`, then loads it back to verify)
+  rather than emitting the files — the format already moved once (v2.1 → v3.0)
+  and a hand-rolled writer would be wrong the next time. It resamples onto the
+  exact 1/fps grid first, since LeRobot derives timestamps from the frame index
+  and would otherwise silently stretch a slipped capture. `episode_replay`
+  (`pixi run arm-replay`) reads the *capture*, not the dataset, so replay needs
+  nothing off-board; it approaches the first pose, replays at a quarter speed,
+  and stops on sustained lag (`motion.py`, shared with `arm-pose go`). Stop the
+  leader before replaying — two things commanding `arm_controller` fight.
+- `arm_gains` (`pixi run arm-setup gains show|apply|sweep`) — the servos' position-loop
   gains live in EEPROM, i.e. invisible config a servo swap would silently
   revert, so `robot.yaml`'s `arm.gains` is the source of truth and this tool
   reconciles hardware with it. The arm shipped `Kp=16`, which left permanent
@@ -946,8 +1094,14 @@ section. Contains:
   reversals — the last two are the buzz check that bounds how high Kp may go),
   writes the trace to `~/.mote/arm_gain_sweeps/`, and restores the gains and
   limpness it started with, so a sweep on its own changes nothing.
-- **Physical note (GitHub #2):** the camera doesn't fit with the arm attached —
-  an unresolved mechanical clash, tracked separately, not addressed here.
+- **Physical note (GitHub #2):** the camera and the arm fouled each other, so
+  the arm is mounted **rotated 180 degrees** (option 1 of that issue). The
+  camera clears it, barely, and the cost is forward reach. **`arm_mount_joint`
+  in `mote.urdf.xacro` is still `rpy="0 0 0"`** and so describes the old
+  orientation: joint-space work is unaffected (nothing there asks where the
+  gripper is in the base frame), but TF draws the arm facing the wrong way and
+  anything reasoning in base coordinates — a fetch standoff, an IK stack —
+  would be 180 degrees out.
   The arm *is* part of the mission bringup now (it is in `mote_hardware`), but it
   stays limp until a controller claims it.
 

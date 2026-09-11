@@ -10,11 +10,13 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>mote_description</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
-  <!-- The jog CLI drives the arm through ros2_control: single-point
-       trajectories to arm_controller, and switch_controller as the torque
-       switch. It never opens the servo bus. -->
+  <!-- The jog CLI, teleop and episode replay drive the arm through
+       ros2_control: single-point trajectories to arm_controller, and
+       switch_controller as the torque switch. None of them opens the servo bus. -->
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>controller_manager_msgs</exec_depend>
+  <!-- std_msgs: the teleop e-stop flag. -->
+  <exec_depend>std_msgs</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <!-- feetech-servo-sdk (imports as scservo_sdk) is a PyPI dep declared in
        pixi.toml; pyserial is its transport. -->

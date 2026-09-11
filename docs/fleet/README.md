@@ -566,7 +566,8 @@ it logs and retries — enrolling later brings it up without a restart.
 pixi run -e fleet fleetctl -- operator new --name michael
 export MOTE_FLEET_TOKEN=<that token>
 
-pixi run fleetctl -- robots                             # the registry roster
+pixi run fleetctl -- robots                             # the roster: who is enrolled, who is online
+pixi run fleetctl -- robots mote-01                     # one robot: health, pose, capabilities, last mission
 pixi run fleetctl -- watch                              # live: presence, health, pose, status
 pixi run fleetctl -- dispatch mote-01 goto target=kitchen   # send a mission
 pixi run fleetctl -- dispatch mote-01 fetch target=lab destination=kitchen
@@ -647,6 +648,37 @@ state of the fleet the instant it connects, with no polling and nothing replayed
 on request. A robot that loses power is marked offline by the broker itself,
 within the keepalive, via its Last Will — not after somebody notices the
 heartbeats stopped.
+
+**Asking once needs no broker.** `robots` and `robots <id>` read the fleet
+server's own copy of those retained topics over HTTP and print it:
+
+```console
+$ pixi run fleetctl -- robots
+ID           NAME             SITE       PRESENCE ENROLLED              FINGERPRINT
+mote-01      Scout            home       online   2026-07-26T18:41:02Z  serial:d25bff05
+mote-02      Rover            -          unknown  2026-07-26T18:44:10Z  serial:8f21ac90
+
+$ pixi run fleetctl -- robots mote-01
+mote-01  Scout  (home)
+  enrolled   2026-07-26T18:41:02Z  serial:d25bff05
+  presence   online
+  health     ok: 6 subsystems ok
+  pose       x=1.5 y=-2.25 yaw=0.75 (home/ground)
+  can do     goto, fetch
+  mission    succeeded (goto, id 3e99cf44d1294ab5)
+```
+
+`unknown` is a third state, not a synonym for offline: a robot that is switched
+off publishes `online: false` through its Last Will and reads `offline`, while
+`unknown` means nothing has ever been heard from it — or that the fleet server
+is not connected to the broker, which both commands say outright when it is so.
+Both need the operator token, like every API route. What the detail view shows
+of a mission is the **last** status, because one is all the broker retains; `watch`
+and `dispatch` are what show every transition, and they keep the broker for
+exactly that reason. The route is
+[`fleet-api.md`](fleet-api.md#get-v1robotsrobot_id), and it is the same answer
+an HTTP-only client — an MCP front door, a script — gets without speaking MQTT
+at all.
 
 ---
 
@@ -1097,10 +1129,12 @@ holds, ignores the rest of the fleet's, downloads the revision, checks its
 digest, stages it in a temporary directory, renames it into `maps/<rev>/` and
 flips its local `map` symlink. A half-transferred revision is never visible.
 
-**Zones travel with the map.** A revision from a different mapping session is a
-different map frame, so the zones bound in the old one are wrong the moment the
-new map is published — the bundle's `binding.yaml` therefore replaces the floor's,
-and the one it replaces is kept beside it as `zones.<old-rev>.yaml`.
+**A revision carries a copy of the floor's zones.** The floor owns them — a zone
+is a coordinate in the floor's frame and a revision is an estimate registered
+into it — but the revision is how a floor's places reach a robot that has never
+driven there, and the copy inside the revision an operator promoted is the
+fleet's current answer. Installing one therefore replaces the floor's
+`zones.yaml`, keeping the one it replaces beside it as `zones.<old-rev>.yaml`.
 
 **The running navigation stack keeps the map it loaded.** Nav2's `map_server`
 reads the map at startup, so the flip takes effect on the next `pixi run robot`
@@ -1164,10 +1198,10 @@ curl -s http://fleet-box:8080/v1/zones/home/ground | python -m json.tool
 ```
 
 This is what to point a dispatcher at — anything turning "take it to the
-kitchen" into `goto kitchen`. It is safe to hand out precisely because it
-carries no coordinates: a vocabulary is portable, a binding is not. The route
-that *does* carry coordinates is `/v1/maps/<site>/<floor>/zones.json`, and it
-is for the thing drawing zones on the basemap, which already has the basemap.
+kitchen" into `goto kitchen`. It carries no coordinates because a caller of this
+route has nothing to draw one on, not because a coordinate would be wrong. The
+route that *does* carry them is `/v1/maps/<site>/<floor>/zones.json`, and it is
+for the thing drawing zones on the basemap, which already has the basemap.
 
 ### Teaching the vocabulary
 
@@ -1192,7 +1226,7 @@ where a hand-maintained list of spellings was one more thing to keep in step.
 
 `pixi run segment-map` gives every candidate it proposes a footprint and nothing
 else; the names it invents (`zone_01`…) are placeholders for you to replace, in
-the dashboard's zone editor or by hand in `vocabulary.yaml`:
+the dashboard's zone editor or by hand in the floor's `zones.yaml`:
 
 ```yaml
 zones:

@@ -20,12 +20,12 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "jog = mote_arm.jog:main",
-            "arm_check = mote_arm.arm_check:main",
-            "arm_calibrate = mote_arm.arm_calibrate:main",
-            "arm_offsets = mote_arm.arm_offsets:main",
+            "arm_setup = mote_arm.arm_setup:main",
             "arm_pose = mote_arm.arm_pose:main",
-            "arm_gains = mote_arm.arm_gains:main",
+            "arm_teleop = mote_arm.arm_teleop:main",
+            "mock_arm = mote_arm.mock_arm:main",
+            "episode_record = mote_arm.episode_record:main",
+            "episode_replay = mote_arm.episode_replay:main",
         ],
     },
 )

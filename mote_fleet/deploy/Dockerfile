@@ -5,8 +5,9 @@
 # through the prefix.dev channel (fleet.md, "The other pipelines"). It is a
 # container image and a compose file, versioned in this repo.
 #
-# python:3.12-slim plus three pure-python wheels: paho for the mediated-dispatch
-# path (BrokerLink), and PyYAML + Pillow for the map registry's validator, which
+# python:3.12-slim plus three pure-python wheels: paho for both halves of the
+# broker hop (BrokerLink's mediated dispatch, BrokerFeed's read of the fleet's
+# retained state), and PyYAML + Pillow for the map registry's validator, which
 # reads bundle YAML and occupancy PNGs with the same libraries that write them.
 # No ROS and no checkout — that is what the design asks of this box (fleet.md
 # Q4), not a dependency count. Measured 152 MB, and it builds in seconds, so a

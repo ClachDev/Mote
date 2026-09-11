@@ -129,6 +129,7 @@ nav:
       - Camera driver evaluation: research/usb_cam_evaluation.md
   - SO-101 arm:
       - Overview: arm/index.md
+      - Teleop and episodes: arm/teleop.md
       - Bench validation: arm/bench.md
   - Fleet:
       - Operator runbook: fleet/README.md
