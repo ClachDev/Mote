@@ -27,8 +27,9 @@ mqtt = pytest.importorskip("paho.mqtt.client")
 
 from geometry_msgs.msg import TransformStamped  # noqa: E402
 from nav2_msgs.action import NavigateToPose  # noqa: E402
-from rclpy.action import ActionServer  # noqa: E402
+from rclpy.action import ActionServer, CancelResponse  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from rclpy.task import Future  # noqa: E402
 from tf2_ros import TransformBroadcaster  # noqa: E402
 
 #: Zones both tests drive to. Matches the sim world's coordinates closely
@@ -127,11 +128,20 @@ class MockNav(Node):
     the robot knows where it is *now*.
     """
 
-    def __init__(self):
+    def __init__(self, hold=False):
         super().__init__("mock_nav")
         self.goals = []
+        #: With ``hold``, a goal drives until it is cancelled rather than
+        #: arriving at once: a robot halfway down a corridor.
+        self.hold = hold
+        self.cancels = 0
+        self._stops = []
         self.server = ActionServer(
-            self, NavigateToPose, "navigate_to_pose", self.execute
+            self,
+            NavigateToPose,
+            "navigate_to_pose",
+            self.execute,
+            cancel_callback=self._on_cancel,
         )
         self._tf = TransformBroadcaster(self)
         self.create_timer(0.1, self._localise)
@@ -145,10 +155,23 @@ class MockNav(Node):
         tf.transform.rotation.w = 1.0
         self._tf.sendTransform(tf)
 
-    def execute(self, goal_handle):
+    async def execute(self, goal_handle):
         self.goals.append(goal_handle.request.pose)
-        goal_handle.succeed()
+        if self.hold:
+            stop = Future()
+            self._stops.append(stop)
+            await stop
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+        else:
+            goal_handle.succeed()
         return NavigateToPose.Result()
+
+    def _on_cancel(self, _goal_handle):
+        self.cancels += 1
+        if self._stops and not self._stops[-1].done():
+            self._stops[-1].set_result(True)
+        return CancelResponse.ACCEPT
 
 
 class Operator:

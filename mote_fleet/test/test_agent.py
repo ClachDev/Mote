@@ -110,10 +110,17 @@ class Peer(Node):
     def __init__(self):
         super().__init__("peer")
         self.commands = []
+        self.cancels = []
         self.create_subscription(
             String,
             "task/command",
             lambda m: self.commands.append(json.loads(m.data)),
+            10,
+        )
+        self.create_subscription(
+            String,
+            "task/cancel",
+            lambda m: self.cancels.append(json.loads(m.data)),
             10,
         )
         self.status_pub = self.create_publisher(String, "task/status", 10)
@@ -247,6 +254,7 @@ def test_connecting_subscribes_to_commands_and_announces_presence(fleet):
     protocol = fleet.protocol
     fleet.mqtt.connect()
     assert "mote/v2/mote-01/mission/command" in fleet.mqtt.subscriptions
+    assert "mote/v2/mote-01/mission/cancel" in fleet.mqtt.subscriptions
     presence = fleet.mqtt.last(protocol.PRESENCE)
     assert presence["online"] is True
     assert presence["robot_id"] == "mote-01"
@@ -374,6 +382,90 @@ def test_an_unanswered_mission_fails_on_its_own(fleet):
     status = fleet.mqtt.last(protocol.STATUS)
     assert status["state"] == spec_mission.FAILED
     assert status["failure"]["class"] == spec_mission.TIMEOUT
+
+
+# ---- cancels ------------------------------------------------------------
+
+
+def cancel(fleet, mission_id, platform_id="mote-01"):
+    protocol = fleet.protocol
+    payload = spec_mission.cancel(platform_id, mission_id, issued_by="ui:tester")
+    fleet.mqtt.deliver(
+        protocol.topic("mote-01", protocol.CANCEL), json.dumps(payload).encode()
+    )
+    fleet.spin(0.2)
+    return payload
+
+
+def test_a_cancel_reaches_ros_and_its_outcome_comes_back(fleet):
+    protocol = fleet.protocol
+    fleet.mqtt.connect()
+    running = send(fleet)
+    fleet.peer.say(running["id"], spec_mission.ACCEPTED)
+    fleet.spin(0.3)
+
+    payload = cancel(fleet, running["id"])
+    # Byte for byte, like a command, and not as a command.
+    assert fleet.peer.cancels == [payload]
+    assert fleet.peer.commands == [running]
+
+    fleet.peer.say(running["id"], spec_mission.CANCELLED)
+    fleet.spin(0.3)
+    final = fleet.mqtt.last(protocol.STATUS)
+    assert (final["state"], final["terminal"], final["source"]) == (
+        spec_mission.CANCELLED,
+        True,
+        spec_mission.SOURCE_FLEET,
+    )
+    assert fleet.agent.tracker.summary() is None
+
+
+def test_a_cancel_for_a_mission_already_over_is_not_forwarded(fleet):
+    fleet.mqtt.connect()
+    done = send(fleet)
+    fleet.peer.say(done["id"], spec_mission.SUCCEEDED)
+    fleet.spin(0.3)
+    cancel(fleet, done["id"])
+    assert fleet.peer.cancels == []
+
+
+def test_a_cancel_for_a_local_mission_is_forwarded(fleet):
+    """Somebody at the robot's keyboard started it; an operator watching the
+    fleet still sees the robot busy, and may still need to stop it."""
+    fleet.mqtt.connect()
+    fleet.peer.say("bench-7", spec_mission.ACCEPTED)
+    fleet.spin(0.3)
+    cancel(fleet, "bench-7")
+    assert [c["id"] for c in fleet.peer.cancels] == ["bench-7"]
+
+
+def test_a_cancel_that_overtakes_its_command_is_sent_again_once_accepted(fleet):
+    """Two topics carry no ordering between them, so the executor can meet the
+    cancel before the command it names and ignore it as unknown."""
+    fleet.mqtt.connect()
+    running = send(fleet)
+    payload = cancel(fleet, running["id"])
+    assert fleet.peer.cancels == [payload]
+
+    fleet.peer.say(running["id"], spec_mission.ACCEPTED)
+    fleet.spin(0.3)
+    assert fleet.peer.cancels == [payload, payload]
+
+    # Once, not on every status that follows.
+    fleet.peer.say(running["id"], spec_mission.RUNNING)
+    fleet.spin(0.3)
+    assert len(fleet.peer.cancels) == 2
+
+
+def test_a_malformed_or_misaddressed_cancel_is_ignored(fleet):
+    protocol = fleet.protocol
+    fleet.mqtt.connect()
+    running = send(fleet)
+    topic = protocol.topic("mote-01", protocol.CANCEL)
+    fleet.mqtt.deliver(topic, b"{not json")
+    fleet.mqtt.deliver(topic, json.dumps({"schema": 1, "id": running["id"]}).encode())
+    cancel(fleet, running["id"], platform_id="mote-02")
+    assert fleet.peer.cancels == []
 
 
 # ---- capabilities --------------------------------------------------------

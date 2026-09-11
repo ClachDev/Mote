@@ -657,3 +657,135 @@ def test_a_mission_can_be_followed_over_http_alone(
         for node in (agent, tasks, nav):
             node.destroy_node()
         rclpy.shutdown()
+
+
+def test_cancel_through_the_fleet_api(tmp_path, monkeypatch, broker, fleet_api):
+    """An operator stops a mission mid-drive with ``fleetctl cancel``.
+
+    The same real pieces as the dispatch test, with a Nav2 that holds its goal
+    until it is cancelled. ``fleetctl`` is given no mission id: it reads the
+    one the robot is running off the retained ``mission/status``, POSTs the
+    cancel, and follows the mission to ``cancelled`` — after which the robot
+    takes the next mission rather than refusing it ``busy``.
+    """
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path / "mote"))
+    monkeypatch.setenv("ROS_DOMAIN_ID", str(random.randint(60, 100)))
+
+    import fleetctl
+    from mote_bringup import identity
+
+    from mote_fleet import enroll
+
+    enroll.main(["--server", fleet_api.url, "--token", fleet_api.registry.new_token()])
+    robot_id = identity.robot_id()
+    operator_token = fleet_api.registry.new_operator(name="michael")
+
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
+    zones_file = tmp_path / "zones.yaml"
+    zones_file.write_text(ZONES)
+
+    from mote_fleet.agent import MoteAgent
+    from mote_tasks.task_server import TaskServer
+
+    agent = MoteAgent(parameter_overrides=[Parameter("keepalive", value=2)])
+    tasks = TaskServer(
+        parameter_overrides=[
+            Parameter("zones_file", value=str(zones_file)),
+            Parameter("tick_period", value=0.05),
+        ]
+    )
+    nav = MockNav(hold=True)
+    executor = SingleThreadedExecutor()
+    for node in (agent, tasks, nav):
+        executor.add_node(node)
+
+    operator = Operator(broker)
+    try:
+        assert spin_until(executor, lambda: agent.connected), "agent never connected"
+        code, answer = api_post(
+            fleet_api.url,
+            f"/v1/robots/{robot_id}/dispatch",
+            {"capability": "goto", "input": {"target": "kitchen"}},
+            token=operator_token,
+        )
+        assert code == 202, answer
+        running = answer["id"]
+        assert spin_until(
+            executor,
+            lambda: (
+                len(nav.goals) == 1
+                and mission.ACCEPTED in [s["state"] for s in operator.statuses(running)]
+            ),
+        ), operator.statuses(running)
+
+        # fleetctl blocks while it follows the mission, and the robot's nodes
+        # share this thread's executor, so it runs beside the spin.
+        exit_code = []
+
+        def run_fleetctl():
+            try:
+                fleetctl.main(
+                    [
+                        "--server",
+                        fleet_api.url,
+                        "--broker",
+                        "127.0.0.1",
+                        "--port",
+                        str(broker),
+                        "--token",
+                        operator_token,
+                        "cancel",
+                        robot_id,
+                        "--reason",
+                        "wrong room",
+                    ]
+                )
+            except SystemExit as exc:
+                exit_code.append(exc.code)
+
+        thread = threading.Thread(target=run_fleetctl, daemon=True)
+        thread.start()
+        assert spin_until(executor, lambda: exit_code, timeout=45.0), "fleetctl hung"
+        assert exit_code == [0], exit_code
+
+        assert [s["state"] for s in operator.statuses(running)] == [
+            mission.DISPATCHED,
+            mission.ACCEPTED,
+            mission.CANCELLED,
+        ]
+        cancelled = operator.statuses(running)[-1]
+        assert cancelled["source"] == mission.SOURCE_FLEET
+        assert "cancelled by fleetctl: wrong room" in cancelled["detail"]
+        assert nav.cancels == 1
+
+        entry = fleet_api.registry.audit()[0]
+        assert (entry["actor"], entry["action"], entry["result"]) == (
+            "michael",
+            "cancel",
+            "published",
+        )
+        assert entry["command_id"] == running
+
+        # The lane is free the moment `cancelled` is out.
+        code, answer = api_post(
+            fleet_api.url,
+            f"/v1/robots/{robot_id}/dispatch",
+            {"capability": "goto", "input": {"target": "lab"}},
+            token=operator_token,
+        )
+        assert code == 202, answer
+        assert spin_until(
+            executor,
+            lambda: (
+                mission.ACCEPTED
+                in [s["state"] for s in operator.statuses(answer["id"])]
+            ),
+        ), operator.statuses(answer["id"])
+    finally:
+        agent.close()
+        operator.close()
+        fleet_api.publisher.close()
+        executor.shutdown()
+        for node in (agent, tasks, nav):
+            node.destroy_node()
+        rclpy.shutdown()

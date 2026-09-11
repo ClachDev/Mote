@@ -152,6 +152,60 @@ def test_an_accepted_mission_is_never_timed_out(tracker):
     assert [entry.id for entry in tracker.in_flight] == ["id-1"]
 
 
+# ---- cancels -------------------------------------------------------------
+
+
+def a_cancel(mission_id="id-1"):
+    return mission.cancel("mote-01", mission_id, issued_by="ui:tester")
+
+
+def test_a_cancel_starts_nothing_and_is_forwarded(tracker):
+    tracker.submit(a_command(), now=0.0)
+    tracker.on_status(a_status("id-1", mission.ACCEPTED), now=1.0)
+    assert tracker.cancel(a_cancel(), now=2.0) == dispatch.FORWARD
+    # It named a mission; it did not become one.
+    assert list(tracker.missions) == ["id-1"]
+    assert tracker.summary()["state"] == mission.ACCEPTED
+
+    tracker.on_status(a_status("id-1", mission.CANCELLED), now=3.0)
+    assert tracker.in_flight == []
+    assert tracker.cancel(a_cancel(), now=4.0) == dispatch.FINISHED
+
+
+def test_a_cancel_for_a_mission_this_agent_never_dispatched_is_forwarded(tracker):
+    """The executor knows what is in flight, including a local mission the
+    agent never saw a command for; a cancel naming nothing is its no-op."""
+    assert tracker.cancel(a_cancel("bench-7"), now=0.0) == dispatch.FORWARD
+    assert tracker.missions == {}
+
+
+def test_a_cancel_ahead_of_its_mission_is_due_again_once_accepted(tracker):
+    tracker.submit(a_command(), now=0.0)
+    payload = a_cancel()
+    assert tracker.cancel(payload, now=0.1) == dispatch.FORWARD
+    assert tracker.cancels_due() == []  # still dispatched: nothing has changed
+
+    tracker.on_status(a_status("id-1", mission.ACCEPTED), now=0.2)
+    assert tracker.cancels_due() == [payload]
+    assert tracker.cancels_due() == []  # once
+
+
+def test_a_cancel_behind_its_accepted_mission_is_not_sent_twice(tracker):
+    tracker.submit(a_command(), now=0.0)
+    tracker.on_status(a_status("id-1", mission.ACCEPTED), now=0.1)
+    tracker.cancel(a_cancel(), now=0.2)
+    tracker.on_status(a_status("id-1", mission.RUNNING), now=0.3)
+    assert tracker.cancels_due() == []
+
+
+def test_a_mission_refused_before_the_held_cancel_is_due_takes_it_along(tracker):
+    tracker.submit(a_command(), now=0.0)
+    tracker.cancel(a_cancel(), now=0.1)
+    busy = mission.failure(mission.BUSY, "mission x holds the default lane")
+    tracker.on_status(a_status("id-1", mission.REJECTED, failure=busy), now=0.2)
+    assert tracker.cancels_due() == []
+
+
 # ---- what health reports -------------------------------------------------
 
 

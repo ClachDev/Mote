@@ -48,11 +48,14 @@ Topic tree (``mote/v2/<robot_id>/…``)::
     pose             retained        last known pose in the map frame
     capabilities     retained        capability/v0: what this robot can be asked
     mission/command  not retained    fleet -> robot: one mission, correlation id
+    mission/cancel   not retained    fleet -> robot: stop the mission with that id
     mission/status   retained        robot -> fleet: that mission's transitions
 
-``mission/command`` is the one topic that is **never retained**: a retained
-command would be re-delivered to the robot every time it reconnects, which
-turns a link flap into a re-dispatch. Everything else is retained, so an
+``mission/command`` and ``mission/cancel`` are the topics that are **never
+retained**: a retained command would be re-delivered to the robot every time it
+reconnects, which turns a link flap into a re-dispatch, and a cancel is a request
+made at one moment, which replayed on every reconnect would keep arriving long
+after the mission it named had ended. Everything else is retained, so an
 operator UI that connects at any moment sees the current state of the fleet
 without waiting for the next heartbeat — and, from v2, what each robot can be
 asked to do, without asking it.
@@ -84,9 +87,8 @@ POSE = "pose"
 CAPABILITIES = "capabilities"
 COMMAND = "mission/command"
 STATUS = "mission/status"
-#: Specified and not yet published: the task layer has no cancel, so nothing
-#: would honour one. The leaf is named here rather than left to be invented,
-#: so the day it lands it lands where a reader already expects it.
+#: fleet -> robot: stop a mission in flight. A leaf of its own rather than a
+#: kind of command, so it reaches the executor past the lane the mission holds.
 CANCEL = "mission/cancel"
 
 # The map registry's subtree (M4). It sits at the same level as a robot id
