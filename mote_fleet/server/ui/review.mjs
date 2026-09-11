@@ -227,8 +227,11 @@ function el(tag, attributes = {}, children = []) {
 }
 
 export class ReviewView {
-  constructor({ api, dom, onPromoted = () => {} }) {
+  constructor({ api, loadImage, dom, onPromoted = () => {} }) {
     this.api = api;
+    // Injected for the same reason `api` is: both carry the operator's token,
+    // and this pane must not hold a second idea of where that lives.
+    this.loadImage = loadImage;
     this.dom = dom;
     this.onPromoted = onPromoted;
     this.floors = [];
@@ -330,9 +333,7 @@ export class ReviewView {
     this.dom.mapLabel.textContent = `${this.key} · ${revision.revision}`;
     try {
       const meta = await this.api(revisionPath(site, floor, revision.revision, 'map.json'));
-      const image = new Image();
-      image.src = meta.image_url;
-      await image.decode();
+      const image = await this.loadImage(meta.image_url);
       if (epoch !== this.epoch) return;
       // Two revisions of one floor are compared by switching between them, so
       // the viewport is kept — unless the maps are different sizes, where

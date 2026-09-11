@@ -2,10 +2,12 @@
 
 A machine is one tailnet node and `tailscale up` replaces the whole tag set, so
 getting roles wrong doesn't error — it silently drops a tag and leaves the ACLs
-that M7 will write against them wrong. The script's `--dry-run` resolves roles,
+in `policy.hujson` wrong. The script's `--dry-run` resolves roles,
 tags and hostname without touching the network, which is what these pin down.
 """
 
+import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -93,3 +95,56 @@ def test_the_auth_key_is_not_echoed(home):
     result = run(home, "--role", "fleet", "--auth-key", "tskey-auth-SECRET")
     assert "tskey-auth-SECRET" not in result.stdout
     assert "--auth-key ***" in result.stdout
+
+
+# ---- the access policy ------------------------------------------------------
+
+
+POLICY = Path(__file__).resolve().parents[1] / "tailscale" / "policy.hujson"
+
+
+def policy():
+    """``policy.hujson`` as data.
+
+    Tailscale's dialect is JSON with `//` comments and trailing commas, which
+    the stdlib parser refuses, so both are stripped here. This is a syntax
+    check, not a semantic one: the rules are enforced by Tailscale, and the
+    `tests` block below is run by Tailscale on every save — it refuses a policy
+    that fails one. What is checked here is what a paste into the console cannot
+    tell us: that the file still parses, and that it still names the tags this
+    repo advertises.
+    """
+    lines = []
+    for line in POLICY.read_text().splitlines():
+        code = line.split("//", 1)[0] if not line.lstrip().startswith("//") else ""
+        lines.append(code)
+    text = "\n".join(lines)
+    return json.loads(re.sub(r",(\s*[}\]])", r"\1", text))
+
+
+def test_the_policy_is_parseable():
+    assert set(policy()) == {"tagOwners", "hosts", "acls", "ssh", "tests"}
+
+
+def test_every_tag_the_joiner_advertises_is_owned():
+    """An `--advertise-tags` on a tag the policy does not declare fails with
+    "requested tags are invalid or not permitted", which is a joining robot
+    stopped by a file it never reads."""
+    advertised = set(re.findall(r"tag:[a-z]+", SCRIPT.read_text()))
+    assert advertised
+    assert advertised <= set(policy()["tagOwners"])
+
+
+def test_no_rule_lets_one_robot_reach_another():
+    """The milestone's criterion, asserted against the rules rather than the
+    comment beside them: in v1 there is no robot-to-robot anything."""
+    for rule in policy()["acls"]:
+        if "tag:robot" in rule["src"]:
+            assert not any(dst.startswith("tag:robot") for dst in rule["dst"])
+
+
+def test_the_policy_asks_tailscale_to_check_that_too():
+    """Tailscale evaluates `tests` on every save and refuses a policy failing
+    one, so the criterion is checked by the thing enforcing it."""
+    robot = next(case for case in policy()["tests"] if case["src"] == "tag:robot")
+    assert {dst for dst in robot["deny"] if dst.startswith("tag:robot:")}

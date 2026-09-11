@@ -61,6 +61,7 @@ def fleet_api(tmp_path, broker):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     server.url = f"http://127.0.0.1:{server.server_address[1]}"
+    server.token = server.registry.new_operator(name="e2e")
     yield server
     server.shutdown()
     server.server_close()
@@ -198,10 +199,14 @@ def test_publish_promote_and_pull(tmp_path, monkeypatch, broker, fleet_api, caps
 
 
 def _get(server, path):
+    """A read of the live server. Every ``/v1`` route needs an operator, so the
+    harness's own token comes along."""
     import json
     import urllib.request
 
-    with urllib.request.urlopen(server.url + path, timeout=10) as response:
+    request = urllib.request.Request(server.url + path)
+    request.add_header("Authorization", f"Bearer {server.token}")
+    with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read())
 
 

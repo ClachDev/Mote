@@ -64,6 +64,18 @@ def test_identity_is_written_before_anything_uses_it(args):
     assert installs_identity < joins_tailnet
 
 
+def test_the_environment_is_installed_from_the_lockfile(args):
+    """`--locked` aborts if pixi.lock is out of date with pixi.toml rather than
+    solving something new, so a robot provisions the dependency set that was
+    tested. Without it, a card imaged months later quietly gets a different
+    one."""
+    commands = [c[-1] for c in yaml.safe_load(provision.build(args))["runcmd"]]
+    install = next(i for i, c in enumerate(commands) if "pixi install" in c)
+    build = next(i for i, c in enumerate(commands) if "pixi run build" in c)
+    assert "--locked" in commands[install]
+    assert install < build
+
+
 def test_secrets_survive_substitution_verbatim(args):
     data = yaml.safe_load(provision.build(args))
     keyfile = next(

@@ -375,7 +375,8 @@ def test_a_broker_that_refuses_the_feed_is_reported_as_not_connected(tmp_path):
     try:
         assert answered.wait(10), "the broker never answered the feed's CONNECT"
         assert server.state.connected is False
-        code, roster = api_get(url, "/v1/robots")
+        token = server.registry.new_operator(name="e2e")
+        code, roster = api_get(url, "/v1/robots", token=token)
         assert code == 200, roster
         assert roster["broker_connected"] is False
     finally:
@@ -583,7 +584,7 @@ def test_a_mission_can_be_followed_over_http_alone(
         # ---- discovery: which robots there are, and which are online ----
         state = until(lambda state: (state["presence"] or {}).get("online"))
         assert state, "presence never reached the API"
-        code, roster = api_get(fleet_api.url, "/v1/robots")
+        code, roster = api_get(fleet_api.url, "/v1/robots", token=token)
         assert code == 200, roster
         assert roster["broker_connected"] is True
         row = next(r for r in roster["robots"] if r["robot_id"] == robot_id)

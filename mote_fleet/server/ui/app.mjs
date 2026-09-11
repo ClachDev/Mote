@@ -47,6 +47,7 @@ const state = {
   robots: new Map(),
   selected: null,
   operator: null,
+  noted: null, // whose capability summary the dispatch note is showing
   mapKey: null,
   floor: null, // the registry's view of the floor on screen: revisions, candidates
   zones: [], // the floor's bound places, for the map and the dispatch picker
@@ -57,6 +58,7 @@ let mapView = null;
 let review = null;
 let panes = null;
 let pending = false;
+let reader = null;
 
 // -- small helpers -------------------------------------------------------
 
@@ -83,14 +85,35 @@ function robotRecord(robotId) {
 
 // -- data in -------------------------------------------------------------
 
-async function api(path, options = {}) {
-  const headers = Object.assign({}, options.headers);
+function authHeaders(headers = {}) {
   const token = localStorage.getItem(TOKEN_KEY);
-  if (token) headers.Authorization = `Bearer ${token}`;
+  return token ? Object.assign({}, headers, { Authorization: `Bearer ${token}` }) : headers;
+}
+
+async function api(path, options = {}) {
+  const headers = authHeaders(options.headers);
   const response = await fetch(path, Object.assign({}, options, { headers }));
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `${response.status} ${response.statusText}`);
   return body;
+}
+
+// The basemap is a gated route like the transform beside it, and an `<img src>`
+// carries no Authorization header — so the pixels are fetched with the token
+// and handed to the decoder as a blob. The object URL is released once decoding
+// has finished: the bitmap outlives it, the URL does not need to.
+async function loadImage(path) {
+  const response = await fetch(path, { headers: authHeaders() });
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  try {
+    const image = new Image();
+    image.src = objectUrl;
+    await image.decode();
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 async function loadRoster() {
@@ -159,9 +182,7 @@ async function ensureMap(record) {
   loadFloor(site, floor, key);
   try {
     const meta = await api(`/v1/maps/${site}/${floor}/map.json`);
-    const image = new Image();
-    image.src = meta.image_url;
-    await image.decode();
+    const image = await loadImage(meta.image_url);
     if (state.mapKey !== key) return;
     mapView.setMap(meta, image);
   } catch (error) {
@@ -288,7 +309,13 @@ function renderDispatch(record) {
       ]),
     ),
   );
-  if (capability) {
+  // One line carries two things: what the selected capability does, and what
+  // the last dispatch did. So the summary is written when the *selection*
+  // changes and not on every render — otherwise an outcome an operator has just
+  // read is replaced by a description of the form, by whatever arrives next.
+  const note = `${state.selected}:${capability && capability.key}`;
+  if (capability && state.noted !== note) {
+    state.noted = note;
     dom.dispatchNote.textContent = capability.summary || '';
     dom.dispatchNote.className = 'note';
   }
@@ -346,6 +373,9 @@ function scheduleRender() {
 }
 
 function render() {
+  // At the gate there is nothing to draw, and the five-second re-render must
+  // not replace "paste a token" with "no robots" — a different claim.
+  if (!state.config) return;
   const records = [...state.robots.values()].sort((a, b) => a.id.localeCompare(b.id));
   if (!state.selected && records.length) state.selected = records[0].id;
   renderRoster(records);
@@ -576,32 +606,36 @@ async function onDispatch(event) {
 
 async function onToken(event) {
   event.preventDefault();
-  const token = dom.token.value.trim();
-  localStorage.setItem(TOKEN_KEY, token);
-  await checkOperator();
+  localStorage.setItem(TOKEN_KEY, dom.token.value.trim());
   dom.token.value = '';
+  await start();
 }
 
-// The one call that tells us whether this token is any good — the audit route
-// is operator-only, so a 200 is proof and a 401 is the reason to say so.
-async function checkOperator() {
-  const token = localStorage.getItem(TOKEN_KEY);
-  if (!token) {
-    state.operator = null;
-    dom.operator.textContent = 'read-only — paste an operator token to dispatch';
-    dom.operator.className = 'operator anonymous';
-    return;
+// There is no read-only mode to fall back to: `/v1/config` is itself
+// operator-only, so the page has two states — signed in, or asking to be — and
+// this is the asking one. It is not an error. A wall display whose token has
+// been revoked looks like this until somebody pastes another in.
+function showGate(reason) {
+  state.operator = null;
+  state.config = null;
+  state.robots.clear();
+  if (reader) {
+    reader.close();
+    reader = null;
   }
-  try {
-    await api('/v1/audit?limit=1');
-    state.operator = token;
-    dom.operator.textContent = 'operator token accepted';
-    dom.operator.className = 'operator ok';
-  } catch (error) {
-    state.operator = null;
-    dom.operator.textContent = `token refused: ${error.message}`;
-    dom.operator.className = 'operator error';
-  }
+  dom.operator.textContent = reason;
+  dom.operator.className = 'operator anonymous';
+  dom.brokerState.textContent = 'not connected — no operator token';
+  dom.brokerState.className = 'broker offline';
+  dom.roster.replaceChildren(
+    el('p', {
+      class: 'empty',
+      text:
+        'Paste an operator token to see the fleet. Mint one on the fleet box: ' +
+        'fleetctl operator new --name <you>',
+    }),
+  );
+  renderDetail(null);
 }
 
 // -- boot ----------------------------------------------------------------
@@ -668,6 +702,49 @@ function brokerUrl(config) {
   return `${scheme}://${host}:${config.broker.ws_port}/`;
 }
 
+// Everything that needs a credential, in one function: called at load and again
+// whenever a token is pasted, so signing in never needs a reload and a token
+// that has stopped working puts the page back at the gate rather than into a
+// silent half-state. `/v1/config` is the check — it is operator-only like every
+// other route, and it is the one the rest of the page is built out of.
+async function start() {
+  if (!localStorage.getItem(TOKEN_KEY)) {
+    showGate('read-only — paste an operator token');
+    return;
+  }
+  try {
+    state.config = await api('/v1/config');
+  } catch (error) {
+    showGate(`token refused: ${error.message}`);
+    return;
+  }
+  state.operator = localStorage.getItem(TOKEN_KEY);
+  dom.operator.textContent = 'operator token accepted';
+  dom.operator.className = 'operator ok';
+  document.getElementById('contract').textContent = state.config.contract;
+  await loadRoster().catch((error) => console.warn('roster unavailable', error));
+  // The registry's floors, not the fleet's: a floor worth reviewing may have no
+  // robot reporting it at all.
+  await review.loadFloors().catch((error) => console.warn('registry unavailable', error));
+
+  if (reader) reader.close();
+  const { root, presence, health, pose, status, capabilities } = state.config.topics;
+  reader = new BrokerReader({
+    url: brokerUrl(state.config),
+    topics: [presence, health, pose, status, capabilities].map(
+      (leaf) => `${root}/+/${leaf}`,
+    ),
+    onMessage: onBrokerMessage,
+    onState: (status_, detail) => {
+      dom.brokerState.textContent =
+        status_ === 'connected' ? `broker connected` : `broker ${status_}: ${detail}`;
+      dom.brokerState.className = `broker ${status_}`;
+    },
+  });
+  reader.connect();
+  scheduleRender();
+}
+
 export async function boot() {
   bind();
   mapView = new MapView(dom.canvas, {
@@ -678,6 +755,7 @@ export async function boot() {
   });
   review = new ReviewView({
     api,
+    loadImage,
     onPromoted,
     dom: {
       canvas: dom.reviewCanvas,
@@ -733,28 +811,7 @@ export async function boot() {
   dom.dispatchSend = dom.dispatch.querySelector('button[type="submit"]');
   document.getElementById('token-form').addEventListener('submit', onToken);
 
-  state.config = await api('/v1/config');
-  document.getElementById('contract').textContent = state.config.contract;
-  await checkOperator();
-  await loadRoster().catch((error) => console.warn('roster unavailable', error));
-  // The registry's floors, not the fleet's: a floor worth reviewing may have no
-  // robot reporting it at all.
-  await review.loadFloors().catch((error) => console.warn('registry unavailable', error));
-
-  const { root, presence, health, pose, status, capabilities } = state.config.topics;
-  const reader = new BrokerReader({
-    url: brokerUrl(state.config),
-    topics: [presence, health, pose, status, capabilities].map(
-      (leaf) => `${root}/+/${leaf}`,
-    ),
-    onMessage: onBrokerMessage,
-    onState: (status_, detail) => {
-      dom.brokerState.textContent =
-        status_ === 'connected' ? `broker connected` : `broker ${status_}: ${detail}`;
-      dom.brokerState.className = `broker ${status_}`;
-    },
-  });
-  reader.connect();
+  await start();
 
   // Ages are the only thing on the page that changes without a message.
   setInterval(scheduleRender, 5000);
