@@ -21,7 +21,7 @@ class DriveTo(py_trees.behaviour.Behaviour):
     Stopping is asynchronous: the cancel goes out when the behaviour is halted,
     and Nav2 ends the goal some time after. :meth:`halting` says whether that
     has happened, which is what lets the task server report a mission
-    ``cancelled`` only once the robot has actually stopped being driven.
+    ``cancelled`` only once Nav2 has let go of it.
 
     Each of those three failures leaves a *typed* reason for the task server
     (``trees.common.report_failure``), because they are three different things
