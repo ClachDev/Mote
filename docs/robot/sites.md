@@ -2,11 +2,13 @@
 
 Everything that is only meaningful relative to one mapped place — the Nav2 map
 pair, the `slam_toolbox` posegraph, and named zones — lives together as a
-**site bundle**. A zone's pose is a coordinate in a map frame whose origin is
-an accident of where SLAM happened to start, so those three artefacts must live
-and travel as one unit or they quietly stop describing the same building.
+**site bundle**. A zone is a coordinate in the floor's frame — a fact about the
+building — and a map revision is one SLAM session registered into that frame, so
+those three artefacts live and travel as one unit or they quietly stop
+describing the same building.
 
-- A **floor** is one SLAM session, i.e. one map frame.
+- A **floor** is one frame — the building's, which its zones are coordinates
+  in. Each map revision is one SLAM session registered into it.
 - A **site** groups floors that share a location.
 - A **revision** is one immutable set of map artefacts for a floor.
 
@@ -123,39 +125,37 @@ pixi run segment-map --write  # merge the proposal into zones.yaml to rename
 ```
 
 `segment-map` carves a saved map's free space into rooms on one physical
-assumption — a doorway is narrow. It is additive over zones already bound (a
-candidate covering an already-footprinted zone is dropped), so re-running is a
-no-op, and it writes beside `zones.yaml`, never into the immutable map
-revision. A proposed room is anchored `derived`, not `taught`: an algorithm read
-it off a map, which is what tells an operator later that a re-map invalidates
-it. Two consequences worth knowing: a corridor network is not proposed at
-all, and the geometry is Manhattan after rotation. See
+assumption — a doorway is narrow. It is additive over the zones already there
+(a candidate covering an already-footprinted zone is dropped), so re-running is
+a no-op, and it writes into the floor's `zones.yaml`, never into the immutable
+map revision. A proposed room records `source: segment-map` — what made it, and
+nothing about what the coordinate is worth. Two consequences worth knowing: a
+corridor network is not proposed at all, and the geometry is Manhattan after
+rotation. See
 [map cleaning & room segmentation](map-cleanup.md) and the
 [validation run](../tuning/2026-07-27-room-segmentation.md).
 
 The shape of the file, circles versus polygons, and how membership is answered
 are covered in [Missions](missions.md#zones-and-go-to-the-kitchen).
 
-### Names travel, coordinates do not
+### What a zone says besides where it is
 
 **A zone is a place-name**: a human name bound to geometry. Beside its
-coordinates it carries a **vocabulary** — the `name` it is called, a free-text
-`note` for what the name cannot say ("stationery lives here, not in the
-office"), and `navigable`. `save-zone` and the dashboard's zone editor both
-write the first two; a zone that says nothing but its name is a place a robot
-may drive to.
+coordinates it carries the `name` it is called, a free-text `note` for what the
+name cannot say ("stationery lives here, not in the office"), and `navigable`.
+`save-zone` and the dashboard's zone editor both write the first two; a zone
+that says nothing but its name is a place a robot may drive to.
 
-That split is the whole reason the vocabulary exists separately. `(2.0, 3.5)`
-is a different physical point for the robot standing beside this one, and no
-fleet-level transform fixes that; the *name* is true for both. So the fleet
-publishes the vocabulary and not the binding, over
-[`GET /v1/zones`](../fleet/fleet-api.md) — expressed by the route rather than
-by a rule someone has to remember: everything under `/v1/maps` is bound to a
-basemap, everything under `/v1/zones` is bound to nothing.
+The names are what [`GET /v1/zones`](../fleet/fleet-api.md) publishes, and it
+publishes them and nothing else — not because a coordinate would be wrong (a
+zone is a coordinate in the floor's frame, and every robot on the floor holds
+the same one) but because a caller of that route has no basemap to draw one on.
+That is what the two prefixes say: everything under `/v1/maps` is served beside
+a basemap, everything under `/v1/zones` needs nothing.
 
-Locally, `load_zones` **refuses** a vocabulary in which two zones answer one
-query, because loading it would resolve `goto` by dictionary order — silently,
-once per boot, and differently after an edit.
+Locally, `load_zones` **refuses** a floor in which two zones answer one query,
+because loading it would resolve `goto` by dictionary order — silently, once per
+boot, and differently after an edit.
 
 ## Publishing a map to the fleet
 

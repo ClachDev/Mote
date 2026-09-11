@@ -65,11 +65,9 @@ answers "am I inside it?". That footprint is just optional metadata on the
 single zone concept — not a second kind of thing — so there's one loader
 whatever wrote the file.
 
-A floor stores this as the zone/v0 pair: `vocabulary.yaml` for what the places
-are called, `binding.yaml` for where geometry says they are. The combined
-`zones.yaml` below is the pre-split shape, still read (and migrated the first
-time anything writes) because the sim worlds and the committed default ship
-that way — one file is the right shape for a fixture with one robot in it.
+A floor stores this in one `zones.yaml`, and the floor owns it: a zone is a
+coordinate in the floor's frame — a fact about the building — where a map
+revision is an estimate registered into that frame.
 
 ```yaml
 frame_id: map

@@ -714,7 +714,7 @@ test('both map canvases take their own touch gestures', () => {
 // pointer events on top of exactly these.
 
 const {
-  EDITOR_ANCHOR,
+  EDITOR_SOURCE,
   NAME_RE,
   ambiguities,
   cursorFor,
@@ -862,21 +862,20 @@ test('moving a zone carries footprint and pose together', () => {
     ...square,
     x: 5,
     y: 5,
-    anchor: EDITOR_ANCHOR,
+    source: EDITOR_SOURCE,
   });
 });
 
-test('geometry this editor places or moves stops claiming a robot drove there', () => {
-  // `anchor.method` is what tells a later reader whether to trust a coordinate
-  // after the map changes, and the answer differs: a taught pose was measured
-  // by driving a robot to it, a `segment-map` room was read off the map by an
-  // algorithm, and one of these is a click. Stamping a click `taught` puts a
-  // measurement nobody took into the one field that exists to say so.
-  const driven = { ...square, anchor: { method: 'taught', by: 'michael' } };
+test('geometry this editor places or moves says the editor made it', () => {
+  // `source` is what put the coordinate there — a robot driven to it, an
+  // algorithm reading a map, or a click. Nothing decides anything from it, so
+  // what it buys is an operator being able to see which zones somebody drew;
+  // and that only works if a click stops answering `save-zone`.
+  const driven = { ...square, source: 'save-zone' };
   const derived = {
     name: 'ward_a',
     polygon: [[0, 0], [2, 0], [2, 2], [0, 2]],
-    anchor: { method: 'derived', by: 'segment-map' },
+    source: 'segment-map',
   };
 
   for (const edited of [
@@ -887,20 +886,15 @@ test('geometry this editor places or moves stops claiming a robot drove there', 
     withoutVertex({ ...derived, polygon: [...derived.polygon, [-1, 1]] }, 0),
     freshZone([], 0, 0),
   ]) {
-    assert.deepEqual(edited.anchor, EDITOR_ANCHOR);
+    assert.equal(edited.source, EDITOR_SOURCE);
   }
 
-  // And a zone nobody touched keeps whatever provenance it arrived with —
-  // re-anchoring the whole set on save would lose the one fact that separates
-  // a room an algorithm proposed from one an operator drew.
+  // And a zone nobody touched keeps what it arrived with — stamping the whole
+  // set on save would lose the one fact that separates a room an algorithm
+  // proposed from one an operator drew.
   const untouched = zonesPayload([driven, derived]);
-  assert.deepEqual(untouched.kitchen.anchor, { method: 'taught', by: 'michael' });
-  assert.deepEqual(untouched.ward_a.anchor, { method: 'derived', by: 'segment-map' });
-
-  // The editor names itself and says nothing about when or who: a browser's
-  // clock is the operator's laptop, and the server fills both in.
-  assert.equal(EDITOR_ANCHOR.method, 'external');
-  assert.ok(!('at' in EDITOR_ANCHOR));
+  assert.equal(untouched.kitchen.source, 'save-zone');
+  assert.equal(untouched.ward_a.source, 'segment-map');
 });
 
 test('a fresh zone gets the first free generated name and a real footprint', () => {

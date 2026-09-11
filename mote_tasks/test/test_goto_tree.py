@@ -219,3 +219,18 @@ def test_idle_rate_is_floored_at_the_mission_rate(ros, tmp_path):
     assert server.idle_tick_period == pytest.approx(0.5)
     assert server.tick_timer.timer_period_ns / 1e9 == pytest.approx(0.5)
     server.destroy_node()
+
+
+def test_every_reason_a_zone_can_fail_for_has_a_recoverable_answer():
+    """``ZONE_REASON_RECOVERABLE`` is indexed, not looked up with a default.
+
+    A reason missing from it is a ``KeyError`` inside the command callback —
+    the mission gets no status at all, which is worse than a wrong one. So the
+    table has to cover zone/v0's reasons exactly, and adding or retiring one
+    has to fail here rather than in the field.
+    """
+    from mote_bringup.spec import zone as zone_spec
+
+    from mote_tasks.task_server import ZONE_REASON_RECOVERABLE
+
+    assert set(ZONE_REASON_RECOVERABLE) == set(zone_spec.REASONS)

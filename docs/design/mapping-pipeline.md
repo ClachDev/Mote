@@ -12,7 +12,7 @@ at the end is sized so each item becomes one dispatchable task.
 > its validator (`mote_bringup/mote_bringup/sites.py`,
 > `mote_bringup/mote_bringup/bundle.py`), the map registry and its promotion
 > flow (`docs/design/fleet.md` M4, `mote_fleet/server/bundle_store.py`), the
-> zone vocabulary split (names travel, coordinates do not — fleet-api.md), the
+> zone vocabulary (`GET /v1/zones` serves the names — fleet-api.md), the
 > declutter/segmentation passes (`mote_bringup/mote_bringup/map_cleanup/`), and
 > the lockstep replay harness (task 295, `mote_simulation/tools/bag_replay/`).
 > None of those move. What this design changes is **what happens between them,
@@ -155,13 +155,11 @@ done by hand on 2026-08-02:
 3. **Declutter** — the FFT structure pass with prominence-based peak picking
    (task 337); no hand thresholds.
 4. **Segment** — room polygons from the cleaned map, as today.
-5. **Carry forward the vocabulary** — the previous revision's zone names,
-   aliases, kinds and taught poses re-bind onto the new geometry: same-frame
-   rebuilds by containment (a named zone whose pose lands inside a proposed
-   room claims it); new frames get proposed matches for the operator to
-   confirm in review. Placeholder names are minted only for genuinely new
-   rooms. (This is the vocabulary/binding split doing work: names are the
-   stable half, coordinates are rebuilt.)
+5. **Carry forward the names** — the previous revision's zone names, notes
+   and poses re-bind onto the new geometry: same-frame rebuilds by containment
+   (a named zone whose pose lands inside a proposed room claims it); a new
+   frame gets proposed matches for the operator to confirm in review.
+   Placeholder names are minted only for genuinely new rooms.
 6. **Validate + score** — `bundle.validate`, then the truth-free metrics
    (loop drift when the trajectory closes, explored area, speckle, wall
    thickness) diffed against the current canonical revision. Regressions
@@ -194,7 +192,7 @@ Requirements, in priority order:
   a polygon, and place a pose by clicking the map (`⌖`), which is what replaced
   driving to a goto target — `save-zone` remains for poses that need a real
   approach heading. A save derives a new candidate from the one under review
-  rather than writing into it (bumping `vocabulary_revision`); the source's
+  rather than writing into it (bumping the floor's `revision`); the source's
   bytes never change and the result stays inert until promoted. Still to do:
   accepting or rejecting a proposed carry-forward match.
 - **See the build report.** The scoring diff from stage 2, on the same page

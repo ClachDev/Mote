@@ -317,7 +317,7 @@ broker that lost its retained state with its volume, repairs itself.
 |---|---|---|
 | `schema` | int | `1` |
 | `site` | string | |
-| `floor` | string | one floor is one SLAM session, i.e. one map frame |
+| `floor` | string | one floor is one frame; each map revision is one SLAM session registered into it |
 | `revision` | string | the immutable revision id; also its directory name at both ends |
 | `url` | string | path on the fleet server to fetch the packed revision from |
 | `sha256` | string | `sha256:<hex>` of the packed bundle |

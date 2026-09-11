@@ -92,7 +92,6 @@ UNENROLLED = "unenrolled"
 #: ``recoverable`` says has not happened.
 ZONE_REASON_RECOVERABLE = {
     "unknown_name": False,
-    "unbound": False,
     "wrong_floor": False,
     "stale_revision": True,
     "not_navigable": False,
@@ -125,22 +124,8 @@ class TaskServer(Node):
                 "config",
                 "zones.default.yaml",
             )
-        # load_floor, not load_zones: a name in the floor's vocabulary that the
-        # binding carries no geometry for must reach the resolver, so a mission
-        # for it can be refused as `unbound` — "I know that place, nothing has
-        # said where it is" — rather than as an unknown name, which sends an
-        # operator hunting for a typo that is not there.
-        self.zones = zones.load_floor(zones_file)
-        bound = sorted(name for name, z in self.zones.items() if z.bound)
-        unbound = sorted(name for name, z in self.zones.items() if not z.bound)
-        self.get_logger().info(f"Zones {bound} from {zones_file}")
-        if unbound:
-            self.get_logger().warning(
-                f"named here, no geometry in the revision this robot is running:"
-                f" {', '.join(unbound)} (place them in the dashboard's zone "
-                "editor and promote, pull the revision that binds them, or "
-                "drive there and run save-zone)"
-            )
+        self.zones = zones.load_zones(zones_file)
+        self.get_logger().info(f"Zones {sorted(self.zones)} from {zones_file}")
 
         self.platform_id = platform_id or identity.robot_id() or UNENROLLED
         self.capabilities = capabilities.capability_set(

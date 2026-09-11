@@ -55,7 +55,6 @@ for _candidate in (
         sys.path.insert(0, str(_candidate))
 
 from mote_bringup import bundle  # noqa: E402
-from mote_bringup.spec import zone as zone_spec  # noqa: E402
 
 #: Candidates kept per floor, on top of whatever is canonical. Enough to see a
 #: mapping session's history and to roll back through it; not so many that a
@@ -281,21 +280,18 @@ class BundleStore:
         return meta
 
     def read_zones(self, site: str, floor: str) -> dict:
-        """The floor's bound zones, in the map frame the basemap is drawn in.
+        """The floor's zones with their coordinates, for a client drawing them.
 
-        This is the **binding**: coordinates, and therefore meaningful only
-        against the map they were bound in. It is served beside the basemap,
-        to the one client that also has the basemap, and it is not what a
-        dispatcher gets — see :meth:`read_vocabulary`.
+        Served beside the basemap, to the one client that also has the basemap,
+        and gated on there being a published map for the same reason: what this
+        route is for is drawing zones *on* one, and a client with nothing to
+        draw them on has asked the wrong question. ``/v1/zones`` is the one that
+        answers without a map — see :meth:`read_vocabulary`.
 
-        Zones travel inside a published revision, because a zone is a
-        coordinate in one SLAM session's frame. A floor seeded by rsync keeps
-        them at floor level, as ``sites.py`` writes them, so that is the
-        fallback rather than an error.
+        A revision carries a copy of the floor's zones and a floor seeded by
+        rsync keeps them at floor level, as ``sites.py`` writes them, so that is
+        the fallback rather than an error.
         """
-        # A binding without the map it is bound to is the coordinate-shaped
-        # thing this whole split exists to stop, so it stays gated on there
-        # being a published revision.
         path = self._zones_file(site, floor, revision=self._live(site, floor))
         if path is None:
             raise StoreError(f"no zones for {site}/{floor}", 404)
@@ -308,15 +304,13 @@ class BundleStore:
         }
 
     def read_revision_zones(self, site: str, floor: str, revision: str) -> dict:
-        """One **revision's** zones, for the operator reviewing it.
+        """The zones **one revision carries**, for the operator reviewing it.
 
-        Still a binding, and still served the way a binding must be: under the
-        revision's own path, beside the revision's own basemap, never over
-        ``/v1/zones``. What it drops is :meth:`read_zones`' gate on there being
-        a published map — which is the one thing that would make it useless
-        here, because the review that matters most is the *first* candidate on
-        a floor with nothing published at all. Naming a revision is naming a
-        map frame, so the coordinates still arrive with something to mean.
+        Served the same way :meth:`read_zones` is — under the revision's own
+        path, beside the revision's own basemap, never over ``/v1/zones``. What
+        it drops is that method's gate on there being a published map, which is
+        the one thing that would make it useless here: the review that matters
+        most is the *first* candidate on a floor with nothing published at all.
         """
         # An unknown revision is a 404 about the revision rather than about the
         # zones, and the floor-level fallback below must not answer for one.
@@ -329,38 +323,34 @@ class BundleStore:
             "site": site,
             "floor": floor,
             "revision": revision,
-            # Which of ``_zones_file``'s two candidates answered. The reviewer
-            # cannot tell from the coordinates, and the difference is the trap
-            # M4 named: a revision carrying no zones inherits the floor's, which
-            # were bound in a *previous* SLAM session's frame and are therefore
-            # wrong for this map by exactly however far the two origins differ.
+            # Which of ``_zones_file``'s two candidates answered. A revision
+            # carrying no zones of its own falls back to the floor's, and an
+            # operator reviewing a candidate is entitled to know that what is
+            # drawn came from beside it rather than from inside it.
             "source": "revision" if path == directory else "floor",
             "frame_id": zones["frame_id"],
             "zones": list(zones["zones"].values()),
         }
 
     def read_vocabulary(self, site: str, floor: str) -> dict:
-        """The floor's zone **vocabulary** — the name of each place and a note
-        about it, no coordinates and no frame.
+        """The names-only view of the same floor: what each place is called and
+        a note about it, no coordinates and no frame.
 
-        Deliberately *not* gated on a published map, where
-        :meth:`read_zones` is. A vocabulary is a fact about the building, so a
-        floor that has been named but never mapped still has one, and a robot
-        arriving at a site can be told what the places are called before it has
-        driven a metre. That is the portability the split buys, and gating this
-        on a promoted revision would have quietly given it back.
+        The same read as :meth:`read_zones` and a different *view* of it —
+        ``bundle.vocabulary`` builds the payload from the fields a vocabulary
+        may carry rather than stripping the ones it may not, which is what keeps
+        a coordinate out of it when someone adds a key.
+
+        Deliberately *not* gated on a published map, where :meth:`read_zones`
+        is. What places a building has is a fact about the building, so a floor
+        that has been named but never mapped still answers, and a robot arriving
+        at a site can be told what the places are called before it has driven a
+        metre.
         """
-        # The floor's own directory first, because the vocabulary lives there
-        # and *only* there: a revision carries the binding. A floor with no
-        # published map still answers, which is the portability the split buys.
-        for directory in (
-            self.floor_dir(site, floor),
-            self._zones_file(site, floor, revision=self.canonical(site, floor)),
-        ):
-            if directory is not None and (directory / bundle.VOCABULARY_YAML).is_file():
-                return bundle.vocabulary(
-                    self._read(directory, site, floor), site, floor
-                )
+        # The canonical revision's copy where there is one, exactly as
+        # `read_zones` reads it: promotion is what publishes an edit, so the
+        # copy inside the revision an operator promoted is the fleet's current
+        # answer and the floor's own file is the fallback.
         path = self._zones_file(site, floor, revision=self.canonical(site, floor))
         if path is None:
             raise StoreError(f"no zones for {site}/{floor}", 404)
@@ -383,10 +373,10 @@ class BundleStore:
         first build of a floor arrives with `zone_01`..`zone_07` from
         `segment-map`, and defaulting to the canonical would have meant
         promoting placeholder names in order to be allowed to fix them —
-        publishing a map *because* it was wrong. It also puts the edit in the
-        frame it was drawn in: the operator renaming rooms is looking at the
-        candidate's own map in the review pane, and rebinding those names onto
-        the published map's frame is exactly the trap the pane exists to name.
+        publishing a map *because* it was wrong. It also derives from what the
+        operator was looking at: the review pane draws the candidate's own map,
+        and deriving from a different revision's zones would save an edit
+        nobody made.
         Returns ``(stored_revision, report, derived_from)``.
         """
         source = source or self.canonical(site, floor)
@@ -399,9 +389,9 @@ class BundleStore:
         # The zones the operator was shown, which is what the edit is a delta
         # of: `_zones_file` falls back to the floor's file for a revision
         # carrying none, and so does the review pane that fed the editor. The
-        # `frame_id` and `vocabulary_revision` come from there for the same
-        # reason — an edit that silently reset the vocabulary revision would
-        # make a later carry-forward unable to tell which naming is newer.
+        # `frame_id` and `revision` come from there for the same reason — an
+        # edit that silently reset the revision would make a later
+        # carry-forward unable to tell which of two copies is newer.
         zones_file = self._zones_file(site, floor, revision=source)
         if zones_file is not None:
             try:
@@ -414,12 +404,10 @@ class BundleStore:
         for name, entry in zones.items():
             entry = dict(entry)
             entry.pop("name", None)
-            if entry.get("anchor"):
-                entry["anchor"] = self._stamp_anchor(entry["anchor"], by)
             cleaned[name] = entry
         payload = {
             "frame_id": previous.get("frame_id") or "map",
-            "vocabulary_revision": int(previous.get("revision") or 0) + 1,
+            "revision": int(previous.get("revision") or 0) + 1,
             "zones": cleaned,
         }
         blob = bundle.pack(
@@ -436,38 +424,9 @@ class BundleStore:
         )
         return stored, report, source
 
-    @staticmethod
-    def _stamp_anchor(anchor, operator: str) -> dict:
-        """The provenance the browser could not supply, on an anchor it marked.
-
-        The editor stamps ``external`` on geometry it placed or moved, and
-        names itself in ``by`` because that is the whole of what it knows. When
-        it happened and who did it are the server's to say: a browser's clock
-        is the operator's laptop and a browser's word for who is at it is
-        whatever the page was told. An anchor arriving with either already
-        filled in is left alone — it came from the revision being edited, on a
-        zone this edit did not touch.
-        """
-        if not isinstance(anchor, dict):
-            return anchor
-        if anchor.get("method") != zone_spec.EXTERNAL:
-            return anchor
-        if anchor.get("by") != zone_spec.EDITOR:
-            return anchor
-        stamped = dict(anchor)
-        stamped["at"] = (
-            datetime.now(timezone.utc)
-            .isoformat(timespec="seconds")
-            .replace("+00:00", "Z")
-        )
-        stamped["by"] = (
-            f"{operator} ({zone_spec.EDITOR})" if operator else zone_spec.EDITOR
-        )
-        return stamped
-
     def vocabularies(self) -> list:
-        """Every floor's vocabulary, for a dispatcher bootstrapping a whole
-        fleet in one call. A floor with no zones yet is skipped, not an error.
+        """Every floor's names, for a dispatcher bootstrapping a whole fleet in
+        one call. A floor with no zones yet is skipped, not an error.
 
         Walks the floors itself rather than reusing :meth:`sites`, which lists
         floors that have a *map*. The two sets are not the same one, and the
@@ -496,21 +455,14 @@ class BundleStore:
 
     def _zones_file(self, site: str, floor: str, revision: str = ""):
         """The directory holding the zones of the given revision, else the
-        floor's own.
-
-        A directory rather than a file since the split: a revision carries the
-        binding and the floor carries the vocabulary, and which of the two a
-        caller wants is what ``read_zones`` and ``read_vocabulary`` differ by.
-        """
+        floor's own. A directory rather than a file, because that is what
+        ``bundle.read_floor`` takes."""
         candidates = []
         if revision:
             candidates.append(self.revision_dir(site, floor, revision))
         candidates.append(self.floor_dir(site, floor))
         for directory in candidates:
-            if any(
-                (directory / name).is_file()
-                for name in (bundle.BINDING_YAML, bundle.ZONES_YAML)
-            ):
+            if (directory / bundle.ZONES_YAML).is_file():
                 return directory
         return None
 
