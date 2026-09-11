@@ -79,9 +79,9 @@ every access log between here and the browser.
 **Security posture, plainly.** Most read routes are unauthenticated and the
 broker is anonymous, exactly as M1 left them. M3 adds a credential on the
 *write* path and a record of who used it, which is the milestone's brief; since
-then two reads have been gated as well, the audit log and one robot's live
-state, because both carry something an anonymous caller has no business with.
-It is proportionate only while the tailnet is the boundary. M7 adds operator
+then two reads have been gated as well: the audit log, which nothing else
+serves, and one robot's live state, whose payloads the anonymous broker also
+carries until M7. It is proportionate only while the tailnet is the boundary. M7 adds operator
 auth on the rest of the read routes, per-robot broker credentials, and the
 Tailscale ACLs. Until then, do not expose this port to a network the robots are
 not already trusted on.
@@ -210,10 +210,14 @@ mission, which is a property of asking rather than of listening.
 fleet server is repopulated by the broker within about a second of connecting;
 a stored copy could only ever be the staler answer.
 
-An operator token because this is where the coordinates are: a pose says where
-in a building a robot is and the mission status says what it was told to do
-there. The token is checked *before* the robot is looked up, so an
-unauthenticated caller cannot enumerate ids by reading 401 against 404.
+**The operator token hides nothing yet.** This route carries the coordinates —
+a pose says where in a building a robot is, the mission status what it was told
+to do there — so it takes the credential M7 will require of every read. Until
+M7, the same payloads are on the anonymous broker and every `robot_id` is in the
+anonymous roster, whose `presence` column shows nothing a broker subscriber
+cannot already see. The token is checked *before* the robot is looked up, so an
+unauthenticated request gets `401` whatever id it names; that stops ids leaking
+through this route once M7 gates the roster, and not before.
 
 ### `POST /v1/robots/<robot_id>/dispatch`
 

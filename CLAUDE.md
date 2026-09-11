@@ -143,8 +143,11 @@ broker has stopped serving. **`mission_status` is the last status, not a
 history**, since one transition is all that is retained; anything wanting every
 transition still subscribes, which is what `watch` and `dispatch` keep the
 broker for. And **the route takes an operator token where the roster does not**,
-because this is where the coordinates are — checked *before* the robot is looked
-up, so an anonymous caller cannot enumerate ids by reading 401 against 404.
+because this is where the coordinates are — which hides nothing until M7, since
+the same payloads are on the anonymous broker and every id is in the anonymous
+roster; the token gives the route M7's shape now. It is checked *before* the
+lookup, so an unauthenticated answer does not depend on the id, which matters
+once M7 gates the roster.
 `publisher` and `feed` are injected as a pair in `serve()`, since a live
 subscription beside a stubbed publisher would have a test dialling a broker it
 does not have; the acceptance is `test_e2e_fleet.py`'s

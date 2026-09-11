@@ -338,6 +338,52 @@ def test_the_registry_survives_a_server_restart(tmp_path, broker):
         second.server_close()
 
 
+def test_a_broker_that_refuses_the_feed_is_reported_as_not_connected(tmp_path):
+    """A real refusal, not a stubbed reason code: mosquitto with anonymous
+    access off answers the feed's CONNECT with "not authorized", which is what
+    a bad credential will look like once M7 issues them."""
+    from fleet_server import BrokerFeed, BrokerLink, serve
+
+    refusing = Broker(tmp_path)
+    refusing.conf.write_text(
+        f"listener {refusing.port} 127.0.0.1\nallow_anonymous false\n"
+        "persistence false\n"
+    )
+    refusing.start()
+    answered = threading.Event()
+
+    class ObservedFeed(BrokerFeed):
+        def _on_connect(self, *args):
+            super()._on_connect(*args)
+            answered.set()
+
+    # A supplied publisher means serve() builds no feed of its own, so the
+    # observed one is the only client the broker sees.
+    server = serve(
+        db=tmp_path / "registry.db",
+        host="127.0.0.1",
+        port=0,
+        broker_host="127.0.0.1",
+        broker_port=refusing.port,
+        publisher=BrokerLink("127.0.0.1", refusing.port),
+    )
+    server.feed = ObservedFeed("127.0.0.1", refusing.port, server.state)
+    server.feed.start()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        assert answered.wait(10), "the broker never answered the feed's CONNECT"
+        assert server.state.connected is False
+        code, roster = api_get(url, "/v1/robots")
+        assert code == 200, roster
+        assert roster["broker_connected"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        refusing.stop()
+
+
 def api_get(url, path, token=""):
     import urllib.error
     import urllib.request

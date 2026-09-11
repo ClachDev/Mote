@@ -12,7 +12,12 @@ server, and the helpers for talking to it, are ``conftest.py`` +
 ``api_harness.py``; the map registry's own routes are ``test_map_registry.py``.
 """
 
+import errno
+import socket
+
+import pytest
 from api_harness import (
+    FakeBroker,
     enroll,
     expect_error,
     get,
@@ -21,6 +26,7 @@ from api_harness import (
     post_raw,
     retain,
 )
+from fleet_server import STATE_LEAVES, BrokerFeed, RobotState, serve
 
 from mote_bringup.spec import mission
 from mote_fleet import protocol
@@ -173,8 +179,9 @@ def test_the_route_needs_an_operator_token(server, robot):
 
 
 def test_an_unknown_robot_without_a_token_is_401_not_404(server):
-    # Otherwise an anonymous caller enumerates the fleet's ids by reading one
-    # status code against the other.
+    # The unauthenticated answer does not depend on the id. That hides nothing
+    # while the roster is anonymous; it stops this route leaking ids once M7
+    # gates the roster.
     expect_error(lambda: get(server, "/v1/robots/mote-99"), 401)
 
 
@@ -218,6 +225,63 @@ def test_what_the_state_refuses_to_hold(server):
         "capabilities": None,
         "mission_status": None,
     }
+
+
+def test_a_port_already_in_use_is_the_error_raised(tmp_path):
+    # TCPServer calls server_close() itself when the bind fails, before
+    # FleetServer.__init__ has run past its super() call.
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen()
+        with pytest.raises(OSError) as raised:
+            serve(
+                db=tmp_path / "registry.db",
+                host="127.0.0.1",
+                port=holder.getsockname()[1],
+                broker_host="fleet-box",
+                publisher=FakeBroker(),
+            )
+    assert raised.value.errno == errno.EADDRINUSE
+
+
+class RecordingClient:
+    def __init__(self):
+        self.subscribed = []
+
+    def subscribe(self, topic, qos=0):
+        self.subscribed.append(topic)
+
+
+def test_a_refused_connection_is_not_a_connected_one():
+    """paho calls on_connect for a refused CONNACK as well as an accepted one.
+    Once M7 issues broker credentials a bad one is the likely refusal, and
+    reporting it as connected is the ambiguity `broker_connected` removes."""
+    reasoncodes = pytest.importorskip("paho.mqtt.reasoncodes")
+    packettypes = pytest.importorskip("paho.mqtt.packettypes")
+    state = RobotState()
+    feed = BrokerFeed("fleet-box", 1883, state)
+    client = RecordingClient()
+
+    refused = reasoncodes.ReasonCode(packettypes.PacketTypes.CONNACK, "Not authorized")
+    feed._on_connect(client, None, {}, refused, None)
+    assert state.connected is False
+    assert client.subscribed == []
+
+    accepted = reasoncodes.ReasonCode(packettypes.PacketTypes.CONNACK, "Success")
+    feed._on_connect(client, None, {}, accepted, None)
+    assert state.connected is True
+    assert len(client.subscribed) == len(STATE_LEAVES)
+
+
+def test_a_paho_1_return_code_is_read_the_same_way():
+    # paho 1.x passes a bare int: 0 accepted, anything else refused.
+    state = RobotState()
+    feed = BrokerFeed("fleet-box", 1883, state)
+    client = RecordingClient()
+    feed._on_connect(client, None, {}, 5)
+    assert (state.connected, client.subscribed) == (False, [])
+    feed._on_connect(client, None, {}, 0)
+    assert state.connected is True
 
 
 def test_a_missing_token_is_401(server):

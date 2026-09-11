@@ -96,9 +96,9 @@ it was, under ``/v1/maps``, served to the client that also has the basemap.
 
 **Security posture for M3:** most read routes are still unauthenticated, exactly
 as M1 left them, and the broker is still anonymous. What M3 adds is a credential
-on the *write* path and a record of who used it. Two reads take one as well —
-the audit log, and one robot's live state — because both carry something an
-anonymous caller has no business with. That stays proportionate only
+on the *write* path and a record of who used it. Two reads take one as well:
+the audit log, which nothing else serves, and one robot's live state, whose
+payloads the anonymous broker also carries until M7. That stays proportionate only
 while the tailnet is the boundary; M7 is where operator auth reaches the rest of
 the read routes, per-robot broker credentials land, and Tailscale ACLs stop
 robots reaching each other. Until then, do not expose this port to a network the
@@ -393,7 +393,18 @@ class BrokerFeed:
             return False
         return True
 
-    def _on_connect(self, client, _userdata, *_args):
+    def _on_connect(self, client, _userdata, _flags, reason_code, *_args):
+        # paho calls this for a refused CONNACK too (after M7, a bad broker
+        # credential). paho 2 passes a ReasonCode, paho 1 an int that is 0 on
+        # success.
+        if getattr(reason_code, "is_failure", reason_code != 0):
+            self.state.connected = False
+            print(
+                f"broker {self.host}:{self.port} refused the robot state feed: "
+                f"{reason_code}",
+                file=sys.stderr,
+            )
+            return
         for leaf in STATE_LEAVES:
             client.subscribe(protocol.any_robot(leaf), qos=protocol.QOS)
         self.state.connected = True
@@ -652,9 +663,13 @@ class FleetHandler(BaseHTTPRequestHandler):
 
         Behind an operator token where the roster is not, because this is where
         the coordinates are — a pose says where in a building the robot is, and
-        the mission status says what it was told to do there. The token is
-        checked before the robot is looked up, so an unauthenticated caller
-        cannot enumerate ids by reading 401 against 404.
+        the mission status says what it was told to do there. The token hides
+        nothing yet: until M7 the same payloads are on the anonymous broker and
+        every id is in the anonymous roster. It gives the route the shape M7
+        will require, so an HTTP client written now already carries the
+        credential. It is checked before the lookup so that an unauthenticated
+        answer does not depend on the id, which matters once M7 gates the
+        roster and not before.
         """
         if "/" in rest:
             self._error(404, f"no route /v1/robots/{rest}")
@@ -1236,23 +1251,26 @@ class FleetServer(ThreadingHTTPServer):
         broker_ws_port,
         foxglove_url,
     ):
+        # Assigned before the socket is bound: when the bind fails, TCPServer
+        # calls server_close() from inside super().__init__, and it must reach
+        # these rather than raise AttributeError over the real OSError.
+        self.publisher = publisher
+        #: What the fleet's robots last said, for the HTTP read routes. The
+        #: feed that fills it is attached by :func:`serve`, because it
+        #: subscribes on behalf of this object and so cannot exist before it.
+        self.state = RobotState()
+        self.feed = None
         super().__init__(address, FleetHandler)
         self.registry = registry
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.id_prefix = id_prefix
-        self.publisher = publisher
         self.maps_dir = Path(maps_dir).expanduser() if maps_dir else None
         self.store = BundleStore(self.maps_dir)
         self.ui_dir = Path(ui_dir).resolve() if ui_dir else None
         self.broker_ws_host = broker_ws_host
         self.broker_ws_port = broker_ws_port
         self.foxglove_url = foxglove_url
-        #: What the fleet's robots last said, for the HTTP read routes. The
-        #: feed that fills it is attached by :func:`serve`, because it
-        #: subscribes on behalf of this object and so cannot exist before it.
-        self.state = RobotState()
-        self.feed = None
 
     def server_close(self):
         """Give back the sockets, the subscription and the publisher together.
