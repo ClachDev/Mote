@@ -91,9 +91,13 @@ def test_a_boolean_is_not_a_number():
 
 
 def test_the_zone_ref_is_resolved_and_an_unknown_ref_is_not():
-    cap.validate_input(cap.zone_ref(), "kitchen")
-    with pytest.raises(cap.InvalidInput):
-        cap.validate_input(cap.zone_ref(), "The Kitchen")
+    # A zone reference takes whatever a floor may call a place — the human name,
+    # spaces and accents and all — and refuses only what the zone record refuses.
+    for name in ("kitchen", "Living Room", "Café", "Ward 3B"):
+        cap.validate_input(cap.zone_ref(), name)
+    for name in (" kitchen", "kitchen ", "", "kit\nchen"):
+        with pytest.raises(cap.InvalidInput):
+            cap.validate_input(cap.zone_ref(), name)
     with pytest.raises(SpecError, match="cannot resolve"):
         cap.validate_input({"$ref": "https://example.invalid/x.json"}, "a")
 
