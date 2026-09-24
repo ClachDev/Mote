@@ -528,13 +528,15 @@ with no reading at all — a legacy `keepout` marked `navigable: true`, a
 shared `mote_bringup/bundle.py`, so `save-map` catches them locally and the
 server catches them on upload.
 
-**Two things Mote and zone/v0 now disagree about**, both outstanding against the
-spec's own repository, which is not in this checkout. Its premise — one SLAM
-frame per platform — is #629. Its vocabulary schema still requires `kind`,
-retired here by #609, which is #616 and is why
-`test_spec_conformance.py::test_a_vocabulary_conforms` carries a strict `xfail`:
-Mote's `/v1/zones` payload does not validate against it, and the marker is what
-makes that fail loudly the moment a successor revision lands.
+**One thing Mote and zone/v0 still disagree about**, outstanding against the
+spec's own repository (a sibling checkout, `augereai-spec`): its premise — one
+SLAM frame per platform — is #629. The vocabulary is settled: the spec's zone/v0
+now states the place-name record below (#616), and
+`test_spec_conformance.py` validates Mote's `/v1/zones` payload, a binding, and a
+`goto` on `Living Room` against it. That file needs `jsonschema`, which only the
+`dev` environment carries, and the checkout — so the run is
+`AUGEREAI_SPEC=<checkout> pixi run -e dev test`; in the default environment it
+skips.
 
 ## Fleet: zones are place-names
 
@@ -585,11 +587,11 @@ Files: `mote_bringup/spec/zone.py` (the record and its rules), `bundle.py`
 (re-exports; `ZONE_KINDS`/`POINT_KINDS` are gone, `CONSTRAINT_KINDS` survives as
 the legacy `navigable` seed), `mote_tasks/zones.py` (`Zone`, `resolve`,
 `append_zone`), `mote_fleet/server/ui/` (the review pane, per the "Zone
-Gazetteer" design), `docs/fleet/fleet-api.md` §the zone vocabulary. **The
-specification's own `spec/zone/v0/README.md` is not in this repo** and still
-describes the seven-field vocabulary; a successor revision there is outstanding,
-and `test_spec_conformance.py` carries a strict `xfail` that will fail loudly
-when it lands.
+Gazetteer" design), `docs/fleet/fleet-api.md` §the zone vocabulary. The
+specification's own `zone/v0/README.md` (in `augereai-spec`) states the same
+record, including the read rule for retired fields, and its zone reference takes
+`ZONE_NAME_RE`'s pattern verbatim — the pattern Mote's `capability.REFS` states
+for the robot's own input check.
 
 ## Fleet: the API auth gate, the tailnet policy, locked installs (M7, part)
 

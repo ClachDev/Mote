@@ -340,6 +340,10 @@ watchexec = ">=2.5,<3"
 # the real bridge the way the Teleop panel does. Test-only, and dev-only for the
 # same reason the real-broker fleet test is: the robot env carries no test rig.
 websockets = ">=12,<16"
+# Validates Mote's payloads against the Augere specification's own schemas in
+# test_spec_conformance.py. Without it that file skips, and a divergence from
+# the spec is found by a robot refusing a mission instead.
+jsonschema = ">=4.21,<5"
 
 # Desktop-only GUI teleop panel (ClachDev/rviz_teleop_panel), published to the
 # mote channel for linux-64 only — the aarch64 robot never runs RViz.
