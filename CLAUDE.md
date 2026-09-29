@@ -110,7 +110,7 @@ The URDF reads it via `xacro.load_yaml('$(find mote_description)/config/robot.ya
 
 ## Fleet: overlay, identity, and the per-robot/shared split
 
-Milestone M0 of `docs/design/fleet.md`; the operator runbook is `docs/fleet/README.md` and the measurements behind it are `docs/fleet/m0-verification.md`. **`MOTE_HOME` (default `~/.mote`) is per-robot state; the package is shared config** — `mote_bringup/mote_home.py` is the one place that rule lives (`mote_dir()`, `path()`, and `override(name, packaged_default)` which prefers the per-robot file). `sites.py`, `mote_launch.py` (camera calibration), `perception_launch.py` (`perception.yaml`) and `self_check.py` (`self_check_status.yaml`) all resolve through it, so `MOTE_HOME` is honoured everywhere and an update can never clobber identity, site selection, calibration, maps or bags. The one place it is *stated twice* is `mote_health/src/mote_home.cpp`, because the health monitor is C++ and cannot import Python — the only such duplication, and `test_mote_home.cpp` pins it to the same cases. **Identity** is `$MOTE_HOME/robot.yaml` (`mote_bringup/identity.py`, `pixi run identity show|id|set`): a `robot_id` constrained to a lowercase DNS label because it is simultaneously a MagicDNS hostname, an MQTT topic level and a directory name. It is deliberately not the hostname, and operator-set until M1's enrollment endpoint allocates it. Do not confuse `$MOTE_HOME/robot.yaml` (this robot's identity) with `mote_description/config/robot.yaml` (shared hardware description). **The overlay** is Tailscale (`pixi run tailnet`, `mote_bringup/tailscale/install.sh`), joining robots/servers as *tagged* devices and the workstation as a user device; a robot's tailnet hostname *is* its `robot_id`. **A clean Pi** is provisioned by one rendered cloud-init file (`pixi run provision`, `mote_bringup/provision.py` + `provisioning/user-data.template`): identity → tailnet (single-use tagged auth key baked into the image, shredded after use) → pixi/build → `pixi run setup`. **DDS**: the end state is `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` on the robot, which retires the `ROS_DOMAIN_ID` isolation question entirely — **landed with M2** (below), which supplied the `foxglove_bridge` off-box path that had to exist first; the systemd units carry the pin, and `config/cyclonedds.xml` — loaded by pixi activation and the units alike — puts DDS transport on loopback only, so even an interactive run is invisible to the LAN (see DDS scoping under Environment). What M0 adds is the measurement: rmw_cyclonedds caps localhost discovery at `MaxAutoParticipantIndex=32`, i.e. 33 participants (≈ processes) per host, and `pixi run dds-check` reports the headroom from `/proc/net/udp` (measured 17/33 for the sim nav mission under both localhost and stock discovery; ~26 with perception, the M1 agent, M2's bridge and teleop relay, and the drive mux). Re-check it whenever a milestone adds processes; raise it in the robot's `cyclonedds.xml` if it runs out. The running total is kept in the Drive path section below, which is the latest thing to have moved it.
+Milestone M0 of `docs/design/fleet.md`; the operator runbook is `docs/fleet/README.md` and the measurements behind it are `docs/fleet/m0-verification.md`. **`MOTE_HOME` (default `~/.mote`) is per-robot state; the package is shared config** — `mote_bringup/mote_home.py` is the one place that rule lives (`mote_dir()`, `path()`, and `override(name, packaged_default)` which prefers the per-robot file). `sites.py`, `mote_launch.py` (camera calibration), `perception_launch.py` (`perception.yaml`) and `self_check.py` (`self_check_status.yaml`) all resolve through it, so `MOTE_HOME` is honoured everywhere and an update can never clobber identity, site selection, calibration, maps or bags. The one place it is *stated twice* is `mote_health/src/mote_home.cpp`, because the health monitor is C++ and cannot import Python — the only such duplication, and `test_mote_home.cpp` pins it to the same cases. **Identity** is `$MOTE_HOME/robot.yaml` (`mote_bringup/identity.py`, `pixi run identity show|id|set`): a `robot_id` constrained to a lowercase DNS label because it is simultaneously a MagicDNS hostname, an MQTT topic level and a directory name. It is deliberately not the hostname, and operator-set until M1's enrollment endpoint allocates it. Do not confuse `$MOTE_HOME/robot.yaml` (this robot's identity) with `mote_description/config/robot.yaml` (shared hardware description). **The overlay** is Tailscale (`pixi run tailnet`, `mote_bringup/tailscale/install.sh`), joining robots/servers as *tagged* devices and the workstation as a user device; a robot's tailnet hostname *is* its `robot_id`. **A clean Pi** is provisioned by one rendered cloud-init file (`pixi run provision`, `mote_bringup/provision.py` + `provisioning/user-data.template`): identity → tailnet (single-use tagged auth key baked into the image, shredded after use) → pixi/build → `pixi run setup`. **DDS**: the end state is `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` on the robot, which retires the `ROS_DOMAIN_ID` isolation question entirely — **landed with M2** (below), which supplied the `foxglove_bridge` off-box path that had to exist first; the systemd units carry the pin, and `config/cyclonedds.xml` — loaded by pixi activation and the units alike — puts DDS transport on loopback only, so even an interactive run is invisible to the LAN (see DDS scoping under Environment). What M0 adds is the measurement: rmw_cyclonedds caps localhost discovery at `MaxAutoParticipantIndex=32`, i.e. 33 participants (≈ processes) per host, and `pixi run dds-check` reports the headroom from `/proc/net/udp` (measured 17/33 for the sim nav mission under both localhost and stock discovery; ~26 with perception, the M1 agent, M2's bridge and teleop relay, and the drive mux). Re-check it whenever a milestone adds processes; raise it in the robot's `cyclonedds.xml` if it runs out. The running total is kept in "Fleet: loading a promoted map" below, which is the latest thing to have moved it.
 
 ## Fleet: the control plane (M1)
 
@@ -213,9 +213,9 @@ the flip and the announcement are reported separately (a broker that is down mus
 not half-promote a floor; the server re-announces every floor at startup, which
 repairs it), an **upload carries no operator credential** — it names an enrolled
 robot, is bounded and audited, and is inert until robots have a credential —
-and a pulled map takes effect on the **next bringup**, since `map_server` reads
-its map at startup, so health now carries the revision each robot is actually
-running. M3's `/v1/maps` routes kept their shape and changed source; the
+and a pulled map is **loaded into the running Nav2 between missions** (see
+"Fleet: loading a promoted map" below), so health carries both the revision
+`map_server` is serving and the one installed on disk. M3's `/v1/maps` routes kept their shape and changed source; the
 dashboard additionally draws the floor's taught zones (circle, polygon or
 waypoint cross) from `/v1/maps/<site>/<floor>/zones.json`.
 **Promotion is a decision, so the operator has to be able to see what they are
@@ -238,6 +238,41 @@ from inside it. One UI ordering bug fell out and is fixed in both panes: the flo
 revisions were fetched only *after* its basemap loaded, behind an early return,
 so a floor whose only revisions were candidates listed none of them and **the
 first promotion on any floor could never be made from a browser**.
+
+## Fleet: loading a promoted map
+
+`map_server` reads its map once, at startup, so until this existed a promoted
+revision was installed and then ignored until someone restarted nav — observed
+on mote-01 on 2026-09-21, with health (reading the symlink) showing the new
+revision while Nav2 drove the old one. **`map_reloader`** (`mote_bringup/
+map_reloader.py`, ROS-free half in `map_reload.py`) closes it. `nav2_launch.py`
+starts it with `localisation:=true` only, since under SLAM there is no saved map
+to swap. The flow is two latched `std_msgs/String` JSON topics and one service:
+the agent publishes **`map/installed`** after `mapsync` flips the floor — a
+statement of what is on disk, which keeps the agent a reporter — and the
+reloader asks the task server's **`task/idle`** (`std_srvs/Trigger`) whether
+the lane is free, calls `map_server/load_map` with the revision's own
+`maps/<rev>/map.yaml` (not the symlink, so what is served is exactly what is
+reported), re-publishes the last `amcl_pose` on `/initialpose`, and reports
+**`map/serving`**. Four things are load-bearing. **The lane holder is asked,
+never inferred**: a mission in flight defers the load to its terminal state,
+and `map/serving.loading` makes the task server refuse a new mission as `busy`
+while a load runs (bounded at 30 s, so a reloader that died mid-load cannot hold
+the lane through its last latched message). **AMCL re-initialises its filter on
+a new map** — the sim logs `Received a ... map` then takes the carried pose —
+and a revision is registered into the same floor frame, so re-seeding with the
+old estimate is correct; `amcl_pose` is carried rather than a TF lookup,
+because a TransformListener takes the whole `/tf` stream for the node's life.
+AMCL needs `first_map_only: false`, now pinned in `nav2_params.yaml`. **Health's
+`map.revision` is what `map_server` serves** and `map.installed` the symlink, so
+the gap between an install and its load is visible; with no reloader running
+the two are the same, because the next bringup loads the installed one. **A
+failed load changes nothing** but `map.error`. The task server reloads the
+floor's zones when the served revision changes, so a promoted zone edit needs no
+restart either. `site use-map` still does (it tells nobody). Measured in the sim
+(`pixi run sim-map-reload-test`): served 0.04 s after `map/installed`, pose
+0.007 m / 0.8° off, `goto` succeeds afterwards. Cost is one process and **one
+DDS participant**, putting the robot stack at ~27 of 33.
 
 ## Fleet: editing a candidate's zones
 

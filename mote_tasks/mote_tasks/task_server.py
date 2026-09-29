@@ -62,8 +62,9 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
-from mote_bringup import identity
+from mote_bringup import identity, map_reload
 from mote_bringup.spec import SpecError
 from mote_bringup.spec import capability as spec_capability
 from mote_bringup.spec import mission as spec_mission
@@ -124,8 +125,17 @@ class TaskServer(Node):
                 "config",
                 "zones.default.yaml",
             )
+        self.zones_file = zones_file
         self.zones = zones.load_zones(zones_file)
         self.get_logger().info(f"Zones {sorted(self.zones)} from {zones_file}")
+        #: The map revision whose zones are loaded, once map_reloader has said.
+        self.map_revision = None
+        #: The revision map_reloader is loading, and since when; None when not.
+        self.map_loading = None
+        self.map_loading_since = 0.0
+        self.map_loading_timeout = self.declare_parameter(
+            "map_loading_timeout", 30.0
+        ).value
 
         self.platform_id = platform_id or identity.robot_id() or UNENROLLED
         self.capabilities = capabilities.capability_set(
@@ -173,6 +183,10 @@ class TaskServer(Node):
         )
         self.capabilities_pub.publish(String(data=json.dumps(self.capabilities)))
         self.create_subscription(String, "task/command", self.on_command, 1)
+        self.create_service(Trigger, map_reload.IDLE_SERVICE, self.on_idle)
+        self.create_subscription(
+            String, map_reload.SERVING_TOPIC, self.on_map_serving, LATCHED
+        )
         self.last_tip = None
         # Two rates, because a tree between missions has nothing to advance: it
         # idles in WaitForTask, whose whole update() is one blackboard read, and
@@ -228,6 +242,73 @@ class TaskServer(Node):
     def _reject(self, command: dict, failure: dict):
         self._status(command, spec_mission.REJECTED, failure=failure)
 
+    # -- the map underneath -----------------------------------------------
+
+    def on_idle(self, _request, response):
+        """May the navigation map change now? Asked by ``map_reloader``.
+
+        Answered here because this node holds the lane: a mission in flight
+        has a Nav2 goal planned on the loaded map, and swapping it underneath
+        would re-plan a live goal against a different costmap.
+        """
+        if self.mission is None:
+            response.success = True
+            response.message = "idle"
+        else:
+            response.success = False
+            response.message = (
+                f"mission {self.mission['id']} ({self.mission['capability']}) "
+                f"holds the {self.mission['lane']} lane"
+            )
+        return response
+
+    def on_map_serving(self, msg: String):
+        """Track the served revision; reload zones when it changes.
+
+        ``mapsync`` replaces the floor's ``zones.yaml`` in the same install
+        that flips the map, so the zones belonging to the served map are on
+        disk by the time ``map_reloader`` reports it. A set that fails to load
+        leaves the previous one in force.
+        """
+        payload = map_reload.parse(msg.data)
+        if payload is None:
+            return
+        loading = payload.get("loading")
+        if loading != self.map_loading:
+            self.map_loading = loading
+            self.map_loading_since = self._now()
+        revision = payload.get("revision")
+        if revision == self.map_revision:
+            return
+        first = self.map_revision is None
+        self.map_revision = revision
+        if first:
+            return
+        try:
+            reloaded = zones.load_zones(self.zones_file)
+        except Exception as exc:  # a bad set must not take the executor down
+            self.get_logger().error(
+                f"map revision {revision} is served but its zones did not load "
+                f"({exc}); keeping {sorted(self.zones)}"
+            )
+            return
+        self.zones = reloaded
+        self.get_logger().info(
+            f"Zones {sorted(self.zones)} reloaded for map revision {revision}"
+        )
+
+    def _map_loading(self) -> str | None:
+        """The revision being loaded, or None.
+
+        Bounded in time, so a reloader that died mid-load does not hold the
+        lane for ever through its last latched message.
+        """
+        if self.map_loading is None:
+            return None
+        if self._now() - self.map_loading_since > self.map_loading_timeout:
+            return None
+        return self.map_loading
+
     # -- inbound missions -------------------------------------------------
 
     def on_command(self, msg: String):
@@ -281,6 +362,17 @@ class TaskServer(Node):
                     spec_mission.BUSY,
                     f"mission {self.mission['id']} ({self.mission['capability']}) "
                     f"holds the {lane} lane",
+                    at=spec_mission.DISPATCHED,
+                ),
+            )
+            return
+        loading = self._map_loading()
+        if loading is not None:
+            self._reject(
+                command,
+                spec_mission.failure(
+                    spec_mission.BUSY,
+                    f"the navigation map is loading revision {loading}",
                     at=spec_mission.DISPATCHED,
                 ),
             )
