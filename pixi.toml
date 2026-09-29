@@ -220,6 +220,10 @@ bench-sweep = "python mote_simulation/tools/benchmark/sweep/sweep.py"
 sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
     "build",
 ] }
+# A promoted map loads into a running Nav2 with no restart (~2 min, needs a GPU).
+sim-map-reload-test = { cmd = "bash mote_simulation/test/map_reload/run_map_reload.sh", depends-on = [
+    "build",
+] }
 
 [feature.lint.tasks]
 lint = "pre-commit run --all-files"

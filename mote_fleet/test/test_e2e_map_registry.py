@@ -214,3 +214,164 @@ def _fleetctl():
     import fleetctl
 
     return fleetctl.main
+
+
+def test_a_promotion_reaches_the_map_nav_is_serving(
+    tmp_path, monkeypatch, broker, fleet_api, capsys
+):
+    """Promote → pull → install → load, with the fleet watching health.
+
+    mote-01, 2026-09-21: a promoted revision was installed and Nav2 kept
+    serving the old one until someone restarted it, while health — reading the
+    symlink — said the new one. Here the robot's lane is held busy across the
+    promotion, so the gap is visible on the wire (``installed`` new, served
+    ``revision`` old), and then released so the load happens with no restart.
+    """
+    monkeypatch.setenv("ROS_DOMAIN_ID", str(random.randint(60, 100)))
+    from fleet_harness import Operator
+    from nav2_msgs.srv import LoadMap
+    from rclpy.node import Node
+    from std_srvs.srv import Trigger
+
+    from mote_bringup import map_reload, sites
+    from mote_bringup.map_reloader import MapReloader
+
+    from mote_fleet import enroll, mapsync
+
+    fleetctl = _fleetctl()
+    second = "20260921T133157"
+
+    # ---- a mapper offers two revisions; the first is promoted ----
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path / "mapper"))
+    enroll.main(
+        [
+            "--server",
+            fleet_api.url,
+            "--token",
+            fleet_api.registry.new_token(note="e2e"),
+        ]
+    )
+    sites.create(SITE, FLOOR)
+    mapper_floor = sites.floor_dir(SITE, FLOOR)
+    for rev in (REVISION, second):
+        write_revision(mapper_floor / "maps" / rev, zones=False)
+        mapsync.publish(fleet_api.url, SITE, FLOOR, rev, "mote-01")
+    operator_token = fleet_api.registry.new_operator(name="michael")
+
+    def promote(rev):
+        fleetctl(
+            [
+                "--server",
+                fleet_api.url,
+                "--token",
+                operator_token,
+                "promote",
+                SITE,
+                FLOOR,
+                rev,
+            ]
+        )
+
+    promote(REVISION)
+
+    # ---- the robot: agent, map_reloader, and Nav2's map_server faked ----
+    from mote_fleet import facts
+
+    monkeypatch.setattr(facts, "fingerprint", lambda collected: "serial:driver")
+    monkeypatch.setenv("MOTE_HOME", str(tmp_path / "driver"))
+    enroll.main(
+        [
+            "--server",
+            fleet_api.url,
+            "--token",
+            fleet_api.registry.new_token(note="e2e"),
+        ]
+    )
+    robot_id = "mote-02"
+    sites.create(SITE, FLOOR)
+    floor = sites.floor_dir(SITE, FLOOR)
+
+    rclpy.init(args=["--ros-args", "-r", f"__ns:=/test_{os.getpid()}"])
+    from mote_fleet.agent import MoteAgent
+
+    class Nav(Node):
+        """map_server's load_map and the task server's lane."""
+
+        def __init__(self):
+            super().__init__("nav")
+            self.loads = []
+            self.busy = True
+            self.create_service(LoadMap, "map_server/load_map", self._load)
+            self.create_service(Trigger, map_reload.IDLE_SERVICE, self._idle)
+
+        def _load(self, request, response):
+            self.loads.append(request.map_url)
+            response.result = LoadMap.Response.RESULT_SUCCESS
+            return response
+
+        def _idle(self, _request, response):
+            response.success = not self.busy
+            response.message = "mission m-1 (goto) holds the default lane"
+            return response
+
+    agent = MoteAgent(
+        parameter_overrides=[
+            Parameter("health_period", value=0.5),
+            Parameter("keepalive", value=2),
+        ]
+    )
+    nav = Nav()
+    executor = SingleThreadedExecutor()
+    executor.add_node(agent)
+    executor.add_node(nav)
+    operator = Operator(broker, client_id="watcher")
+    reloader = None
+
+    def health_map():
+        for topic, payload in reversed(operator.messages):
+            if topic == f"mote/v2/{robot_id}/health":
+                return payload.get("map") or {}
+        return {}
+
+    try:
+        assert spin_until(
+            executor, lambda: sites.current_revision(floor) == REVISION, timeout=30.0
+        ), "the agent did not pull the first canonical revision"
+        # Nav2 comes up on the first revision, as a bringup would.
+        reloader = MapReloader(
+            parameter_overrides=[
+                Parameter("map", value=str(floor / "map" / "map.yaml")),
+                Parameter("poll_period", value=0.2),
+            ]
+        )
+        executor.add_node(reloader)
+        assert spin_until(
+            executor, lambda: health_map().get("revision") == REVISION, timeout=10.0
+        )
+
+        promote(second)
+        assert spin_until(
+            executor,
+            lambda: health_map().get("installed") == second,
+            timeout=30.0,
+        ), health_map()
+        # Installed, not served: the mission in flight holds the lane.
+        assert health_map()["revision"] == REVISION
+        assert nav.loads == []
+
+        nav.busy = False
+        assert spin_until(
+            executor, lambda: health_map().get("revision") == second, timeout=10.0
+        ), health_map()
+        assert nav.loads == [str(floor / "maps" / second / "map.yaml")]
+        assert health_map()["error"] is None
+    finally:
+        operator.close()
+        if reloader is not None:
+            reloader.stop()
+            reloader.destroy_node()
+        agent.close()
+        executor.shutdown()
+        agent.destroy_node()
+        nav.destroy_node()
+        rclpy.shutdown()

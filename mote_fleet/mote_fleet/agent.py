@@ -42,8 +42,10 @@ revision on a retained topic, so this agent learns about a new map the instant
 it connects rather than by polling, and installs it by staging the revision and
 flipping one symlink (:mod:`mote_fleet.mapsync`, fleet.md Q4). Nothing about
 that is in the control loop either: a map arrives, is staged, and is published
-locally — the running navigation stack keeps using the map it loaded until it
-is restarted.
+locally, and the agent says so on the latched ``map/installed`` topic.
+``map_reloader``, beside Nav2, decides when navigation takes it (between
+missions), and reports the revision Nav2 is serving on ``map/serving``, which
+is what health's ``map.revision`` carries.
 
 Threading: paho runs its own network loop, so its callbacks arrive off the ROS
 executor. Inbound commands are therefore pushed onto a queue and drained by a
@@ -71,7 +73,7 @@ from std_msgs.msg import String
 
 import tf2_ros
 
-from mote_bringup import identity, sites
+from mote_bringup import identity, map_reload, sites
 from mote_bringup.spec import SpecError
 from mote_bringup.spec import mission as spec_mission
 
@@ -195,6 +197,13 @@ class MoteAgent(Node):
         )
         self.create_subscription(
             DiagnosticArray, "diagnostics_agg", self._on_diagnostics, 10
+        )
+        self._serving = None
+        self.installed_pub = self.create_publisher(
+            String, map_reload.INSTALLED_TOPIC, LATCHED
+        )
+        self.create_subscription(
+            String, map_reload.SERVING_TOPIC, self._on_map_serving, LATCHED
         )
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -473,11 +482,17 @@ class MoteAgent(Node):
                 continue
             self.get_logger().info(
                 f"{result['site']}/{result['floor']}: {result['action']} map "
-                f"revision {result['revision']} (restart nav to load it)"
+                f"revision {result['revision']}"
             )
-            # Health carries the running revision, so the fleet can see the
-            # difference between a robot that has the canonical map and one
-            # that has not picked it up yet.
+            # A statement of what is on disk, not an instruction: map_reloader,
+            # beside Nav2, decides when navigation takes it.
+            self.installed_pub.publish(
+                String(
+                    data=map_reload.installed(
+                        result["site"], result["floor"], result["revision"]
+                    )
+                )
+            )
             self.publish_health()
 
     def _local_revision(self, site: str, floor: str) -> str | None:
@@ -486,14 +501,40 @@ class MoteAgent(Node):
         except OSError:
             return None
 
+    def _on_map_serving(self, msg: String):
+        self._serving = map_reload.parse(msg.data)
+        self.publish_health()
+
+    def _served(self, site: str, floor: str) -> dict | None:
+        """map_reloader's report for this floor, while one is running."""
+        if (
+            self._serving is None
+            or self.count_publishers(map_reload.SERVING_TOPIC) == 0
+        ):
+            return None
+        if (self._serving.get("site"), self._serving.get("floor")) != (site, floor):
+            return None
+        return self._serving
+
     def _map_summary(self) -> dict | None:
+        """``revision`` is what Nav2 serves; ``installed`` is what is on disk.
+
+        They differ between an install and the load that follows it, which is
+        the gap the fleet needs to see. With no Nav2 serving a map (it is not
+        running, or it is running SLAM) the next bringup loads the installed
+        revision, so that is the one reported.
+        """
         site, floor = self._active_site()
         if not site or not floor:
             return None
+        installed = self._local_revision(site, floor)
+        served = self._served(site, floor)
         return {
             "site": site,
             "floor": floor,
-            "revision": self._local_revision(site, floor),
+            "revision": served["revision"] if served else installed,
+            "installed": installed,
+            "error": served.get("error") if served else None,
         }
 
     # ---- outbound telemetry ---------------------------------------------
