@@ -65,7 +65,7 @@ pixi run sim-nav        # = sim mode:=nav (the real robot_launch.py + saved map)
 #   pixi run sim world:=hospital_world.sdf   (mote_world easy, office_world medium, hospital_world hard)
 pixi run sim-test       # ~20 s headless smoke test (local pre-PR gate, needs a GPU)
 pixi run bench          # Nav benchmark vs Gazebo ground truth (mote_simulation/tools/benchmark)
-pixi run segment-eval   # Score room segmentation against ground-truth rooms
+pixi run segment-eval   # Score room segmentation
 pixi run sim-map-reload-test  # A promoted map loads into a running Nav2 (~2 min, GPU)
 
 pixi run -e dev test-fleet        # mote_fleet tests incl. the real-broker e2e run
@@ -139,7 +139,8 @@ Milestones and rationale: `docs/design/fleet.md`. Built: M0 (overlay + identity)
 Mote is the reference implementation of the Augere specs. Contracts live in `mote_bringup/mote_bringup/spec/` — **ROS-free and stdlib-only**, because the task layer, the agent and the fleet server all use them and none may depend on the others.
 - `spec/mission.py` enforces three rules callers get wrong silently: `terminal` is computed from `state`; `failure` is required on `rejected`/`failed` and refused elsewhere; `recoverable` must be stated for `precondition`, `unresolved_zone` and `timeout`.
 - The input validator is a bounded JSON Schema subset that **raises on any keyword it does not implement**. `check_schema` runs when a capability is declared.
-- **Vendor no copy of the specs' schemas.** `test_spec_conformance.py` validates against the spec checkout (`$AUGEREAI_SPEC` or sibling `augereai-spec/`) and skips without one. Its strict `xfail` on the vocabulary marks the known disagreement over `kind` (#616); don't remove it until the spec changes.
+- **Vendor no copy of the specs' schemas.** `test_spec_conformance.py` validates against the spec checkout (`$AUGEREAI_SPEC` or sibling `augereai-spec/`) and needs `jsonschema` (dev env only): run `AUGEREAI_SPEC=<checkout> pixi run -e dev test`.
+- `ZONE_NAME_RE` is copied verbatim into zone/v0's zone reference; changing it needs a spec revision.
 - The ROS seam is `std_msgs/String` carrying JSON, not a custom message, so the agent can forward bytes unchanged.
 
 ### Agent and dispatch
@@ -201,7 +202,7 @@ Mote is the reference implementation of the Augere specs. Contracts live in `mot
 - zone/v0's vocabulary and binding documents are **views built at the wire** by `spec/zone.py` (`vocabulary()`, `binding()`), never stored. The names-only view is **built from `VOCABULARY_KEYS`, never stripped**. `_ANCHOR_METHOD` is the one `source` → `anchor.method` mapping.
 - `resolve` matches name exactly, then case-insensitive and whitespace-normalised. Non-navigable zones are refused as destinations. `load_zones` refuses an ambiguous set. `problems` over `/v1/zones` is reported, not enforced.
 - `/v1/maps/...` is served beside a basemap and gated on one; `/v1/zones/...` serves names only and is gated on nothing.
-- Where Mote and zone/v0 disagree (#629, #616): `docs/fleet/fleet-api.md` and `docs/robot/sites.md`.
+- The one open disagreement with zone/v0 is its one-frame-per-platform premise (#629).
 
 ### Tailnet, provisioning, server deploys
 

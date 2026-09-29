@@ -262,15 +262,26 @@ function selectedCapability(record) {
   return offered.find((item) => item.key === dom.capability.value) || offered[0] || null;
 }
 
+// Every retained message re-renders the detail pane, a pose once a second among
+// them, and rebuilding a select closes its open dropdown and drops its value.
+// So each half of the form is rebuilt only when what it is generated from
+// changes.
+const built = { capabilities: null, fields: null };
+
 function renderDispatch(record) {
   const offered = (record && record.capabilities && record.capabilities.capabilities) || [];
-  const wanted = dom.capability.value;
-  dom.capability.replaceChildren(
-    ...offered.map((item) =>
-      el('option', { value: item.key, text: item.display_name || item.key }),
-    ),
-  );
-  if (offered.some((item) => item.key === wanted)) dom.capability.value = wanted;
+  const offeredKey = JSON.stringify([state.selected, offered.map((item) => [item.key, item.display_name])]);
+  if (built.capabilities !== offeredKey) {
+    built.capabilities = offeredKey;
+    built.fields = null;
+    const wanted = dom.capability.value;
+    dom.capability.replaceChildren(
+      ...offered.map((item) =>
+        el('option', { value: item.key, text: item.display_name || item.key }),
+      ),
+    );
+    if (offered.some((item) => item.key === wanted)) dom.capability.value = wanted;
+  }
   if (!offered.length) {
     // Retained, so an empty set means the robot has never advertised one —
     // its task server is not running, or it predates the capability topic.
@@ -289,6 +300,22 @@ function renderDispatch(record) {
   const properties = schema.properties || {};
   const required = schema.required || [];
   const names = state.zones.map((zone) => zone.name).sort((a, b) => a.localeCompare(b));
+  const fieldsKey = JSON.stringify([state.selected, capability && capability.key, properties, required, names]);
+  if (built.fields !== fieldsKey) renderFields(properties, required, names);
+  built.fields = fieldsKey;
+  // One line carries two things: what the selected capability does, and what
+  // the last dispatch did. So the summary is written when the *selection*
+  // changes and not on every render — otherwise an outcome an operator has just
+  // read is replaced by a description of the form, by whatever arrives next.
+  const note = `${state.selected}:${capability && capability.key}`;
+  if (capability && state.noted !== note) {
+    state.noted = note;
+    dom.dispatchNote.textContent = capability.summary || '';
+    dom.dispatchNote.className = 'note';
+  }
+}
+
+function renderFields(properties, required, names) {
   dom.missionInput.replaceChildren(
     ...Object.entries(properties).map(([key, sub]) =>
       el('label', { class: 'mission-field', title: sub.description || '' }, [
@@ -309,16 +336,6 @@ function renderDispatch(record) {
       ]),
     ),
   );
-  // One line carries two things: what the selected capability does, and what
-  // the last dispatch did. So the summary is written when the *selection*
-  // changes and not on every render — otherwise an outcome an operator has just
-  // read is replaced by a description of the form, by whatever arrives next.
-  const note = `${state.selected}:${capability && capability.key}`;
-  if (capability && state.noted !== note) {
-    state.noted = note;
-    dom.dispatchNote.textContent = capability.summary || '';
-    dom.dispatchNote.className = 'note';
-  }
 }
 
 function onCapability() {

@@ -50,6 +50,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "mote_bringup"))
 import json  # noqa: E402
 import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
