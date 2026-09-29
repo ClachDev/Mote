@@ -1136,11 +1136,34 @@ driven there, and the copy inside the revision an operator promoted is the
 fleet's current answer. Installing one therefore replaces the floor's
 `zones.yaml`, keeping the one it replaces beside it as `zones.<old-rev>.yaml`.
 
-**The running navigation stack keeps the map it loaded.** Nav2's `map_server`
-reads the map at startup, so the flip takes effect on the next `pixi run robot`
-(or `systemctl restart mote-bringup`). The agent logs `restart nav to load it`,
-and each robot's health carries the revision it is *actually* running — which is
-how the dashboard shows a robot that has not picked the new map up yet.
+**A running navigation stack loads the new map without a restart.** After the
+flip the agent publishes `map/installed` (latched, ROS-side). `map_reloader`,
+started beside Nav2 by `nav2_launch.py` whenever it localises against a saved
+map, acts on it for the floor Nav2 is serving:
+
+- **Robot idle:** it calls `map_server/load_map` with the new revision's
+  `map.yaml`, then re-publishes AMCL's last `amcl_pose` on `/initialpose`. AMCL
+  re-initialises its filter on a new map; the revision is registered into the
+  same floor frame, so the old estimate is still correct on it. Measured in the
+  sim (`pixi run sim-map-reload-test`): served 0.04 s after `map/installed`,
+  pose off by 0.007 m and 0.8°.
+- **Mission in flight:** it asks the task server (`task/idle`), which holds the
+  lane, and waits. The load happens when the mission reaches a terminal state.
+  While a load runs, the task server refuses a new mission as `busy`
+  (recoverable).
+- **Nav not running, or running SLAM:** nothing loads; the next bringup reads
+  the symlink.
+- **The zones come too.** The task server reloads the floor's `zones.yaml` when
+  the served revision changes, so a promoted zone edit is live with no restart.
+- **A failed load** (unreadable map, `map_server` absent) leaves the old map
+  serving; the reason is logged and reported in health's `map.error`. The same
+  revision is not retried until the agent installs it again.
+
+Each robot's health carries `map.revision`, the revision `map_server` is
+*serving*, and `map.installed`, the one on disk. They differ between an install
+and the load that follows it, which is how the dashboard shows a robot that has
+a new map but is not yet driving on it. `site use-map <rev>` flips the symlink
+without telling `map_reloader`, so a local rollback still needs a nav restart.
 
 ### Two robots mapped the same floor
 

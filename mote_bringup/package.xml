@@ -21,6 +21,10 @@
        runs this way only: mote_health knows nothing about the launch files. -->
   <exec_depend>mote_health</exec_depend>
   <exec_depend>twist_mux</exec_depend>
+  <!-- map_reloader: map_server/load_map, /initialpose, task/idle. -->
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
