@@ -158,7 +158,7 @@ sees.
 | `version` | string, *nullable* | |
 | `uptime_s` | number, *nullable* | host uptime, from `/proc/uptime` |
 | `battery` | object, *nullable* | **reserved; always null** |
-| `map` | object, *nullable* | `{site, floor, revision}` — the map revision this robot is *running* |
+| `map` | object, *nullable* | `{site, floor, revision, installed, error}` — the map revision this robot is *running*, and the one on its disk |
 
 `state: unknown` is a real answer, not a gap: the health monitor is a separate
 service, and an agent whose diagnostics are missing or stale says so rather than
@@ -174,11 +174,22 @@ the two is the only way to see a robot that has not picked up a new map.
 `revision` is `null` for a floor with no saved map. Added in M4 as an optional
 field, which bumps no version — consumers ignore what they do not recognise.
 
+`revision` is what Nav2's `map_server` is serving, as `map_reloader` reports it.
+`installed` is the floor's `map` symlink: what the agent last installed. The two
+differ between an install and the load that follows it — the load waits for any
+mission in flight to finish — and a dashboard comparing `revision` with the
+canonical one sees that gap. With no `map_server` running (nav stopped, or
+running SLAM) the next bringup loads the installed revision, so `revision`
+equals `installed`. `error` says why the last load failed while the old map is
+still served, and is `null` otherwise. `installed` and `error` were added
+without a version bump, as `map` was.
+
 ```json
 {"schema":1,"robot_id":"mote-01","stamp":"2026-07-26T16:15:24.001Z","state":"ok",
  "summary":"OK","subsystems":[{"name":"lidar","state":"ok","message":"ok"}],
  "mission":null,"site":"home","floor":"ground","version":"ece90cc","uptime_s":48213.0,
- "battery":null,"map":{"site":"home","floor":"ground","revision":"20260727T101500"}}
+ "battery":null,"map":{"site":"home","floor":"ground","revision":"20260727T101500",
+ "installed":"20260727T101500","error":null}}
 ```
 
 ### pose

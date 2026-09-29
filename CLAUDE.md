@@ -3,6 +3,11 @@
 Rules and traps for this repository. Reasoning and measurements live in the docs
 it points to; read the pointed-to doc before changing what it covers.
 
+**Editing this file.** Add a rule only if breaking it fails silently, as one
+bullet under the existing heading. The story, the evidence and the measurements
+go in the package README, `docs/fleet/` or `docs/tuning/`. Never add a section
+per feature. Keep the file under 5,000 words.
+
 ## Build & Common Commands
 
 All tasks run via [pixi](https://pixi.sh). Never invoke `colcon` or `ros2` directly — always `pixi run <task>`.
@@ -27,23 +32,17 @@ pixi run arm            # SO-101 arm bench control stack (ros2_control, no missi
 pixi run arm-setup check|calibrate|limits|offsets|gains   # Arm bus tools (control stack stopped)
 pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
 pixi run arm-teleop     # Keyboard teleop: clamped, rate-limited arm_controller goals
-pixi run arm-mock       # The arm control stack's interface, no hardware (+ --camera)
-pixi run arm-record     # Record teleop episodes into $MOTE_HOME/episodes
-pixi run arm-replay     # Replay a recorded episode on the arm, gated
-pixi run arm-teleop-test # Headless teleop->record->replay loop vs the mock arm
+pixi run arm-record | arm-replay | arm-mock | arm-teleop-test   # episodes; mock arm (mote_arm/TELEOP.md)
 pixi run sync           # rsync project to Pi at SSH host 'mote'
 pixi run setup          # One-time Pi setup: udev + wifi + systemd (needs sudo)
-pixi run udev           # Install udev rules + dialout group (needs sudo)
 pixi run wifi-check     # who takes the roam decision (+ wifi-roaming/-roamlog/-powersave)
 pixi run setup-ids      # Guided servo ID assignment tool
 pixi run kill           # Kill this checkout's ROS processes and reset daemon
 pixi run sweep          # Report ROS processes leaked by dead agent jobs (--kill to reap)
 pixi run identity       # Fleet identity CLI: show / id / set --id --name --site
 pixi run tailnet        # Join this machine to the Tailscale overlay (needs sudo)
-pixi run provision      # Render cloud-init user-data for a clean Pi
 pixi run dds-check      # DDS participant-slot headroom on this host
-pixi run camera-decay-check  # Time a real camera_layer mark expiring (~40 s, no hardware)
-pixi run enroll         # Ask the fleet server for this robot's id (writes ~/.mote)
+pixi run enroll         # Get this robot's id from the fleet server
 pixi run agent          # Robot -> fleet bridge (mote-agent.service)
 pixi run foxglove       # foxglove_bridge + teleop relay: the remote console
 pixi run fleet-server   # Off-board: fleet API + operator dashboard
@@ -51,8 +50,7 @@ pixi run fleetctl       # Operator CLI: token / operator / robots / dispatch / p
 pixi run fleet-broker   # Off-board: MQTT broker + WebSockets (a container)
 pixi run fleet-ui-check # Fake fleet + headless Chrome dashboard check (-- --keep to leave it up)
 pixi run fleet-deploy   # Fleet box: container stack up/update/rollback/backup
-pixi run inference-deploy  # GPU box: blue/green deploy of the inference image
-pixi run deploy-test    # Exercise the blue/green pipeline with stubs (no GPU)
+pixi run inference-deploy  # GPU box: blue/green deploy (deploy-test: stubbed, no GPU)
 pixi run test           # colcon test (gtest + pytest)
 pixi run docs           # mkdocs site (docs-build: CI, --strict)
 
@@ -68,6 +66,7 @@ pixi run sim-nav        # = sim mode:=nav (the real robot_launch.py + saved map)
 pixi run sim-test       # ~20 s headless smoke test (local pre-PR gate, needs a GPU)
 pixi run bench          # Nav benchmark vs Gazebo ground truth (mote_simulation/tools/benchmark)
 pixi run segment-eval   # Score room segmentation against ground-truth rooms
+pixi run sim-map-reload-test  # A promoted map loads into a running Nav2 (~2 min, GPU)
 
 pixi run -e dev test-fleet        # mote_fleet tests incl. the real-broker e2e run
 
@@ -119,7 +118,7 @@ Three files are called some form of robot config — do not confuse them:
 
 - DDS transport is **loopback-only everywhere**: `config/cyclonedds.xml`, loaded via `CYCLONEDDS_URI` by pixi activation and the systemd units. No machine joins another's DDS graph. Foxglove is the off-box window. Camera calibration, the one flow needing a LAN peer, unsets the profile explicitly.
 - Every `mote-*.service` sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` — **all of them**, because a localhost-range participant discovers a default-range one on the same host but not the reverse. Interactive `pixi run` keeps stock discovery.
-- rmw_cyclonedds caps localhost discovery at **33 participants per host** (`MaxAutoParticipantIndex=32`). The full robot stack sits at ~26. Run `pixi run dds-check` whenever you add a process; raise the cap in `cyclonedds.xml` if needed.
+- rmw_cyclonedds caps localhost discovery at **33 participants per host** (`MaxAutoParticipantIndex=32`). The full robot stack sits at ~27. Run `pixi run dds-check` whenever you add a process; raise the cap in `cyclonedds.xml` if needed.
 - The `sim` env sets `LOCALHOST` too. Every gz entry point (`bench.py`, smoke test, `map_world.sh`) claims a free `ROS_DOMAIN_ID` + `GZ_PARTITION` through `mote_simulation/tools/sim_domain.py`. **Teardown must be scoped as well**: each launch is `setsid`-ed and reaped by session id, never by bare name (`pkill -f mote_world` is what this replaced).
 
 ## Fleet
@@ -167,14 +166,22 @@ Mote is the reference implementation of the Augere specs. Contracts live in `mot
 - The 760 px breakpoint lives in `layout.mjs`; `ui_test.mjs` reads `style.css` to keep CSS and JS agreeing, and asserts `touch-action: none` on the canvas.
 - **A canvas gets no CSS cascade**: read colours from computed style (`--dim`, ink). The basemap's free space is white in both themes.
 - `[hidden]` needs the `display: none !important` rule already in `style.css`; don't remove it.
-- Tests: `test_ui.py` → `ui_test.mjs` under node, against the files the browser loads. `browser_check.mjs` / `pixi run fleet-ui-check` needs docker and Chrome and stays out of CI (`m3-verification.md` §2).
+- `ui_test.mjs` runs under node against the files the browser loads. `fleet-ui-check` needs docker and Chrome, so it stays out of CI.
 
 ### Map registry (M4)
 
 - **Uploading is not publishing.** `publish-map` uploads an inert candidate. Only an operator's promote (`fleetctl promote` or the review pane) flips the floor's `map` symlink and publishes the retained `…/current` topic. Two mappers leave two candidates, never a merge.
 - `mote_bringup/bundle.py` is the shared, ROS-free validator (content); `sites.py` owns layout. It uses **PyYAML and Pillow** — do not replace them with hand-rolled readers (it was tried and broke on `Café`, polygons and PNG decoding; `m4-verification.md` §2, §8). The fleet image copies these two files; the fleet box installs no ROS.
 - The flip and the announcement are reported separately; the server re-announces every floor at startup.
-- On the robot, `mapsync.py` stages a pull in a temp dir, verifies sha256, renames into `maps/<rev>/` and flips. A pulled map takes effect at the **next bringup** (`map_server` reads at startup); health reports the running revision.
+- On the robot, `mapsync.py` stages a pull in a temp dir, verifies sha256, renames into `maps/<rev>/` and flips; the agent then publishes latched `map/installed`.
+- **`map_reloader`** (`map_reloader.py`, ROS-free half `map_reload.py`; started by `nav2_launch.py` only with `localisation:=true`) loads that revision into the running Nav2. Rules:
+  - **Ask the lane holder, never infer.** It calls the task server's `task/idle`; a mission in flight defers the load to its terminal state. While `map/serving.loading` is set the task server refuses missions as `busy` (bounded at 30 s).
+  - Load the revision's own `maps/<rev>/map.yaml`, never the symlink, so what is served is what is reported.
+  - Re-seed AMCL from the last `amcl_pose` on `/initialpose` — not a TF lookup (a `TransformListener` costs the whole `/tf` stream). AMCL needs `first_map_only: false`, pinned in `nav2_params.yaml`.
+  - A failed load changes nothing but health's `map.error`. Health's `map.revision` is what `map_server` serves; `map.installed` is the symlink.
+  - The task server reloads the floor's zones when the served revision changes.
+  - `site use-map` tells nobody, so a local rollback still needs a nav restart.
+  - Flow and measurements: `docs/fleet/README.md` §11.
 - The review pane's revision routes: `…/revisions/<rev>/{map.json,map.png,zones.json}`. `image_url` must be revision-aware; revision zones are not gated on a published map and report `source: revision|floor`.
 
 ### Zone editor
@@ -198,9 +205,9 @@ Mote is the reference implementation of the Augere specs. Contracts live in `mot
 
 ### Tailnet, provisioning, server deploys
 
-- Tailscale joins robots and servers as tagged devices; a robot's tailnet hostname is its `robot_id`. The policy is `mote_bringup/tailscale/policy.hujson`, with a `tests` block asserting no robot reaches another. `test_tailnet_roles.py` checks every tag `install.sh` advertises is declared.
+- The tailnet policy is `mote_bringup/tailscale/policy.hujson`; its `tests` block asserts no robot reaches another. Every tag `install.sh` advertises must be declared there (`test_tailnet_roles.py`).
 - A clean Pi is one rendered cloud-init file (`provision.py` + `provisioning/user-data.template`), which runs `pixi install --locked`.
-- Fleet server: two containers (mosquitto on `server/mosquitto.conf`, the same file `fleet-broker` uses; image tag pinned once to `2.1-alpine` in the compose file). Updates are a gated recreate with automatic rollback. Inference server: stateless blue/green, gated by `tools/probe.py` serving a real frame. See `docs/fleet/server-pipelines.md`.
+- The deployed broker reads `server/mosquitto.conf`, the same file `fleet-broker` uses; its image tag is pinned once, to `2.1-alpine`. Deploys: `docs/fleet/server-pipelines.md`.
 - conda-forge's mosquitto lacks websockets; use the container broker.
 
 ## Sites (maps & zones)
@@ -223,7 +230,7 @@ Everything meaningful relative to one mapped place lives in a **site bundle** un
 
 ## Architecture
 
-Differential-drive robot on **ROS 2 Jazzy**, managed entirely through pixi. First-party packages below.
+Differential-drive robot on **ROS 2 Jazzy**.
 
 ### `mote_hardware` (C++)
 `ros2_control` `SystemInterface` (`MoteHardware`) driving two Feetech STS3215 wheel servos over the SCServo SDK.
@@ -267,7 +274,7 @@ Launch files, config, udev rules, systemd units, `wifi/`, the fleet foundation (
 - `slam_toolbox_params.yaml` — the live config: best-known-good values only, never deliberately hobbled.
 - `slam_toolbox_build_params.yaml` — the offline-build copy. Every value must match the live file unless the key carries a `# DIVERGENCE:` note; `test_slam_build_params.py` enforces both directions.
 
-**Foxglove.** Bridge 3.3.0 speaks only the `foxglove.sdk.v1` subprotocol. The Teleop panel publishes unstamped `Twist`; `twist_relay` stamps it on the robot, event-driven with no timer. `test_foxglove_layout.py` ties `foxglove/mote.json` to `controllers.yaml`.
+**Foxglove.** Bridge 3.3.0 accepts only the `foxglove.sdk.v1` subprotocol. `twist_relay` stamps the panel's `Twist` on the robot, with no timer.
 
 **On-robot reliability** (`mote_bringup/README.md`):
 - systemd units are installed by `pixi run setup` but **not enabled**. They restart with backoff and never give up.
@@ -285,10 +292,8 @@ Launch files, config, udev rules, systemd units, `wifi/`, the fleet foundation (
 ### `mote_simulation` (Python/ament)
 Workstation-only; excluded from `pixi run sync`; built only in the `sim` env. Dependencies run one way: it includes from `mote_bringup` and `mote_tasks`, never the reverse.
 - `sim_launch.py` runs headless gz, spawns the robot (URDF with `use_sim:=true`, swapping in `gz_ros2_control` and a sim lidar), bridges `/clock` and `/scan`, and reuses `mote_bringup`'s controllers, laser filters, localization and twist_mux. `mode:=mapping|nav` includes the real mission launches with `base:=false`, plus `tasks_launch.py` with the world's `worlds/<world>.zones.yaml`.
-- Worlds: `mote_world` (easy), `office_world` (medium), `hospital_world` (hard, **generated by `worlds/gen_hospital.py`** — edit the script, never the SDF).
-- `sim_home/` is a committed sim `MOTE_HOME`: one site per world (floor `ground`). Only bundles are committed.
-- `pixi run sim-map-world` builds those sites with the real mapping mission and `explore --sim-time`, saving with `clean=False`.
-- `test/sim_smoke/` is the `sim-test` gate. `tools/benchmark/` and `tools/bag_replay/` have their own READMEs.
+- `hospital_world.sdf` is **generated by `worlds/gen_hospital.py`** — edit the script, never the SDF.
+- `sim_home/` is a committed sim `MOTE_HOME`, one site per world, built by `pixi run sim-map-world` and saved with `clean=False`.
 
 ### `mote_perception` (Python/ament)
 Camera-derived perception. Nodes run on the robot; torch runs on an off-board inference server over TCP at `inference_host` (`config/perception.yaml`, overridable in `$MOTE_HOME`). Details: `mote_perception/README.md`, `docs/inference-server.md`.
@@ -297,13 +302,11 @@ Camera-derived perception. Nodes run on the robot; torch runs on an off-board in
 - **L2 open-vocabulary detection**: `object_detector_node.py` idles until labels arrive on `detect/labels`, then publishes `detected_objects` in the map frame. Floor-ray grounding is accurate only near the robot.
 - `tools/inference_server.py` supervises the tenants in `SERVICES`; models load on demand and unload when idle.
 - `perception_launch.py` is not part of mission bringup; run `pixi run perception` alongside.
-- Camera calibration: `$MOTE_HOME/camera_calibration.yaml` overrides the committed default (`config/README.md`).
 
 ### `mote_tasks` (Python/ament)
 py_trees behaviour trees over Nav2 (py_trees from PyPI; no py_trees_ros). Details: `mote_tasks/README.md`.
 - `capabilities.py` declares `goto {target}` and `fetch {target, destination}` using the standard registry's property names. Location inputs `$ref` zone/v0's zone reference.
 - `task_server.py` publishes capabilities on latched `task/capabilities`, takes mission/v0 JSON on `task/command`, answers on `task/status`. It owns the lane, validates input against the capability schema, evaluates blocking preconditions (`localized`: `map`→`base_link` newer than 5 s; `zone_known`) and enforces `max_duration_s`. Failure class comes from what failed (`trees/common.py` `report_failure`).
-- `mission.py` (`ros2 run mote_tasks mission goto target=kitchen`, `--list`) is the bench dispatcher.
 - `zones.py`: `load_zones`, `resolve`, `containing`, `append_zone`. Polygons may be concave and may omit `x`/`y` (a pose inside is derived). A re-teach keeps name, note, `navigable` and footprint.
 - `behaviours/`: `DriveTo`, `AcquireObject`, `TimedStub` (pick/place are still stubs). `trees/`: `fetch.py`, `goto.py`.
 - Zones resolve from the active floor, then legacy `~/.mote/zones.yaml`, then `config/zones.default.yaml`.
@@ -311,7 +314,7 @@ py_trees behaviour trees over Nav2 (py_trees from PyPI; no py_trees_ros). Detail
 ### `mote_fleet` (Python/ament)
 Both ends of the fleet wire. Details: `mote_fleet/README.md`.
 - `protocol.py` — topic tree and payload builders; **stdlib-only, ROS-free**, imported by path on the server.
-- `dispatch.py`, `agent.py` (MQTT client injectable for tests), `enroll.py` + `facts.py`, `fleet_config.py`, `mapsync.py`, `publish.py`.
+- `agent.py` takes an injectable MQTT client, so tests need no broker.
 - `server/` — ROS-free: `fleet_server.py`, `registry.py` (SQLite under `$MOTE_FLEET_HOME`), `bundle_store.py` (filesystem is the truth about what is canonical), `fleetctl.py`, `ui/`, `mosquitto.conf`, `broker.sh`.
 - e2e tests skip without a broker; `pixi run -e dev test-fleet` runs everything.
 
@@ -326,7 +329,7 @@ SO-101 follower arm (no leader arm), controlled directly over Feetech rather tha
 - **`FeetechBus._read` is the single read choke point**: it flushes the input buffer first, and a missing reply returns `None` (the SDK raises `IndexError`). After an EEPROM write, require two agreeing reads.
 - **Every arm CLI uses `cli.shutdown` and `cli.parse`.** Shutdown joins the spin thread before destroying the node (otherwise exit 134). Parse strips `--ros-args` and parses strictly.
 - Teleop: one process, one node. All safety rules (clamp, 0.5 rad/s rate limit, deadman, latched panic, re-seed on resume) live in ROS-free `teleop.py`. **The safety loop runs on its own thread**, because a service call from an executor callback never completes.
-- Episodes: `episode_record` writes captures (JSON lines + raw compressed frames, stdlib only). `tools/lerobot_export.py` converts them through LeRobot's own API. `episode_replay` reads captures. `jog` is retired.
+- Episode captures are stdlib-only on the Pi; `tools/lerobot_export.py` converts them through LeRobot's own API, never a hand-rolled writer.
 - Gains are EEPROM state reconciled from `robot.yaml` (`arm-setup gains`): Kp=64, Ki=0, chosen by `sweep`.
 
 ### Third-party submodules (`third_party/`)

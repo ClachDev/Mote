@@ -109,7 +109,9 @@
       "properties": {
         "site": {"type": "string", "description": "Site the revision belongs to."},
         "floor": {"type": "string", "description": "Floor the revision belongs to."},
-        "revision": {"type": ["string", "null"], "description": "Revision id, or null if this floor has no map."}
+        "revision": {"type": ["string", "null"], "description": "Revision id Nav2's map_server is serving; with no map_server running, the installed one the next bringup loads. Null if this floor has no map."},
+        "installed": {"type": ["string", "null"], "description": "Revision id installed on disk (the floor's map symlink). Differs from revision between an install and the load that follows it."},
+        "error": {"type": ["string", "null"], "description": "Why the last load of an installed revision failed, while the old one is still served; null otherwise."}
       }
     }
   }
