@@ -80,7 +80,7 @@ controller_server:
       angular_granularity: 0.025
       transform_tolerance: 0.2
       xy_goal_tolerance: 0.1
-      trans_stopped_velocity: 0.25
+      trans_stopped_velocity: 0.1
       short_circuit_trajectory_evaluation: true
       stateful: true
       critics: ["WheelSpeedLimit", "RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
