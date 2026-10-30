@@ -5,9 +5,7 @@
 #                                 -> episode_record -> episode_replay
 #
 # Nothing here needs the arm, the camera, or a terminal, so it is the gate to
-# run before taking any of this to the bench (mote_arm/BENCH.md). It ends by
-# planning the LeRobot export, which needs no LeRobot: the plan is computed from
-# the capture alone.
+# run before taking any of this to the bench (mote_arm/BENCH.md).
 #
 #   pixi run arm-teleop-test [seconds]
 set -euo pipefail
@@ -81,17 +79,17 @@ stop() {
     done
 }
 
-echo "== 1/6  mock follower with a synthetic camera =="
+echo "== 1/5  mock follower with a synthetic camera =="
 # --droop: a real servo settles short of its goal (kp*error balances the load),
 # so the mock does too. Without it the mock lands exactly on every setpoint and
 # the recorded action would be indistinguishable from the observed state.
 background mock_arm ros2 run mote_arm mock_arm --camera --rate 20 --speed 1.0 --droop 0.01
 sleep 4
 
-echo "== 2/6  teleop -> follower, ${DEMO_SECONDS}s =="
+echo "== 2/5  teleop -> follower, ${DEMO_SECONDS}s =="
 background teleop ros2 run mote_arm arm_teleop -- --demo "$DEMO_SECONDS" --speed 0.3
 
-echo "== 3/6  record the session =="
+echo "== 3/5  record the session =="
 ros2 run mote_arm episode_record -- \
     --task "sweep the first joint" \
     --root "$CAPTURE" \
@@ -104,10 +102,10 @@ EPISODE="$CAPTURE/episode_000"
 [ -f "$CAPTURE/dataset.json" ] || fail "no dataset.json in $CAPTURE"
 [ -f "$EPISODE/episode.json" ] || fail "episode was not closed"
 
-echo "== 4/6  check the capture actually holds a motion =="
+echo "== 4/5  check the capture actually holds a motion =="
 python3 "$(dirname "$0")/check_capture.py" "$CAPTURE" || fail "capture check failed"
 
-echo "== 5/6  replay it on the follower at half speed =="
+echo "== 5/5  replay it on the follower at half speed =="
 # The leader and the mirror have to be out of the way first: replay publishes
 # arm_controller itself, and two things commanding one arm fight. (The stall
 # guard does catch it — that is how this was found — but a caught stall is not
@@ -119,12 +117,8 @@ ros2 run mote_arm episode_replay -- "$CAPTURE" --episode 0 --yes --speed-scale 0
 tail -n 12 "$LOGS/replay.log"
 grep -q "STOPPED during" "$LOGS/replay.log" && fail "replay stalled"
 
-echo "== 6/6  plan the LeRobot export (no LeRobot required) =="
-python3 "$(dirname "$0")/../../tools/lerobot_export.py" --capture "$CAPTURE" --dry-run \
-    || fail "export plan failed"
-
 echo
-echo "PASS — teleop, recording, replay and the export plan all ran headless."
+echo "PASS — teleop, recording and replay all ran headless."
 echo "capture kept at: $CAPTURE"
 trap - EXIT
 cleanup

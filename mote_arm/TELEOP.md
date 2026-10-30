@@ -5,10 +5,9 @@ and the **follower** mirrors it. We have one arm and no intention of buying a
 second, so the pose the arm follows is held in software and moved by the
 keyboard.
 
-The point of teleoperating at all is the **episodes**: recorded demonstrations
-in [LeRobot](https://github.com/huggingface/lerobot)'s dataset format, which is
-what a policy would later be learned from. Teleop without recording is just a
-slower jog CLI.
+The point of teleoperating at all is the **episodes**: recorded demonstrations,
+which is what a policy would later be learned from. Teleop without recording is
+just a slower jog CLI.
 
 ```
   keyboard ─► arm_teleop ─► arm_controller ─► MoteHardware ─► servos
@@ -17,9 +16,9 @@ slower jog CLI.
                   └────► episode_record ◄──── /image_raw/compressed
                                  │
                             capture dir
-                             ╱        ╲
-                 lerobot_export      episode_replay
-              (off-board, LeRobot)   (back onto the arm)
+                                 │
+                           episode_replay
+                         (back onto the arm)
 ```
 
 ## Why this shape
@@ -32,9 +31,9 @@ decision](README.md#stack-decision-direct-feetech-control-not-lerobot) was
 direct Feetech control precisely so that `torch` and the HuggingFace stack stay
 off the Pi, the same way inference does. Running LeRobot's teleop means running
 LeRobot's robot class, its bus driver and its calibration on the robot — the
-thing that decision exists to avoid. LeRobot is still where the *dataset* goes;
-it just does not need to be where the *arm* is driven from. That split is the
-whole design.
+thing that decision exists to avoid. A training stack is still where the
+*dataset* goes; it just does not need to be where the *arm* is driven from. That
+split is the whole design.
 
 **End-effector jog with IK** was explicitly out for v1, and rightly: there is no
 off-the-shelf SO-101 IK we could drop in, and building one is a separate piece
@@ -159,52 +158,28 @@ rather than from the teleop node, so a session driven by `arm-pose` records too.
 
 > The arm is mounted **rotated 180 degrees** so the camera clears it (GitHub
 > #2), so episodes do record camera frames. Use `--no-camera` for a robot whose
-> camera is off or fouled: the capture, the export and the replay all handle a
-> camera-less dataset.
+> camera is off or fouled: the capture and the replay both handle a camera-less
+> dataset.
 
 Captures land in `$MOTE_HOME/episodes/<dataset>/` — per-robot state, alongside
 maps, zones and taught poses. The format is documented in `mote_arm/episode.py`:
 JSON lines plus the compressed frames, written with nothing but the standard
 library, because the Pi carries no parquet or ffmpeg and should not have to.
 
-### 4. Export to a LeRobot dataset (off-board)
+### 4. Off-board use
 
-```bash
-pixi run -e lerobot arm-export -- --capture ~/.mote/episodes/teleop \
-    --repo-id mote/teleop-demo
-```
+The capture is the hand-off. Copy it off the robot (`rsync`) and convert it in
+whatever environment the training stack needs; the repo ships no converter. One
+that targets [LeRobot](https://github.com/huggingface/lerobot) should write
+through `LeRobotDataset.create` / `add_frame` / `save_episode` / `finalize`
+rather than emit the files itself: the format has already moved once (v2.1's
+file-per-episode became v3.0's aggregated shards), and a hand-rolled writer
+would be wrong the first time it changed. Two things it has to do on the way:
+put every episode on the exact 1/fps grid first (`episode.py`'s resampler;
+LeRobot derives timestamps from the frame index, so a slipped timer would
+silently stretch the motion), and decode the stored frames to RGB.
 
-The `lerobot` environment is linux-64 and no-default-feature, for the same
-reason `inference` has its own: LeRobot brings torch, ffmpeg and the
-HuggingFace stack, none of which belongs on the aarch64 Pi that did the
-recording. Copy the capture off the robot (`rsync`) and convert it there.
-
-The exporter writes through `LeRobotDataset.create` / `add_frame` /
-`save_episode` / `finalize` rather than emitting the files itself. The format
-has already moved once (v2.1's file-per-episode became v3.0's aggregated
-shards); a hand-rolled writer would be a second implementation of someone
-else's schema, wrong the first time it changed.
-
-Two things it does on the way:
-
-- **Resampling.** LeRobot stores no timestamps — it derives them from the frame
-  index and the dataset's fps. A capture whose timer slipped would export as if
-  it had not, silently stretching the motion, so every episode is put on the
-  exact 1/fps grid first (zero-order hold, never a peek ahead).
-- **Decoding.** The stored frames are decoded to RGB here, off-board, where
-  Pillow exists.
-
-`--dry-run` reports the schema and the resampled frame counts using only the
-capture, so the conversion can be checked on a machine with no LeRobot at all.
-
-### 5. Inspect it with LeRobot's own tooling
-
-```bash
-pixi run -e lerobot -- lerobot-dataset-viz \
-    --repo-id mote/teleop-demo --root <out> --episode-index 0
-```
-
-### 6. Replay on the arm
+### 5. Replay on the arm
 
 ```bash
 pixi run arm-replay -- ~/.mote/episodes/teleop --episode 0
@@ -266,16 +241,12 @@ episode — is step 8 of `BENCH.md` and is still open.
 
 | Check | Result |
 |-------|--------|
-| Teleop loop, headless | `pixi run arm-teleop-test`: teleop -> arm_controller -> arm -> record -> replay -> export plan, all green |
+| Teleop loop, headless | `pixi run arm-teleop-test`: teleop -> arm_controller -> arm -> record -> replay, all green |
 | Taking hold | the mock starts with `arm_controller` inactive, as the real stack spawns it; the first commanded goal activates it |
 | Deadman in the loop | logged `deadman: no input, holding position` / `following the keyboard` on every pause the demo took |
 | Two things commanding one arm | caught by the stall guard before the script learned to stop teleop first — the replay halted at 24/220 with 0.209 rad of lag instead of fighting |
 | Recording | 220 frames over 10.9 s at 20 fps, 0 dropped ticks, camera frames all distinct |
 | Replay | 220 setpoints at half speed, lag steady at 0.010 rad (the mock's droop), finished within 0.0000 rad of the last action |
-| Export (camera) | v3.0 dataset: `data/chunk-000/file-000.parquet`, `videos/observation.images.front/chunk-000/file-000.mp4`, `meta/episodes/chunk-000/file-000.parquet` |
-| Export (`--no-camera`) | same, state + action only — the path the arm/camera clash forces today |
-| Loads back through LeRobot | 1 episode, 220 frames, 20 fps, `so101_follower`; sample shapes `observation.state (6,)`, `action (6,)`, `observation.images.front (3, 72, 96)`, task string intact |
-| LeRobot's own viewer | `lerobot-dataset-viz --save 1` read the dataset and wrote a 619 KB `.rrd` |
 | Safety rules | 15 unit tests over `teleop.py` (clamp, rate limit, deadman halt-then-silence, re-seed on resume, panic latch) plus 7 node tests through `ArmTeleop` against the mock |
 
 The unit tests are the load-bearing ones: every safety rule is decided in
@@ -307,5 +278,4 @@ control surface for a remote arm would not be a topic in the first place.
 | `episode_replay.py` | `arm-replay` — a capture back onto the arm, gated. |
 | `motion.py` | Lag supervision, shared with `arm-pose go`. |
 | `control.py` | Shared with `arm-pose` and replay: single-point trajectories, and activation as the torque switch. |
-| `tools/lerobot_export.py` | Capture → LeRobotDataset, off-board (`-e lerobot`). |
 | `test/teleop_loop/` | The headless end-to-end gate (`arm-teleop-test`). |
