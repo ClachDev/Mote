@@ -235,7 +235,6 @@ def _session(node: EpisodeRecorder, args) -> None:
         ):
             break
     print(f"\n{recorded} episode(s) in {node.root}")
-    print(f"export with:  pixi run -e lerobot arm-export -- --capture {node.root}")
 
 
 def main() -> None:
@@ -263,7 +262,9 @@ def main() -> None:
     )
     parser.add_argument("--camera-topic", default=DEFAULT_CAMERA_TOPIC)
     parser.add_argument(
-        "--camera-key", default=DEFAULT_CAMERA_KEY, help="LeRobot feature suffix"
+        "--camera-key",
+        default=DEFAULT_CAMERA_KEY,
+        help="image feature key (observation.images.<key>)",
     )
     parser.add_argument(
         "--no-camera",

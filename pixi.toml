@@ -4,256 +4,54 @@ channels = ["https://prefix.dev/mote", "robostack-jazzy", "conda-forge"]
 name = "mote"
 platforms = ["linux-64", "linux-aarch64"]
 version = "0.1.0"
+repository = "https://github.com/ClachDev/Mote"
+description = "Low-cost differential-drive robot combining the Physical AI pipeline of LeKiwi with ROS/Nav2 navigation on a Turtlebot 3-compatible base. Circular footprint, ORP-standard chassis, SO-101 arm compatible. A comparison platform for classical navigation vs. learned robot policies."
+license-file = "LICENSE"
 
-[tasks]
-submodules = "git submodule update --init"
-# Release, so optimisation is stated here rather than inherited from whatever the
-# conda activation puts in CXXFLAGS. NOT RelWithDebInfo: config flags land after
-# CXXFLAGS, so its -O2 would lower the Pi's -O3. See docs/tuning/2026-08-11.
-build = { cmd = "colcon build --symlink-install --cmake-args -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release", depends-on = [
-    "submodules",
-] }
-test = { cmd = "colcon test --packages-select mote_hardware mote_bringup mote_health mote_nav mote_perception mote_tasks mote_arm mote_fleet --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
-    "build",
-] }
+# Features and environments. `robot` is what a robot runs; `build` is the
+# toolchain that compiles it from a checkout; `dev` is the workstation's extras.
+# The default environment is robot + build, which is what the Pi installs and
+# what a bare `pixi run <task>` uses on either machine. `dev` adds desktop, sim
+# and the fleet server on top. The off-board roles (fleet, inference, lint,
+# docs) are their own environments and carry none of the robot's stack.
+#
+# A task defined in `robot` or `build` exists in both `default` and `dev`, and
+# pixi then picks `default`. A task defined only in `dev`, `sim` or another
+# single-environment feature runs in that environment with no `-e`.
 
-# Pi Setup tasks
-setup-ids = "ros2 run mote_hardware setup_ids"
-udev = "sudo cp mote_bringup/udev/99-mote.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger && sudo usermod -aG dialout $USER"
-# Wifi (mote_bringup/wifi/README.md). `wifi-roaming` writes one modprobe option
-# and takes effect at the next reboot; it restarts NetworkManager only on a
-# robot still carrying the iwd backend, and guards that step.
-wifi-powersave = "bash mote_bringup/wifi/install.sh --powersave-only"
-wifi-roaming = "bash mote_bringup/wifi/install.sh --roaming-only"
-wifi-check = "bash mote_bringup/wifi/check.sh"
-wifi-roamlog = "bash mote_bringup/wifi/roamlog.sh"
-install-systemd = "bash mote_bringup/systemd/install.sh"
-setup = { depends-on = ["udev", "wifi-powersave", "wifi-roaming", "install-systemd"] }
-
-# Fleet: overlay + identity (docs/fleet/README.md)
-identity = "ros2 run mote_bringup identity"      # this robot's id/name/site
-tailnet = "bash mote_bringup/tailscale/install.sh"  # join the Tailscale overlay
-provision = "ros2 run mote_bringup provision"    # render cloud-init for a new Pi
-dds-check = "ros2 run mote_bringup dds_participants"  # participant-slot headroom
-
-# Fleet control plane (docs/fleet/control-plane.md). The agent and enroll run on
-# the robot; the server and fleetctl are off-board but ROS-free, so they run in
-# any environment — the dedicated `fleet` env below is the deployable role, and
-# it is the only one that carries the broker.
-agent = "ros2 launch mote_fleet agent_launch.py"   # robot -> fleet bridge
-enroll = "ros2 run mote_fleet enroll"              # ask the server for an id
-fleet-server = "python -u mote_fleet/server/fleet_server.py"  # API + dashboard
-fleetctl = "python -u mote_fleet/server/fleetctl.py"          # operator CLI
-# The broker, in a container: the dashboard's read path is MQTT-over-WebSockets,
-# which conda-forge's mosquitto is not built for (m1-verification.md §4), and
-# the container is what the deployed fleet box runs anyway. It lives here rather
-# than in [feature.fleet.tasks] because it needs docker, not an environment —
-# and because a task defined in the fleet feature lands in both the `fleet` and
-# `dev` environments (dev folds that feature in), which makes a bare
-# `pixi run <task>` ambiguous. The no-docker fallback is `fleet-broker-local`,
-# below, which does need the environment: it runs conda's binary.
-fleet-broker = "bash mote_fleet/server/broker.sh"
-# The dashboard, checked in a real browser against a fake fleet: broker, server,
-# basemap, wire-only robots and the browser assertions, on ports of their own,
-# torn down afterwards (docs/fleet/m3-verification.md §2). Needs docker and a
-# chrome, so it lives here for the same reason `fleet-broker` does — a
-# dependency on the machine, not on an environment. `-- --keep` leaves the stack
-# up instead, which is the loop for working on server/ui/.
-fleet-ui-check = "python -u mote_fleet/test/ui_check.py"
-
-# Server pipelines (docs/fleet/server-pipelines.md). The deployed servers need
-# docker and nothing else — these tasks are the convenience of running the same
-# scripts from a checkout; a real fleet box or GPU box has no pixi.
-fleet-deploy = "bash mote_fleet/deploy/fleet-deploy.sh"           # broker + API stack
-inference-deploy = "bash mote_perception/deploy/inference-deploy.sh"  # GPU box
-deploy-test = "bash mote_perception/deploy/test/drill.sh"  # blue/green drill, no GPU
-
-# Dev tasks
-# Matching is on each process' identity in /proc, not on its command line: the
-# `pkill -9 -f '<names>'` this replaces matched the shell running the task
-# itself (the names are in its own command line), SIGKILLed it, and so never
-# reached the daemon reset below -- and it matched every other checkout and
-# worktree on the box besides. See mote_bringup/sweep_orphans.py.
-kill = "PYTHONPATH=mote_bringup python -m mote_bringup.sweep_orphans --scope . --kill; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true"
-# Reap ROS processes left behind by agent worktrees whose job has ended. Reports
-# only; add --kill to act.
-sweep = "PYTHONPATH=mote_bringup python -m mote_bringup.sweep_orphans"
-# '.git' has no trailing slash on purpose: a submodule's .git is a *file*
-# holding a path into this checkout's .git/modules, and '.git/' (directory-only)
-# would ship it to the robot and break the robot's submodule refs.
-sync = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/"
-save-map = "ros2 run mote_bringup site save-map"
-# Offer the saved map to the fleet registry as a candidate (docs/fleet/
-# fleet-api.md). Separate from save-map because saving must work offline.
-publish-map = "ros2 run mote_fleet publish-map"
-clean-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.cli"
-# Propose a zone per room of a saved map, so a floor starts with its rooms named
-# rather than every one captured by driving to it. Defaults to the active floor's
-# map; --write merges the proposal into that floor's zones.yaml.
-segment-map = "PYTHONPATH=mote_bringup python -m mote_bringup.map_cleanup.rooms_cli"
-# Score that segmentation against the sim ladder's ground-truth room rectangles.
-segment-eval = "PYTHONPATH=mote_bringup python mote_simulation/test/room_segmentation_eval.py"
-save-zone = "ros2 run mote_tasks save_zone"
-site = "ros2 run mote_bringup site"
-
-# Replay a recorded real-robot mapping bag through SLAM (or kinematic_icp) under
-# N parameter sets and score them with truth-free proxies -> comparison report
-# (metrics table + rendered maps). The reality check that complements `bench`
-# (which needs Gazebo ground truth). Needs no sim/gz. Example:
-#   pixi run bag-replay -- --bag ~/.mote/bags/mapping/<ts> --params a.yaml b.yaml
-bag-replay = "python mote_simulation/tools/bag_replay/replay.py"
-
-# Quick launch commands
-launch = "ros2 launch mote_bringup mote_launch.py"
-mapping = "ros2 launch mote_bringup mapping_launch.py"
-nav = "ros2 launch mote_bringup nav2_launch.py"
-robot = "ros2 launch mote_bringup robot_launch.py"
-slam = "ros2 launch mote_bringup slam_launch.py"
-# Publishes the drive mux's teleop input, so it pre-empts an active Nav2 goal
-# rather than fighting it — and so it needs the base up, which owns the mux.
-teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/cmd_vel_teleop_stamped"
-# Autonomous mapping coverage beside `pixi run mapping`; drives the same mux
-# input as teleop. See mote_bringup/README.md "Mapping a space autonomously".
-explore = "ros2 run mote_bringup explore"
-perception = "ros2 launch mote_perception perception_launch.py"
-# Remote observability + teleop (docs/fleet/README.md §10). Included in the base
-# by default, so this is for running it on its own — or under systemd, where
-# mote-foxglove.service keeps it up across a bringup restart.
-foxglove = "ros2 launch mote_bringup foxglove_launch.py"
-record = "ros2 launch mote_bringup record_launch.py"
-tasks = "ros2 launch mote_tasks tasks_launch.py"
-health = "ros2 run mote_health health_monitor"
-self-check = "ros2 run mote_bringup self_check"
-# Wheel-vs-lidar odometry residual: slip / stuck / scan-match excursions. Runs
-# with the base already; this is for watching it on its own.
-slip = "ros2 run mote_bringup slip_monitor"
-# Re-score recorded bags through the very estimator the node runs — how
-# config/slip.yaml's thresholds were set, and how a change to them is checked.
-slip-replay = "python mote_bringup/tools/slip_replay.py"
-chaos = "bash mote_bringup/test/chaos/chaos_restart.sh"
-# Times a real camera_layer mark against a real costmap (~40 s, needs no
-# hardware). test_costmap_layers.py holds the settings this depends on; this is
-# what proves they still add up to a mark that expires.
-camera-decay-check = "python mote_bringup/tools/camera_layer_decay.py"
-# Per-node CPU on a live robot, one column per node. Two builds of one node can
-# be sampled against each other in a single run by starting the second renamed,
-# which is the only sound way to compare them on hardware whose own condition
-# drifts between runs. See docs/tuning/2026-08-11-monitor-cpu.md.
-node-cpu = "python mote_bringup/tools/node_cpu.py"
-# SO-101 arm bench stack: the same ros2_control bring-up a mission uses, without
-# the lidar/camera/Nav2. During a mission the arm is already there (it lives in
-# mote_hardware, which owns the shared servo bus) — this is for bench work only.
-# Drive it with `pixi run arm-teleop`, in either case.
-arm = "ros2 launch mote_bringup arm_launch.py"
-# Teach/replay named arm poses.
-arm-pose = "ros2 run mote_arm arm_pose"
-# Everything that configures the arm's servos, behind one command: check,
-# calibrate, gains, offsets, limits. Opens the bus directly, so run it with the
-# control stack stopped (`pixi run kill`). Once-off work, `check` aside — the
-# arm is *driven* by arm-teleop / arm-pose / arm-record, which never open it.
-arm-setup = "ros2 run mote_arm arm_setup"
-# Keyboard teleop (mote_arm/TELEOP.md): one process holding the keyboard, the
-# safety rules and the arm. Needs a stack that owns the servo bus beside it —
-# `pixi run arm`, `pixi run launch`, or a mission.
-arm-teleop = "ros2 run mote_arm arm_teleop"
-# The arm control stack's interface (trajectory topic + switch_controller) with
-# no hardware behind it — teleop, recording and replay all run against this on a
-# workstation. `-- --camera` adds a synthetic camera so episodes have frames.
-arm-mock = "ros2 run mote_arm mock_arm"
-# Record teleop episodes (observations + actions) into $MOTE_HOME/episodes, and
-# replay one on the arm at reduced speed. Export them with `arm-export` below.
-arm-record = "ros2 run mote_arm episode_record"
-arm-replay = "ros2 run mote_arm episode_replay"
-# The whole teleop -> record -> export -> replay loop against the mock arm; the
-# pre-bench gate for anything that touches the arm's teleop path.
-arm-teleop-test = "bash mote_arm/test/teleop_loop/run_teleop_loop.sh"
-# Robot-side inference diagnostics (torch-free — run in the default/robot env):
-# probe the inference machine's health/version, or benchmark round-trip latency.
-inference-health = "python -u mote_perception/tools/inference_health.py"
-inference-bench = "python -u mote_perception/tools/inference_bench.py"
-
-#### The below tasks are tied to specific features and environments however they
-#### can be run like any other task.
-
-[feature.dev.tasks]
-rviz = "ros2 launch mote_bringup rviz_launch.py"
-# Same RViz, but joined to the sim's host-local DDS graph (the sim pins
-# discovery to LOCALHOST; a default-range RViz cannot see it). Use `rviz` for
-# the robot, `rviz-sim` for a sim running on this machine.
-rviz-sim = { cmd = "ros2 launch mote_bringup rviz_launch.py", env = { ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST" } }
-# env -u: calibration is the one flow that joins the robot's graph over the
-# LAN, so it drops the default loopback-only DDS profile (see [activation]).
-camera_calibration = "env -u CYCLONEDDS_URI ros2 run camera_calibration cameracalibrator --size 6x9 --square 0.025 --ros-args -r image:=/image_raw -p camera:=/camera -p image_transport:=compressed"
-
-# Continuously rsync to the Pi on save (watchexec honours .gitignore, so
-# build/install/log/.pixi are skipped). Edits to launch/config/Python go live
-# without a rebuild thanks to colcon --symlink-install; only C++ needs `build`.
-sync-watch = "watchexec --debounce 1s -- pixi run sync"
-
-# Sim sites (maps + zones) are committed under mote_simulation/sim_home and
-# selected via MOTE_HOME, so sim-nav loads a world's own map and never touches
-# the robot's real ~/.mote. sim_launch resolves the map from the world arg.
-[feature.sim.activation.env]
-MOTE_HOME = "$PIXI_PROJECT_ROOT/mote_simulation/sim_home"
-# Confine DDS discovery to this machine for every sim/benchmark process, so a
-# run neither advertises itself to nor discovers a robot or another workstation
-# on the LAN. Same-host tooling still works: a LOCALHOST participant discovers
-# same-host SUBNET ones. The reverse does not hold, so a default-range tool
-# cannot see the sim — hence `rviz-sim` below. To deliberately expose a sim run
-# (e.g. viewing it from another machine): pixi run -e sim -- env
-# ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET ros2 launch mote_simulation sim_launch.py
-ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
-
-[feature.sim.tasks]
-sim = "ros2 launch mote_simulation sim_launch.py"
-sim-mapping = "ros2 launch mote_simulation sim_launch.py mode:=mapping"
-sim-nav = "ros2 launch mote_simulation sim_launch.py mode:=nav"
-# Build/refresh a world's committed site by mapping it with SLAM (see the tool).
-sim-map-world = "bash mote_simulation/tools/map_world.sh"
-# Benchmark the nav mission against Gazebo ground truth -> metrics JSON + report.
-# Args pass through, e.g. `pixi run bench -- --worlds mote_world.sdf --trials 3`.
-bench = "python mote_simulation/tools/benchmark/bench.py"
-# Parameter sweep on top of bench: run the benchmark per parameter set, rank
-# against the baseline, emit a ranking + provenance report. Sequential (one gz
-# instance). `pixi run bench-sweep <spec.yaml>`; `-- --dry-run` prints the plan.
-bench-sweep = "python mote_simulation/tools/benchmark/sweep/sweep.py"
-sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", depends-on = [
-    "build",
-] }
-# A promoted map loads into a running Nav2 with no restart (~2 min, needs a GPU).
-sim-map-reload-test = { cmd = "bash mote_simulation/test/map_reload/run_map_reload.sh", depends-on = [
-    "build",
-] }
-
-[feature.lint.tasks]
-lint = "pre-commit run --all-files"
-# One-time per clone: wire pre-commit into .git/hooks so it runs on commit
-lint-install = "pre-commit install"
-
-# The documentation site (mkdocs.yml). --strict so a link the build cannot
-# resolve fails here rather than shipping as a 404 — which is the whole point
-# of a site that mounts markdown from across the repo (docs/hooks/repo_links.py).
-[feature.docs.tasks]
-docs = "mkdocs serve"
-docs-build = "mkdocs build --strict"
-
-[dependencies]
+# build: compile the workspace from a checkout. Nothing here is needed to run
+# the robot, and the release deploy manifest leaves it out.
+[feature.build.dependencies]
 cmake = ">=4.3.2,<5"
 colcon-common-extensions = ">=0.3.0,<0.4"
 compilers = ">=1.11.0,<2"
+ninja = ">=1.13.2,<2"
+pkg-config = ">=0.29.2,<0.30"
+ros-jazzy-ament-cmake-auto = ">=2.5.5,<3"
+ros-jazzy-ament-cmake-gtest = ">=2.5"
+ros-jazzy-ament-lint-auto = ">=0.17.4,<0.18"
+
+[feature.build.activation.env]
+CMAKE_GENERATOR = "Ninja"
+CMAKE_BUILD_TYPE = "Release"
+# CMake 4 dropped compatibility with cmake_minimum_required < 3.5. Sophus and
+# tessil's robin-map, fetched by kinematic_icp, still declare one.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
+[feature.build.tasks]
+submodules = { cmd = "git submodule update --init", description = "Fetch the git submodules" }
+build = { cmd = "colcon build --symlink-install", description = "colcon build, symlink install", depends-on = ["submodules"] }
+test = { cmd = "colcon test --event-handlers console_cohesion+ && colcon test-result --verbose", description = "colcon test, then fail on any failed test", depends-on = [
+    "build",
+] }
+
+# robot: the stack a robot runs, and the tasks typed on a robot.
+[feature.robot.dependencies]
 filelock = ">=3.12.2"
 libcap = ">=2.77,<3"
 lttng-ust = ">=2.13.9,<3"
-ninja = ">=1.13.2,<2"
-# The robot reads its own saved maps back through mote_bringup/bundle.py (the
-# same validator the fleet server runs on an upload), so the image library that
-# validator uses has to be here too. Pillow rather than the opencv the cleaning
-# pass uses: the fleet server runs this file as well, and opencv is not a
-# dependency to put in a container whose whole job is answering HTTP.
+paho-mqtt = ">=2,<3"
 pillow = ">=10,<13"
-pkg-config = ">=0.29.2,<0.30"
-ros-jazzy-ament-cmake-auto = ">=2.5.5,<3"
-ros-jazzy-ament-lint-auto = ">=0.17.4,<0.18"
 ros-jazzy-image-transport-plugins = ">=3.0.0"
 ros-jazzy-laser-filters = ">=2.0.0"
 ros-jazzy-nav2-amcl = ">=1.3.0"
@@ -281,239 +79,196 @@ ros-jazzy-ros2lifecycle = ">=0.18.0"
 ros-jazzy-ros2run = ">=0.18.0"
 ros-jazzy-rosbag2-cpp = ">=0.26.0"
 ros-jazzy-rosbag2-storage = ">=0.26.0"
-# `ros2 bag record` CLI verb, recorder, and storage plugins (pixi run record)
 ros-jazzy-ros2bag = ">=0.26.0"
 ros-jazzy-rosbag2-transport = ">=0.26.0"
 ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
 ros-jazzy-slam-toolbox = ">=2.8.4,<3"
-# The local costmap's camera_layer plugin. Not part of the nav2 metapackage set
-# above -- it is a separate upstream repo, so it has to be asked for by name or
-# the costmap fails to load the plugin class and nav2 comes up without it.
+# camera_layer. Not in the nav2 set above; without it the costmap loads silently without the layer.
 ros-jazzy-spatio-temporal-voxel-layer = ">=2.5.5,<3"
 ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
-# The drive path's velocity arbiter (mote_bringup/README.md "Drive path"): one
-# publisher on the controller's topic, so teleop pre-empts Nav2 instead of
-# competing with it. >=4.5 for `use_stamped`, which this robot's stamped-only
-# controller needs.
+# >=4.5 for `use_stamped`.
 ros-jazzy-twist-mux = ">=4.5.0,<5"
-# The robot's off-box observability path (docs/fleet/README.md §10): the operator's
-# Foxglove connects to this over the tailnet, so it runs on the robot alongside
-# the mission rather than on the workstation.
 ros-jazzy-foxglove-bridge = ">=3.3.0,<4"
 ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
 ros-jazzy-vision-msgs = ">=4.1.0"
 ros-jazzy-xacro = ">=2.0.0"
-# YAML for mote_health, which reads health.yaml in C++. Present transitively
-# already; named here because a package that builds against it must not depend
-# on some other package continuing to want it.
+# mote_health builds against it; transitive today, so named rather than borrowed.
 ros-jazzy-yaml-cpp-vendor = ">=9.0.0"
-# ABI floor for the URDF stack. robostack's ros-jazzy-urdf depends on
-# ros-jazzy-urdfdom with no version bound, but its liburdf_xml_parser plugin
-# links liburdfdom_model.so.6; libsdformat14 — pulled in transitively via
-# ros2-control's hardware-interface -> sdformat-urdf — otherwise holds urdfdom
-# at 4.0.1, and robot_state_publisher then dies loading the parser plugin.
 urdfdom = ">=6"
 scservo-linux = "==1.0.0"
-ros-jazzy-ament-cmake-gtest = ">=2.5"
-# MQTT client for the fleet agent (mote_fleet). On the robot because the agent
-# runs there; the broker itself is a fleet-server dependency, not a robot one.
-paho-mqtt = ">=2,<3"
 
-# Pure-Python behaviour-tree library for mote_tasks; not packaged on
-# robostack/conda-forge, so it comes from PyPI.
-[pypi-dependencies]
+[feature.robot.pypi-dependencies]
 py-trees = ">=2.2,<3"
-# Feetech STS servo SDK (imports as scservo_sdk) for the SO-101 arm bus in
-# mote_arm; pure-Python, not packaged on robostack/conda-forge. Same servo
-# family as the drive wheels (mote_hardware uses the vendored C++ SDK).
+# imports as scservo_sdk
 feetech-servo-sdk = ">=1.0"
 
+[feature.robot.activation]
+scripts = ["install/setup.sh"]
+
+[feature.robot.activation.env]
+RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
+CYCLONEDDS_URI = "file://$PIXI_PROJECT_ROOT/mote_bringup/config/cyclonedds.xml"
+
+[feature.robot.tasks]
+setup = { cmd = "bash mote_bringup/setup.sh", description = "One-time Pi setup: udev + systemd + wifi (sudo); `setup wifi` etc. runs one part" }
+setup-ids = { cmd = "ros2 run mote_hardware setup_ids", description = "Assign servo IDs one servo at a time (bench prep)" }
+wifi-check = { cmd = "bash mote_bringup/wifi/check.sh", description = "Who takes the wifi roam decision" }
+wifi-roamlog = { cmd = "bash mote_bringup/wifi/roamlog.sh", description = "Follow the wifi roaming log" }
+
+fleet = { cmd = "ros2 run mote_fleet fleet", description = "Robot side of the fleet: enroll / publish-map / join" }
+identity = { cmd = "ros2 run mote_bringup identity", description = "This robot's fleet identity: show / id / set" }
+dds-check = { cmd = "ros2 run mote_bringup dds_participants", description = "DDS participant-slot headroom on this host" }
+
+launch = { cmd = "ros2 launch mote_bringup mote_launch.py", description = "Hardware base: drivers, lidar, camera, localization" }
+mapping = { cmd = "ros2 launch mote_bringup mapping_launch.py", description = "Base + SLAM: build or extend a map" }
+nav = { cmd = "ros2 launch mote_bringup nav2_launch.py", description = "Nav2 on the active site's map (beside launch)" }
+robot = { cmd = "ros2 launch mote_bringup robot_launch.py", description = "Base + Nav2: drive the active site's map" }
+slam = { cmd = "ros2 launch mote_bringup slam_launch.py", description = "SLAM stack only (beside launch)" }
+agent = { cmd = "ros2 launch mote_fleet agent_launch.py", description = "Robot -> fleet bridge (mote-agent.service)" }
+teleop = { cmd = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -r /cmd_vel:=/cmd_vel_teleop_stamped", description = "Keyboard teleop; overrides Nav2 while keys are held" }
+explore = { cmd = "ros2 run mote_bringup explore", description = "Autonomous mapping coverage beside `mapping`" }
+perception = { cmd = "ros2 launch mote_perception perception_launch.py", description = "Camera perception nodes (inference off-board)" }
+foxglove = { cmd = "ros2 launch mote_bringup foxglove_launch.py", description = "foxglove_bridge + teleop relay: the remote console" }
+record = { cmd = "ros2 launch mote_bringup record_launch.py", description = "Record the mission's bag streams" }
+tasks = { cmd = "ros2 launch mote_tasks tasks_launch.py", description = "Behaviour-tree task server (missions)" }
+health = { cmd = "ros2 run mote_health health_monitor", description = "Health monitor on its own" }
+self-check = { cmd = "ros2 run mote_bringup self_check", description = "Pre-flight check: servos, lidar, camera, disk, clock, config" }
+slip = { cmd = "ros2 run mote_bringup slip_monitor", description = "Wheel-vs-lidar slip monitor on its own" }
+slip-replay = { cmd = "python mote_bringup/tools/slip_replay.py", description = "Re-score recorded bags through the slip estimator" }
+
+site = { cmd = "ros2 run mote_bringup site", description = "Sites CLI: create / add-floor / use / use-map / list / info / save-map / save-zone / clean / segment" }
+
+arm = { cmd = "ros2 launch mote_bringup arm_launch.py", description = "SO-101 bench control stack (ros2_control, no mission)" }
+arm-pose = { cmd = "ros2 run mote_arm arm_pose", description = "Teach / replay named arm poses; narrow the envelope" }
+arm-setup = { cmd = "ros2 run mote_arm arm_setup", description = "Arm bus tools: check / calibrate / gains / offsets / limits (stack stopped)" }
+arm-teleop = { cmd = "ros2 run mote_arm arm_teleop", description = "Keyboard arm teleop: clamped, rate-limited goals" }
+arm-record = { cmd = "ros2 run mote_arm episode_record", description = "Record teleop episodes into $MOTE_HOME/episodes" }
+arm-replay = { cmd = "ros2 run mote_arm episode_replay", description = "Replay an episode on the arm at reduced speed" }
+
+inference-health = { cmd = "python -u mote_perception/tools/inference_health.py", description = "Probe the inference machine's health and version" }
+inference-bench = { cmd = "python -u mote_perception/tools/inference_bench.py", description = "Benchmark inference round-trip latency" }
+
+chaos = { cmd = "bash mote_bringup/test/chaos/chaos_restart.sh", description = "Chaos test: restart units on a live robot" }
+node-cpu = { cmd = "python mote_bringup/tools/node_cpu.py", description = "Per-node CPU on a live robot" }
+
+kill = { cmd = "python -m mote_bringup.sweep_orphans --scope . --kill; ros2 daemon stop; rm -f /dev/shm/fast*; ros2 daemon start; true", description = "Kill this checkout's ROS processes and reset the daemon" }
+sweep = { cmd = "python -m mote_bringup.sweep_orphans", description = "Report ROS processes leaked by dead agent jobs (--kill reaps)" }
+
+# dev: the workstation. Desktop tools, and tasks that are typed at a
+# workstation even when they only need the robot's stack.
 [feature.dev.dependencies]
 ros-jazzy-desktop = ">=0.11.0"
 ros-jazzy-nav2-bringup = ">=1.3.11,<2"
-# RViz display for AMCL's /particle_cloud (nav2_msgs/ParticleCloud); the stock
-# rviz_default_plugins only ships a PoseArray display, which mistypes the topic.
+# The /particle_cloud display; rviz_default_plugins mistypes that topic.
 ros-jazzy-nav2-rviz-plugins = ">=1.3.0"
-# Interactive camera calibration GUI — run on the workstation against the Pi's
-# camera topics; the robot env stays lean. semver is an undeclared runtime
-# dependency of the conda camera_calibration package, so it is pinned here.
 ros-jazzy-camera-calibration = "*"
+# Undeclared runtime dependency of camera_calibration.
 semver = ">=3,<4"
 watchexec = ">=2.5,<3"
-# Speaks the Foxglove WebSocket protocol in test_foxglove_teleop.py, which drives
-# the real bridge the way the Teleop panel does. Test-only, and dev-only for the
-# same reason the real-broker fleet test is: the robot env carries no test rig.
+# test_foxglove_teleop.py
 websockets = ">=12,<16"
-# Validates Mote's payloads against the Augere specification's own schemas in
-# test_spec_conformance.py. Without it that file skips, and a divergence from
-# the spec is found by a robot refusing a mission instead.
+# test_spec_conformance.py; without it that file skips.
 jsonschema = ">=4.21,<5"
 
-# Desktop-only GUI teleop panel (ClachDev/rviz_teleop_panel), published to the
-# mote channel for linux-64 only — the aarch64 robot never runs RViz.
 [feature.dev.target.linux-64.dependencies]
 ros-jazzy-rviz-teleop-panel = ">=0.1.0"
 
+[feature.dev.tasks]
+rviz = { cmd = "ros2 launch mote_bringup rviz_launch.py", description = "RViz2 with the mote config" }
+camera-calibrate = { cmd = "bash mote_perception/tools/camera_calibrate.sh", description = "Bench prep: camera intrinsics with the camera on this machine" }
+
+sync = { cmd = "rsync -avz --exclude='.pixi/' --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git' --exclude='.claude/' --exclude='mote_simulation/' --exclude='__pycache__/' . michael@auldbot:~/Mote/", description = "rsync the checkout to the Pi" }
+sync-watch = { cmd = "watchexec --debounce 1s -- pixi run sync", description = "rsync to the Pi on every save" }
+
+provision = { cmd = "ros2 run mote_bringup provision", description = "Render cloud-init user-data for a new Pi" }
+tailnet = { cmd = "bash mote_bringup/tailscale/install.sh", description = "Join this machine to the Tailscale overlay (sudo)" }
+
+fleet-ui-check = { cmd = "python -u mote_fleet/test/ui_check.py", description = "Dashboard check in headless Chrome against a fake fleet (docker)" }
+
+fleet-deploy = { cmd = "bash mote_fleet/deploy/fleet-deploy.sh", description = "Fleet box: container stack up / update / rollback / backup" }
+inference-deploy = { cmd = "bash mote_perception/deploy/inference-deploy.sh", description = "GPU box: blue/green inference deploy" }
+deploy-test = { cmd = "bash mote_perception/deploy/test/drill.sh", description = "Blue/green deploy drill, stubbed, no GPU" }
+
+segment-eval = { cmd = "python mote_simulation/test/room_segmentation_eval.py", description = "Score room segmentation against ground-truth rooms" }
+bag-replay = { cmd = "python mote_simulation/tools/bag_replay/replay.py", description = "Replay a mapping bag through SLAM under N parameter sets" }
+camera-decay-check = { cmd = "python mote_bringup/tools/camera_layer_decay.py", description = "Time a camera_layer mark expiring on a real costmap (~40 s)" }
+
+arm-mock = { cmd = "ros2 run mote_arm mock_arm", description = "The arm control stack's interface with no hardware" }
+arm-teleop-test = { cmd = "bash mote_arm/test/teleop_loop/run_teleop_loop.sh", description = "Headless teleop -> record -> replay loop against the mock arm" }
+
+# sim: Gazebo
 [feature.sim.dependencies]
 ros-jazzy-ros-gz-sim = "*"
 ros-jazzy-ros-gz-bridge = "*"
 ros-jazzy-gz-ros2-control = "*"
 
-# Off-board inference env: torch + the depth/detect servers, no ROS. Runs on the
-# "inference machine" (a GPU box, or the same box as the robot/sim via 127.0.0.1).
+[feature.sim.activation.env]
+MOTE_HOME = "$PIXI_PROJECT_ROOT/mote_simulation/sim_home"
+ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
+
+[feature.sim.tasks]
+sim = { cmd = "ros2 launch mote_simulation sim_launch.py", description = "Headless Gazebo: world + robot + controllers (world:=...)" }
+sim-mapping = { cmd = "ros2 launch mote_simulation sim_launch.py mode:=mapping", description = "sim mode:=mapping (the real mapping launch)" }
+sim-nav = { cmd = "ros2 launch mote_simulation sim_launch.py mode:=nav", description = "sim mode:=nav (the real robot launch + saved map)" }
+sim-map-world = { cmd = "bash mote_simulation/tools/map_world.sh", description = "Build a world's committed site by mapping it with SLAM" }
+bench = { cmd = "python mote_simulation/tools/benchmark/bench.py", description = "Nav benchmark against Gazebo ground truth" }
+bench-sweep = { cmd = "python mote_simulation/tools/benchmark/sweep/sweep.py", description = "Benchmark per parameter set, ranked against the baseline" }
+sim-test = { cmd = "bash mote_simulation/test/sim_smoke/run_sim_smoke.sh", description = "~20 s headless smoke test (pre-PR gate, GPU)", depends-on = [
+    "build",
+] }
+sim-map-reload-test = { cmd = "bash mote_simulation/test/map_reload/run_map_reload.sh", description = "A promoted map loads into a running Nav2 (~2 min, GPU)", depends-on = [
+    "build",
+] }
+
+# inference: torch + the depth/detect servers, no ROS. The GPU box.
 [feature.inference.dependencies]
 numpy = ">=1.26,<3"
 pillow = ">=10,<13"
 pytorch = ">=2,<3"
-# scipy: undeclared requirement of transformers' Owlv2ImageProcessor
+# Undeclared requirement of transformers' Owlv2ImageProcessor.
 scipy = ">=1,<2"
 transformers = ">=4,<5"
 
-# -u: the servers log by printing; unbuffered stdout so the lines survive
-# redirection to a file (block buffering otherwise holds them indefinitely)
 [feature.inference.tasks]
-# Both servers together — the usual way to run a dedicated inference machine.
-inference = "python -u mote_perception/tools/inference_server.py"
-# Or one model at a time (e.g. depth-server --metric, or to save VRAM).
-depth-server = "python -u mote_perception/tools/depth_server.py"
-detect-server = "python -u mote_perception/tools/detect_server.py"
-# Warm the HuggingFace cache so the first request doesn't block on a download.
-inference-prefetch = "python -u mote_perception/tools/prefetch_models.py"
+inference = { cmd = "python -u mote_perception/tools/inference_server.py", description = "Depth + detect inference servers (GPU box)" }
+depth-server = { cmd = "python -u mote_perception/tools/depth_server.py", description = "Depth inference server alone" }
+detect-server = { cmd = "python -u mote_perception/tools/detect_server.py", description = "Open-vocabulary detection server alone" }
+inference-prefetch = { cmd = "python -u mote_perception/tools/prefetch_models.py", description = "Warm the HuggingFace model cache" }
 
-# GPU-accelerated sibling of the `inference` feature (env `inference-rocm`). Same
-# depth/detect servers, but torch comes from the pytorch.org ROCm wheel index
-# instead of conda-forge so inference can run on an AMD GPU. Kept a separate env so
-# the CPU `inference` env, the robot/Pi default env, and their solves are
-# untouched. The ROCm wheels bundle their own userspace (no system ROCm needed) and
-# only publish cp3.x up to 3.12, so python is pinned here (the CPU inference env
-# floats to 3.14). numpy/pillow/scipy stay on conda; only torch + transformers come
-# from PyPI so pip resolves torch against the ROCm index rather than pulling conda's
-# CPU pytorch. x86_64-only: the wheels have no aarch64 build and the aarch64 robot
-# never runs this workstation feature.
-[feature.inference-rocm]
-platforms = ["linux-64"]
-
-[feature.inference-rocm.dependencies]
-python = "3.12.*"
-numpy = ">=1.26,<3"
-pillow = ">=10,<13"
-# scipy: undeclared requirement of transformers' Owlv2ImageProcessor
-scipy = ">=1,<2"
-
-[feature.inference-rocm.pypi-dependencies]
-torch = { version = ">=2.8,<3", index = "https://download.pytorch.org/whl/rocm6.4" }
-pytorch-triton-rocm = { version = "*", index = "https://download.pytorch.org/whl/rocm6.4" }
-transformers = ">=4,<5"
-
-# gfx1103 (Phoenix3 RDNA3 iGPU) is not an officially supported ROCm target; the
-# standard workaround is to masquerade as gfx1100. Set here so it applies to every
-# `pixi run -e inference-rocm` invocation without manual exporting.
-[feature.inference-rocm.activation.env]
-HSA_OVERRIDE_GFX_VERSION = "11.0.0"
-
-# GPU-suffixed names so the CPU tasks (`inference`, `depth-server`, `detect-server`)
-# stay unambiguous; `inference-rocm` runs both servers on the GPU (the servers'
-# --device auto picks the GPU when present), the single-server variants save VRAM.
-[feature.inference-rocm.tasks]
-inference-rocm = "python -u mote_perception/tools/inference_server.py"
-depth-server-rocm = "python -u mote_perception/tools/depth_server.py"
-detect-server-rocm = "python -u mote_perception/tools/detect_server.py"
-inference-prefetch-rocm = "python -u mote_perception/tools/prefetch_models.py"
-
-# The fleet-server role: an MQTT broker and the enrollment/registry API, with no
-# ROS at all. Its own env (no-default-feature) because the fleet box is not a
-# robot and should not have to solve the robot's stack to run a broker and a
-# stdlib HTTP server — the same separation the inference env makes for the GPU
-# box. The dev env folds this feature in as well, so a workstation can run the
-# whole control plane (broker included) next to a sim or a real robot.
+# fleet: the MQTT broker and the enrollment/registry API, no ROS. The fleet box.
 [feature.fleet.dependencies]
-# The broker anyone runs is the container one (`fleet-broker`), so this package
-# is here for two other jobs: the real-broker tests locate its binary in
-# $CONDA_PREFIX/sbin, and `fleet-broker-local` below is the fallback for a box
-# with no docker. It has no websockets, which is why it is neither default.
 mosquitto = ">=2.0,<3"
 paho-mqtt = ">=2,<3"
-# The bundle validator reads bundle YAML and bundle maps with the same
-# libraries that write them (mote_bringup/bundle.py). Hand-rolled readers for
-# both were tried and both were wrong: the parser silently mangled non-ASCII
-# zone names, and the PNG decoder raised through a "never raises" contract.
 pyyaml = ">=6,<7"
 pillow = ">=10,<13"
 pytest = ">=8,<9"
 
 [feature.fleet.tasks]
-# The broker for a box with no docker. It belongs *here*, unlike `fleet-broker`,
-# because conda's mosquitto is what it runs and this feature is what provides
-# it. No websockets, so no dashboard — it says so on startup. Name it with the
-# environment (`pixi run -e fleet fleet-broker-local`), as with test-fleet.
-fleet-broker-local = "bash mote_fleet/server/broker.sh --local"
-# Repeated from [tasks] because this environment takes no default feature: a
-# fleet box that is not a robot still has to be able to run the fleet server.
-fleet-server = "python -u mote_fleet/server/fleet_server.py"
-fleetctl = "python -u mote_fleet/server/fleetctl.py"
-# Runs everywhere the deps allow: rclpy tests skip without ROS, the broker test
-# skips without mosquitto, so the same file is the CI unit run and the local
-# end-to-end run (see mote_fleet/test/test_e2e_fleet.py).
-test-fleet = "pytest mote_fleet/test -q"
-# M2's teleop path against the real bridge; needs the dev env's WebSocket client.
-test-foxglove = "pytest mote_bringup/test/test_foxglove_teleop.py -q"
-
-# Off-board LeRobot env: converts on-robot episode captures into a LeRobotDataset
-# and inspects it with LeRobot's own tooling. Its own env, no-default-feature and
-# linux-64 only, for the same reason `inference` has one — lerobot brings torch,
-# ffmpeg and the HuggingFace stack, none of which belongs on the aarch64 Pi that
-# does the recording. The robot writes a plain capture directory; this converts
-# it (see mote_arm/tools/lerobot_export.py).
-[feature.lerobot]
-platforms = ["linux-64"]
-
-[feature.lerobot.dependencies]
-python = "3.12.*"
-numpy = ">=1.26,<3"
-pillow = ">=10,<13"
-# The video path LeRobot encodes MP4 shards with.
-ffmpeg = ">=6"
-
-[feature.lerobot.pypi-dependencies]
-# v3.0 datasets (aggregated parquet/mp4 shards) land in lerobot >= 0.4.
-lerobot = ">=0.4"
-
-[feature.lerobot.tasks]
-arm-export = "python -u mote_arm/tools/lerobot_export.py"
+fleet-server = { cmd = "python -u mote_fleet/server/fleet_server.py", description = "Fleet API + operator dashboard" }
+fleetctl = { cmd = "python -u mote_fleet/server/fleetctl.py", description = "Operator CLI: token / operator / robots / dispatch / promote / audit / watch" }
+fleet-broker = { cmd = "bash mote_fleet/server/broker.sh", description = "MQTT broker with WebSockets, in a container (docker)" }
+fleet-broker-local = { cmd = "bash mote_fleet/server/broker.sh --local", description = "conda's mosquitto: no WebSockets, no dashboard" }
+test-fleet = { cmd = "pytest mote_fleet/test -q", description = "mote_fleet tests incl. the broker e2e" }
 
 [feature.lint.dependencies]
 pre-commit = ">=4,<5"
+
+[feature.lint.tasks]
+lint = { cmd = "pre-commit run --all-files", description = "All pre-commit hooks" }
+lint-install = { cmd = "pre-commit install", description = "Wire pre-commit into .git/hooks" }
 
 [feature.docs.dependencies]
 mkdocs = ">=1.6,<2"
 mkdocs-material = ">=9.7,<10"
 
-[activation]
-scripts = ["install/setup.sh"]
-# DDS transport is loopback-only by default, in every environment
-# (config/cyclonedds.xml): the robot's graph must never depend on a radio, and
-# a workstation's sims/benchmarks are same-host graphs anyway. Foxglove is the
-# off-box window (a WebSocket server, not a DDS peer). The one flow that needs
-# a LAN DDS peer — camera calibration — unsets the profile explicitly; see
-# mote_perception/config/README.md.
-env = { RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp", CYCLONEDDS_URI = "file://$PIXI_PROJECT_ROOT/mote_bringup/config/cyclonedds.xml" }
+[feature.docs.tasks]
+docs = { cmd = "mkdocs serve", description = "Serve the mkdocs site" }
+docs-build = { cmd = "mkdocs build --strict", description = "Build the docs site, --strict (CI)" }
 
 [environments]
-# dev also carries the fleet feature: a workstation is where the whole control
-# plane gets exercised at once (broker + server + agent + a real behaviour tree).
-dev = { features = ["dev", "fleet"], solve-group = "default" }
-# The fleet-server role: broker + registry API, no ROS. Own solve.
+default = { features = ["robot", "build"], solve-group = "default" }
+dev = { features = ["dev", "robot", "build", "fleet", "sim"], solve-group = "default" }
 fleet = { features = ["fleet"], no-default-feature = true }
-# Own solve (no solve-group) so sim deps can never shift the robot/Pi env
-sim = { features = ["sim"] }
 inference = { features = ["inference"], no-default-feature = true }
-inference-rocm = { features = ["inference-rocm"], no-default-feature = true }
-# Off-board episode export + LeRobot's dataset viewer. Own solve, no ROS.
-lerobot = { features = ["lerobot"], no-default-feature = true }
-# ^ GPU sibling of `inference`; own solve (no solve-group) so the ROCm torch wheel
-# can never perturb any other env.
-# Minimal env (no ROS) so 'pixi run lint' is fast to solve and install
 lint = { features = ["lint"], no-default-feature = true }
-# Likewise for the docs site: mkdocs needs nothing from the robot stack, and
-# building the site should not mean solving ROS on a contributor's machine.
 docs = { features = ["docs"], no-default-feature = true }

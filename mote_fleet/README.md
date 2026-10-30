@@ -26,9 +26,9 @@ is called everywhere it is visible: the node is `mote_agent`, the service is
 ## On the robot
 
 ```bash
-pixi run enroll -- --server http://fleet-box:8080 --token <token>
+pixi run fleet enroll --server http://fleet-box:8080 --token <token>
 pixi run agent
-pixi run publish-map            # after save-map: offer the map to the registry
+pixi run fleet publish-map            # after save-map: offer the map to the registry
 ```
 
 | Module | |

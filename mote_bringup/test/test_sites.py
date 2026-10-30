@@ -209,3 +209,35 @@ def test_cli_round_trip(mote_home, capsys):
     out = capsys.readouterr().out
     assert "alpha/ground *" in out
     assert "beta/ground" in out
+
+
+# --- the forwarding subcommands ---------------------------------------------
+
+
+def test_cli_forwards_clean_and_segment_with_their_own_flags(monkeypatch):
+    from mote_bringup.map_cleanup import cli, rooms_cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "main", lambda argv: seen.setdefault("clean", argv) and 0)
+    monkeypatch.setattr(
+        rooms_cli, "main", lambda argv: seen.setdefault("segment", argv) and 0
+    )
+
+    assert sites.main(["clean", "map.png", "--out", "d"]) == 0
+    assert sites.main(["segment", "--", "--write"]) == 0
+    assert seen == {"clean": ["map.png", "--out", "d"], "segment": ["--write"]}
+
+
+def test_cli_save_zone_is_a_subprocess_into_mote_tasks(monkeypatch):
+    calls = []
+
+    class Done:
+        returncode = 3
+
+    monkeypatch.setattr(
+        sites.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Done()
+    )
+    assert sites.main(["save-zone", "the kitchen", "--radius", "1.5"]) == 3
+    assert calls == [
+        ["ros2", "run", "mote_tasks", "save_zone", "the kitchen", "--radius", "1.5"]
+    ]

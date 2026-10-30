@@ -44,7 +44,7 @@ erodes. See `angular_stats._pick_directions` and
 ## Usage
 
 ```bash
-pixi run clean-map path/to/map.png [--out DIR] [--wedge 5] [--peak-rel 0.15] [--gate 2]
+pixi run site clean path/to/map.png [--out DIR] [--wedge 5] [--peak-rel 0.15] [--gate 2]
 ```
 
 Writes `<map>_cleaned.png` (a ROS occupancy PNG) and `<map>_diagnostics.png`
@@ -68,7 +68,7 @@ with a polygon footprint, so a freshly mapped floor arrives with its rooms
 already outlined instead of every one captured by driving to it.
 
 ```bash
-pixi run segment-map [MAP.yaml] [--write] [--out DIR]
+pixi run site segment [MAP.yaml] [--write] [--out DIR]
 ```
 
 With no argument it segments the active site floor's current map and writes

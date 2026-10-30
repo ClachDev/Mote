@@ -415,8 +415,7 @@ python3 mote_arm/test/teleop_loop/check_capture.py ~/.mote/episodes/bench
 pixi run arm-replay -- ~/.mote/episodes/bench --episode 0   # stop teleop first
 ```
 
-The export is off-board and verifies itself by loading the dataset back through
-LeRobot's own API. Full workflow and design: [TELEOP.md](TELEOP.md).
+Full workflow and design: [TELEOP.md](TELEOP.md).
 
 ---
 

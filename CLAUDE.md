@@ -10,72 +10,12 @@ per feature. Keep the file under 5,000 words.
 
 ## Build & Common Commands
 
-All tasks run via [pixi](https://pixi.sh). Never invoke `colcon` or `ros2` directly — always `pixi run <task>`.
+All tasks run via [pixi](https://pixi.sh). Never invoke `colcon` or `ros2` directly — always `pixi run <task>`. **`pixi task list` is the catalogue**: every task carries a description; `pixi task list -e dev` adds the workstation's. (The "(by design)" tag is pixi saying this machine's platform is one the workspace declares; ignore it.)
 
-```bash
-pixi run build          # Build all packages with colcon + Ninja
-pixi run submodules     # Fetch git submodules (sllidar_ros2, kinematic_icp)
-pixi run launch         # Full robot bringup (hardware + lidar + camera + localization)
-pixi run slam           # SLAM stack only (run alongside launch)
-pixi run nav            # Nav2 stack (loads the active site's map)
-pixi run mapping        # bringup + SLAM together (build/extend a map)
-pixi run robot          # bringup + Nav2 together (drive the active site's map)
-pixi run save-map       # Save map + slam posegraph into the active site floor
-pixi run publish-map    # Offer that map to the fleet registry as a candidate
-pixi run save-zone <n>  # Teach a zone from the current robot pose (--radius, --note, --no-navigable)
-pixi run segment-map    # Propose a zone per room of a saved map (--write merges into zones.yaml)
-pixi run site           # Site CLI: create / add-floor / use / use-map / list / info
-pixi run teleop         # Keyboard teleoperation
-pixi run explore        # Autonomous mapping coverage (beside `pixi run mapping`, on the Pi)
-pixi run tasks          # Task layer: behaviour-tree task_server
-pixi run arm            # SO-101 arm bench control stack (ros2_control, no mission)
-pixi run arm-setup check|calibrate|limits|offsets|gains   # Arm bus tools (control stack stopped)
-pixi run arm-pose       # Teach/replay named arm poses; narrow the envelope
-pixi run arm-teleop     # Keyboard teleop: clamped, rate-limited arm_controller goals
-pixi run arm-record | arm-replay | arm-mock | arm-teleop-test   # episodes; mock arm (mote_arm/TELEOP.md)
-pixi run sync           # rsync project to Pi at SSH host 'mote'
-pixi run setup          # One-time Pi setup: udev + wifi + systemd (needs sudo)
-pixi run wifi-check     # who takes the roam decision (+ wifi-roaming/-roamlog/-powersave)
-pixi run setup-ids      # Guided servo ID assignment tool
-pixi run kill           # Kill this checkout's ROS processes and reset daemon
-pixi run sweep          # Report ROS processes leaked by dead agent jobs (--kill to reap)
-pixi run identity       # Fleet identity CLI: show / id / set --id --name --site
-pixi run tailnet        # Join this machine to the Tailscale overlay (needs sudo)
-pixi run dds-check      # DDS participant-slot headroom on this host
-pixi run enroll         # Get this robot's id from the fleet server
-pixi run agent          # Robot -> fleet bridge (mote-agent.service)
-pixi run foxglove       # foxglove_bridge + teleop relay: the remote console
-pixi run fleet-server   # Off-board: fleet API + operator dashboard
-pixi run fleetctl       # Operator CLI: token / operator / robots / dispatch / promote / audit / watch
-pixi run fleet-broker   # Off-board: MQTT broker + WebSockets (a container)
-pixi run fleet-ui-check # Fake fleet + headless Chrome dashboard check (-- --keep to leave it up)
-pixi run fleet-deploy   # Fleet box: container stack up/update/rollback/backup
-pixi run inference-deploy  # GPU box: blue/green deploy (deploy-test: stubbed, no GPU)
-pixi run test           # colcon test (gtest + pytest)
-pixi run docs           # mkdocs site (docs-build: CI, --strict)
-
-# Dev environment only (ros-jazzy-desktop)
-pixi run rviz           # RViz2 with mote config (rviz-sim joins the sim's graph)
-
-# Sim environment only (gz-sim Harmonic; own solve, never affects the Pi env).
-# sim/sim-test tasks auto-select the env; ad-hoc commands need `pixi run -e sim -- ...`
-pixi run sim            # Headless Gazebo sim: world + robot + controllers (no mission)
-pixi run sim-mapping    # = sim mode:=mapping (the real mapping_launch.py)
-pixi run sim-nav        # = sim mode:=nav (the real robot_launch.py + saved map)
-#   pixi run sim world:=hospital_world.sdf   (mote_world easy, office_world medium, hospital_world hard)
-pixi run sim-test       # ~20 s headless smoke test (local pre-PR gate, needs a GPU)
-pixi run bench          # Nav benchmark vs Gazebo ground truth (mote_simulation/tools/benchmark)
-pixi run segment-eval   # Score room segmentation
-pixi run sim-map-reload-test  # A promoted map loads into a running Nav2 (~2 min, GPU)
-
-pixi run -e dev test-fleet        # mote_fleet tests incl. the real-broker e2e run
-
-pixi run -e lerobot arm-export -- --capture ~/.mote/episodes/<name>  # torch env, off-board
-
-# Lint env (pre-commit; auto-selected)
-pixi run lint           # all pre-commit hooks (~1 s cached)
-pixi run lint-install   # wire pre-commit into .git/hooks (once per clone)
-```
+- The default env is the robot's stack plus the build toolchain (features `robot` + `build`); `dev` adds desktop, sim and the fleet server. A `robot`/`build` task runs in `default`; a task only in `dev`/`sim` runs there with no `-e`. Ad-hoc desktop or sim commands need `pixi run -e dev -- ...`.
+- Fleet-server tasks exist in both `fleet` and `dev`, so they need `-e`: `pixi run -e fleet fleet-server`, `pixi run -e dev test-fleet`.
+- `arm-setup` opens the servo bus directly: stop the control stack first (`pixi run kill`).
+- `pixi run setup` is for the Pi (udev, systemd, wifi). On a workstation, `pixi run setup udev` alone gives the bench-prep tools (`setup-ids`, `camera-calibrate`) the same device names.
 
 Artifacts go into `build/`, `install/`, `log/` (git-ignored). A CMakeCache "wrong source directory" error means a stale `build/`: delete it.
 
@@ -116,10 +56,10 @@ Three files are called some form of robot config — do not confuse them:
 
 ## DDS scoping
 
-- DDS transport is **loopback-only everywhere**: `config/cyclonedds.xml`, loaded via `CYCLONEDDS_URI` by pixi activation and the systemd units. No machine joins another's DDS graph. Foxglove is the off-box window. Camera calibration, the one flow needing a LAN peer, unsets the profile explicitly.
+- DDS transport is **loopback-only everywhere**: `config/cyclonedds.xml`, loaded via `CYCLONEDDS_URI` by pixi activation and the systemd units. No machine joins another's DDS graph. Foxglove is the off-box window. No flow needs a LAN peer (camera calibration is bench prep).
 - Every `mote-*.service` sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` — **all of them**, because a localhost-range participant discovers a default-range one on the same host but not the reverse. Interactive `pixi run` keeps stock discovery.
 - rmw_cyclonedds caps localhost discovery at **33 participants per host** (`MaxAutoParticipantIndex=32`). The full robot stack sits at ~27. Run `pixi run dds-check` whenever you add a process; raise the cap in `cyclonedds.xml` if needed.
-- The `sim` env sets `LOCALHOST` too. Every gz entry point (`bench.py`, smoke test, `map_world.sh`) claims a free `ROS_DOMAIN_ID` + `GZ_PARTITION` through `mote_simulation/tools/sim_domain.py`. **Teardown must be scoped as well**: each launch is `setsid`-ed and reaped by session id, never by bare name (`pkill -f mote_world` is what this replaced).
+- The `sim` feature's activation sets `LOCALHOST` too, for the whole `dev` env. Every gz entry point (`bench.py`, smoke test, `map_world.sh`) claims a free `ROS_DOMAIN_ID` + `GZ_PARTITION` through `mote_simulation/tools/sim_domain.py`. **Teardown must be scoped as well**: each launch is `setsid`-ed and reaped by session id, never by bare name (`pkill -f mote_world` is what this replaced).
 
 ## Fleet
 
@@ -291,7 +231,7 @@ Launch files, config, udev rules, systemd units, `wifi/`, the fleet foundation (
 **Wifi** (`mote_bringup/wifi/README.md`): roaming is the firmware's (`roamoff=0`); the modprobe file must sort last by base name (`zz-mote-brcmfmac.conf`).
 
 ### `mote_simulation` (Python/ament)
-Workstation-only; excluded from `pixi run sync`; built only in the `sim` env. Dependencies run one way: it includes from `mote_bringup` and `mote_tasks`, never the reverse.
+Workstation-only; excluded from `pixi run sync`; built only in the `dev` env. Dependencies run one way: it includes from `mote_bringup` and `mote_tasks`, never the reverse.
 - `sim_launch.py` runs headless gz, spawns the robot (URDF with `use_sim:=true`, swapping in `gz_ros2_control` and a sim lidar), bridges `/clock` and `/scan`, and reuses `mote_bringup`'s controllers, laser filters, localization and twist_mux. `mode:=mapping|nav` includes the real mission launches with `base:=false`, plus `tasks_launch.py` with the world's `worlds/<world>.zones.yaml`.
 - `hospital_world.sdf` is **generated by `worlds/gen_hospital.py`** — edit the script, never the SDF.
 - `sim_home/` is a committed sim `MOTE_HOME`, one site per world, built by `pixi run sim-map-world` and saved with `clean=False`.
@@ -330,7 +270,7 @@ SO-101 follower arm (no leader arm), controlled directly over Feetech rather tha
 - **`FeetechBus._read` is the single read choke point**: it flushes the input buffer first, and a missing reply returns `None` (the SDK raises `IndexError`). After an EEPROM write, require two agreeing reads.
 - **Every arm CLI uses `cli.shutdown` and `cli.parse`.** Shutdown joins the spin thread before destroying the node (otherwise exit 134). Parse strips `--ros-args` and parses strictly.
 - Teleop: one process, one node. All safety rules (clamp, 0.5 rad/s rate limit, deadman, latched panic, re-seed on resume) live in ROS-free `teleop.py`. **The safety loop runs on its own thread**, because a service call from an executor callback never completes.
-- Episode captures are stdlib-only on the Pi; `tools/lerobot_export.py` converts them through LeRobot's own API, never a hand-rolled writer.
+- Episode captures are stdlib-only (`episode.py`); nothing in `mote_arm` imports torch or LeRobot; no dataset converter is kept.
 - Gains are EEPROM state reconciled from `robot.yaml` (`arm-setup gains`): Kp=64, Ki=0, chosen by `sweep`.
 
 ### Third-party submodules (`third_party/`)
@@ -343,7 +283,7 @@ SO-101 follower arm (no leader arm), controlled directly over Feetech rather tha
 
 ## Environment
 
-pixi activates `install/setup.sh`, sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and `CYCLONEDDS_URI`. Dependencies come from the `mote` prefix.dev channel, robostack-jazzy and conda-forge. The default env runs on the robot (Raspberry Pi 5, deployed with `pixi run sync`); `dev` adds `ros-jazzy-desktop`.
+The `robot` feature activates `install/setup.sh` and sets `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and `CYCLONEDDS_URI`; `build` carries the toolchain and the `CMAKE_*` variables. The default env is `robot` + `build` and runs on the robot (Raspberry Pi 5, deployed with `pixi run sync`); `dev` adds desktop, sim and the fleet server. A `robot`/`build` task runs in the default env; a `dev`- or `sim`-only task runs there with no `-e`.
 
 ## Verification
 

@@ -9,9 +9,9 @@ deliberately carries none of it — the same reason inference runs off-board.
 So the robot writes a **capture**: a plain directory of JSON lines plus the
 camera's already-compressed frames, stored byte-for-byte as they were published.
 Nothing decodes, re-encodes, or is even aware of an image format. The capture is
-the replay source of truth, and ``mote_arm/tools/lerobot_export.py`` turns it
-into a real LeRobot dataset off-board, using LeRobot's own writer so validity is
-never our reimplementation of someone else's schema.
+the replay source of truth and the hand-off to an off-board training stack. The
+repo keeps no converter; one that targets LeRobot should write through LeRobot's
+own API, never a hand-rolled copy of its schema.
 
 Layout, under ``$MOTE_HOME/episodes/<dataset>/``::
 

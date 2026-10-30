@@ -45,8 +45,8 @@ pixi run -- ros2 run mote_tasks mission fetch target=pickup destination=dropoff
 
 On the real robot, run `pixi run tasks` alongside `pixi run robot`. Zones
 belong to the active site (see the Sites section in CLAUDE.md). Geometry gets
-there three ways: `pixi run save-zone <name>` captures the pose the robot is
-standing at, `pixi run segment-map` reads room outlines off a saved map, and
+there three ways: `pixi run site save-zone <name>` captures the pose the robot is
+standing at, `pixi run site segment` reads room outlines off a saved map, and
 the fleet dashboard's zone editor places them on a candidate revision, which a
 promotion then hands to every robot at the site. Only `save-zone` proves the
 pose is reachable, by having driven to it; the other two put a coordinate on
@@ -85,7 +85,7 @@ answers "which zone am I in?" (nearest-pose first) using the footprints.
 
 ### Circles and polygons
 
-A `radius` is the simple default — one number, and `pixi run save-zone <name>
+A `radius` is the simple default — one number, and `pixi run site save-zone <name>
 --radius R` writes it along with the pose. It only describes a roughly round
 room, though. A real ward is a rectangle, a ward with an ensuite is an L, and a
 corridor stretch is a long thin box; sizing a circle to fit inside one of those
@@ -98,7 +98,7 @@ A `polygon` is a list of `[x, y]` vertices in the file's `frame_id`, closed
 implicitly, in either winding order, and may be concave — membership is a ray
 cast, not a convex-hull test. A zone carrying both keys uses the polygon.
 
-Polygons do not come from driving. `pixi run segment-map` reads them off a
+Polygons do not come from driving. `pixi run site segment` reads them off a
 saved map, and the fleet dashboard's zone editor draws and drags them on a
 candidate revision — which is also why a polygon zone may omit `x`/`y`: the
 loader then derives a pose guaranteed to lie inside the outline (the centroid,
@@ -108,7 +108,7 @@ which matters: in the hospital wards the room centre is occupied by a bed, so
 the pose is the doorway approach.
 
 Because polygons arrive from a different direction than poses do, re-capturing
-a room's pose with `pixi run save-zone <name>` keeps whatever footprint the
+a room's pose with `pixi run site save-zone <name>` keeps whatever footprint the
 zone already had; passing `--radius R` is the deliberate way to replace it.
 Zones are written into the active site's floor (`site info` shows the zone
 count, how many have a footprint, and how many names have no geometry here at

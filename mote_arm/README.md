@@ -30,10 +30,9 @@ stack). We chose direct Feetech control:
    run LeRobot off-board.
 
    *That follow-up has since landed, and off-board is what it does* — the robot
-   writes a stdlib-only capture and `tools/lerobot_export.py` converts it into a
-   real `LeRobotDataset` in a linux-64 environment of its own. See
-   [TELEOP.md](TELEOP.md). The decision above is unchanged: LeRobot is where the
-   dataset goes, not where the arm is driven from.
+   writes a stdlib-only capture ([TELEOP.md](TELEOP.md)); converting it to a
+   training format is off-board work, and the repo keeps no converter. The
+   decision above is unchanged: the arm is not driven from LeRobot.
 4. **We can borrow the calibration flow without the framework.** LeRobot's
    `lerobot-calibrate` is two phases — write each servo's homing offset so
    mid-travel reads 2048, then record every joint's range in one sweep — and
@@ -181,7 +180,7 @@ conversions are verified without hardware.
 | `arm_offsets` (tool) | Read/back up/restore/set the servos' position-correction offsets. The recovery path if a calibration is interrupted. `pixi run arm-setup offsets`. |
 | `poses.py` / `arm_pose` | Teach and replay named poses, and narrow limits to a working envelope. `pixi run arm-pose save\|list\|go\|limits\|delete`. |
 | `mock_arm` (node) | The control stack's interface — trajectory topic and `switch_controller` — with nothing behind it, plus an optional synthetic camera, so teleop, recording and replay run on a workstation. `pixi run arm-mock`. |
-| **teleop + episodes** | Keyboard teleoperation and LeRobot-format episode recording — `teleop.py`, `arm_teleop`, `episode_record`, `episode_replay`, `tools/lerobot_export.py`. Its own doc: **[TELEOP.md](TELEOP.md)**. |
+| **teleop + episodes** | Keyboard teleoperation and episode recording — `teleop.py`, `arm_teleop`, `episode_record`, `episode_replay`. Its own doc: **[TELEOP.md](TELEOP.md)**. |
 
 ## Exits and arguments
 
@@ -444,7 +443,7 @@ to put back whatever was found.
 ### Named poses, and narrowing the envelope
 
 The base layer captures a map position by driving there and running
-`pixi run save-zone`; the arm's analogue is `pixi run arm-pose`. Pose the limp
+`pixi run site save-zone`; the arm's analogue is `pixi run arm-pose`. Pose the limp
 arm by hand, capture it, and later command it back:
 
 ```

@@ -1,8 +1,8 @@
 # Getting started
 
 This is the path from a box of parts to a robot that maps a room and drives it.
-Steps 1 and 2 run anywhere; from step 3 on you need the hardware, so they run on
-the Pi.
+Steps 1 to 3 run on your workstation (step 3 with two parts on its USB); from
+step 4 on they run on the Pi.
 
 If you want to try the software before building anything, skip to
 [Simulation](simulation.md) — it needs no hardware and runs the same launch
@@ -47,7 +47,48 @@ Built on your workstation? Copy it to the Pi with `pixi run sync`, or
 config and Python go live without a rebuild (`colcon --symlink-install`); only
 C++ needs `pixi run build` again on the Pi.
 
-## 3. Set up the Pi
+## 3. Bench prep
+
+Two parts are configured before the robot exists, plugged into your workstation
+over USB. The results stay in the parts or go onto the card, so nothing here is
+repeated on the Pi.
+
+**Device names.** The tools open `/dev/mote_servos` and `/dev/mote_camera`, the
+names the udev rules give the hardware. Install the rules here once, the same
+way the Pi gets them:
+
+```bash
+pixi run setup udev
+```
+
+**Servo IDs.** The drive wheels are expected at servo IDs **7** (left) and **9**
+(right) at 1 Mbaud. Fresh Feetech STS3215 servos all ship as ID 1, so assign IDs
+before the wheels go on, connecting one servo at a time when prompted:
+
+```bash
+pixi run setup-ids
+```
+
+An SO-101 arm's six servos share the wheels' bus at IDs 1–6 and are assigned the
+same way; its range calibration is not bench work, because the travel depends
+on the mount ([the arm docs](arm/index.md)). IDs live in each servo's EEPROM, so
+this is once per servo. The [servo bus tools](hardware/servo-tools.md) cover the
+rest of the bus utilities.
+
+**Camera intrinsics.** Optional: the packaged default fits the UGREEN webcam in
+the BOM. For a different camera, or for metric work, calibrate with the camera on
+your USB and the printed target from
+[camera calibration](perception/camera-calibration.md):
+
+```bash
+pixi run camera-calibrate      # -> ./camera_calibration.yaml
+```
+
+The file goes onto the card in the next step with
+`pixi run provision --camera-calibration camera_calibration.yaml`, or to
+`~/.mote/camera_calibration.yaml` on a robot that is already running.
+
+## 4. Set up the Pi
 
 One time, on the robot:
 
@@ -68,25 +109,6 @@ sudo systemctl enable --now mote-bringup mote-health
 See [Bringup & reliability](robot/bringup.md) for what those services do, and
 what the pre-flight self-check refuses to start without.
 
-## 4. Configure the servos
-
-The drive wheels are expected at servo IDs **7** (left) and **9** (right) at
-1 Mbaud. Fresh Feetech STS3215 servos all ship as ID 1, so assign IDs before
-first use, connecting one servo at a time when prompted:
-
-```bash
-pixi run setup-ids
-```
-
-The [servo bus tools](hardware/servo-tools.md) cover the rest of the bus
-utilities — pinging, swapping IDs, and calibrating `velocity_scale`.
-
-!!! note "The arm is on the same bus"
-    An SO-101 arm's six servos share the wheels' bus at IDs 1–6, so it needs no
-    extra electronics — and no udev rule of its own. A serial port has no
-    kernel-level exclusion, so exactly one process may hold it, and that process
-    is the controller manager. See [the arm docs](arm/index.md).
-
 ## 5. Map a space
 
 The stack runs in two phases: build a map with SLAM, then drive it without.
@@ -94,7 +116,7 @@ The stack runs in two phases: build a map with SLAM, then drive it without.
 ```bash
 pixi run mapping   # bringup + SLAM
 pixi run teleop    # in another terminal: drive it around
-pixi run save-map  # save the map + posegraph into the active site
+pixi run site save-map  # save the map + posegraph into the active site
 ```
 
 Instead of driving it yourself, `pixi run explore` covers the space

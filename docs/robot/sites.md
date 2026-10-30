@@ -67,7 +67,7 @@ The newest revisions are kept and older ones pruned.
 
 ```bash
 pixi run mapping   # bringup + SLAM
-pixi run save-map  # into the active site's floor
+pixi run site save-map  # into the active site's floor
 ```
 
 `save-map` stores the posegraph alongside the map, which is what lets a later
@@ -111,7 +111,7 @@ has to arrive at facing something is still worth driving to.
 Drive there and capture the pose:
 
 ```bash
-pixi run save-zone "the kitchen" --radius 1.5
+pixi run site save-zone "the kitchen" --radius 1.5
 ```
 
 Re-teaching a zone's pose keeps whatever footprint it already had; passing
@@ -120,8 +120,8 @@ Re-teaching a zone's pose keeps whatever footprint it already had; passing
 Rooms do not have to be bound one at a time, either:
 
 ```bash
-pixi run segment-map          # propose one polygon zone per room
-pixi run segment-map --write  # merge the proposal into zones.yaml to rename
+pixi run site segment          # propose one polygon zone per room
+pixi run site segment --write  # merge the proposal into zones.yaml to rename
 ```
 
 `segment-map` carves a saved map's free space into rooms on one physical
@@ -163,7 +163,7 @@ Saving and publishing are deliberately separate: saving has to work on a robot
 that has never seen a fleet server.
 
 ```bash
-pixi run publish-map   # offer the saved revision as a *candidate*
+pixi run fleet publish-map   # offer the saved revision as a *candidate*
 ```
 
 An upload changes nothing. The revision sits inert until an operator promotes

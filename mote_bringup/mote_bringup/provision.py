@@ -9,7 +9,8 @@ First boot then runs, with no interactive steps
 (``mote_bringup/provisioning/user-data.template``):
 
 1. write ``$MOTE_HOME/robot.yaml`` — the identity everything downstream is keyed
-   by (:mod:`mote_bringup.identity`);
+   by (:mod:`mote_bringup.identity`) — and beside it, when one is given, the
+   camera calibration from bench prep (``pixi run camera-calibrate``);
 2. ``tailscale up`` with a **single-use, pre-authorised, tagged auth key baked
    into the image** — which is what resolves the ordering trap: the robot is on
    the tailnet before it has to reach anything, so no secret is ever fetched
@@ -26,10 +27,12 @@ Console script ``provision`` (pixi task: provision)::
 
     pixi run provision --id mote-02 --ssh-key ~/.ssh/id_ed25519.pub \\
         --ts-authkey tskey-auth-... --name "Scout" \\
-        --wifi-ssid HomeNet --wifi-psk secret --boot /media/$USER/bootfs
+        --wifi-ssid HomeNet --wifi-psk secret --boot /media/$USER/bootfs \\
+        [--camera-calibration camera_calibration.yaml]
 """
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -41,8 +44,9 @@ import yaml
 
 from mote_bringup.identity import ID_RE
 
-WIFI_OPEN = "# >>> wifi"
-WIFI_CLOSE = "# <<< wifi"
+# Optional template blocks: `# >>> name` ... `# <<< name`, kept or dropped whole.
+BLOCK_OPEN_RE = re.compile(r"^# >>> (\w+)$")
+BLOCK_CLOSE_RE = re.compile(r"^# <<< (\w+)$")
 PLACEHOLDER_RE = re.compile(r"@[A-Z_]+@")
 USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -51,7 +55,15 @@ COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 # Placeholders that sit inside a double-quoted YAML scalar in the template. An
 # auth key or a passphrase is arbitrary bytes, and a stray " or \ in one would
 # otherwise produce a user-data that half-provisions a Pi nobody is watching.
-QUOTED = {"ROBOT_NAME", "SITE", "SSH_KEY", "TS_AUTHKEY"}
+QUOTED = {"ROBOT_NAME", "SITE", "SSH_KEY", "TS_AUTHKEY", "CAMERA_CALIBRATION_B64"}
+
+# What a camera_info_manager file carries; anything else is the wrong file.
+CAMERA_INFO_KEYS = {
+    "image_width",
+    "image_height",
+    "camera_matrix",
+    "distortion_coefficients",
+}
 
 
 def template_path() -> Path:
@@ -71,14 +83,17 @@ def template_path() -> Path:
     return Path(__file__).resolve().parents[1] / "provisioning" / "user-data.template"
 
 
-def strip_wifi(text: str) -> str:
-    """Drop the wifi blocks — the robot is wired, or the card already has a network."""
+def select_blocks(text: str, keep: dict) -> str:
+    """Keep or drop the template's optional blocks whole, markers gone either way:
+    wifi when the robot has a network to join, camera when a bench calibration
+    was given."""
     out, skipping = [], False
     for line in text.splitlines():
-        if line.strip() == WIFI_OPEN:
-            skipping = True
+        opened = BLOCK_OPEN_RE.match(line.strip())
+        if opened:
+            skipping = not keep.get(opened.group(1), False)
             continue
-        if line.strip() == WIFI_CLOSE:
+        if BLOCK_CLOSE_RE.match(line.strip()):
             skipping = False
             continue
         if not skipping:
@@ -86,16 +101,24 @@ def strip_wifi(text: str) -> str:
     return "\n".join(out) + "\n"
 
 
-def keep_wifi(text: str) -> str:
-    """Keep the wifi blocks, dropping just their markers."""
-    return (
-        "\n".join(
-            line
-            for line in text.splitlines()
-            if line.strip() not in (WIFI_OPEN, WIFI_CLOSE)
+def camera_calibration_b64(path: Path) -> str:
+    """The bench calibration as cloud-init ``encoding: b64`` content: one line,
+    so neither YAML quoting nor block indentation can touch the bytes the robot
+    will load. Checked to be a camera_info file, not some other yaml."""
+    if not path.is_file():
+        raise ValueError(f"no such camera calibration: {path}")
+    raw = path.read_bytes()
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path} is not valid YAML: {exc}") from exc
+    missing = CAMERA_INFO_KEYS - set(data or {})
+    if missing:
+        raise ValueError(
+            f"{path} is not a camera_info calibration: missing "
+            + ", ".join(sorted(missing))
         )
-        + "\n"
-    )
+    return base64.b64encode(raw).decode("ascii")
 
 
 def quote(value: str) -> str:
@@ -107,7 +130,13 @@ def render(template: str, values: dict) -> str:
     """Substitute @PLACEHOLDERS@ by plain string replacement — a passphrase full
     of backslashes, ampersands or pipes has to survive verbatim, so no
     regex/sed replacement — escaping the ones that land in a quoted scalar."""
-    text = keep_wifi(template) if values.get("WIFI_SSID") else strip_wifi(template)
+    text = select_blocks(
+        template,
+        {
+            "wifi": bool(values.get("WIFI_SSID")),
+            "camera": bool(values.get("CAMERA_CALIBRATION_B64")),
+        },
+    )
     for key, value in values.items():
         text = text.replace(f"@{key}@", quote(value) if key in QUOTED else value)
     # A site is optional; drop the key rather than emit an empty one.
@@ -155,6 +184,11 @@ def build(args) -> str:
     if not authkey:
         raise ValueError("--ts-authkey is required (single-use, tagged tag:robot)")
 
+    camera_b64 = ""
+    camera_file = getattr(args, "camera_calibration", None)
+    if camera_file:
+        camera_b64 = camera_calibration_b64(Path(camera_file).expanduser())
+
     values = {
         "ROBOT_ID": args.id,
         "ROBOT_NAME": args.name or args.id,
@@ -167,6 +201,7 @@ def build(args) -> str:
         "WIFI_COUNTRY": args.wifi_country or "",
         "REPO": args.repo,
         "TIMEZONE": args.timezone,
+        "CAMERA_CALIBRATION_B64": camera_b64,
     }
     for key, value in values.items():
         # Values that land in a YAML block scalar (the wifi keyfile, the staged
@@ -202,6 +237,11 @@ def main():
     )
     parser.add_argument("--repo", default="https://github.com/ClachDev/Mote.git")
     parser.add_argument("--timezone", default="Etc/UTC")
+    parser.add_argument(
+        "--camera-calibration",
+        help="camera_info yaml from `pixi run camera-calibrate`, installed as "
+        "$MOTE_HOME/camera_calibration.yaml at first boot",
+    )
     parser.add_argument("--out", help="write here (default: stdout)")
     parser.add_argument(
         "--boot", help="boot partition mount point; writes <boot>/user-data"
@@ -224,6 +264,7 @@ def main():
     print(f"wrote {path} (contains secrets: 0600, do not commit)")
     print(
         f"robot id: {args.id}   user: {args.user}   wifi: {args.wifi_ssid or '<none>'}"
+        f"   camera calibration: {'yes' if args.camera_calibration else '<packaged default>'}"
     )
     print(
         f"next: boot the card, then from any tailnet device: tailscale ping {args.id}"

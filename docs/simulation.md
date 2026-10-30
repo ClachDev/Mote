@@ -10,14 +10,14 @@ pixi run sim            # headless gz server + robot + controllers
 pixi run sim-mapping    # the real mapping mission on top of it
 pixi run sim-nav        # the real nav mission against the world's saved map
 pixi run sim-test       # ~20 s headless smoke test (needs a GPU)
-pixi run -e sim -- gz sim -g   # optional: attach the Gazebo GUI
+pixi run -e dev -- gz sim -g   # optional: attach the Gazebo GUI
 ```
 
-The `sim`, `sim-*` and benchmark tasks are defined only in the sim
+The `sim`, `sim-*` and benchmark tasks are defined only in the `dev`
 environment, so pixi selects it for you. An ad-hoc command has to name it:
 
 ```bash
-pixi run -e sim -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
+pixi run -e dev -- ros2 launch mote_bringup slam_launch.py use_sim_time:=true
 ```
 
 ## How it delegates
@@ -65,8 +65,8 @@ and the furniture, and lies inside its own footprint.
 
 `mote_simulation/sim_home/` is a committed, in-repo `MOTE_HOME`: one real
 [site bundle](robot/sites.md) per world (site name = world stem, floor
-`ground`) holding that world's SLAM map and zones. The sim environment points
-`MOTE_HOME` at it, so `sim-nav` loads a world's own map and never touches the
+`ground`) holding that world's SLAM map and zones. The `sim` feature, part of
+the `dev` environment, points `MOTE_HOME` at it, so `sim-nav` loads a world's own map and never touches the
 robot's real `~/.mote`.
 
 Those maps are built the same way the robot builds one:
@@ -103,7 +103,7 @@ room.
 Every entry point that starts a gz server — the benchmark, the smoke test,
 `map_world.sh` — claims a free `ROS_DOMAIN_ID` and `GZ_PARTITION` through one
 picker (`mote_simulation/tools/sim_domain.py`), so two runs on one machine stay
-separate. The sim environment also pins
+separate. The `sim` feature also pins
 `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`, so a run neither advertises itself
 to nor discovers a robot on the LAN.
 

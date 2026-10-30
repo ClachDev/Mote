@@ -31,7 +31,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def test_segment_map_output_is_a_bundle_this_can_read(tmp_path):
-    """`pixi run segment-map --write` (#69) proposes polygon zones.
+    """`pixi run site segment --write` (#69) proposes polygon zones.
 
     Its writer emits a block sequence of flow pairs for the vertex list — the
     exact shape the hand-rolled parser rejected, which made the whole path

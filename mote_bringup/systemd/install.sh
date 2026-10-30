@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install the mote systemd services for the invoking user.
-# Run via: pixi run install-systemd (uses sudo; @USER@/@HOME@/@REPO@ are
+# Run via: pixi run setup systemd (uses sudo; @USER@/@HOME@/@REPO@ are
 # filled in here).
 set -euo pipefail
 
@@ -41,7 +41,7 @@ sudo systemctl daemon-reload
 # mote-agent and mote-foxglove are the exceptions worth enabling on their own:
 # they draw nothing and drive nothing, and a robot that is not reporting to the
 # fleet, or that an operator cannot look at, is a robot nobody can help. The
-# agent needs `pixi run enroll` first; the bridge needs nothing.
+# agent needs `pixi run fleet enroll` first; the bridge needs nothing.
 # (docs/fleet/README.md)
 #
 #   sudo systemctl enable --now mote-agent mote-foxglove
@@ -54,4 +54,4 @@ echo
 echo "Units installed (not enabled). Start a session with 'pixi run robot'."
 echo "For unattended boot:  sudo systemctl enable --now mote-bringup mote-health"
 echo "To watch it remotely: sudo systemctl enable --now mote-foxglove"
-echo "To join the fleet:    pixi run enroll ... && sudo systemctl enable --now mote-agent"
+echo "To join the fleet:    pixi run fleet enroll ... && sudo systemctl enable --now mote-agent"
