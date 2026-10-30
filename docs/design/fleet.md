@@ -571,7 +571,7 @@ duplicated in two places — one small refactor to factor out at M4.)
 **Conflict: two robots map the same floor.** Do **not** auto-merge. A map frame's
 origin is *"an accident of where SLAM started, so zones/map/posegraph must live and
 travel together"* (`sites.py` docstring); silently merging two frames breaks every
-taught zone coordinate. Instead the server keeps both as **candidate revisions**,
+bound zone coordinate. Instead the server keeps both as **candidate revisions**,
 and an operator **promotes** one to canonical — the same `site use-map` semantics,
 centralised. Nothing is lost, nothing is silently merged, and the loser is retained
 for audit (matching the raw-map-retention ethos already in `save-map`).
@@ -978,7 +978,8 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   basemaps are read from **site bundles on the fleet box** through routes M4
   keeps while replacing where the bytes come from; and the **operator token is
   one credential on one path**, not the auth story M7 owes — the read routes and
-  the broker are still open on the tailnet.
+  the broker were still open on the tailnet. (The read routes are closed since;
+  the broker is not.)
 
 ### v1 — second robot enrolled, plus shared infrastructure
 
@@ -1013,7 +1014,7 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   must not leave a floor half-promoted — the server re-announces every floor at
   startup, which repairs it; and zones travel *inside* the revision and replace
   the floor's on install, because a different session's map makes previously
-  taught zones wrong. The one thing the milestone does not do is make a pulled
+  bound zones wrong. The one thing the milestone does not do is make a pulled
   map take effect live: `map_server` reads its map at startup, so a flip lands
   on the next bringup, and health now carries the revision each robot is
   actually running so the gap is visible.
@@ -1057,6 +1058,15 @@ M7 (security hardening) : cross-cutting, folds into each; can start after M0
   signed if available) packages. *Accept:* a device off the tailnet reaches nothing;
   a robot can't read another robot's command topic. *Depends on:* M0; folds into
   each milestone as it lands.
+
+  **Landed so far:** operator auth on every `/v1` route (one gate in front of
+  routing, four stated carve-outs), the Tailscale access policy as a committed
+  file with its own `tests` block, and `pixi install --locked` in provisioning.
+  **Still owed:** the broker half — per-robot and per-operator broker
+  credentials and the ACL that keeps them apart — which is where the second
+  acceptance criterion ("a robot can't read another robot's command topic")
+  lives, and which waits on M6. Package signing waits on M5, when there is a
+  package to sign.
 
 ### Cross-cutting — adopting the open specifications
 

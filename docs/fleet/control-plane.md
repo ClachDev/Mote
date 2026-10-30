@@ -158,7 +158,7 @@ sees.
 | `version` | string, *nullable* | |
 | `uptime_s` | number, *nullable* | host uptime, from `/proc/uptime` |
 | `battery` | object, *nullable* | **reserved; always null** |
-| `map` | object, *nullable* | `{site, floor, revision}` — the map revision this robot is *running* |
+| `map` | object, *nullable* | `{site, floor, revision, installed, error}` — the map revision this robot is *running*, and the one on its disk |
 
 `state: unknown` is a real answer, not a gap: the health monitor is a separate
 service, and an agent whose diagnostics are missing or stale says so rather than
@@ -174,11 +174,22 @@ the two is the only way to see a robot that has not picked up a new map.
 `revision` is `null` for a floor with no saved map. Added in M4 as an optional
 field, which bumps no version — consumers ignore what they do not recognise.
 
+`revision` is what Nav2's `map_server` is serving, as `map_reloader` reports it.
+`installed` is the floor's `map` symlink: what the agent last installed. The two
+differ between an install and the load that follows it — the load waits for any
+mission in flight to finish — and a dashboard comparing `revision` with the
+canonical one sees that gap. With no `map_server` running (nav stopped, or
+running SLAM) the next bringup loads the installed revision, so `revision`
+equals `installed`. `error` says why the last load failed while the old map is
+still served, and is `null` otherwise. `installed` and `error` were added
+without a version bump, as `map` was.
+
 ```json
 {"schema":1,"robot_id":"mote-01","stamp":"2026-07-26T16:15:24.001Z","state":"ok",
  "summary":"OK","subsystems":[{"name":"lidar","state":"ok","message":"ok"}],
  "mission":null,"site":"home","floor":"ground","version":"ece90cc","uptime_s":48213.0,
- "battery":null,"map":{"site":"home","floor":"ground","revision":"20260727T101500"}}
+ "battery":null,"map":{"site":"home","floor":"ground","revision":"20260727T101500",
+ "installed":"20260727T101500","error":null}}
 ```
 
 ### pose
@@ -317,7 +328,7 @@ broker that lost its retained state with its volume, repairs itself.
 |---|---|---|
 | `schema` | int | `1` |
 | `site` | string | |
-| `floor` | string | one floor is one SLAM session, i.e. one map frame |
+| `floor` | string | one floor is one frame; each map revision is one SLAM session registered into it |
 | `revision` | string | the immutable revision id; also its directory name at both ends |
 | `url` | string | path on the fleet server to fetch the packed revision from |
 | `sha256` | string | `sha256:<hex>` of the packed bundle |
@@ -329,7 +340,8 @@ broker that lost its retained state with its volume, repairs itself.
 fleet box is reached — MagicDNS name, tailnet address or localhost.
 
 `sha256` is checked by the puller before anything is staged. It is not a
-security boundary (the tailnet is that until M7); it is there because a
+security boundary (the tailnet is that, while the broker is anonymous); it is
+there because a
 transfer that silently truncated would otherwise become a map, and a wrong map
 is worse than no map.
 
@@ -426,13 +438,21 @@ supersedes M0's operator-set id: the server owns the id space.
 | Route | Purpose |
 |---|---|
 | `GET /healthz` | liveness, contract version, robot count |
-| `GET /v1/robots` | the roster |
-| `GET /v1/robots/<robot_id>` | one row |
+| `GET /v1/robots` | the roster, each row with its `presence` payload |
+| `GET /v1/robots/<robot_id>` | one row, plus the retained payloads below as the server last saw them |
 | `POST /v1/enroll` | allocate (or return) a robot id |
 
 The map registry's routes — upload a candidate, pull a revision, promote one —
 are the same server and are specified in [`fleet-api.md`](fleet-api.md), with
 the retained `current` topic above as their only MQTT half.
+
+**A client that reads these topics need not subscribe to them.** The fleet
+server holds its own subscription to `presence`, `health`, `pose`,
+`capabilities` and `mission/status` and forwards what it last saw over
+`GET /v1/robots/<robot_id>` — the same payloads, unchanged, for the client that
+asks once and acts rather than following the stream (specified in
+[`fleet-api.md`](fleet-api.md#get-v1robotsrobot_id)). Subscribing is still what
+a dashboard does, and the only way to see every transition.
 
 ### `POST /v1/enroll`
 
@@ -474,25 +494,32 @@ robots enrolling at once get eight distinct ids.
 
 ---
 
-## Security posture (and what M7 changes)
+## Security posture (and what is still owed)
 
-M1 is proportionate to the M0 substrate and no further. Stated plainly so it is
-not mistaken for a finished story:
+Stated plainly so it is not mistaken for a finished story:
 
 - **The broker is anonymous.** Any client that can reach it may publish or
   subscribe anywhere in the tree. WireGuard is the authentication boundary;
   nothing here is reachable from the public internet.
-- **The fleet API has no auth** on its read routes. Enrollment tokens and, since
-  M3, operator tokens are the only credentials in the system.
+- **The fleet API is not.** Every `/v1` route needs an operator token, checked by
+  one gate in front of routing ([`fleet-api.md`](fleet-api.md)); `/healthz`, the
+  static UI, enrollment and the two robot-facing map routes are the carve-outs,
+  each for a stated reason.
+- **The tailnet has rules.** `mote_bringup/tailscale/policy.hujson` is the
+  committed access policy: operators reach the fleet box and a robot's SSH and
+  Foxglove ports, robots reach the fleet server and their inference box, and no
+  robot reaches another. Its `tests` block asserts that last one, and Tailscale
+  refuses to save a policy that fails it.
 - **Dispatch is mediated, as of M3.** M1's `fleetctl` published straight to the
   broker; now it and the dashboard both POST to `/v1/robots/<id>/dispatch`,
-  which authorizes an operator token and writes an audit row before publishing
-  ([`fleet-api.md`](fleet-api.md)). As this section promised, **the topic tree
-  did not change** — only who publishes to it. The browser holds no broker
-  credential that can publish; making that structural on the broker side, with a
-  subscribe-only credential, is still M7's.
+  which authorizes an operator token and writes an audit row before publishing.
+  As this section promised, **the topic tree did not change** — only who
+  publishes to it. The browser holds no broker credential that can publish;
+  making that structural on the broker side, with a subscribe-only credential,
+  waits on the broker having credentials at all.
 
-M7 adds per-robot broker credentials (username = `robot_id`, publish confined to
-its own prefix), operator auth on the API, and the Tailscale ACLs that stop
-robots reaching each other. Until then: do not put the broker or the API on a
-network the robots are not already trusted on.
+What is still owed is the broker half: per-robot credentials (username =
+`robot_id`, publish confined to its own prefix), a subscribe-only operator
+credential for the browser, and the ACL that keeps the three principals apart.
+Until then, do not put the broker on a network the robots are not already
+trusted on.

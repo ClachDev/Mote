@@ -5,8 +5,8 @@
 # save-map into the world's site under the in-repo sim MOTE_HOME. One site per
 # world, floor "ground".
 #
-# Must run in the sim pixi env:
-#   pixi run -e sim -- bash mote_simulation/tools/map_world.sh <world.sdf> [budget_s]
+# Needs the dev pixi env, which the task selects:
+#   pixi run sim-map-world <world.sdf> [budget_s]
 #
 # Idempotent: re-running adds a new map revision to the same site.
 set -u

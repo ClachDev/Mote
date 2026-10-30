@@ -6,7 +6,9 @@ this stays because a CLI composes, exits with a status, and needs no display.
 
     fleetctl token new                        mint an enrollment token
     fleetctl operator new --name michael      mint an operator token
-    fleetctl robots                           the registry roster
+    fleetctl robots                           the roster, with who is online
+    fleetctl robots mote-01                   one robot: presence, health,
+                                              pose, capabilities, last mission
     fleetctl dispatch mote-01 goto target=kitchen
                                               send a mission, follow it to terminal
     fleetctl audit                            who dispatched what
@@ -23,7 +25,17 @@ publish to it — so ``watch`` and the status half of ``dispatch`` still read
 directly from the broker, which is the cheap, live, no-service-in-the-middle
 read path the design asks for.
 
-The token for that lives in ``--token`` or ``$MOTE_FLEET_TOKEN``.
+**One-shot reads go through the API.** ``robots`` and ``robots <id>`` ask the
+fleet server what it last saw on the retained topics rather than opening an MQTT
+connection to find out, because a question with an answer does not need a
+stream: no broker credential, no waiting to see whether a topic is going to
+arrive, and an exit status. ``watch`` and ``dispatch`` keep the broker, which is
+what following every transition actually requires.
+
+The token for that lives in ``--token`` or ``$MOTE_FLEET_TOKEN``, and every
+verb that talks to the API needs it — the roster and the registry are
+operator-only too, not only the writes. ``watch`` is the exception, because it
+reads the broker rather than the API.
 
 ``token``/``operator`` talk to the registry file directly rather than over
 HTTP, because minting a credential is a thing you do while sitting on the fleet
@@ -38,6 +50,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "mote_bringup"))
 import json  # noqa: E402
 import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
@@ -139,16 +152,73 @@ def cmd_token(args):
 
 
 def cmd_robots(args):
-    robots = _get(args.server, "/v1/robots").get("robots", [])
+    """The roster, or one robot's live state — both from the API, not the
+    broker. ``watch`` is what a live stream is for; this is the one-shot
+    answer, and it costs no MQTT connection to get."""
+    if args.robot_id:
+        _print_robot(_get(args.server, f"/v1/robots/{args.robot_id}", _token(args)))
+        return
+    body = _get(args.server, "/v1/robots", _token(args))
+    robots = body.get("robots", [])
     if not robots:
         print("no robots enrolled")
         return
-    print(f"{'ID':12} {'NAME':16} {'SITE':10} {'ENROLLED':21} FINGERPRINT")
+    if not body.get("broker_connected"):
+        # Otherwise every robot reads as offline and the reason is invisible.
+        print(
+            "the fleet server is not connected to the broker — presence is "
+            "unknown, not offline",
+            file=sys.stderr,
+        )
+    print(
+        f"{'ID':12} {'NAME':16} {'SITE':10} {'PRESENCE':8} {'ENROLLED':21} FINGERPRINT"
+    )
     for robot in robots:
         print(
             f"{robot['robot_id']:12} {robot['name'][:16]:16} "
-            f"{(robot['site'] or '-')[:10]:10} {robot['enrolled_at']:21} "
-            f"{robot['fingerprint']}"
+            f"{(robot['site'] or '-')[:10]:10} {_presence(robot.get('presence')):8} "
+            f"{robot['enrolled_at']:21} {robot['fingerprint']}"
+        )
+
+
+def _presence(payload) -> str:
+    """Three states, not two: a robot nobody has heard from is not offline."""
+    if not payload:
+        return "unknown"
+    return "online" if payload.get("online") else "offline"
+
+
+def _print_robot(body: dict):
+    print(f"{body['robot_id']}  {body['name']}  ({body['site'] or 'no site'})")
+    print(f"  enrolled   {body['enrolled_at']}  {body['fingerprint']}")
+    print(f"  presence   {_presence(body.get('presence'))}")
+    health = body.get("health")
+    if health:
+        print(f"  health     {health['state']}: {health['summary']}")
+    pose = body.get("pose")
+    if pose:
+        print(
+            f"  pose       x={pose['x']} y={pose['y']} yaw={pose['yaw']} "
+            f"({pose.get('site')}/{pose.get('floor')})"
+        )
+    capabilities = body.get("capabilities")
+    if capabilities:
+        keys = ", ".join(item["key"] for item in capabilities["capabilities"])
+        print(f"  can do     {keys}")
+    status = body.get("mission_status")
+    if status:
+        # The *last* transition, not a history: one retained status is all the
+        # broker holds, and inventing the rest here would be a fiction.
+        line = f"{status['state']} ({status['capability']}, id {status['id']})"
+        failure = status.get("failure")
+        if failure:
+            retry = "retryable" if failure["recoverable"] else "not retryable"
+            line += f"  [{failure['class']}, {retry}] {failure['detail']}"
+        print(f"  mission    {line}")
+    if not body.get("broker_connected"):
+        print(
+            "  (the fleet server is not connected to the broker — every field "
+            "above is the last it saw, or nothing)"
         )
 
 
@@ -156,7 +226,7 @@ def cmd_sites(args):
     """The map registry. Without a floor: what every floor is on. With one:
     every candidate revision and whether it could be promoted."""
     if not (args.site and args.floor):
-        floors = _get(args.server, "/v1/sites").get("sites", [])
+        floors = _get(args.server, "/v1/sites", _token(args)).get("sites", [])
         if not floors:
             print("no site bundles on the fleet server")
             return
@@ -168,7 +238,9 @@ def cmd_sites(args):
                 f"{(floor['canonical'] or '-'):18} {candidates}"
             )
         return
-    detail = _get(args.server, f"/v1/sites/{args.site}/floors/{args.floor}")
+    detail = _get(
+        args.server, f"/v1/sites/{args.site}/floors/{args.floor}", _token(args)
+    )
     print(f"{args.site}/{args.floor}  canonical: {detail['canonical'] or 'none'}")
     for revision in detail["revisions"]:
         marker = "*" if revision["canonical"] else " "
@@ -451,7 +523,7 @@ def main(argv=None):
     parser.add_argument(
         "--token",
         default="",
-        help=f"operator token for the write routes (default: ${TOKEN_ENV})",
+        help=f"operator token for the API (default: ${TOKEN_ENV})",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -474,6 +546,12 @@ def main(argv=None):
     p_operator.set_defaults(func=cmd_operator)
 
     p_robots = sub.add_parser("robots", help="list enrolled robots")
+    p_robots.add_argument(
+        "robot_id",
+        nargs="?",
+        default="",
+        help="one robot's live state instead of the roster (needs an operator token)",
+    )
     p_robots.set_defaults(func=cmd_robots)
 
     p_audit = sub.add_parser("audit", help="what was dispatched, by whom")

@@ -45,37 +45,29 @@ and the board is centred with a white border.
 
 ## Running the calibration
 
-`cameracalibrator` is an interactive GUI tool, so run it on the **workstation**
-(it is a `dev` dependency, not installed on the robot) against the Pi's live
-camera over the ROS 2 network. Both machines must be on the same LAN and
-`ROS_DOMAIN_ID`.
-
-This is the one flow that joins the robot's graph over the LAN: DDS transport
-is loopback-only by default everywhere (`mote_bringup/config/cyclonedds.xml`,
-via `CYCLONEDDS_URI`), so both ends must drop that profile for the session.
-The `camera_calibration` task does it itself; anything started by hand on the
-Pi needs the `env -u CYCLONEDDS_URI` prefix shown below.
+This is bench prep ([getting started](../../docs/getting-started.md)): plug the
+camera into your **workstation** and run the calibrator there. `cameracalibrator`
+is an interactive GUI and a `dev` dependency, not installed on the robot, and the
+camera does not have to be on the robot for its intrinsics. Nothing joins the
+robot's graph: a camera node and the GUI run on this machine, on a ROS domain of
+their own, loopback only.
 
 1. Print and mount the target above.
-2. On the **Pi**, start the camera so it publishes `/image_raw` on the LAN —
-   not under the loopback profile, so not `pixi run launch`; run the camera
-   node alone:
+2. Plug the camera in. The tool opens `/dev/mote_camera` when the udev rules are
+   installed here (`pixi run setup udev`), else `/dev/video0`; `--device` picks
+   another.
+3. Run the calibrator:
 
    ```bash
-   pixi run -- env -u CYCLONEDDS_URI ros2 run v4l2_camera v4l2_camera_node \
-       --ros-args -p video_device:=/dev/mote_camera
-   ```
-3. On the **workstation** run the calibrator:
-
-   ```bash
-   pixi run camera_calibration
+   pixi run camera-calibrate                        # -> ./camera_calibration.yaml
+   pixi run camera-calibrate --out mote-02-camera.yaml
    ```
 
-4. Move the board through the frame until the X/Y/Size/Skew bars are full, then
-   press **CALIBRATE**. It prints the result (`camera matrix`, `distortion`,
-   `rectification`, `projection`) to the console in oST format.
+4. Move the board through the frame until the X/Y/Size/Skew bars are full, press
+   **CALIBRATE**, then **SAVE**, then close the window. The saved result (`camera
+   matrix`, `distortion`, `rectification`, `projection`) is extracted to `--out`
+   in the camera_info format `mote_launch.py` loads.
 
-   Copy the printed parameters into a `camera_calibration.yaml` file.
-
-5. **Install it.** Copy calibration file to `~/.mote/camera_calibration.yaml`
-  **on the Pi**.
+5. **Install it.** For a new robot, onto the card:
+   `pixi run provision … --camera-calibration camera_calibration.yaml`. For a
+   robot already running, copy it to `~/.mote/camera_calibration.yaml` on the Pi.

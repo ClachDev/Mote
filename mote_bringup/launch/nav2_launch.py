@@ -218,6 +218,20 @@ def generate_launch_description():
         respawn_delay=2.0,
     )
 
+    # map_server reads its map once; this is what loads a promoted revision
+    # into it afterwards (see map_reloader.py). Only with localisation: under
+    # SLAM there is no saved map to swap.
+    reloader = Node(
+        package="mote_bringup",
+        executable="map_reloader",
+        name="map_reloader",
+        parameters=[{"map": LaunchConfiguration("map")}],
+        output="screen",
+        respawn=True,
+        respawn_delay=2.0,
+        condition=IfCondition(localisation),
+    )
+
     return LaunchDescription(
         [
             map_arg,
@@ -225,6 +239,7 @@ def generate_launch_description():
             sim_time_arg,
             SetParameter(name="use_sim_time", value=use_sim_time),
             container,
+            reloader,
             RegisterEventHandler(
                 OnProcessStart(
                     target_action=container,

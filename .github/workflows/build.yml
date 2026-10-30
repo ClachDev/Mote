@@ -1,9 +1,22 @@
 name: build
 
+# Prose, CAD and images cannot change what builds or what the tests see, so a
+# change touching only those skips the job (docs.yml still checks the prose).
+# `paths` rather than `paths-ignore` because only `paths` takes a negation, and
+# one markdown file is test input: test_wifi_roaming.py reads the wifi README.
+# A new test that reads a .md file must be re-included here the same way.
 on:
   push:
     branches: [main]
+    paths: &build-paths
+      - "**"
+      - "!**.md"
+      - "!docs/**"
+      - "!design/**"
+      - "!LICENSE"
+      - "mote_bringup/wifi/README.md"
   pull_request:
+    paths: *build-paths
 
 jobs:
   build:

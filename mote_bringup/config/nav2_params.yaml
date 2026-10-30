@@ -356,6 +356,9 @@ amcl:
     transform_tolerance: 1.0
     tf_broadcast: true
     save_pose_rate: 0.5
+    # A promoted revision is loaded into the running map_server
+    # (map_reloader.py); AMCL must take the new map rather than keep the first.
+    first_map_only: false
     set_initial_pose: true
     initial_pose:
       x: 0.0

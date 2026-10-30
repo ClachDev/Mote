@@ -24,8 +24,8 @@ different from the one on disk, that is a real conflict — two enrollments, or 
 recycled fingerprint — so it stops and says so instead of rewriting identity
 under a running fleet. ``--force`` is the deliberate override.
 
-    pixi run enroll -- --server http://fleet-box:8080 --token <token>
-    pixi run enroll -- --token <token> --name Scout --site home
+    pixi run fleet enroll --server http://fleet-box:8080 --token <token>
+    pixi run fleet enroll --token <token> --name Scout --site home
 """
 
 import argparse
@@ -103,7 +103,7 @@ def persist(server: str, answer: dict) -> dict:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="enroll", description=__doc__.split("\n\n")[0]
+        prog="fleet enroll", description=__doc__.split("\n\n")[0]
     )
     parser.add_argument(
         "--server",

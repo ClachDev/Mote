@@ -4,9 +4,9 @@ The gains live in each servo's EEPROM, which makes them invisible config: swap a
 servo and the tuning silently reverts. ``robot.yaml``'s ``arm.gains`` is the
 source of truth, and this tool reconciles the hardware with it.
 
-    pixi run arm-gains show     # read-only comparison against robot.yaml
-    pixi run arm-gains apply    # write robot.yaml's gains, verifying each servo
-    pixi run arm-gains sweep    # measure a step response across candidate gains
+    pixi run arm-setup gains show     # read-only comparison against robot.yaml
+    pixi run arm-setup gains apply    # write robot.yaml's gains, verifying each servo
+    pixi run arm-setup gains sweep    # measure a step response across candidate gains
 
 Opens the bus directly, so run it with the driver stopped. ``apply`` and
 ``sweep`` write EEPROM — a persistent change — so they ask first unless
@@ -21,14 +21,12 @@ moves the arm, so it is a bench tool — clear the arm's path first.
 
 from __future__ import annotations
 
-import argparse
 import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from mote_arm import config
-from mote_arm.bus import BusError, FeetechBus, port_holders
+from mote_arm.bus import BusError
 from mote_arm.poses import mote_home
 from mote_arm.step_response import Sample, StepMetrics, droop_verdict, summarise
 
@@ -36,23 +34,6 @@ from mote_arm.step_response import Sample, StepMetrics, droop_verdict, summarise
 # the ones that heat it, so pressing on would both risk the servo and score the
 # later trials against a different machine than the earlier ones.
 MAX_TEMP_C = 55
-
-
-def _open_bus(cfg) -> FeetechBus:
-    holders = port_holders(cfg.port)
-    if holders:
-        for pid, cmd in holders:
-            print(f"  port held by pid {pid}: {cmd}")
-        raise SystemExit(
-            "refusing to share the bus — stop the arm driver / robot base first "
-            "(`pixi run kill`)."
-        )
-    bus = FeetechBus(cfg.port, cfg.baud_rate)
-    try:
-        bus.open()
-    except BusError as exc:
-        raise SystemExit(f"cannot open bus: {exc}")
-    return bus
 
 
 def _report(cfg, bus) -> list[tuple[str, int, tuple[int, int, int] | None]]:
@@ -223,7 +204,7 @@ def _cmd_sweep(cfg, bus, args) -> None:
     if original is None:
         raise SystemExit(
             f"joint {joint.name!r} (id {joint.id}) did not answer a gain read — "
-            "check the arm is attached and powered (`pixi run arm-check`)"
+            "check the arm is attached and powered (`pixi run arm-setup check`)"
         )
 
     # The driver is the only thing that normally fixes a servo's mode, and this
@@ -234,7 +215,7 @@ def _cmd_sweep(cfg, bus, args) -> None:
         raise SystemExit(
             f"joint {joint.name!r} (id {joint.id}) is not confirmed in position "
             "mode, so a position goal could spin it continuously instead of "
-            "stepping. Check it with `pixi run arm-check`; a servo that cannot "
+            "stepping. Check it with `pixi run arm-setup check`; a servo that cannot "
             "be read is left untouched rather than blind-written."
         )
 
@@ -360,7 +341,7 @@ def _cmd_sweep(cfg, bus, args) -> None:
             f"\nrestored kp={original[0]} kd={original[1]} ki={original[2]}"
             if restored
             else f"\nWARNING: could not restore the original gains {original} — "
-            "run `arm-gains apply` before using the arm"
+            "run `arm-setup gains apply` before using the arm"
         )
 
     if results:
@@ -426,15 +407,14 @@ def _default_sweep_path() -> Path:
     return mote_home() / "arm_gain_sweeps" / f"{stamp}.json"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Arm servo position-loop gains")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+def add_subparser(sub) -> None:
+    parser = sub.add_parser("gains", help="the servos' position-loop gains (EEPROM)")
+    sub = parser.add_subparsers(dest="action", required=True)
 
     p_show = sub.add_parser("show", help="read gains and compare to robot.yaml")
     p_show.set_defaults(func=_cmd_show)
 
     p_apply = sub.add_parser("apply", help="write robot.yaml's gains to the servos")
-    p_apply.add_argument("--yes", action="store_true", help="skip confirmation")
     p_apply.set_defaults(func=_cmd_apply)
 
     p_sweep = sub.add_parser(
@@ -487,17 +467,4 @@ def main() -> None:
         help="stop if the servo reaches this temperature (default: %(default)s C)",
     )
     p_sweep.add_argument("--out", help="where to write the JSON trace")
-    p_sweep.add_argument("--yes", action="store_true", help="skip confirmation")
     p_sweep.set_defaults(func=_cmd_sweep)
-
-    args = parser.parse_args()
-    cfg = config.load()
-    bus = _open_bus(cfg)
-    try:
-        args.func(cfg, bus, args)
-    finally:
-        bus.close()
-
-
-if __name__ == "__main__":
-    main()

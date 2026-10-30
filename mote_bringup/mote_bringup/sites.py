@@ -5,15 +5,11 @@ place, managed as a single versioned unit.
     ~/.mote/sites/<site>/
         site.yaml                  -> {schema: 1, name, default_floor}
         floors/<floor>/
-            vocabulary.yaml        what the places here are CALLED (zone/v0).
-                                   No coordinates: safe to share with every
-                                   robot at the site.
-            binding.yaml           where THIS robot believes they are, in this
-                                   floor's map frame. Never shared; travels
-                                   inside a map revision, since a coordinate
-                                   means nothing without the map beside it.
-            zones.yaml             the combined file both used to be. Still
-                                   read; migrated to the pair on first write.
+            zones.yaml             the floor's places: what they are called
+                                   and where they are, in the floor's frame. A
+                                   map revision carries a copy so that they
+                                   reach a robot which has never driven here;
+                                   the floor owns them.
             map -> maps/<rev>/     symlink to the current map revision
             maps/<rev>/            immutable once published:
                 map.yaml + map.png     nav2 map_server pair — the cleaned map,
@@ -36,10 +32,10 @@ save, crash, or interrupted transfer is never visible to readers and
 rolling back is flipping to an older revision (``site use-map``). The
 newest revisions are kept, older ones pruned.
 
-Zone poses are coordinates in a map frame whose origin is an accident of
-where SLAM started, so zones/map/posegraph must live and travel together.
-A floor is one SLAM session (one frame); a site groups floors that share a
-location. The whole bundle is plain files + YAML so it can be zipped,
+A zone is a coordinate in the floor's frame — a fact about the building —
+and a map revision is one SLAM session registered into that frame, so
+zones/map/posegraph live and travel together. A site groups floors that share
+a location. The whole bundle is plain files + YAML so it can be zipped,
 synced, or served by a web API without translation.
 
 Site bundles are per-robot state, so they live under ``MOTE_HOME`` (``~/.mote``
@@ -51,14 +47,21 @@ stdlib-only so the fleet server can validate an uploaded revision with the same
 code that wrote it (fleet.md Q4). This module keeps the layout; that one keeps
 the content.
 
-Console script ``site`` (pixi tasks: site, save-map):
+Console script ``site`` (pixi task: site):
     site create <name> [--floor ground]   new site (+ becomes active if none)
     site add-floor <name>                 add a floor to the active site
     site use <site> [floor]               select the active site/floor
     site list | site info                 inspect
+    site save-zone <name> [...]           teach a zone at the robot's pose
+                                          (mote_tasks save_zone, a subprocess)
+    site clean <map.png> [...]            FFT declutter (map_cleanup.cli)
+    site segment [map.yaml] [--write]     propose a zone per room (rooms_cli)
     site save-map                         save map + posegraph from a running
                                           mapping session into the active floor
     site use-map <rev>                    roll the active floor to a revision
+
+Offering a saved map to the fleet registry is ``fleet publish-map`` (mote_fleet),
+not a ``site`` subcommand: saving must work with no fleet reachable.
 """
 
 import argparse
@@ -132,12 +135,10 @@ def resolve_map() -> str:
 
 
 def resolve_zones() -> str:
-    """The active floor's zones, or ''.
+    """The active floor's zones directory, or ''.
 
-    A *directory* now, not a file: the floor's zones are two documents, and
-    which of them a reader wants is the reader's business. What comes back is
-    what ``bundle.read_floor`` takes, so a legacy combined file still works —
-    it is inside the same directory.
+    The directory rather than the file, because that is what
+    ``bundle.read_floor`` takes.
     """
     act = active()
     if act:
@@ -148,13 +149,11 @@ def resolve_zones() -> str:
 
 
 def has_zones(fdir: Path) -> bool:
-    return (fdir / bundle.VOCABULARY_YAML).exists() or (
-        fdir / bundle.ZONES_YAML
-    ).exists()
+    return (fdir / bundle.ZONES_YAML).exists()
 
 
 def zones_for_write() -> Path:
-    """The floor newly taught zones should be written into."""
+    """The floor a newly bound zone should be written into."""
     act = active()
     if not act:
         sys.exit("no active site (run: site create <name>)")
@@ -249,23 +248,15 @@ def cmd_info():
             print(f"  zones        UNREADABLE ({exc})")
         else:
             with_fp = sum(1 for z in zones.values() if "radius" in z or "polygon" in z)
-            unbound = sum(1 for z in zones.values() if not z.get("bound"))
             notes = [f"{len(zones)} zones"]
             if with_fp:
                 notes.append(f"{with_fp} with a footprint")
-            # A name this robot has never been taught is worth saying: it is
-            # the difference between a floor it can work on and one it has only
-            # been told about.
-            if unbound:
-                notes.append(f"{unbound} not taught here")
-            legacy = " (combined zones.yaml — migrates on next write)"
-            split = (fdir / bundle.VOCABULARY_YAML).exists()
-            print(f"  zones        ok ({', '.join(notes)}){'' if split else legacy}")
+            print(f"  zones        ok ({', '.join(notes)})")
     else:
         print("  zones        missing")
     current = current_revision(fdir)
     if not current:
-        print("  map          none (run: pixi run save-map during mapping)")
+        print("  map          none (run: pixi run site save-map during mapping)")
         return
     for rev in revisions(fdir):
         marker = " *" if rev == current else ""
@@ -497,15 +488,12 @@ def install_revision(site: str, floor: str, revision: str, blob: bytes) -> str:
     and nothing has to be undone if the transfer dies. Returns what it did:
     ``current`` (nothing to do), ``flipped`` (already had it) or ``installed``.
 
-    **Coordinates travel with the map; names do not.** A revision from a
-    different mapping session is a different map frame, so the poses taught in
-    the old one are wrong the instant the new map is published — the bundle's
-    ``binding.yaml`` therefore replaces the floor's, and the one it replaces is
-    kept beside it as ``binding.<old-rev>.yaml``, because losing a map is
-    recoverable and losing every taught place silently is not. The
-    ``vocabulary.yaml`` is left alone: the rooms did not change their names
-    when the robot re-mapped them, which is the practical dividend of the
-    zone/v0 split.
+    **The revision's zones replace the floor's.** A revision carries a copy of
+    the floor's places so that they reach a robot which has never driven here,
+    and the copy in the revision an operator promoted is the fleet's current
+    answer to what this floor's places are. The copy it replaces is kept beside
+    it as ``zones.<old-rev>.yaml``, because losing a map is recoverable and
+    losing every named place silently is not.
     """
     fdir = floor_dir(site, floor)
     if not fdir.is_dir():
@@ -547,26 +535,22 @@ def install_revision(site: str, floor: str, revision: str, blob: bytes) -> str:
 
 
 def _adopt_zones(fdir: Path, rev_dir: Path, previous: str | None):
-    """Install a revision's **binding** as the floor's.
+    """Install a revision's copy of the floor's zones as the floor's.
 
-    Only the binding: it is the half that is bound to this revision's map
-    frame, and it is the half a different SLAM session makes wrong. The
-    vocabulary stays where it is, because the names of the rooms did not change
-    when the robot re-mapped the floor — which is the practical dividend of the
-    split, and the reason re-mapping no longer costs an operator the names
-    they typed.
+    The floor owns its zones and a revision carries a copy, so promoting a
+    revision is also how an edit made in the dashboard reaches a robot. The copy
+    being replaced is kept as ``zones.<old-rev>.yaml``, because losing a map is
+    recoverable and losing every named place silently is not.
     """
-    for name in (bundle.BINDING_YAML, bundle.ZONES_YAML):
-        source = rev_dir / name
-        if not source.is_file():
-            continue
-        target = fdir / name
-        if target.is_file():
-            if target.read_bytes() == source.read_bytes():
-                return
-            target.rename(fdir / f"{Path(name).stem}.{previous or 'previous'}.yaml")
-        shutil.copyfile(source, target)
+    source = rev_dir / bundle.ZONES_YAML
+    target = fdir / bundle.ZONES_YAML
+    if not source.is_file():
         return
+    if target.is_file():
+        if target.read_bytes() == source.read_bytes():
+            return
+        target.rename(fdir / f"zones.{previous or 'previous'}.yaml")
+    shutil.copyfile(source, target)
 
 
 def use_map(rev: str):
@@ -598,9 +582,23 @@ def main(argv=None):
         "use-map", help="roll the active floor to a map revision"
     )
     p_use_map.add_argument("revision")
+    # Forwarded wholesale to CLIs with their own flags (`site clean --help`).
+    for name, help_ in (
+        ("save-zone", "teach a zone from the robot's current pose"),
+        ("clean", "declutter a map PNG (FFT cleaning pass)"),
+        ("segment", "propose a zone per room of a saved map"),
+    ):
+        # Listed for --help; dispatched on argv[0] below, before argparse, because
+        # REMAINDER would not capture a leading `--write` or `--help`.
+        sub.add_parser(name, help=help_, add_help=False)
+
+    argv = sys.argv[1:] if argv is None else list(argv)
+    forwarded = {"save-zone": save_zone, "clean": clean, "segment": segment}
+    if argv and argv[0] in forwarded:
+        return forwarded[argv[0]](_forwarded(argv[1:]))
 
     args = parser.parse_args(argv)
-    {
+    return {
         "create": lambda: create(args.name, args.floor),
         "add-floor": lambda: add_floor(args.name),
         "use": lambda: use(args.site, args.floor),
@@ -611,5 +609,29 @@ def main(argv=None):
     }[args.command]()
 
 
+def _forwarded(rest):
+    """A subcommand's own arguments. pixi passes a ``--`` through to us, and
+    argparse would read it as the end of options."""
+    return rest[1:] if rest[:1] == ["--"] else rest
+
+
+def clean(argv):
+    from mote_bringup.map_cleanup import cli
+
+    return cli.main(argv)
+
+
+def segment(argv):
+    from mote_bringup.map_cleanup import rooms_cli
+
+    return rooms_cli.main(argv)
+
+
+def save_zone(argv):
+    """mote_tasks owns zones and imports this module, never the reverse, so the
+    seam is a process, not an import."""
+    return subprocess.run(["ros2", "run", "mote_tasks", "save_zone", *argv]).returncode
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

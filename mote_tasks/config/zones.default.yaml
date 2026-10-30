@@ -5,7 +5,7 @@
 # sit at (1.5, 1.0) and (-1.2, -1.5)) so `pixi run sim-mapping` + `pixi run
 # tasks` work out of the box with no saved site. They won't make sense
 # anywhere else — a real robot should always have an active site with its
-# own taught zones.yaml.
+# own zones.
 frame_id: map
 zones:
   pickup: {x: 1.8, y: -1.5, yaw: 0.0}

@@ -132,7 +132,7 @@ def declutter(rev_dir: Path, enabled: bool) -> dict:
     return sites.promote_cleaned(rev_dir)
 
 
-def segment(rev_dir: Path, site: str, floor: str, out_dir: Path) -> dict:
+def segment(rev_dir: Path, out_dir: Path) -> dict:
     """One polygon zone per room of the cleaned map, plus an overlay to look at.
 
     Geometry only: the names are ``room_NN`` placeholders for the reviewer to
@@ -150,17 +150,7 @@ def segment(rev_dir: Path, site: str, floor: str, out_dir: Path) -> dict:
 
     occ, geometry = load_map(rev_dir / "map.yaml")
     result = segment_rooms(occ, geometry, RoomParams())
-    added, skipped = merge_into_zones(
-        rev_dir,
-        result.rooms,
-        site=site,
-        floor=floor,
-        # The coordinates are in the *build's* map frame, which is no robot's.
-        # zone/v0 wants the platform that holds the frame named; naming the
-        # builder is the true answer and keeps a robot from being blamed for
-        # poses it never drove to.
-        platform_id="map-build",
-    )
+    added, skipped = merge_into_zones(rev_dir, result.rooms)
     overlay = out_dir / "rooms.png"
     cv2.imwrite(str(overlay), make_overlay(occ, geometry, result))
     return {
@@ -397,7 +387,7 @@ def main(argv=None) -> int:
             zones = {"added": [], "skipped": [], "n_rooms": 0}
             stage("segment", "skipped", "--no-segment")
         else:
-            zones = segment(rev_dir, args.site, args.floor, out_dir)
+            zones = segment(rev_dir, out_dir)
             stage("segment", "ok", f"{len(zones['added'])} room zone(s) proposed")
         zones["carry_forward"] = carry_forward(baseline_dir)
         stage("carry forward", "stub", "task 345 — names are reported, not rebound")
@@ -491,7 +481,7 @@ def main(argv=None) -> int:
             "route accepts enrolled robots only, so a builder needs a credential "
             "of its own — that is task 344; until it lands, a robot at the site "
             "can side-load the revision directory into its floor and "
-            "`pixi run publish-map --revision "
+            "`pixi run fleet publish-map --revision "
             f"{revision_id}`. Promotion is unchanged: an operator's audited "
             "call, in the dashboard or `fleetctl promote`."
         )

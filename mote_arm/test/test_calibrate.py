@@ -660,7 +660,7 @@ def test_a_failed_save_after_centring_says_the_servos_are_ahead_of_the_file():
     said = str(exc.value)
     assert "refusing to save: bad" in said
     assert "already been centred" in said
-    assert "arm-offsets restore" in said
+    assert "arm-setup offsets restore" in said
 
 
 def test_a_failed_save_under_skip_homing_leaves_nothing_to_recover():

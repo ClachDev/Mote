@@ -279,7 +279,9 @@ def health(
     ``map`` is which map revision this robot is actually running (M4). It is
     reported rather than assumed because the registry's canonical revision is
     what a floor *should* be on, and the difference between the two is the only
-    way to see a robot that has not picked up a new map.
+    way to see a robot that has not picked up a new map. Its ``revision`` is
+    what Nav2 serves and ``installed`` what is on disk, so a map pulled but not
+    yet loaded shows as the two disagreeing.
     """
     if state not in HEALTH_STATES:
         raise ProtocolError(f"unknown health state {state!r}")

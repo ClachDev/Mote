@@ -67,7 +67,7 @@ container, because the registry file it writes lives in the container's volume:
 ```bash
 ./fleet-deploy.sh fleetctl operator new --name you    # dispatch refuses without one
 ./fleet-deploy.sh fleetctl token new                  # an enrollment token
-pixi run enroll -- --server http://fleet-box:8080 --token mt-…   # on the robot
+pixi run fleet enroll --server http://fleet-box:8080 --token mt-…   # on the robot
 ```
 
 The dashboard is served by the same container, at `http://fleet-box:8080/`.

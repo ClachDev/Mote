@@ -1,6 +1,6 @@
 """CLI: propose named zones for the rooms of a saved map.
 
-    pixi run segment-map [MAP.yaml] [--write] [--out DIR]
+    pixi run site segment [MAP.yaml] [--write] [--out DIR]
 
 With no argument it segments the active site floor's current map (see
 :mod:`mote_bringup.sites`); pass a ``map.yaml`` to segment any saved revision.
@@ -11,7 +11,7 @@ what the rooms are actually called.
 
 Merging never overwrites: a candidate covering the pose of a zone that already
 has a footprint is dropped as already-named, and an existing zone is never
-touched. That makes re-running after teaching a few rooms by hand additive, and
+touched. That makes re-running after binding a few rooms by hand additive, and
 running twice in a row a no-op.
 """
 
@@ -80,14 +80,7 @@ def zone_entry(room: Room) -> dict:
     }
 
 
-def merge_into_zones(
-    path: Path,
-    rooms: list[Room],
-    *,
-    site: str = "",
-    floor: str = "",
-    platform_id: str | None = None,
-) -> tuple[list[str], list[str]]:
+def merge_into_zones(path: Path, rooms: list[Room]) -> tuple[list[str], list[str]]:
     """Add the rooms that are not already named to a zones file.
 
     Returns ``(added, skipped)`` names. A candidate is skipped when its outline
@@ -95,20 +88,15 @@ def merge_into_zones(
     that room has a name, and it is not this tool's to replace. Bare waypoints
     (a ``pickup`` standing in the middle of a hall) do not suppress anything:
     they name a spot, not the room around it.
-
-    ``site``/``floor``/``platform_id`` stamp the documents that come out. The
-    CLI leaves them to whatever the floor already says, because it is writing
-    into a floor that knows; the offline map build passes them, because it is
-    writing a revision for a floor it was told about on the command line.
     """
     if path.suffix == ".yaml":
-        # A caller that named the old combined file means the floor it is in.
+        # A caller that named the file means the floor it is in.
         path = path.parent
     try:
-        document = bundle.read_floor(path)
+        floor = bundle.read_floor(path)
     except bundle.BundleError:
-        document = {"frame_id": "map", "revision": 0, "zones": {}}
-    zones = document["zones"]
+        floor = {"frame_id": "map", "revision": 0, "zones": {}}
+    zones = floor["zones"]
 
     named = [
         (float(spec["x"]), float(spec["y"]))
@@ -128,17 +116,13 @@ def merge_into_zones(
         entry = zone_entry(room)
         zones[name] = dict(
             bundle.zone_term("segment-map", name, entry),
-            bound=True,
-            # Read off the map by an algorithm rather than driven to, which is
-            # what ``derived`` is for — and what tells an operator, later, that
-            # a re-map invalidates it without a human having done anything.
-            anchor=zone_spec.anchor(zone_spec.DERIVED, by="segment-map"),
+            source=zone_spec.SEGMENT_MAP,
             **{k: entry[k] for k in ("x", "y", "yaw", "polygon") if k in entry},
         )
         added.append(name)
     if added:
-        document["revision"] = int(document.get("revision") or 0) + 1
-    bundle.write_floor(path, document, site=site, floor=floor, platform_id=platform_id)
+        floor["revision"] = int(floor.get("revision") or 0) + 1
+    bundle.write_floor(path, floor)
     return added, skipped
 
 
@@ -218,7 +202,7 @@ def _resolve_zones(argument: str | None) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     defaults = RoomParams()
-    parser = argparse.ArgumentParser(prog="segment-map", description=__doc__)
+    parser = argparse.ArgumentParser(prog="site segment", description=__doc__)
     parser.add_argument("map", nargs="?", help="map.yaml (default: active floor's map)")
     parser.add_argument("--out", help="output directory (default: beside the map)")
     parser.add_argument(

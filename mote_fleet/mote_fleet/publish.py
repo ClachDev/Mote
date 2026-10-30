@@ -1,6 +1,6 @@
 """``publish-map`` — offer this robot's saved map to the fleet registry.
 
-The other half of ``pixi run save-map``: that writes a map revision into this
+The other half of ``pixi run site save-map``: that writes a map revision into this
 robot's site bundle, this hands it to the fleet server, which validates it and
 keeps it as a **candidate**. Publishing changes nothing for anybody until an
 operator promotes it (``fleetctl promote``), which is what makes it safe to run
@@ -12,9 +12,9 @@ work on a robot that has never seen a fleet server; publishing needs a network
 and an enrollment. Chaining them would make the first fail when the second
 cannot happen.
 
-    pixi run save-map                     # save locally, as always
-    pixi run publish-map                  # offer it to the fleet
-    pixi run publish-map -- --revision 20260727T101500
+    pixi run site save-map                     # save locally, as always
+    pixi run fleet publish-map                  # offer it to the fleet
+    pixi run fleet publish-map --revision 20260727T101500
 """
 
 import argparse
@@ -26,7 +26,7 @@ from mote_fleet import fleet_config, mapsync
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="publish-map", description=__doc__)
+    parser = argparse.ArgumentParser(prog="fleet publish-map", description=__doc__)
     parser.add_argument(
         "--revision",
         default="",
@@ -59,7 +59,7 @@ def main(argv=None):
     if not revision:
         sys.exit(
             f"{site}/{floor} has no saved map to publish "
-            "(run: pixi run save-map during a mapping session)"
+            "(run: pixi run site save-map during a mapping session)"
         )
 
     config = fleet_config.load() or {}

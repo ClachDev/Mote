@@ -115,8 +115,8 @@ def test_the_capability_set_is_the_robots_own(robot):
     [
         (a_command(capability="wibble"), mission.UNKNOWN_CAPABILITY),
         (a_command(payload_input={}), mission.INVALID_INPUT),
-        (a_command(payload_input={"target": "Nowhere"}), mission.INVALID_INPUT),
-        (a_command(payload_input={"target": "nowhere"}), mission.UNRESOLVED_ZONE),
+        (a_command(payload_input={"target": "Nowhere "}), mission.INVALID_INPUT),
+        (a_command(payload_input={"target": "Nowhere"}), mission.UNRESOLVED_ZONE),
         (
             a_command(capability="fetch", payload_input={"target": "box"}),
             mission.INVALID_INPUT,

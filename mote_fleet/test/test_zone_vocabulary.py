@@ -71,7 +71,7 @@ def test_a_floor_serves_the_name_of_each_place_and_a_note(server):
 
 
 #: Everything a zone entry used to carry beside its name. The harness fixture
-#: still has them, because a floor taught before place-names has to keep
+#: still has them, because a floor written before place-names has to keep
 #: loading; none of them may be served.
 RETIRED_KEYS = frozenset(
     ("kind", "display_name", "aliases", "parent", "tags", "description")
@@ -107,7 +107,7 @@ def test_a_constraint_zone_is_named_but_not_navigable(server):
 
     The fixture says so with the retired ``kind: keepout`` and nothing else,
     which is the migration: dropping the taxonomy without reading it here would
-    have turned every barrier on every already-taught floor into a destination,
+    have turned every barrier on every already-written floor into a destination,
     silently, on the first load after the upgrade.
     """
     _, body = get(server, f"/v1/zones/{SITE}/{FLOOR}")

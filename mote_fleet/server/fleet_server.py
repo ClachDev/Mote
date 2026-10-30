@@ -18,8 +18,8 @@ The contract is ``docs/fleet/fleet-api.md``::
 
     GET  /healthz                            liveness + how many robots
     GET  /v1/config                          what the browser needs to bootstrap
-    GET  /v1/robots                          the roster
-    GET  /v1/robots/<id>                     one row
+    GET  /v1/robots                          the roster + each robot's presence
+    GET  /v1/robots/<id>                     one row + its live state
     POST /v1/enroll                          allocate (or return) a robot id
     POST /v1/robots/<id>/dispatch            authorize, audit, then publish a
                                              mission (capability + typed input)
@@ -27,8 +27,8 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET  /v1/maps                            basemaps this server can serve
     GET  /v1/maps/<site>/<floor>/map.json    resolution + origin (the Q5 transform)
     GET  /v1/maps/<site>/<floor>/map.png     the basemap image
-    GET  /v1/maps/<site>/<floor>/zones.json  the floor's zone *binding*
-    GET  /v1/zones                           every floor's zone *vocabulary*
+    GET  /v1/maps/<site>/<floor>/zones.json  the floor's zones, with poses
+    GET  /v1/zones                           every floor's zone *names*
     GET  /v1/zones/<site>/<floor>            one floor's, as a zone/v0 document
     GET  /v1/sites                           the registry: floors + canonical rev
     GET  /v1/sites/<site>/floors/<floor>     revisions, validated, with provenance
@@ -36,11 +36,14 @@ The contract is ``docs/fleet/fleet-api.md``::
     GET      .../revisions/<rev>/bundle.tar.gz   pull one (robot)
     GET      .../revisions/<rev>/map.json    that revision's own Q5 transform
     GET      .../revisions/<rev>/map.png     that revision's own image
-    GET      .../revisions/<rev>/zones.json  that revision's own zone binding
+    GET      .../revisions/<rev>/zones.json  the zones that revision carries
     POST     .../revisions/<rev>/promote     make it canonical (operator)
     POST /v1/sites/<site>/floors/<floor>/zones  edited zones of a revision ->
                                              a new candidate (operator)
     GET  /                                   the operator UI (static files)
+
+The table that dispatches these is ``ROUTES``, below, and it carries what each
+one costs: an operator token unless the entry says otherwise.
 
     pixi run fleet-server -- --db ~/fleet/registry.db --broker-host fleet-box
 
@@ -62,34 +65,60 @@ coming back is typed — ``invalid_input`` naming the property, ``busy`` naming
 the mission that holds the lane — so a dispatcher decides what to do without
 reading prose.
 
+**A robot's state is readable without joining the broker.** M3's split — reads
+over MQTT, writes over HTTP — is right for the dashboard, which wants a live
+stream, and wrong for a client that asks once and acts. So this server holds
+its own subscription to the retained half of the topic tree (:class:`BrokerFeed`
+into :class:`RobotState`) and answers ``GET /v1/robots/<id>`` with what it last
+saw: presence, health, pose, capabilities and the last mission status, each
+forwarded as published or null. Such a client then depends on
+``docs/fleet/fleet-api.md`` alone rather than on the topic tree, its retention
+rules and a broker credential — three contracts to track instead of one, which
+is what the abandoned MCP front door was rewritten under twice.
+
 **The registry is the source of truth for maps (M4).** A robot uploads a saved
 revision as a *candidate*, which changes nothing; an operator promotes one, which
 flips the floor's ``map`` symlink and publishes the retained
 ``registry/site/<site>/floor/<floor>/current`` every agent pulls from. Two robots
 mapping one floor therefore end with two candidates and no merge — a map frame's
-origin is an accident of where SLAM started, so merging frames would break every
-taught zone (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
+origin is an accident of where SLAM started, so merging frames would put the
+floor's zones somewhere nobody put them (fleet.md Q4). The bytes live in :mod:`bundle_store`, and both ends
 validate with the *same* ROS-free module the robot writes with
 (``mote_bringup.bundle``).
 
-**Names are served; coordinates are not (zone/v0).** The same site bundles hold
-the answer to the question a dispatcher actually asks — *what places can I
-name?* — and until now the only ways to get it were an out-of-band document or
-scraping the list a robot prints when it refuses an unknown zone. ``/v1/zones``
-answers it directly, and answers it with a **vocabulary**: the name of each
-place and a note about it, no coordinates, no frame. That restraint is what
-makes publishing it safe. A zone's pose is a coordinate in one robot's map frame, whose origin is an
-accident of where its SLAM session started, so it is true for that robot and
-false for the one beside it; the name is true for both. The binding stays where
-it was, under ``/v1/maps``, served to the client that also has the basemap.
+**Two routes, two views of one file.** The site bundles hold the answer to the
+question a dispatcher asks — *what places can I name?* — and ``/v1/zones``
+answers it with the **names** and nothing else: what each place is called and a
+note about it, no coordinates. Not because a coordinate would be wrong — a zone
+is a coordinate in the floor's frame and every robot on the floor holds the same
+one — but because a caller with no basemap has nothing to draw one on, and being
+handed a number it cannot place is worse than not being handed it. The poses
+stay under ``/v1/maps``, gated on there being a published map, served to the
+client that also has the basemap to put them on.
 
-**Security posture for M3:** the read routes are still unauthenticated, exactly
-as M1 left them, and the broker is still anonymous. What M3 adds is a credential
-on the *write* path and a record of who used it. That stays proportionate only
-while the tailnet is the boundary; M7 is where operator auth reaches the read
-routes, per-robot broker credentials land, and Tailscale ACLs stop robots
-reaching each other. Until then, do not expose this port to a network the robots
-are not already trusted on.
+**Every ``/v1`` route needs a credential, and one gate takes it.** Through M3
+only dispatch checked, which left the roster, the basemaps, the audit log and
+the broker's address readable by anything that could reach the port. The check
+now happens in ``_handle`` in front of route dispatch, against the table above,
+so a route added later is authenticated without anyone remembering to
+authenticate it and an anonymous caller is refused before the table is consulted
+for existence — a 404 would say which routes are real.
+
+What is open is open for a stated reason rather than by omission. ``/healthz``,
+because a liveness probe that needs a secret is a liveness probe nobody wires up.
+The static UI — which is not in the table at all, being what an unmatched GET
+falls through to — because the page has to load in order to ask for a token, and
+it holds no fleet data until it has one. ``POST /v1/enroll``, because it carries
+its own credential in the body and an unattended first boot has no human behind
+it. And both halves of M4's map exchange, a robot uploading a candidate and a
+robot pulling the revision it was told is canonical, because robots have no
+credential to present yet; an upload is bounded, audited and inert, and a pull
+serves what an operator has already promoted.
+
+The tailnet (``mote_bringup/tailscale/policy.hujson``) is still the outer
+boundary and still what keeps this port off the public internet. What changed is
+that it is no longer the *only* boundary. The broker remains anonymous: giving
+robots and operators their own broker credentials is its own piece of work.
 """
 
 import argparse
@@ -102,6 +131,7 @@ import sys
 import traceback
 import threading
 import time
+import typing
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -149,14 +179,138 @@ UI_DIR = Path(__file__).resolve().parent / "ui"
 # test without a package.json declaring the tree a module.
 mimetypes.add_type("text/javascript", ".mjs")
 
-#: Route shape for the registry's per-revision paths. The three review leaves
-#: mirror ``/v1/maps/<site>/<floor>/…`` exactly, because they answer the same
-#: three questions about a revision that is *not* the floor's canonical one —
-#: which is what an operator has to see before promoting it.
-REVISION_RE = re.compile(
-    r"^(?P<site>[^/]+)/floors/(?P<floor>[^/]+)/revisions/(?P<revision>[^/]+)"
-    r"(?P<leaf>/promote|/bundle\.tar\.gz|/map\.json|/map\.png|/zones\.json)?$"
+#: What a revision answers to under review. These three mirror
+#: ``/v1/maps/<site>/<floor>/…`` exactly, because they answer the same three
+#: questions about a revision that is *not* the floor's canonical one — which is
+#: what an operator has to see before promoting it. ``bundle.tar.gz`` is not one
+#: of them: it is the robot's pull, and has a route of its own.
+REVIEW_LEAVES = ("map.json", "map.png", "zones.json")
+
+
+# -- the route table --------------------------------------------------------
+#
+# One table, read by the request gate and walked by the tests. Making it the
+# thing that *dispatches* rather than a description beside a chain of `elif`s is
+# what keeps "every route is authorized" a property of the code instead of a
+# claim about it: a route that is not in the table is not served, and a route in
+# the table carries its credential requirement in the same line as its path.
+
+#: An operator token as a bearer header. The default, and the reason it is the
+#: default: a route added later is authenticated without anybody remembering to
+#: authenticate it, and has to opt out in a line a reviewer reads.
+OPERATOR = "operator"
+#: The enrollment token in the request body. A robot is not an operator, and an
+#: unattended first boot has no human behind it.
+ENROLLMENT = "enrollment"
+#: No credential, by M4's decision: an upload names an enrolled robot, is
+#: bounded and audited, and is inert until an operator promotes it; a pull serves
+#: what an operator has already promoted. Robots have nothing else to present.
+ROBOT = "robot"
+#: Open to anything that can reach the port, for a stated reason.
+OPEN = "open"
+
+
+class Route(typing.NamedTuple):
+    """One path this server answers, and what it costs to reach it."""
+
+    method: str
+    #: Path template. ``{name}`` matches one segment and is passed to the
+    #: handler as a keyword argument of that name.
+    template: str
+    handler: str
+    auth: str = OPERATOR
+    #: The handler answers the refusal itself, because it records the attempt
+    #: in the audit log first — "who tried" is the half of an audit trail a
+    #: dashboard never shows you. The gate still resolves the token; what it
+    #: hands over is ``operator=None``.
+    audits_refusal: bool = False
+    #: The handler reads the request body itself: an uploaded bundle is neither
+    #: JSON nor small.
+    raw_body: bool = False
+
+
+ROUTES = (
+    # Open, and each for a reason rather than by omission. /healthz because a
+    # liveness probe that needs a secret is a liveness probe nobody wires up;
+    # enrollment because it carries its own credential; the two halves of the
+    # robot's map exchange per M4 (below).
+    Route("GET", "/healthz", "_healthz", OPEN),
+    Route("POST", "/v1/enroll", "_enroll", ENROLLMENT),
+    Route(
+        "POST",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}",
+        "_upload",
+        ROBOT,
+        raw_body=True,
+    ),
+    # A robot pulling the revision it was just told is canonical. It is the
+    # other half of the upload above and carries no credential for the same
+    # reason: robots have none to carry yet. This entry precedes the review
+    # leaves below so the literal segment wins over ``{leaf}``.
+    Route(
+        "GET",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}/bundle.tar.gz",
+        "_bundle",
+        ROBOT,
+    ),
+    # Everything else needs an operator.
+    Route("GET", "/v1/config", "_config"),
+    Route("GET", "/v1/robots", "_roster"),
+    Route("GET", "/v1/robots/{robot_id}", "_robot"),
+    Route("GET", "/v1/audit", "_audit"),
+    Route("GET", "/v1/maps", "_maps"),
+    Route("GET", "/v1/maps/{site}/{floor}/{leaf}", "_map"),
+    Route("GET", "/v1/zones", "_zones"),
+    Route("GET", "/v1/zones/{site}/{floor}", "_vocabulary"),
+    Route("GET", "/v1/sites", "_sites"),
+    Route("GET", "/v1/sites/{site}/floors/{floor}", "_floor"),
+    Route(
+        "GET",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}/{leaf}",
+        "_revision",
+    ),
+    Route(
+        "POST",
+        "/v1/robots/{robot_id}/dispatch",
+        "_dispatch",
+        audits_refusal=True,
+    ),
+    Route(
+        "POST",
+        "/v1/sites/{site}/floors/{floor}/zones",
+        "_edit_zones",
+        audits_refusal=True,
+    ),
+    Route(
+        "POST",
+        "/v1/sites/{site}/floors/{floor}/revisions/{revision}/promote",
+        "_promote",
+        audits_refusal=True,
+    ),
 )
+
+
+def match_route(method: str, path: str):
+    """``(route, path variables)`` for a request, or ``(None, {})``.
+
+    Matching is on the raw path, never on an unquoted one: ``%2F`` stays inside
+    a segment, so a name carrying an escaped separator reaches ``_names`` and is
+    refused there rather than silently becoming two path components.
+    """
+    parts = path.strip("/").split("/")
+    for route in ROUTES:
+        shape = route.template.strip("/").split("/")
+        if route.method != method or len(shape) != len(parts):
+            continue
+        variables = {}
+        for expected, actual in zip(shape, parts):
+            if expected.startswith("{"):
+                variables[expected[1:-1]] = actual
+            elif expected != actual:
+                break
+        else:
+            return route, variables
+    return None, {}
 
 
 class BrokerLink:
@@ -223,6 +377,192 @@ class BrokerLink:
             try:
                 client.disconnect()
                 client.loop_stop()
+            except Exception:
+                pass
+
+
+#: The leaves this server keeps the last retained payload of — everything the
+#: dashboard subscribes to, so a client that asks once over HTTP is told what a
+#: client following the stream would see.
+STATE_LEAVES = (
+    protocol.PRESENCE,
+    protocol.HEALTH,
+    protocol.POSE,
+    protocol.CAPABILITIES,
+    protocol.STATUS,
+)
+
+#: `mission/status` is not a JSON key. A field name is its topic leaf with the
+#: separator flattened, so the route's payload maps onto the topic tree without
+#: a table to look either up in.
+STATE_FIELDS = {leaf: leaf.replace("/", "_") for leaf in STATE_LEAVES}
+
+
+class RobotState:
+    """The last retained payload this server saw on each robot's topics.
+
+    This is the read half of the control plane held in memory, for the client
+    that asks once and acts rather than following a stream — an MCP front door,
+    ``fleetctl``, a script. Such a client should not have to speak MQTT, track
+    the topic tree, know which topics are retained and, after M7, hold a broker
+    credential, to answer *is this robot online and what is it doing*.
+
+    Payloads are stored and served as published: this server subscribes to the
+    same topics the dashboard does and forwards what it was handed, never
+    adding, renaming or reinterpreting a field. That is the rule the agent
+    follows, for the same reason — there is one definition of these payloads,
+    in ``mission/v0`` and ``control-plane.md``, and a second reading of them
+    here would be a contract nobody declared.
+
+    Nothing is persisted. Every topic it reads is retained, so a restarted
+    server is repopulated by the broker within a second of connecting, and a
+    persisted copy could only ever be the staler answer.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._robots: dict[str, dict] = {}
+        #: Whether the subscription is live. Without it a client cannot tell a
+        #: robot that has said nothing from a server that cannot hear.
+        self.connected = False
+
+    def apply(self, topic: str, raw: bytes) -> bool:
+        """Take one message off the wire. True if it is one this server holds
+        state from — a robot's topic, one of the leaves above, a JSON object or
+        the empty payload that clears one."""
+        parsed = protocol.parse_topic(topic)
+        if parsed is None:
+            return False
+        robot_id, leaf = parsed
+        if leaf not in STATE_LEAVES or not protocol.valid_id(robot_id):
+            return False
+        if not raw:
+            # A zero-length payload is how a publisher *clears* a retained
+            # topic. Keeping the last value would leave this server asserting a
+            # state the broker has stopped serving.
+            with self._lock:
+                self._robots.get(robot_id, {}).pop(leaf, None)
+            return True
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        with self._lock:
+            self._robots.setdefault(robot_id, {})[leaf] = payload
+        return True
+
+    def of(self, robot_id: str) -> dict:
+        """Every state field for one robot, the ones never heard of null.
+
+        Null is the honest answer and the only one available: a payload this
+        server has not been handed cannot be invented, and a robot that has
+        never connected differs from one that has only in that its topics are
+        empty.
+        """
+        with self._lock:
+            held = dict(self._robots.get(robot_id) or {})
+        return {field: held.get(leaf) for leaf, field in STATE_FIELDS.items()}
+
+    def presence(self, robot_id: str):
+        """Just the presence payload — what the roster carries per row."""
+        with self._lock:
+            return (self._robots.get(robot_id) or {}).get(protocol.PRESENCE)
+
+
+class BrokerFeed:
+    """This server's subscription to the fleet's retained state.
+
+    Separate from :class:`BrokerLink` because the two halves fail differently.
+    A publish that does not land must be reported to the operator who asked for
+    it, synchronously; a subscription that drops must reconnect and resubscribe
+    on its own, forever, with nobody asking.
+
+    **The subscribe lives in ``on_connect``.** A broker restart hands the client
+    a clean session, so one that subscribed beside its connect comes back
+    subscribed to nothing: it stays connected and goes silent, which is
+    indistinguishable from a fleet with nothing to say. The agent and
+    ``fleetctl`` are arranged the same way, for the same reason.
+
+    paho is imported on first use, which keeps this module's import surface the
+    standard library plus the wire contract.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        state: RobotState,
+        *,
+        keepalive: int = 30,
+        client_id: str = "mote-fleet-api-feed",
+    ):
+        self.host = host
+        self.port = int(port)
+        self.state = state
+        self.keepalive = keepalive
+        self.client_id = client_id
+        self._client = None
+
+    def start(self) -> bool:
+        """Connect in the background. A broker that is down is not an error
+        here: the API must answer while the robots are unreachable, and say so
+        rather than wait."""
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError as exc:
+            print(f"no MQTT client, robot state unavailable: {exc}", file=sys.stderr)
+            return False
+        try:
+            client = mqtt.Client(
+                mqtt.CallbackAPIVersion.VERSION2, client_id=self.client_id
+            )
+        except AttributeError:  # paho 1.x
+            client = mqtt.Client(client_id=self.client_id)
+        client.on_connect = self._on_connect
+        client.on_disconnect = self._on_disconnect
+        client.on_message = self._on_message
+        client.reconnect_delay_set(min_delay=1, max_delay=30)
+        self._client = client
+        try:
+            client.connect_async(self.host, self.port, keepalive=self.keepalive)
+            client.loop_start()
+        except (OSError, ValueError) as exc:
+            print(f"robot state feed not started: {exc}", file=sys.stderr)
+            self._client = None
+            return False
+        return True
+
+    def _on_connect(self, client, _userdata, _flags, reason_code, *_args):
+        # paho calls this for a refused CONNACK too (after M7, a bad broker
+        # credential). paho 2 passes a ReasonCode, paho 1 an int that is 0 on
+        # success.
+        if getattr(reason_code, "is_failure", reason_code != 0):
+            self.state.connected = False
+            print(
+                f"broker {self.host}:{self.port} refused the robot state feed: "
+                f"{reason_code}",
+                file=sys.stderr,
+            )
+            return
+        for leaf in STATE_LEAVES:
+            client.subscribe(protocol.any_robot(leaf), qos=protocol.QOS)
+        self.state.connected = True
+
+    def _on_disconnect(self, _client, _userdata, *_args):
+        self.state.connected = False
+
+    def _on_message(self, _client, _userdata, message):
+        self.state.apply(message.topic, bytes(message.payload))
+
+    def close(self):
+        client, self._client = self._client, None
+        self.state.connected = False
+        if client is not None:
+            try:
+                client.loop_stop()
+                client.disconnect()
             except Exception:
                 pass
 
@@ -302,89 +642,119 @@ class FleetHandler(BaseHTTPRequestHandler):
     # -- routes -----------------------------------------------------------
 
     def do_HEAD(self):
-        self.do_GET()
+        self._handle("GET")
 
     def do_GET(self):
-        path, _, query = self.path.partition("?")
-        path = path.rstrip("/") or "/"
-        params = urllib.parse.parse_qs(query)
-
-        if path == "/healthz":
-            self._send(
-                200,
-                {
-                    "schema": protocol.SCHEMA,
-                    "ok": True,
-                    "service": "mote-fleet",
-                    "contract": f"{protocol.ROOT}/{protocol.VERSION}",
-                    "version": VERSION,
-                    "robots": len(self.server.registry.robots()),
-                },
-            )
-        elif path == "/v1/config":
-            self._send(200, self.server.ui_config())
-        elif path == "/v1/robots":
-            self._send(
-                200,
-                {"schema": protocol.SCHEMA, "robots": self.server.registry.robots()},
-            )
-        elif path.startswith("/v1/robots/"):
-            robot = self.server.registry.robot(path.rsplit("/", 1)[-1])
-            if robot is None:
-                self._error(404, "no such robot")
-            else:
-                self._send(200, {"schema": protocol.SCHEMA, **robot})
-        elif path == "/v1/audit":
-            self._audit(params)
-        elif path == "/v1/maps":
-            self._send(
-                200, {"schema": protocol.SCHEMA, "maps": self.server.list_maps()}
-            )
-        elif path.startswith("/v1/maps/"):
-            self._map(path[len("/v1/maps/") :])
-        elif path == "/v1/zones":
-            self._store(lambda store: {"vocabularies": store.vocabularies()})
-        elif path.startswith("/v1/zones/"):
-            self._vocabulary(path[len("/v1/zones/") :])
-        elif path == "/v1/sites":
-            self._store(lambda store: {"sites": store.sites()})
-        elif path.startswith("/v1/sites/"):
-            self._registry_get(path[len("/v1/sites/") :])
-        elif path.startswith("/v1/"):
-            self._error(404, f"no route {path}")
-        else:
-            self._static(path)
+        self._handle("GET")
 
     def do_POST(self):
+        self._handle("POST")
+
+    def _handle(self, method: str):
+        """Resolve the route, take the credential, then call the handler.
+
+        The credential is taken **here**, once, in front of every route rather
+        than inside the handlers that happen to want one. Through M3 only
+        dispatch checked, which left the roster, the basemaps, the audit log and
+        the broker's address readable by anything that could reach the port.
+        Checking here also settles what an unauthenticated caller learns from a
+        path that does not exist: nothing, because the answer is 401 before the
+        route table is consulted for existence.
+        """
         raw_path, _, query = self.path.partition("?")
         path = raw_path.rstrip("/") or "/"
-        params = urllib.parse.parse_qs(query)
-        # The upload route carries a packed bundle, so it reads its own body:
-        # everything else here is JSON and small.
-        if path.startswith("/v1/sites/") and not (
-            path.endswith("/promote") or path.endswith("/zones")
-        ):
-            self._upload(path[len("/v1/sites/") :], params)
+        self.params = urllib.parse.parse_qs(query)
+        self.body = {}
+        self.operator = None
+        self.auth_error = ""
+
+        route, path_vars = match_route(method, path)
+        if route is None:
+            # Default deny, and deny *before* answering: an unrouted path under
+            # /v1 is authenticated first, so a 404 cannot be used to map which
+            # routes are real. Everything else is the static UI, which is open
+            # because the page has to load in order to ask for a token.
+            if path == "/v1" or path.startswith("/v1/"):
+                if self._authorize() is None:
+                    return
+                self._error(404, f"no route {path}")
+            elif method == "GET":
+                self._static(path)
+            else:
+                self._error(404, f"no route {path}")
             return
+
+        if route.auth == OPERATOR:
+            self.operator = self._authorize(defer=route.audits_refusal)
+            if self.operator is None and not route.audits_refusal:
+                return
+
+        if not route.raw_body:
+            try:
+                self.body = self._body()
+            except ValueError as exc:
+                self._error(400, str(exc))
+                return
+
+        getattr(self, route.handler)(**path_vars)
+
+    def _authorize(self, defer: bool = False):
+        """The operator behind this request, or None having answered 401.
+
+        ``defer`` leaves the answer to the handler, which is what an audited
+        route needs: the refusal has to reach the log naming what was attempted,
+        and only the handler knows that.
+        """
         try:
-            body = self._body()
-        except ValueError as exc:
-            self._error(400, str(exc))
-            return
-        if path == "/v1/enroll":
-            self._enroll(body)
-        elif path.startswith("/v1/robots/") and path.endswith("/dispatch"):
-            self._dispatch(path[len("/v1/robots/") : -len("/dispatch")], body)
-        elif path.startswith("/v1/sites/") and path.endswith("/promote"):
-            self._promote(path[len("/v1/sites/") :], body)
-        elif path.startswith("/v1/sites/") and path.endswith("/zones"):
-            self._edit_zones(path[len("/v1/sites/") : -len("/zones")], body)
-        else:
-            self._error(404, f"no route {path}")
+            return self._operator()
+        except Unauthorized as exc:
+            self.auth_error = str(exc)
+            if not defer:
+                self._error(401, str(exc))
+            return None
+
+    def _refuse(self, **record) -> None:
+        """Record an unauthorized attempt on an audited route, then answer it."""
+        self.server.registry.record(
+            actor="anonymous",
+            result="unauthorized",
+            detail=self.auth_error,
+            remote=self.address_string(),
+            **record,
+        )
+        self._error(401, self.auth_error)
+
+    # -- what the routes answer -------------------------------------------
+
+    def _healthz(self):
+        self._send(
+            200,
+            {
+                "schema": protocol.SCHEMA,
+                "ok": True,
+                "service": "mote-fleet",
+                "contract": f"{protocol.ROOT}/{protocol.VERSION}",
+                "version": VERSION,
+                "robots": len(self.server.registry.robots()),
+            },
+        )
+
+    def _config(self):
+        self._send(200, self.server.ui_config())
+
+    def _maps(self):
+        self._send(200, {"schema": protocol.SCHEMA, "maps": self.server.list_maps()})
+
+    def _zones(self):
+        self._store(lambda store: {"vocabularies": store.vocabularies()})
+
+    def _sites(self):
+        self._store(lambda store: {"sites": store.sites()})
 
     # -- enrollment -------------------------------------------------------
 
-    def _enroll(self, body: dict):
+    def _enroll(self):
+        body = self.body
         token = (body.get("token") or "").strip()
         fingerprint = (body.get("fingerprint") or "").strip()
         requested_id = (body.get("robot_id") or "").strip()
@@ -437,9 +807,59 @@ class FleetHandler(BaseHTTPRequestHandler):
             },
         )
 
+    # -- the roster and one robot's live state ----------------------------
+
+    def _roster(self):
+        """Every enrolled robot, each with its ``presence`` payload.
+
+        Presence rather than the whole state: a client picking a robot to
+        dispatch to asks one question — which of these is online — and the
+        answer to it should not cost a request per robot. Everything else about
+        one robot is on that robot's own route.
+        """
+        state = self.server.state
+        self._send(
+            200,
+            {
+                "schema": protocol.SCHEMA,
+                "broker_connected": state.connected,
+                "robots": [
+                    {**row, "presence": state.presence(row["robot_id"])}
+                    for row in self.server.registry.robots()
+                ],
+            },
+        )
+
+    def _robot(self, robot_id: str):
+        """One robot: its registry row, and the retained state as last seen.
+
+        This is the whole of what the dashboard's MQTT subscription gets,
+        answered over HTTP for the client that asks once and acts. What it is
+        not is a stream: ``mission_status`` is the *last* status, one
+        transition, and a caller that wants every transition subscribes to the
+        topic the way the browser does.
+
+        The token is the gate's, like every ``/v1`` route's. It hides less than
+        it looks: the same payloads are on the broker, which is still anonymous.
+        """
+        robot = self.server.registry.robot(robot_id)
+        if robot is None:
+            self._error(404, "no such robot")
+            return
+        state = self.server.state
+        self._send(
+            200,
+            {
+                "schema": protocol.SCHEMA,
+                **robot,
+                "broker_connected": state.connected,
+                **state.of(robot_id),
+            },
+        )
+
     # -- dispatch + audit -------------------------------------------------
 
-    def _dispatch(self, robot_id: str, body: dict):
+    def _dispatch(self, robot_id: str):
         """Authorize, record, publish — in that order.
 
         The order is the point. The audit row is written *before* the publish
@@ -455,6 +875,7 @@ class FleetHandler(BaseHTTPRequestHandler):
         ``invalid_input`` and says which property, which is an answer an
         operator can act on and a parser here could not improve.
         """
+        body = self.body
         registry = self.server.registry
         remote = self.address_string()
         capability = str(body.get("capability") or "").strip()
@@ -462,22 +883,15 @@ class FleetHandler(BaseHTTPRequestHandler):
         if payload_input is None:
             payload_input = {}
         described = _describe(capability, payload_input)
-        try:
-            operator = self._operator()
-        except Unauthorized as exc:
-            registry.record(
-                actor="anonymous",
+        if self.operator is None:
+            self._refuse(
                 action="dispatch",
                 robot_id=robot_id,
                 command=described[:MAX_COMMAND],
-                result="unauthorized",
-                detail=str(exc),
-                remote=remote,
             )
-            self._error(401, str(exc))
             return
 
-        actor = operator["name"]
+        actor = self.operator["name"]
         if not capability:
             self._error(400, "a capability is required")
             return
@@ -554,12 +968,8 @@ class FleetHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _audit(self, params: dict):
-        try:
-            self._operator()
-        except Unauthorized as exc:
-            self._error(401, str(exc))
-            return
+    def _audit(self):
+        params = self.params
         try:
             limit = int((params.get("limit") or ["100"])[0])
         except ValueError:
@@ -576,13 +986,11 @@ class FleetHandler(BaseHTTPRequestHandler):
 
     # -- basemaps ---------------------------------------------------------
 
-    def _map(self, rest: str):
-        parts = rest.split("/")
+    def _map(self, site: str, floor: str, leaf: str):
         leaves = ("map.json", "map.png", "zones.json")
-        if len(parts) != 3 or parts[2] not in leaves:
+        if leaf not in leaves:
             self._error(404, f"expected /v1/maps/<site>/<floor>/{'|'.join(leaves)}")
             return
-        site, floor, leaf = parts
         if not self._names(site, floor):
             return
         if leaf == "zones.json":
@@ -624,21 +1032,16 @@ class FleetHandler(BaseHTTPRequestHandler):
 
     # -- the zone vocabulary ----------------------------------------------
 
-    def _vocabulary(self, rest: str):
+    def _vocabulary(self, site: str, floor: str):
         """``/v1/zones/<site>/<floor>`` — what places can be named here.
 
-        The split zone/v0 asks for is expressed by the route, which is why this
-        is not another leaf under ``/v1/maps``. Everything under that prefix is
-        bound to a basemap and is only true for the robot that taught it; this
-        is bound to nothing, and is true for every robot at the site. A caller
-        that must never be handed a map — an MCP front door turning "take it to
-        the kitchen" into ``goto kitchen`` — can be given this and only this.
+        Its own prefix rather than another leaf under ``/v1/maps``, because
+        everything under that one is served beside a basemap and gated on there
+        being one. This needs no published map and nothing to make sense of,
+        so a caller that must never be handed a map — an MCP front door turning
+        "take it to the kitchen" into ``goto kitchen`` — can be given this and
+        only this.
         """
-        parts = rest.split("/")
-        if len(parts) != 2:
-            self._error(404, "expected /v1/zones/<site>/<floor>")
-            return
-        site, floor = parts
         if not self._names(site, floor):
             return
         self._store(lambda store: store.read_vocabulary(site, floor))
@@ -666,29 +1069,25 @@ class FleetHandler(BaseHTTPRequestHandler):
             return
         self._send(200, {"schema": protocol.SCHEMA, **payload})
 
-    def _registry_get(self, rest: str):
-        parts = rest.split("/")
-        if len(parts) == 3 and parts[1] == "floors":
-            site, _, floor = parts
-            if self._names(site, floor):
-                self._store(lambda store: store.detail(site, floor))
+    def _floor(self, site: str, floor: str):
+        if not self._names(site, floor):
             return
-        match = REVISION_RE.match(rest)
-        # `/promote` is a POST, and a bare revision path has nothing to answer:
-        # both are 404 here rather than falling through to the bundle.
-        if not match or match.group("leaf") in (None, "/promote"):
-            self._error(404, f"no route /v1/sites/{rest}")
+        self._store(lambda store: store.detail(site, floor))
+
+    def _revision(self, site: str, floor: str, revision: str, leaf: str):
+        if leaf not in REVIEW_LEAVES:
+            self._error(404, f"expected one of {'|'.join(REVIEW_LEAVES)}")
             return
-        site, floor = match.group("site"), match.group("floor")
-        revision = match.group("revision")
         if not self._names(site, floor, revision):
             return
-        leaf = match.group("leaf").lstrip("/")
         if leaf == "zones.json":
             self._store(lambda store: store.read_revision_zones(site, floor, revision))
             return
-        if leaf in ("map.json", "map.png"):
-            self._send_map(leaf, lambda store: store.read_map(site, floor, revision))
+        self._send_map(leaf, lambda store: store.read_map(site, floor, revision))
+
+    def _bundle(self, site: str, floor: str, revision: str):
+        """The packed revision, for the agent that was told to pull it."""
+        if not self._names(site, floor, revision):
             return
         try:
             blob = self.server.store.pack(site, floor, revision)
@@ -708,26 +1107,19 @@ class FleetHandler(BaseHTTPRequestHandler):
             X_Bundle_Sha256=bundle.digest(blob),
         )
 
-    def _upload(self, rest: str, params: dict):
+    def _upload(self, site: str, floor: str, revision: str):
         """Take one candidate revision from a robot.
 
         Deliberately **not** operator-authenticated, and deliberately inert: a
         candidate changes nothing about any floor until it is promoted, and the
         route that does change something is the operator's. What is required is
         that the uploader name an enrolled robot, so the artifact has a subject
-        in the audit log. M7 replaces that with a per-robot credential.
+        in the audit log. Giving a robot a credential of its own is the
+        companion security task's, not this one's.
         """
-        match = REVISION_RE.match(rest)
-        if not match or match.group("leaf"):
-            self._error(
-                404, "expected POST /v1/sites/<site>/floors/<floor>/revisions/<rev>"
-            )
-            return
-        site, floor = match.group("site"), match.group("floor")
-        revision = match.group("revision")
         if not self._names(site, floor, revision):
             return
-        robot_id = (params.get("robot_id") or [""])[0]
+        robot_id = (self.params.get("robot_id") or [""])[0]
         if not protocol.valid_id(robot_id):
             self._error(400, "a robot_id query parameter is required")
             return
@@ -790,7 +1182,7 @@ class FleetHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _promote(self, rest: str, body: dict):
+    def _promote(self, site: str, floor: str, revision: str):
         """Make a candidate canonical: authorize, flip, announce, record.
 
         The flip is the fact and the announcement is best effort — a broker
@@ -798,30 +1190,14 @@ class FleetHandler(BaseHTTPRequestHandler):
         plainly whether the fleet was told, and the server re-announces every
         floor at startup so a missed announcement heals itself.
         """
-        match = REVISION_RE.match(rest)
-        if not match or match.group("leaf") != "/promote":
-            self._error(404, "expected POST .../revisions/<rev>/promote")
-            return
-        site, floor = match.group("site"), match.group("floor")
-        revision = match.group("revision")
         registry = self.server.registry
         target = f"{site}/{floor}/{revision}"
-        try:
-            operator = self._operator()
-        except Unauthorized as exc:
-            registry.record(
-                actor="anonymous",
-                action="map.promote",
-                command=target,
-                result="unauthorized",
-                detail=str(exc),
-                remote=self.address_string(),
-            )
-            self._error(401, str(exc))
+        if self.operator is None:
+            self._refuse(action="map.promote", command=target)
             return
         if not self._names(site, floor, revision):
             return
-        actor = operator["name"]
+        actor = self.operator["name"]
         entry = registry.record(
             actor=actor,
             action="map.promote",
@@ -865,7 +1241,7 @@ class FleetHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _edit_zones(self, rest: str, body: dict):
+    def _edit_zones(self, site: str, floor: str):
         """An operator's zone edit: derive a candidate from a revision.
 
         The edit writes nothing the fleet can see — the result is an ordinary
@@ -880,25 +1256,11 @@ class FleetHandler(BaseHTTPRequestHandler):
         derivation and never the thing written — the route's own resource is
         the floor's zones, and the result is a revision id neither end chose.
         """
-        parts = rest.split("/")
-        if len(parts) != 3 or parts[1] != "floors":
-            self._error(404, "expected POST /v1/sites/<site>/floors/<floor>/zones")
-            return
-        site, _, floor = parts
+        body = self.body
         registry = self.server.registry
         target = f"{site}/{floor}"
-        try:
-            operator = self._operator()
-        except Unauthorized as exc:
-            registry.record(
-                actor="anonymous",
-                action="map.zones",
-                command=target,
-                result="unauthorized",
-                detail=str(exc),
-                remote=self.address_string(),
-            )
-            self._error(401, str(exc))
+        if self.operator is None:
+            self._refuse(action="map.zones", command=target)
             return
         source = str(body.get("revision") or "")
         if not self._names(site, floor, *([source] if source else [])):
@@ -907,7 +1269,7 @@ class FleetHandler(BaseHTTPRequestHandler):
         if not isinstance(zones, dict):
             self._error(400, "a zones mapping is required: {zones: {name: {...}}}")
             return
-        actor = operator["name"]
+        actor = self.operator["name"]
         # The audit row names what was edited, not only which floor: two
         # candidates of one floor are two different maps, and "who renamed the
         # rooms on this map" is unanswerable from the floor alone.
@@ -994,18 +1356,38 @@ class FleetServer(ThreadingHTTPServer):
         broker_ws_port,
         foxglove_url,
     ):
+        # Assigned before the socket is bound: when the bind fails, TCPServer
+        # calls server_close() from inside super().__init__, and it must reach
+        # these rather than raise AttributeError over the real OSError.
+        self.publisher = publisher
+        #: What the fleet's robots last said, for the HTTP read routes. The
+        #: feed that fills it is attached by :func:`serve`, because it
+        #: subscribes on behalf of this object and so cannot exist before it.
+        self.state = RobotState()
+        self.feed = None
         super().__init__(address, FleetHandler)
         self.registry = registry
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.id_prefix = id_prefix
-        self.publisher = publisher
         self.maps_dir = Path(maps_dir).expanduser() if maps_dir else None
         self.store = BundleStore(self.maps_dir)
         self.ui_dir = Path(ui_dir).resolve() if ui_dir else None
         self.broker_ws_host = broker_ws_host
         self.broker_ws_port = broker_ws_port
         self.foxglove_url = foxglove_url
+
+    def server_close(self):
+        """Give back the sockets, the subscription and the publisher together.
+
+        The two broker connections outlive ``shutdown()`` — they are paho's own
+        threads, not this server's — so a test that starts a server per case
+        leaks a client per case unless they are closed here.
+        """
+        super().server_close()
+        if self.feed is not None:
+            self.feed.close()
+        self.publisher.close()
 
     # -- what the browser needs to bootstrap ------------------------------
 
@@ -1196,15 +1578,22 @@ def serve(
     publish_port=None,
     id_prefix=ID_PREFIX,
     publisher=None,
+    feed=None,
     maps_dir=None,
     ui_dir=UI_DIR,
     broker_ws_host=None,
     broker_ws_port=9001,
     foxglove_url=FOXGLOVE_URL,
 ) -> FleetServer:
-    """Build a listening server. The caller runs it (or its ``serve_forever``)."""
+    """Build a listening server. The caller runs it (or its ``serve_forever``).
+
+    ``publisher`` and ``feed`` are the two halves of the broker hop and are
+    injected as a pair: supplying a ``publisher`` is what a test does to stand
+    the broker down, and building a live subscription beside a stubbed
+    publisher would have the server dialling a broker the test does not have.
+    """
     broker_host = broker_host or socket.gethostname()
-    return FleetServer(
+    server = FleetServer(
         (host, port),
         Registry(db),
         broker_host=broker_host,
@@ -1218,6 +1607,16 @@ def serve(
         broker_ws_port=broker_ws_port,
         foxglove_url=foxglove_url,
     )
+    if feed is None and publisher is None:
+        feed = BrokerFeed(
+            publish_host or broker_host,
+            publish_port or broker_port,
+            server.state,
+        )
+    if feed is not None:
+        server.feed = feed
+        feed.start()
+    return server
 
 
 def main(argv=None):
@@ -1314,7 +1713,7 @@ def main(argv=None):
         thread.join()
     except KeyboardInterrupt:
         server.shutdown()
-        server.publisher.close()
+        server.server_close()
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ setup(
             "dds_participants = mote_bringup.dds_participants:main",
             "sweep_orphans = mote_bringup.sweep_orphans:main",
             "explore = mote_bringup.explore:main",
+            "map_reloader = mote_bringup.map_reloader:main",
         ],
     },
 )

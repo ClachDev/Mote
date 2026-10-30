@@ -575,11 +575,111 @@ def test_health_reports_the_map_revision_this_robot_is_running(fleet):
     fleet.mqtt.connect()
     fleet.spin(0.4)
     reported = fleet.mqtt.last(fleet.protocol.HEALTH)["map"]
+    # No map_server is reporting, so the next bringup loads what is installed.
     assert reported == {
         "site": "home",
         "floor": "ground",
         "revision": "20260727T101500",
+        "installed": "20260727T101500",
+        "error": None,
     }
+
+
+OLD, NEW = "20260727T101500", "20260921T133157"
+
+
+def serve(fleet, revision, **extra):
+    """Publish map/serving as map_reloader does, latched."""
+    from mote_bringup import map_reload
+
+    if not hasattr(fleet.peer, "serving_pub"):
+        fleet.peer.serving_pub = fleet.peer.create_publisher(
+            String, map_reload.SERVING_TOPIC, agent.LATCHED
+        )
+    fleet.peer.serving_pub.publish(
+        String(data=map_reload.serving("home", "ground", revision, **extra))
+    )
+
+
+def installed_on_disk(revision):
+    from mote_bringup import sites
+
+    floor_dir = sites.floor_dir("home", "ground")
+    (floor_dir / "maps" / revision).mkdir(parents=True, exist_ok=True)
+    sites._publish_revision(floor_dir, revision)
+
+
+def test_health_names_the_served_revision_until_the_load_succeeds(fleet):
+    """mote-01, 2026-09-21: the fleet showed the new map while Nav2 drove the
+    old one, because health read the symlink. It reads map_server's answer."""
+    installed_on_disk(OLD)
+    fleet.mqtt.connect()
+    serve(fleet, OLD)
+    fleet.spin(0.4)
+
+    installed_on_disk(NEW)  # the agent has pulled; Nav2 has not loaded it
+    fleet.spin(0.4)
+    between = fleet.mqtt.last(fleet.protocol.HEALTH)["map"]
+    assert (between["revision"], between["installed"]) == (OLD, NEW)
+
+    serve(fleet, NEW)
+    fleet.spin(0.4)
+    after = fleet.mqtt.last(fleet.protocol.HEALTH)["map"]
+    assert (after["revision"], after["installed"]) == (NEW, NEW)
+
+
+def test_a_failed_load_keeps_the_old_revision_and_says_why(fleet):
+    installed_on_disk(NEW)
+    fleet.mqtt.connect()
+    serve(fleet, OLD, error=f"revision {NEW}: invalid map data")
+    fleet.spin(0.4)
+    reported = fleet.mqtt.last(fleet.protocol.HEALTH)["map"]
+    assert reported["revision"] == OLD
+    assert reported["installed"] == NEW
+    assert "invalid map data" in reported["error"]
+
+
+def test_a_map_server_on_another_floor_is_not_this_floors_answer(fleet):
+    from mote_bringup import map_reload
+
+    installed_on_disk(NEW)
+    fleet.mqtt.connect()
+    pub = fleet.peer.create_publisher(String, map_reload.SERVING_TOPIC, agent.LATCHED)
+    pub.publish(String(data=map_reload.serving("home", "upstairs", OLD)))
+    fleet.spin(0.4)
+    assert fleet.mqtt.last(fleet.protocol.HEALTH)["map"]["revision"] == NEW
+
+
+def test_an_installed_revision_is_announced_to_the_robot(fleet, monkeypatch):
+    """The agent states what it put on disk; map_reloader decides when Nav2
+    takes it. Latched, so a reloader that starts later still hears it."""
+    from mote_bringup import map_reload
+
+    from mote_fleet import mapsync
+
+    monkeypatch.setattr(
+        mapsync,
+        "pull",
+        lambda server, a, **k: {
+            "action": "installed",
+            "site": a["site"],
+            "floor": a["floor"],
+            "revision": a["revision"],
+        },
+    )
+    fleet.mqtt.connect()
+    announce(fleet, NEW)
+    fleet.spin(1.5)
+
+    heard = []
+    fleet.peer.create_subscription(
+        String,
+        map_reload.INSTALLED_TOPIC,
+        lambda m: heard.append(map_reload.parse(m.data)),
+        agent.LATCHED,
+    )
+    fleet.spin(0.5)
+    assert heard == [{"site": "home", "floor": "ground", "revision": NEW}]
 
 
 def test_health_reports_no_revision_when_the_floor_has_no_map(fleet):

@@ -43,7 +43,7 @@ the mission — never the mission:
 ssh <robot> tmux new -s map
 pixi run mapping      # window 1
 pixi run explore      # window 2 — watch progress via Foxglove
-pixi run save-map     # when it reports covered
+pixi run site save-map     # when it reports covered
 ```
 
 The default thresholds suit corridor-scale spaces. Domestic layouts (~0.75 m
@@ -129,9 +129,9 @@ take that decision on this card, for reasons in their source rather than their
 configuration — `wifi/README.md` quotes both.
 
 ```bash
-pixi run wifi-check     # what takes the roam decision (read-only)
-pixi run wifi-roaming   # write the modprobe option; takes effect at next boot
-pixi run wifi-roamlog   # log BSSID/signal/RTT during an acceptance walk
+pixi run wifi-check                  # what takes the roam decision (read-only)
+pixi run setup wifi --roaming-only   # write the modprobe option; takes effect at next boot
+pixi run wifi-roamlog                # log BSSID/signal/RTT during an acceptance walk
 ```
 
 The trigger is -75 dBm with a 20 dB delta, compiled into the driver and not

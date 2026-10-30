@@ -37,7 +37,7 @@ class JointSpec:
     id: int
     min_rad: float
     max_rad: float
-    # Raw encoder count that corresponds to 0 rad. Set by `arm-calibrate`;
+    # Raw encoder count that corresponds to 0 rad. Set by `arm-setup calibrate`;
     # defaults to the servo mid-point.
     zero_counts: int = COUNTS_PER_REV // 2
     # True if the joint's positive direction is opposite the servo's.
@@ -50,6 +50,42 @@ class JointSpec:
     def clamp_rad(self, rad: float) -> float:
         """Clamp a commanded angle to the joint's soft limits."""
         return max(self.min_rad, min(self.max_rad, rad))
+
+    @property
+    def reachable_min(self) -> float:
+        """Lowest angle the 0-4095 goal register can actually express."""
+        edge = (0 - self.zero_counts) * RAD_PER_COUNT * self.sign
+        other = (COUNTS_PER_REV - 1 - self.zero_counts) * RAD_PER_COUNT * self.sign
+        return max(self.min_rad, min(edge, other))
+
+    @property
+    def reachable_max(self) -> float:
+        """Highest angle the 0-4095 goal register can actually express."""
+        edge = (0 - self.zero_counts) * RAD_PER_COUNT * self.sign
+        other = (COUNTS_PER_REV - 1 - self.zero_counts) * RAD_PER_COUNT * self.sign
+        return min(self.max_rad, max(edge, other))
+
+    @property
+    def unreachable(self) -> str | None:
+        """Why part of this joint's soft band cannot be commanded, if any.
+
+        A goal is written to a 12-bit register, so an angle outside
+        [0, 4095] counts about ``zero`` saturates at the edge instead of being
+        refused. The joint then stops at the same angle every time, in one
+        direction only, whatever the load — which looks like a stall and is not
+        one. A soft band wider than the register can address is therefore a
+        configuration error worth naming, not a limit to discover by driving
+        into it.
+        """
+        lo, hi = self.reachable_min, self.reachable_max
+        if lo <= self.min_rad and hi >= self.max_rad:
+            return None
+        return (
+            f"joint {self.name!r}: soft limits [{self.min_rad:+.3f}, "
+            f"{self.max_rad:+.3f}] but zero={self.zero_counts} leaves only "
+            f"[{lo:+.3f}, {hi:+.3f}] addressable in the 0-{COUNTS_PER_REV - 1} "
+            "goal register — re-run `pixi run arm-setup calibrate` to re-centre it"
+        )
 
     def counts_to_rad(self, counts: int) -> float:
         """Convert a raw encoder reading to radians about the joint zero."""
@@ -70,7 +106,7 @@ class JointSpec:
 class ServoGains:
     """Position-loop gains held in servo EEPROM (registers 21/22/23).
 
-    Recorded in robot.yaml so they survive a servo swap; `arm-gains apply`
+    Recorded in robot.yaml so they survive a servo swap; `arm-setup gains apply`
     writes them to the hardware. kp too low leaves a permanent steady-state
     error under load, since ki=0 never integrates the droop away.
     """
@@ -105,6 +141,15 @@ class ArmConfig:
     @property
     def names(self) -> list[str]:
         return [j.name for j in self.joints]
+
+    @property
+    def problems(self) -> list[str]:
+        """Configuration faults worth warning about, but not worth refusing over.
+
+        Reported rather than raised: a robot with one over-wide band should
+        still come up and drive the rest of its joints.
+        """
+        return [p for p in (j.unreachable for j in self.joints) if p]
 
     def joint(self, name: str) -> JointSpec:
         for j in self.joints:

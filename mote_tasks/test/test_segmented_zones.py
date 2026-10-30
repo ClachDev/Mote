@@ -61,9 +61,9 @@ def test_a_written_room_loads_back_as_a_zone_the_robot_can_be_in(tmp_path, rooms
     assert left and right and left != right
 
 
-def test_a_hand_taught_room_is_not_renamed_by_a_later_run(tmp_path, rooms):
+def test_a_hand_bound_room_is_not_renamed_by_a_later_run(tmp_path, rooms):
     path = tmp_path
-    # A floor taught by hand, still in the combined shape. The merge migrates
+    # A floor bound by hand, still in the combined shape. The merge migrates
     # it on the way through, which is the only migration anybody runs.
     (path / "zones.yaml").write_text(
         yaml.safe_dump(
@@ -89,16 +89,15 @@ def test_a_hand_taught_room_is_not_renamed_by_a_later_run(tmp_path, rooms):
 def test_running_it_twice_adds_nothing(tmp_path, rooms):
     path = tmp_path
     merge_into_zones(path, rooms)
-    documents = ("vocabulary.yaml", "binding.yaml")
-    before = {name: (path / name).read_text() for name in documents}
+    before = (path / "zones.yaml").read_text()
 
     added, skipped = merge_into_zones(path, rooms)
 
     assert added == []
     assert len(skipped) == 2
-    # Byte-identical, both halves: a re-run that bumped the vocabulary revision
-    # would make every binding on the fleet look a version behind.
-    assert {name: (path / name).read_text() for name in documents} == before
+    # Byte-identical: a re-run that bumped the revision would make every copy
+    # of this floor's zones on the fleet look a version behind.
+    assert (path / "zones.yaml").read_text() == before
 
 
 def test_a_proposed_room_says_nothing_it_cannot_know(tmp_path, rooms):

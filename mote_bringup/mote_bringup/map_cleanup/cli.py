@@ -1,6 +1,6 @@
 """CLI: declutter a ROS occupancy-grid PNG and render a diagnostics panel.
 
-    python -m mote_bringup.map_cleanup.cli INPUT.png [--out DIR]
+    pixi run site clean INPUT.png [--out DIR]
 
 Writes a cleaned map PNG and a side-by-side diagnostics image (input, Fourier
 spectrum with detected orientations, angular-energy plot, cleaned map).
@@ -136,7 +136,7 @@ def make_diagnostics(occ: np.ndarray, res: StructureResult) -> np.ndarray:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(prog="site clean", description=__doc__)
     ap.add_argument("input", help="ROS occupancy-grid PNG")
     ap.add_argument(
         "--out", default=None, help="output directory (default: alongside input)"

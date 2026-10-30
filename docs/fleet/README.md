@@ -24,9 +24,9 @@ site's maps (**M4**). The architecture and the milestones after these are in
 | `pixi run fleet-broker` | the MQTT control plane, with WebSockets (a container) |
 | `pixi run fleet-server` | fleet API + operator dashboard (fleet box) |
 | `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, audit, watch |
-| `pixi run enroll` | ask the server for this robot's identity |
+| `pixi run fleet enroll` | ask the server for this robot's identity |
 | `pixi run agent` | the robot's bridge to the fleet |
-| `pixi run publish-map` | offer this robot's saved map to the registry |
+| `pixi run fleet publish-map` | offer this robot's saved map to the registry |
 | `pixi run foxglove` | the robot's remote view + teleop (Foxglove WebSocket) |
 
 **First time through**, in order: §1a (create the tailnet — browser, once, for
@@ -75,19 +75,26 @@ Tags do not exist until an owner is declared for them, and `--advertise-tags` on
 a machine fails with "requested tags are invalid or not permitted" if you skip
 this:
 
-```jsonc
-{
-  "tagOwners": {
-    "tag:robot":     ["autogroup:admin"],
-    "tag:fleet":     ["autogroup:admin"],
-    "tag:inference": ["autogroup:admin"],
-  },
-  // The default policy already allows every device to reach every other, which
-  // is what M0 wants. M7 replaces this with per-tag rules (operators reach
-  // robots; robots reach the broker and their own inference box; robots cannot
-  // reach each other).
-}
-```
+The policy this repo ships is
+[`mote_bringup/tailscale/policy.hujson`](../../mote_bringup/tailscale/policy.hujson):
+the three tags above, plus the rules that say who may open a socket to what.
+Tailscale keeps the policy in its console rather than in a repo, so **the file is
+the source of truth and the console is a copy** — edit here first, then paste:
+
+1. <https://login.tailscale.com/admin/acls/file>
+2. paste the file, **Preview** to see what changes, then **Save**.
+
+Two things it does that the default "everyone reaches everyone" policy does not.
+Operators reach a robot's SSH and Foxglove ports and nothing else on it; a robot
+reaches the fleet server's API and broker and its inference box's two wire ports,
+and **no robot can reach another robot** — there is no robot-to-robot anything in
+v1, so the absence of a rule is the design. The file carries a `tests` block
+asserting exactly that, and Tailscale evaluates it on every save and refuses a
+policy that fails one, so the rule is checked by the thing enforcing it.
+
+Do this before joining any machine: `--advertise-tags` on a tag the policy does
+not declare fails with "requested tags are invalid or not permitted", which is
+the first thing to check if joining a robot fails.
 
 **4. Mint an auth key per robot.** Admin console → **Settings → Keys → Generate
 auth key**. For a robot:
@@ -100,7 +107,7 @@ auth key**. For a robot:
 | Tags | **`tag:robot`** | this is what makes the key mint a *tagged* device |
 
 The key looks like `tskey-auth-…`; it goes into `pixi run provision --ts-authkey`
-(or `pixi run tailnet --auth-key` on a machine you are sitting at). Keep the key's
+(or `pixi run fleet join --auth-key` on a robot you are sitting at). Keep the key's
 tags and the `--role` you pass in agreement — a mismatch is rejected rather than
 merged. The workstation needs no key at all: `pixi run tailnet --role workstation`
 opens a browser to authenticate you.
@@ -109,13 +116,14 @@ opens a browser to authenticate you.
 (180 days by default) and needs a human to re-authenticate it, which for a robot
 means it silently drops off the tailnet one day months from now. Tagged devices
 do not expire. That failure mode is the practical argument for `tag:robot`,
-ahead of anything M7 does with it.
+ahead of anything the access policy does with it.
 
 ### 1b. Joining machines
 
 ```bash
-# on the robot (identity must exist first — its id becomes the MagicDNS name)
-pixi run tailnet --role robot --auth-key tskey-auth-...
+# on the robot: tailnet + enroll + enable the reporting units, in one command.
+# The node takes the robot id the server hands back as its MagicDNS name.
+pixi run fleet join --server http://fleet-box:8080 --token mt-… --auth-key tskey-auth-...
 
 # on the workstation (a user device, untagged)
 pixi run tailnet --role workstation
@@ -145,9 +153,11 @@ any tagged role are mutually exclusive and the script refuses the combination.
 For one operator at one site, leave the dev machine an untagged workstation that
 happens to run Mosquitto and the inference servers: nothing functional depends on
 the tag (robots reach it by MagicDNS either way, and `inference_host` is just a
-name). What you defer is M7's ACLs — a rule keyed on your user's device rather
-than `tag:fleet`/`tag:inference`. Tag it when a second person or a second machine
-appears and the roles want to outlive your account.
+name). What you defer is the policy's rules — they are keyed on
+`tag:fleet`/`tag:inference`, so an untagged dev box is reachable under
+`autogroup:member` rather than under the rule written for its role. Tag it when a
+second person or a second machine appears and the roles want to outlive your
+account.
 
 **Verify off-LAN** (the M0 acceptance test) — from a device on a *different*
 network, e.g. a laptop tethered to a phone:
@@ -260,9 +270,9 @@ Where it applies, and where it does not:
   loaded through `CYCLONEDDS_URI` by `[activation.env]` and repeated by the
   units), because a radio-pinned profile let a wifi flap stall topic delivery
   between processes on the robot's own board. LAN bench flows (workstation
-  RViz, `pixi run teleop` from a laptop) are gone with it; camera calibration,
-  the one flow that needs a LAN DDS peer, unsets the profile explicitly
-  (`mote_perception/config/README.md`);
+  RViz, `pixi run teleop` from a laptop) are gone with it; camera calibration
+  is bench prep with the camera on the workstation's USB, so it needs no LAN
+  peer either (`mote_perception/config/README.md`);
 - **sims and benchmarks pin themselves** (`[feature.sim.activation.env]`), as
   before.
 
@@ -355,7 +365,10 @@ run on real hardware yet (see [m0-verification.md §5](m0-verification.md)).
 
    `--wifi-country` is required with wifi and is not guessed: the Pi's WLAN stays
    rfkill-blocked until the regulatory domain is set. Omit the three wifi flags
-   entirely if the robot is on ethernet.
+   entirely if the robot is on ethernet. `--camera-calibration FILE` adds the
+   bench camera calibration (`pixi run camera-calibrate`), installed as
+   `~/.mote/camera_calibration.yaml` at first boot; without it the robot uses the
+   packaged default.
 
    The output carries a live auth key and a wifi passphrase: it is written `0600`
    and must never be committed. Print it to stdout first (drop `--boot`) if you
@@ -393,7 +406,7 @@ not ship a robot package yet; when it does (M5), that step becomes a pinned
 that changes.
 
 The template still writes an **operator-set** identity, as it did at M0. Now
-that there is an enrollment endpoint, first boot should call `pixi run enroll`
+that there is an enrollment endpoint, first boot should call `pixi run fleet enroll`
 with a token instead — a template change that is deliberately left until the
 next real Pi provisioning, so the change and its verification land together
 ([`m1-verification.md` §5](m1-verification.md)). Nothing breaks meanwhile:
@@ -483,14 +496,18 @@ fleet box's MagicDNS name (`fleet-box`), not `localhost` — it is handed out
 verbatim in every enrollment answer. It defaults to the box's hostname. Under
 compose it is `BROKER_HOST` in `.env`, and the stack refuses to start without it.
 
-**Security, plainly:** the broker is anonymous and the API's *read* routes are
-unauthenticated. Dispatch is not — it needs an operator token (§8) — but that is
-one credential on one path, not an auth story. It is proportionate only because
-the tailnet is the boundary: WireGuard authenticates, and nothing here is
-exposed to the internet. Do not put either on a network the robots are not
-already trusted on. Per-robot broker credentials and operator auth everywhere
-are M7; the shape of what changes is in
-[`control-plane.md`](control-plane.md#security-posture-and-what-m7-changes).
+**Security, plainly:** every `/v1` route on the API needs an operator token
+(§8), checked by one gate in front of routing rather than by each handler. Four
+things are open and each for a reason: `/healthz`, the static UI, enrollment
+(which carries its own token), and the two robot-facing map routes, which carry
+no credential because robots have none to carry yet. The **broker is still
+anonymous**, so the dashboard's read path and `fleetctl watch` connect to it
+without one. The tailnet is the outer boundary — WireGuard authenticates, the
+policy in §1a says who may reach which port, and nothing here is exposed to the
+internet. Do not put the broker on a network the robots are not already trusted
+on. Per-robot and per-operator broker credentials are still to come; the shape of
+what changes is in
+[`control-plane.md`](control-plane.md#security-posture-and-what-is-still-owed).
 
 ---
 
@@ -504,7 +521,7 @@ fingerprint and is told who it is and where its broker lives.
 pixi run fleetctl -- token new
 
 # [robot] exchange it for an identity
-pixi run enroll -- --server http://fleet-box:8080 --token tskey… --name Scout --site home
+pixi run fleet enroll --server http://fleet-box:8080 --token mt-… --name Scout --site home
 ```
 
 That writes both files the agent needs, and nothing else:
@@ -553,7 +570,8 @@ it logs and retries — enrolling later brings it up without a restart.
 pixi run -e fleet fleetctl -- operator new --name michael
 export MOTE_FLEET_TOKEN=<that token>
 
-pixi run fleetctl -- robots                             # the registry roster
+pixi run fleetctl -- robots                             # the roster: who is enrolled, who is online
+pixi run fleetctl -- robots mote-01                     # one robot: health, pose, capabilities, last mission
 pixi run fleetctl -- watch                              # live: presence, health, pose, status
 pixi run fleetctl -- dispatch mote-01 goto target=kitchen   # send a mission
 pixi run fleetctl -- dispatch mote-01 fetch target=lab destination=kitchen
@@ -569,6 +587,11 @@ minted against the registry file while you are sitting on the fleet box, never
 over the network; the **name on it is what the audit log records**, which is why
 an unnamed one is refused. `fleetctl operator list|revoke` are the other two
 verbs, and the route contract is [`fleet-api.md`](fleet-api.md).
+
+**`MOTE_FLEET_TOKEN` is now needed for every `fleetctl` verb that talks to the
+API**, not only `dispatch` and `audit`: the roster, the maps and the registry are
+operator-only too. Without it they answer `401` and say so. `watch` is the
+exception, because it reads the broker rather than the API.
 
 **A mission is a capability and a typed input**, not a sentence: the first
 argument is a capability key and the rest are `key=value` pairs (or one `{...}`
@@ -630,6 +653,37 @@ on request. A robot that loses power is marked offline by the broker itself,
 within the keepalive, via its Last Will — not after somebody notices the
 heartbeats stopped.
 
+**Asking once needs no broker.** `robots` and `robots <id>` read the fleet
+server's own copy of those retained topics over HTTP and print it:
+
+```console
+$ pixi run fleetctl -- robots
+ID           NAME             SITE       PRESENCE ENROLLED              FINGERPRINT
+mote-01      Scout            home       online   2026-07-26T18:41:02Z  serial:d25bff05
+mote-02      Rover            -          unknown  2026-07-26T18:44:10Z  serial:8f21ac90
+
+$ pixi run fleetctl -- robots mote-01
+mote-01  Scout  (home)
+  enrolled   2026-07-26T18:41:02Z  serial:d25bff05
+  presence   online
+  health     ok: 6 subsystems ok
+  pose       x=1.5 y=-2.25 yaw=0.75 (home/ground)
+  can do     goto, fetch
+  mission    succeeded (goto, id 3e99cf44d1294ab5)
+```
+
+`unknown` is a third state, not a synonym for offline: a robot that is switched
+off publishes `online: false` through its Last Will and reads `offline`, while
+`unknown` means nothing has ever been heard from it — or that the fleet server
+is not connected to the broker, which both commands say outright when it is so.
+Both need the operator token, like every API route. What the detail view shows
+of a mission is the **last** status, because one is all the broker retains; `watch`
+and `dispatch` are what show every transition, and they keep the broker for
+exactly that reason. The route is
+[`fleet-api.md`](fleet-api.md#get-v1robotsrobot_id), and it is the same answer
+an HTTP-only client — an MCP front door, a script — gets without speaking MQTT
+at all.
+
 ---
 
 ## 9. The dashboard
@@ -652,11 +706,14 @@ no request/response loop, and no service between the broker and the browser.
 That is the read path in [`fleet.md`](../design/fleet.md) Q5, and it is why the
 broker needs the WebSocket listener from §6.
 
-**Paste an operator token to dispatch.** Without one the page is read-only,
-which is a perfectly good wall display. The token is kept in the browser's local
-storage and sent to the fleet API as a bearer credential; the page holds **no
-broker credential that can publish**, and its MQTT client implements no PUBLISH
-packet at all.
+**Paste an operator token to see anything at all.** `/v1/config` — what the
+page is built out of — is operator-only like every other route, so there is no
+read-only mode: the dashboard is signed in, or it is asking to be, and a wall
+display whose token was revoked shows the gate rather than a stale fleet. Pasting
+a token starts everything without a reload. The token is kept in the browser's
+local storage and sent to the fleet API as a bearer credential; the page holds
+**no broker credential that can publish**, and its MQTT client implements no
+PUBLISH packet at all.
 
 **Each state is said once**, by the strongest idiom the page has. The roster
 row's dot and its state column already read `ok`, so the line under them speaks
@@ -694,7 +751,7 @@ M4, robots publish into rather than an operator rsyncing (§11). A robot with no
 basemap on the server still appears in the roster with its health and its mission;
 the map pane says so rather than drawing an empty grid.
 
-**Taught zones are drawn on the basemap**: a circle for a `radius` footprint, an
+**A floor's bound zones are drawn on the basemap**: a circle for a `radius` footprint, an
 outline for a `polygon`, a cross for a bare waypoint, each labelled — so the
 `goto <zone>` targets you can type are the ones you can see. They come from the
 canonical revision, in that revision's map frame.
@@ -730,7 +787,7 @@ and the detail pane. Two things follow from losing the side-by-side view:
 **The dispatch form is generated from the robot's own capability set.** It
 arrives retained on the broker, so the page knows the keys and the input shapes
 without asking; a select lists what this robot offers, and one field appears per
-input property. A field becomes a **zone picker** — the taught zones of the
+input property. A field becomes a **zone picker** — the bound zones of the
 floor on screen — exactly when its schema `$ref`s zone/v0's zone reference,
 which is what that `$ref` is for. So the page contains no list of capabilities
 and no list of which inputs are places, a robot that grows a capability grows
@@ -876,10 +933,10 @@ commands and one rule.
 ```bash
 # [robot] map the floor as always, then save it locally
 pixi run mapping                  # drive it; ...or `pixi run sim-mapping`
-pixi run save-map                 # -> ~/.mote/sites/home/floors/ground/maps/<rev>/
+pixi run site save-map                 # -> ~/.mote/sites/home/floors/ground/maps/<rev>/
 
 # [robot] offer it to the fleet
-pixi run publish-map
+pixi run fleet publish-map
 #   published home/ground/20260728T090412 to http://fleet-box:8080 (186349 bytes)
 #   it is a candidate; home/ground is still on 20260727T101500.
 #   an operator promotes it with: fleetctl promote home ground 20260728T090412
@@ -942,7 +999,7 @@ which appears whenever the floor on screen has something waiting. It shows:
   can be continued in this frame), its bytes and digest.
 - **The zones in it**, and — the part that is easy to miss — an `inherited`
   mark beside the heading when they are not the revision's own. A revision that
-  carries no zones is drawn with the floor's, taught in a previous session's
+  carries no zones is drawn with the floor's, bound in a previous session's
   frame: they draw perfectly over the new map and are out by however far the two
   origins differ, which the canvas cannot show. Zones that belong to the map
   they are drawn on are marked nothing at all — that is what "zones" means.
@@ -966,7 +1023,7 @@ happened is the only evidence there is.
 
 ### Naming the rooms on it, before you promote it
 
-`pixi run segment-map` finds the rooms of a map but cannot know what they are
+`pixi run site segment` finds the rooms of a map but cannot know what they are
 called, so a fresh revision arrives with `zone_01`..`zone_07`. **`edit zones`**,
 beside the zone list, is where they get their names — on the candidate's own map,
 where you can see which room is which.
@@ -986,9 +1043,18 @@ The controls are the map and the list together:
   claims precision the map does not have. A whole zone moves by whole pixels, so
   a traced room keeps its shape. **Hold shift to move freely**, for the rare
   case that wants a coordinate between two pixels. Only what you drag is
-  snapped: a pose taught by driving a robot there is a measurement, and it is
-  left exactly where the robot said, while an outline this editor invents starts
-  on the grid.
+  snapped, whoever put it there — a pose a robot measured by driving to it and
+  one an earlier edit placed are alike in being already recorded — while an
+  outline this editor invents starts on the grid. Drag a pose and it does snap:
+  a drag is a fresh coordinate, with the map's precision and no more.
+- **What you move stops claiming a robot drove there.** Each zone's coordinate
+  records how it came to be — `taught` when a robot was driven there and
+  `save-zone` captured the pose, `derived` when `segment-map` read it off the
+  map — and that is what tells whoever looks next whether a re-map invalidates
+  it. Anything you place or drag here is neither, so it is saved as `external`,
+  stamped with your operator name and the server's clock. A zone you did not
+  touch keeps what it had, so a segmented room stays `derived` until somebody
+  reshapes it.
 - **It is the same list either way.** The zones of a revision are listed under
   the map whether or not you are editing them — the name, then whether it is a
   **point** or an **area** — and `edit zones` puts controls into those rows
@@ -1045,7 +1111,7 @@ it looks right. Two consequences worth knowing:
   revision plus the five newest candidates, so the intermediates fall off on
   their own.
 - **A revision that inherited the floor's zones stops inheriting.** The saved
-  candidate carries them, which is what you want: inherited zones were taught in
+  candidate carries them, which is what you want: inherited zones were bound in
   another session's frame, and dragging them onto this map is the correction.
 
 `cancel` discards the edit. There is no autosave and nothing is written until
@@ -1067,23 +1133,48 @@ holds, ignores the rest of the fleet's, downloads the revision, checks its
 digest, stages it in a temporary directory, renames it into `maps/<rev>/` and
 flips its local `map` symlink. A half-transferred revision is never visible.
 
-**Zones travel with the map.** A revision from a different mapping session is a
-different map frame, so the zones taught in the old one are wrong the moment the
-new map is published — the bundle's `binding.yaml` therefore replaces the floor's,
-and the one it replaces is kept beside it as `zones.<old-rev>.yaml`.
+**A revision carries a copy of the floor's zones.** The floor owns them — a zone
+is a coordinate in the floor's frame and a revision is an estimate registered
+into it — but the revision is how a floor's places reach a robot that has never
+driven there, and the copy inside the revision an operator promoted is the
+fleet's current answer. Installing one therefore replaces the floor's
+`zones.yaml`, keeping the one it replaces beside it as `zones.<old-rev>.yaml`.
 
-**The running navigation stack keeps the map it loaded.** Nav2's `map_server`
-reads the map at startup, so the flip takes effect on the next `pixi run robot`
-(or `systemctl restart mote-bringup`). The agent logs `restart nav to load it`,
-and each robot's health carries the revision it is *actually* running — which is
-how the dashboard shows a robot that has not picked the new map up yet.
+**A running navigation stack loads the new map without a restart.** After the
+flip the agent publishes `map/installed` (latched, ROS-side). `map_reloader`,
+started beside Nav2 by `nav2_launch.py` whenever it localises against a saved
+map, acts on it for the floor Nav2 is serving:
+
+- **Robot idle:** it calls `map_server/load_map` with the new revision's
+  `map.yaml`, then re-publishes AMCL's last `amcl_pose` on `/initialpose`. AMCL
+  re-initialises its filter on a new map; the revision is registered into the
+  same floor frame, so the old estimate is still correct on it. Measured in the
+  sim (`pixi run sim-map-reload-test`): served 0.04 s after `map/installed`,
+  pose off by 0.007 m and 0.8°.
+- **Mission in flight:** it asks the task server (`task/idle`), which holds the
+  lane, and waits. The load happens when the mission reaches a terminal state.
+  While a load runs, the task server refuses a new mission as `busy`
+  (recoverable).
+- **Nav not running, or running SLAM:** nothing loads; the next bringup reads
+  the symlink.
+- **The zones come too.** The task server reloads the floor's `zones.yaml` when
+  the served revision changes, so a promoted zone edit is live with no restart.
+- **A failed load** (unreadable map, `map_server` absent) leaves the old map
+  serving; the reason is logged and reported in health's `map.error`. The same
+  revision is not retried until the agent installs it again.
+
+Each robot's health carries `map.revision`, the revision `map_server` is
+*serving*, and `map.installed`, the one on disk. They differ between an install
+and the load that follows it, which is how the dashboard shows a robot that has
+a new map but is not yet driving on it. `site use-map <rev>` flips the symlink
+without telling `map_reloader`, so a local rollback still needs a nav restart.
 
 ### Two robots mapped the same floor
 
 Nothing is merged, and nothing is lost. Both are candidates, an operator
 promotes one, and the other is retained. This is not a limitation to fix: a map
 frame's origin is an accident of where SLAM started, so silently merging two
-frames would break every taught zone coordinate. If both robots proposed the
+frames would break every bound zone coordinate. If both robots proposed the
 same revision id (they are per-second timestamps), the second is stored as
 `<rev>-2` and `fleetctl sites <site> <floor>` shows which robot uploaded which.
 
@@ -1134,10 +1225,10 @@ curl -s http://fleet-box:8080/v1/zones/home/ground | python -m json.tool
 ```
 
 This is what to point a dispatcher at — anything turning "take it to the
-kitchen" into `goto kitchen`. It is safe to hand out precisely because it
-carries no coordinates: a vocabulary is portable, a binding is not. The route
-that *does* carry coordinates is `/v1/maps/<site>/<floor>/zones.json`, and it
-is for the thing drawing zones on the basemap, which already has the basemap.
+kitchen" into `goto kitchen`. It carries no coordinates because a caller of this
+route has nothing to draw one on, not because a coordinate would be wrong. The
+route that *does* carry them is `/v1/maps/<site>/<floor>/zones.json`, and it is
+for the thing drawing zones on the basemap, which already has the basemap.
 
 ### Teaching the vocabulary
 
@@ -1146,23 +1237,23 @@ what the name cannot say. `save-zone` takes both, and quote a name with spaces
 in it:
 
 ```bash
-pixi run save-zone "the kitchen" --radius 1.5
-pixi run save-zone "store room" --note "stationery lives here, not the office"
-pixi run save-zone sluice --radius 0.8 --no-navigable
+pixi run site save-zone "the kitchen" --radius 1.5
+pixi run site save-zone "store room" --note "stationery lives here, not the office"
+pixi run site save-zone sluice --radius 0.8 --no-navigable
 ```
 
 `--no-navigable` marks a place a robot must not be sent to — `goto sluice` is
-then refused by the robot rather than driven to. Re-teaching a pose (`save-zone
-"the kitchen"` again) keeps the note and the flag: a better coordinate is not a
-rename.
+then refused by the robot rather than driven to. Capturing a pose again
+(`save-zone "the kitchen"`) keeps the note and the flag: a better coordinate is
+not a rename.
 
 Other names a place answers to belong in the note. There is no alias list: the
 mission layer's resolver reads free text and already knows what a store room is,
 where a hand-maintained list of spellings was one more thing to keep in step.
 
-`pixi run segment-map` gives every candidate it proposes a footprint and nothing
+`pixi run site segment` gives every candidate it proposes a footprint and nothing
 else; the names it invents (`zone_01`…) are placeholders for you to replace, in
-the dashboard's zone editor or by hand in `vocabulary.yaml`:
+the dashboard's zone editor or by hand in the floor's `zones.yaml`:
 
 ```yaml
 zones:
@@ -1170,7 +1261,7 @@ zones:
                 note: the good kettle is in the store room}
 ```
 
-A floor taught before place-names still loads without being re-taught: its
+A floor written before place-names still loads unchanged: its
 `kind`, `display_name`, `aliases`, `parent` and `tags` are accepted and dropped,
 its `description` is read as the note it was, and `kind: keepout` still means
 `navigable: false`. What it loses is alias matching — `goto galley` no longer

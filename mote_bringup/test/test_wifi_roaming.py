@@ -58,7 +58,10 @@ def test_installer_sources_exist(install_sh, name):
 
 
 def test_pixi_tasks_point_at_files_that_exist():
-    tasks = tomllib.loads((REPO / "pixi.toml").read_text())["tasks"]
+    manifest = tomllib.loads((REPO / "pixi.toml").read_text())
+    tasks = dict(manifest.get("tasks", {}))
+    for feature in manifest.get("feature", {}).values():
+        tasks.update(feature.get("tasks", {}))
     referenced = set()
     for task in tasks.values():
         command = task if isinstance(task, str) else task.get("cmd", "")
@@ -67,6 +70,16 @@ def test_pixi_tasks_point_at_files_that_exist():
     assert referenced, "no pixi task runs anything in mote_bringup/wifi"
     for path in sorted(referenced):
         assert (REPO / path).is_file(), f"pixi.toml runs {path}, which does not exist"
+
+
+def test_setup_runs_the_wifi_install():
+    # `pixi run setup` reaches wifi/install.sh through mote_bringup/setup.sh, so
+    # the files the task runs are checked one hop further on.
+    assert "bash mote_bringup/setup.sh" in (REPO / "pixi.toml").read_text()
+    setup = (REPO / "mote_bringup" / "setup.sh").read_text()
+    for rel in ("wifi/install.sh", "systemd/install.sh", "udev/99-mote.rules"):
+        assert f'"$SRC_DIR/{rel}"' in setup, f"setup.sh does not run {rel}"
+        assert (REPO / "mote_bringup" / rel).is_file()
 
 
 # --- the settings that fail silently ----------------------------------------

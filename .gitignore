@@ -13,6 +13,7 @@ site/
 #llm
 .claude/
 __pycache__/
+.playwright-mcp/
 
 scratchpad*
 

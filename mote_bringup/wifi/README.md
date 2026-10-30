@@ -5,11 +5,11 @@ ssh session, and the roaming configuration that lets the robot change access
 point as it drives between rooms.
 
 ```bash
-pixi run wifi-check       # what takes the roam decision right now (read-only)
-pixi run wifi-powersave   # NetworkManager power-save drop-in
-pixi run wifi-roaming     # let the firmware roam; reverts an earlier iwd switch
-pixi run wifi-roamlog     # log BSSID/signal/loss during a walk
-pixi run setup            # all of the above, plus udev and the systemd units
+pixi run wifi-check                    # what takes the roam decision right now (read-only)
+pixi run setup wifi --powersave-only   # NetworkManager power-save drop-in
+pixi run setup wifi --roaming-only     # let the firmware roam; reverts an earlier iwd switch
+pixi run wifi-roamlog                  # log BSSID/signal/loss during a walk
+pixi run setup                         # both wifi halves, plus udev and the systemd units
 ```
 
 ## The problem: nothing was taking a roam decision
@@ -156,7 +156,7 @@ It names only `roamoff`, so the vendor's `feature_disable` carries through.
 ## Installing
 
 ```bash
-pixi run wifi-roaming
+pixi run setup wifi --roaming-only
 sudo reboot                 # module parameters are read when the module loads
 pixi run wifi-check
 ```

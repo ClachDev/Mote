@@ -31,7 +31,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def test_segment_map_output_is_a_bundle_this_can_read(tmp_path):
-    """`pixi run segment-map --write` (#69) proposes polygon zones.
+    """`pixi run site segment --write` (#69) proposes polygon zones.
 
     Its writer emits a block sequence of flow pairs for the vertex list — the
     exact shape the hand-rolled parser rejected, which made the whole path
@@ -54,12 +54,30 @@ def test_segment_map_output_is_a_bundle_this_can_read(tmp_path):
 
     zones = bundle.read_floor(tmp_path)["zones"]
     assert zones["room_1"]["polygon"][2] == [4.0, 3.0]
-    # Read off the map by an algorithm, never driven to — which is what tells
-    # an operator later that a re-map invalidates it.
-    assert zones["room_1"]["anchor"]["method"] == "derived"
-    for name in ("vocabulary.yaml", "binding.yaml"):
-        text = (tmp_path / name).read_text()
-        assert bundle.load_yaml(text) == yaml.safe_load(text)
+    assert zones["room_1"]["source"] == "segment-map"
+    text = (tmp_path / bundle.ZONES_YAML).read_text()
+    assert bundle.load_yaml(text) == yaml.safe_load(text)
+
+
+def test_a_file_keeps_the_source_it_carries(tmp_path):
+    """What made a zone survives the reader, and an unrecognised value does not.
+
+    ``source`` says what put the coordinate there — ``save-zone``,
+    ``segment-map`` or the dashboard's ``editor``. Nothing decides anything from
+    it, which is why a value outside the three is dropped rather than costing
+    the floor its map; and why a zone that says nothing carries nothing rather
+    than a default that would read as a claim.
+    """
+    (tmp_path / bundle.ZONES_YAML).write_text(
+        "zones:\n"
+        "  the kitchen: {x: 1.0, y: 2.0, source: editor}\n"
+        "  office: {x: 3.0, y: 4.0}\n"
+        "  yard: {x: 5.0, y: 6.0, source: surveyed}\n"
+    )
+    zones = bundle.read_floor(tmp_path, "home", "ground")["zones"]
+    assert zones["the kitchen"]["source"] == "editor"
+    assert "source" not in zones["office"]
+    assert "source" not in zones["yard"]
 
 
 @pytest.mark.parametrize(
@@ -354,26 +372,16 @@ def revision(directory, **kwargs) -> Path:
         (directory / "map.posegraph").write_bytes(b"graph")
         (directory / "map.data").write_bytes(b"data")
     if kwargs.get("zones", True):
-        # A revision carries the *binding*, since coordinates are only
-        # meaningful in the map frame beside them.
+        # A revision carries a copy of the floor's zones, so that a floor's
+        # places reach a robot which has never driven there.
         bundle.write_floor(
             directory,
-            {"frame_id": "map", "revision": 1, "zones": {}},
-            site="home",
-            floor="ground",
-            platform_id="mote-01",
-        )
-        (directory / "vocabulary.yaml").unlink()
-        binding = yaml.safe_load((directory / "binding.yaml").read_text())
-        binding["bindings"] = [
             {
-                "name": "a",
-                "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
-                "footprint": None,
-                "anchor": {"method": "taught"},
-            }
-        ]
-        (directory / "binding.yaml").write_text(yaml.safe_dump(binding))
+                "frame_id": "map",
+                "revision": 1,
+                "zones": {"a": {"name": "a", "x": 0.0, "y": 0.0, "yaw": 0.0}},
+            },
+        )
     return directory
 
 
@@ -441,7 +449,7 @@ def test_the_image_must_be_the_one_map_yaml_names(tmp_path):
 
 def test_a_raw_map_of_a_different_size_is_refused(tmp_path):
     """map.png and map_raw.png are the same frame with different pixels, so a
-    size that differs means every zone taught on this floor is suspect."""
+    size that differs means every zone bound on this floor is suspect."""
     directory = revision(tmp_path / "rev")
     png(directory / "map_raw.png", 10, 10, lambda x, y: 254)
     assert any("share a frame" in error for error in bundle.validate(directory).errors)
@@ -450,7 +458,7 @@ def test_a_raw_map_of_a_different_size_is_refused(tmp_path):
 def test_a_floor_with_no_zones_validates_but_says_so(tmp_path):
     report = bundle.validate(revision(tmp_path / "rev", zones=False))
     assert report.ok
-    assert any("no binding.yaml" in warning for warning in report.warnings)
+    assert any("no zones.yaml" in warning for warning in report.warnings)
 
 
 # ---- the wire form ------------------------------------------------------
@@ -466,7 +474,7 @@ def test_pack_round_trips_through_unpack(tmp_path):
         "meta.yaml",
         "map.posegraph",
         "map.data",
-        "binding.yaml",
+        "zones.yaml",
     }
     assert bundle.validate(tmp_path / "landed").ok
     for name in written:
@@ -481,10 +489,10 @@ def test_packing_is_deterministic(tmp_path):
     assert bundle.digest(bundle.pack(source)).startswith("sha256:")
 
 
-def test_extra_files_travel_with_the_frame(tmp_path):
+def test_extra_files_travel_with_the_revision(tmp_path):
     source = revision(tmp_path / "rev", zones=False)
-    blob = bundle.pack(source, {"binding.yaml": b"schema: 1\nbindings: []\n"})
-    assert "binding.yaml" in bundle.unpack(blob, tmp_path / "landed")
+    blob = bundle.pack(source, {"zones.yaml": b"frame_id: map\nzones: {}\n"})
+    assert "zones.yaml" in bundle.unpack(blob, tmp_path / "landed")
 
 
 def test_a_file_that_is_not_part_of_a_bundle_cannot_be_packed(tmp_path):

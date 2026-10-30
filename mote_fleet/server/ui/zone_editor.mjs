@@ -22,7 +22,7 @@
 // and an editor that could only edit the published map would have required
 // promoting those placeholder names in order to be allowed to fix them.
 //
-// Geometry and the vocabulary rules live in pure functions over zone objects in
+// Geometry and the naming rules live in pure functions over zone objects in
 // *world* metres, so every edit operation is testable under node with no canvas
 // and no DOM.
 
@@ -111,24 +111,40 @@ export function cursorFor(target, placing = false) {
   return target.kind === 'vertex' ? 'crosshair' : 'move';
 }
 
+// `source` records what made the zone: `save-zone` for a pose a robot was
+// driven to and captured, `segment-map` for a room read off a saved map, and
+// `editor` for geometry placed or dragged here. It is a note and nothing reads
+// it to decide anything — a zone is a coordinate in the floor's frame however
+// it got there — so what it buys is an operator being able to see which zones
+// somebody drew.
+export const EDITOR_SOURCE = 'editor';
+
+// Any edit to a zone's geometry makes this editor what most recently placed it,
+// so every geometry helper goes through here. A zone this edit does not touch
+// keeps the source it arrived with, which is why nothing stamps the whole set
+// on save.
+export function sourced(zone) {
+  return { ...zone, source: EDITOR_SOURCE };
+}
+
 export function withVertex(zone, index, x, y) {
   const polygon = zone.polygon.map((point, i) =>
     i === index ? [round(x), round(y)] : point,
   );
-  return { ...zone, polygon };
+  return sourced({ ...zone, polygon });
 }
 
 export function withInsertedVertex(zone, afterIndex, x, y) {
   const polygon = zone.polygon.slice();
   polygon.splice(afterIndex + 1, 0, [round(x), round(y)]);
-  return { ...zone, polygon };
+  return sourced({ ...zone, polygon });
 }
 
 // A polygon needs three vertices to enclose anything; refuse rather than
 // letting a delete quietly produce a line.
 export function withoutVertex(zone, index) {
   if (!zone.polygon || zone.polygon.length <= 3) return null;
-  return { ...zone, polygon: zone.polygon.filter((_, i) => i !== index) };
+  return sourced({ ...zone, polygon: zone.polygon.filter((_, i) => i !== index) });
 }
 
 // Moving a zone moves its footprint and its pose together: they name the same
@@ -140,11 +156,11 @@ export function translated(zone, dx, dy) {
   }
   if (typeof zone.x === 'number') moved.x = round(zone.x + dx);
   if (typeof zone.y === 'number') moved.y = round(zone.y + dy);
-  return moved;
+  return sourced(moved);
 }
 
 export function withPose(zone, x, y) {
-  return { ...zone, x: round(x), y: round(y) };
+  return sourced({ ...zone, x: round(x), y: round(y) });
 }
 
 // A new zone arrives as a rectangle at the view centre with the first free
@@ -153,7 +169,7 @@ export function freshZone(existing, cx, cy, half = 1.0) {
   const names = new Set(existing.map((zone) => zone.name));
   let n = 1;
   while (names.has(`zone_${String(n).padStart(2, '0')}`)) n += 1;
-  return {
+  return sourced({
     name: `zone_${String(n).padStart(2, '0')}`,
     x: round(cx),
     y: round(cy),
@@ -164,7 +180,7 @@ export function freshZone(existing, cx, cy, half = 1.0) {
       [round(cx + half), round(cy + half)],
       [round(cx - half), round(cy + half)],
     ],
-  };
+  });
 }
 
 // The map's own pixel grid, in world metres. A vertex dropped anywhere inside a
@@ -188,9 +204,8 @@ export function snapDelta(map, delta) {
   return round(Math.round(delta / map.resolution) * map.resolution);
 }
 
-// One zone's geometry in a phrase: the binding half, which is the half that is
-// only true against the map beside it. Shown in the list whether or not the
-// list is being edited — the shape is a fact about the zone, not a control.
+// One zone's geometry in a phrase. Shown in the list whether or not the list is
+// being edited — the shape is a fact about the zone, not a control.
 //
 // A zone is a *point* or an *area*, and that is geometry rather than a type it
 // was declared to be: a zone has a pose, and it may also have an extent. The
@@ -588,7 +603,7 @@ export class ZoneEditor {
 
   // Every rename is checked against the same rules the robot's loader enforces
   // — the name shape, and two zones answering one query — because the loader
-  // *refuses* an ambiguous vocabulary rather than resolving it by dict order.
+  // *refuses* two zones answering one query rather than picking by dict order.
   // A set this editor is willing to save is a set a robot will load.
   problems() {
     const seen = new Set();

@@ -207,3 +207,37 @@ def test_real_robot_yaml_gains_are_sane():
         pytest.skip("robot.yaml not found in source tree")
     g = ArmConfig.from_yaml_file(str(robot_yaml)).gains
     assert 0 < g.kp <= 254
+
+
+def test_a_band_the_goal_register_cannot_address_is_named():
+    """Measured on the arm: shoulder_lift stopped dead at -0.865 rad every time,
+    in one direction only, whatever the load — because zero=564 puts -0.865 rad
+    at encoder count 0 and the goal saturates there silently."""
+    joint = JointSpec(
+        name="shoulder_lift", id=2, min_rad=-1.775, max_rad=1.775, zero_counts=564
+    )
+    assert joint.reachable_min == pytest.approx(-0.865, abs=1e-3)
+    assert joint.reachable_max == pytest.approx(1.775)
+    assert "only [-0.865, +1.775] addressable" in joint.unreachable
+
+
+def test_a_centred_joint_has_no_problem():
+    joint = JointSpec(
+        name="elbow_flex", id=3, min_rad=-1.662, max_rad=1.662, zero_counts=2048
+    )
+    assert joint.unreachable is None
+    assert joint.reachable_min == pytest.approx(-1.662)
+
+
+def test_an_inverted_joint_saturates_at_the_opposite_end():
+    """Inverting the joint swaps which encoder edge bites: the same zero that
+    caps a normal joint's minimum caps an inverted one's maximum."""
+    plain = JointSpec(name="a", id=1, min_rad=-1.5, max_rad=1.5, zero_counts=564)
+    flipped = JointSpec(
+        name="b", id=2, min_rad=-1.5, max_rad=1.5, zero_counts=564, invert=True
+    )
+    assert plain.reachable_min == pytest.approx(-0.865, abs=1e-3)
+    assert plain.reachable_max == pytest.approx(1.5)
+    assert flipped.reachable_max == pytest.approx(0.865, abs=1e-3)
+    assert flipped.reachable_min == pytest.approx(-1.5)
+    assert flipped.unreachable is not None

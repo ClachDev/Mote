@@ -2,13 +2,13 @@
 
 The offset register (EEPROM, ``SMS_STS_OFS_L/H``) is the one piece of arm state
 with no copy anywhere else: it lives only in the servo, and overwriting it
-destroys the previous value. ``arm-calibrate`` writes it, so this exists to see
+destroys the previous value. ``arm-setup calibrate`` writes it, so this exists to see
 what is there, to put it back, and to set one by hand.
 
-    pixi run arm-offsets show       # read-only: raw register + decoded value
-    pixi run arm-offsets backup     # snapshot the current offsets to ~/.mote
-    pixi run arm-offsets restore    # write the snapshot back
-    pixi run arm-offsets set --joint shoulder_pan --value 2027
+    pixi run arm-setup offsets show       # read-only: raw register + decoded value
+    pixi run arm-setup offsets backup     # snapshot the current offsets to ~/.mote
+    pixi run arm-setup offsets restore    # write the snapshot back
+    pixi run arm-setup offsets set --joint shoulder_pan --value 2027
 
 Opens the bus directly, so run it with the driver stopped. ``show`` and
 ``backup`` never write. ``restore`` and ``set`` write EEPROM and ask first.
@@ -20,39 +20,14 @@ its decode, that assumption is what to doubt first.
 
 from __future__ import annotations
 
-import argparse
 from datetime import datetime, timezone
 
-from mote_arm import config
-from mote_arm.bus import (
-    OFFSET_MAX,
-    BusError,
-    FeetechBus,
-    decode_sign_magnitude,
-    port_holders,
-)
+from mote_arm.bus import OFFSET_MAX, decode_sign_magnitude
 from mote_arm.calibrate import (
     load_offsets_backup,
     offsets_backup_path,
     save_offsets_backup,
 )
-
-
-def _open_bus(cfg) -> FeetechBus:
-    holders = port_holders(cfg.port)
-    if holders:
-        for pid, cmd in holders:
-            print(f"  port held by pid {pid}: {cmd}")
-        raise SystemExit(
-            "refusing to share the bus — stop the arm driver / robot base first "
-            "(`pixi run kill`)."
-        )
-    bus = FeetechBus(cfg.port, cfg.baud_rate)
-    try:
-        bus.open()
-    except BusError as exc:
-        raise SystemExit(f"cannot open bus: {exc}")
-    return bus
 
 
 def _read_all(cfg, bus) -> dict[str, int | None]:
@@ -147,43 +122,24 @@ def _cmd_set(cfg, bus, args) -> None:
     _write(bus, cfg, {args.joint: args.value}, args)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Servo position-correction offsets (EEPROM)"
+def add_subparser(sub) -> None:
+    parser = sub.add_parser(
+        "offsets", help="the servos' position-correction registers (EEPROM)"
     )
-    parser.add_argument("--robot-yaml", default="", help="override robot.yaml path")
-    parser.add_argument("--yes", action="store_true", help="skip confirmation")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser("show", help="read the offsets (read-only)").set_defaults(
+    inner = parser.add_subparsers(dest="action", required=True)
+    inner.add_parser("show", help="read the offsets (read-only)").set_defaults(
         func=_cmd_show
     )
-    sub.add_parser("backup", help="snapshot the offsets to ~/.mote").set_defaults(
+    inner.add_parser("backup", help="snapshot the offsets to ~/.mote").set_defaults(
         func=_cmd_backup
     )
-    sub.add_parser("restore", help="write the snapshot back").set_defaults(
+    inner.add_parser("restore", help="write the snapshot back").set_defaults(
         func=_cmd_restore
     )
-    p_set = sub.add_parser("set", help="write one joint's offset")
+    p_set = inner.add_parser("set", help="write one joint's offset")
     p_set.add_argument("--joint", required=True)
     p_set.add_argument("--value", required=True, type=int)
     p_set.set_defaults(func=_cmd_set)
 
-    args = parser.parse_args()
-    cfg = (
-        config.ArmConfig.from_yaml_file(args.robot_yaml)
-        if args.robot_yaml
-        else config.load()
-    )
-    bus = _open_bus(cfg)
-    try:
-        args.func(cfg, bus, args)
-    finally:
-        bus.close()
 
-
-if __name__ == "__main__":
-    main()
-
-
-__all__ = ["main", "decode_sign_magnitude"]
+__all__ = ["add_subparser", "decode_sign_magnitude"]

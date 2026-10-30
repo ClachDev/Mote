@@ -142,11 +142,11 @@ scratch registry seeded from the committed sim bundles, and one robot's retained
 presence/health/pose published straight to the wire — driven with a headless
 Chromium.
 
-![The fleet map with taught zones and the revision picker](../images/fleet-map-registry.webp)
+![The fleet map with the floor's zones and the revision picker](../images/fleet-map-registry.webp)
 
 What the picture verifies, none of which a unit test can:
 
-- **Taught zones land on the map.** The four dashed rectangles are
+- **The floor's zones land on the map.** The four dashed rectangles are
   `hospital_world`'s ward polygons drawn through the Q5 transform, and they sit
   exactly on the room walls in the basemap. `pickup`, `home` and `dropoff` are
   bare waypoints and draw as labelled crosses.
@@ -226,7 +226,7 @@ a reason:
 5. **Zones travel inside the revision**, and replace the floor's on install (the
    old file is kept as `zones.<old-rev>.yaml`). The design says map and zones
    must travel together; the consequence nobody writes down is that installing a
-   *different* session's map makes the previously taught zones wrong, so leaving
+   *different* session's map makes the previously bound zones wrong, so leaving
    them in place would be the silent failure the rule exists to prevent.
 
 Also worth recording: `save-map` now runs the same validation locally, so a map

@@ -12,14 +12,26 @@ server, and the helpers for talking to it, are ``conftest.py`` +
 ``api_harness.py``; the map registry's own routes are ``test_map_registry.py``.
 """
 
+import errno
+import json
+import socket
+import urllib.error
+import urllib.request
+
+import pytest
+
+import fleet_server
 from api_harness import (
+    FakeBroker,
     enroll,
     expect_error,
     get,
     get_bytes,
     post,
     post_raw,
+    retain,
 )
+from fleet_server import STATE_LEAVES, BrokerFeed, RobotState, serve
 
 from mote_bringup.spec import mission
 from mote_fleet import protocol
@@ -74,18 +86,206 @@ def test_the_roster_lists_what_was_enrolled(server):
     assert [r["name"] for r in body["robots"]] == ["Scout", "Rover"]
 
 
-def test_one_robot_can_be_fetched_by_id(server):
+def test_one_robot_can_be_fetched_by_id(server, operator):
     enroll(server, "serial:aaa")
-    status, body = get(server, "/v1/robots/mote-01")
+    status, body = get(server, "/v1/robots/mote-01", token=operator)
     assert (status, body["robot_id"]) == (200, "mote-01")
 
 
-def test_unknown_robot_is_404(server):
-    expect_error(lambda: get(server, "/v1/robots/nope"), 404)
+def test_unknown_robot_is_404(server, operator):
+    expect_error(lambda: get(server, "/v1/robots/nope", token=operator), 404)
 
 
 def test_unknown_route_is_404(server):
     expect_error(lambda: get(server, "/v1/nothing"), 404)
+
+
+# -- one robot's live state, over HTTP --------------------------------------
+#
+# The route exists so a client can discover and follow a mission without
+# joining the broker. What it must never do is invent: a field it has not been
+# handed is null, and a field it has been handed comes back as published.
+
+
+def presence_payload(robot_id="mote-01", online=True):
+    return protocol.presence(robot_id, online, version="test")
+
+
+def status_payload(robot_id="mote-01", state=mission.ACCEPTED, mission_id="abc123"):
+    return mission.status(robot_id, mission_id, "goto", state)
+
+
+def test_a_robot_nothing_has_been_heard_from_has_every_field_null(server, operator):
+    enroll(server, "serial:aaa", name="Scout")
+    status, body = get(server, "/v1/robots/mote-01", token=operator)
+    assert status == 200
+    assert body["name"] == "Scout"
+    assert body["presence"] is None
+    assert body["health"] is None
+    assert body["pose"] is None
+    assert body["capabilities"] is None
+    assert body["mission_status"] is None
+
+
+def test_retained_state_comes_back_verbatim(server, operator, robot):
+    presence = retain(server, robot, protocol.PRESENCE, presence_payload())
+    pose = retain(
+        server,
+        robot,
+        protocol.POSE,
+        protocol.pose(robot, 1.5, -2.25, 0.75, site="home", floor="ground"),
+    )
+    running = retain(server, robot, protocol.STATUS, status_payload())
+
+    status, body = get(server, f"/v1/robots/{robot}", token=operator)
+    assert status == 200
+    # Not "looks like": the whole payload, field for field, as the robot
+    # published it. A server that reinterpreted one would be a second
+    # definition of a wire that already has one.
+    assert body["presence"] == presence
+    assert body["pose"] == pose
+    assert body["mission_status"] == running
+    assert body["health"] is None
+
+
+def test_the_latest_payload_on_a_topic_is_the_one_served(server, operator, robot):
+    retain(server, robot, protocol.STATUS, status_payload(state=mission.ACCEPTED))
+    finished = retain(
+        server, robot, protocol.STATUS, status_payload(state=mission.SUCCEEDED)
+    )
+    _, body = get(server, f"/v1/robots/{robot}", token=operator)
+    assert body["mission_status"] == finished
+    assert body["mission_status"]["terminal"] is True
+
+
+def test_state_is_kept_per_robot(server, operator):
+    enroll(server, "serial:aaa")
+    enroll(server, "serial:bbb")
+    retain(server, "mote-01", protocol.PRESENCE, presence_payload("mote-01", True))
+    retain(server, "mote-02", protocol.PRESENCE, presence_payload("mote-02", False))
+    _, first = get(server, "/v1/robots/mote-01", token=operator)
+    _, second = get(server, "/v1/robots/mote-02", token=operator)
+    assert first["presence"]["online"] is True
+    assert second["presence"]["online"] is False
+
+
+def test_clearing_a_retained_topic_clears_the_field(server, operator, robot):
+    retain(server, robot, protocol.PRESENCE, presence_payload())
+    # A zero-length payload is how MQTT clears retention. Holding the old value
+    # would leave this server asserting a state the broker no longer serves.
+    server.state.apply(protocol.topic(robot, protocol.PRESENCE), b"")
+    _, body = get(server, f"/v1/robots/{robot}", token=operator)
+    assert body["presence"] is None
+
+
+def test_the_route_needs_an_operator_token(server, robot):
+    body = expect_error(lambda: get(server, f"/v1/robots/{robot}", token=""), 401)
+    assert "operator token" in body["error"]
+
+
+def test_an_unknown_robot_without_a_token_is_401_not_404(server):
+    # The unauthenticated answer does not depend on the id, so this route
+    # cannot be used to find out which ids are enrolled.
+    expect_error(lambda: get(server, "/v1/robots/mote-99", token=""), 401)
+
+
+def test_the_roster_carries_presence_per_row(server, operator):
+    enroll(server, "serial:aaa", name="Scout")
+    enroll(server, "serial:bbb", name="Rover")
+    retain(server, "mote-01", protocol.PRESENCE, presence_payload("mote-01", True))
+    status, body = get(server, "/v1/robots")
+    assert status == 200
+    assert body["broker_connected"] is True
+    rows = {row["robot_id"]: row for row in body["robots"]}
+    assert rows["mote-01"]["presence"]["online"] is True
+    # Never invented: the second robot has published nothing.
+    assert rows["mote-02"]["presence"] is None
+
+
+def test_a_server_that_cannot_hear_says_so(server, operator, robot):
+    server.state.connected = False
+    _, body = get(server, f"/v1/robots/{robot}", token=operator)
+    # All-null state means "the robot has said nothing" only if the server can
+    # hear; this is the field that separates the two.
+    assert body["broker_connected"] is False
+    assert body["presence"] is None
+
+
+def test_what_the_state_refuses_to_hold(server):
+    # A map announcement is not a robot; a command is not state (it is the
+    # write path, and a retained one would re-fire anyway); a payload that is
+    # not a JSON object cannot go into a JSON envelope.
+    for topic, payload in (
+        ("mote/v2/registry/site/home/floor/ground/current", b"{}"),
+        (protocol.topic("mote-01", protocol.COMMAND), b"{}"),
+        (protocol.topic("mote-01", protocol.POSE), b"not json"),
+        (protocol.topic("mote-01", protocol.POSE), b"[1, 2]"),
+    ):
+        assert not server.state.apply(topic, payload), topic
+    assert server.state.of("mote-01") == {
+        "presence": None,
+        "health": None,
+        "pose": None,
+        "capabilities": None,
+        "mission_status": None,
+    }
+
+
+def test_a_port_already_in_use_is_the_error_raised(tmp_path):
+    # TCPServer calls server_close() itself when the bind fails, before
+    # FleetServer.__init__ has run past its super() call.
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen()
+        with pytest.raises(OSError) as raised:
+            serve(
+                db=tmp_path / "registry.db",
+                host="127.0.0.1",
+                port=holder.getsockname()[1],
+                broker_host="fleet-box",
+                publisher=FakeBroker(),
+            )
+    assert raised.value.errno == errno.EADDRINUSE
+
+
+class RecordingClient:
+    def __init__(self):
+        self.subscribed = []
+
+    def subscribe(self, topic, qos=0):
+        self.subscribed.append(topic)
+
+
+def test_a_refused_connection_is_not_a_connected_one():
+    """paho calls on_connect for a refused CONNACK as well as an accepted one.
+    Once M7 issues broker credentials a bad one is the likely refusal, and
+    reporting it as connected is the ambiguity `broker_connected` removes."""
+    reasoncodes = pytest.importorskip("paho.mqtt.reasoncodes")
+    packettypes = pytest.importorskip("paho.mqtt.packettypes")
+    state = RobotState()
+    feed = BrokerFeed("fleet-box", 1883, state)
+    client = RecordingClient()
+
+    refused = reasoncodes.ReasonCode(packettypes.PacketTypes.CONNACK, "Not authorized")
+    feed._on_connect(client, None, {}, refused, None)
+    assert state.connected is False
+    assert client.subscribed == []
+
+    accepted = reasoncodes.ReasonCode(packettypes.PacketTypes.CONNACK, "Success")
+    feed._on_connect(client, None, {}, accepted, None)
+    assert state.connected is True
+    assert len(client.subscribed) == len(STATE_LEAVES)
+
+
+def test_a_paho_1_return_code_is_read_the_same_way():
+    # paho 1.x passes a bare int: 0 accepted, anything else refused.
+    state = RobotState()
+    feed = BrokerFeed("fleet-box", 1883, state)
+    client = RecordingClient()
+    feed._on_connect(client, None, {}, 5)
+    assert (state.connected, client.subscribed) == (False, [])
+    feed._on_connect(client, None, {}, 0)
+    assert state.connected is True
 
 
 def test_a_missing_token_is_401(server):
@@ -274,7 +474,7 @@ def test_a_broker_that_is_down_is_reported_not_swallowed(server, operator, robot
 
 
 def test_the_audit_route_needs_an_operator_token(server, operator, robot):
-    expect_error(lambda: get(server, "/v1/audit"), 401)
+    expect_error(lambda: get(server, "/v1/audit", token=""), 401)
     dispatch(server, robot, token=operator)
     status, body = get(server, "/v1/audit", token=operator)
     assert status == 200
@@ -362,3 +562,183 @@ def test_a_reconnecting_client_resubscribes_every_time():
     on_connect(client, None, {}, 0)
     assert [t for t, _ in client.subscribed] == topics + topics
     assert {qos for _, qos in client.subscribed} == {protocol.QOS}
+
+
+# ---- the auth gate: every route, walked ------------------------------------
+#
+# These read `fleet_server.ROUTES` rather than a list kept here, so a route
+# added to the server is covered the day it is added and a route that quietly
+# stops requiring a credential fails a test rather than a review.
+
+#: A value for every path variable the table uses. A route introducing a new
+#: one fails here with a KeyError, which is the intended way to be told.
+SAMPLES = {
+    "robot_id": "mote-01",
+    "site": "home",
+    "floor": "ground",
+    "revision": "20260726T120000",
+    "leaf": "map.json",
+}
+
+
+def url_for(route):
+    return route.template.format(**SAMPLES)
+
+
+def call(server, route, token):
+    """One request at a route, answered as ``(status, body bytes)``.
+
+    Raw rather than parsed because the table holds a route serving gzip, and a
+    test of who may reach a route has no business decoding what it serves.
+    """
+    request = urllib.request.Request(
+        server.url + url_for(route),
+        data=None if route.method == "GET" else json.dumps({}).encode(),
+        headers={"Content-Type": "application/json"},
+        method=route.method,
+    )
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+GATED = [r for r in fleet_server.ROUTES if r.auth == fleet_server.OPERATOR]
+OPEN = [r for r in fleet_server.ROUTES if r.auth != fleet_server.OPERATOR]
+
+
+#: What the gate says, and the only refusal these tests are about.
+REFUSAL = b"operator token"
+
+
+@pytest.mark.parametrize("route", GATED, ids=url_for)
+def test_every_gated_route_refuses_an_anonymous_request(server, robot, route):
+    """M3 put a token on dispatch alone, so the roster, the basemaps, the audit
+    log and the broker's address were readable by anything that could reach the
+    port. This is the statement, per route, that they are not."""
+    status, body = call(server, route, "")
+    assert (status, REFUSAL in body) == (401, True)
+    assert not server.publisher.published
+
+
+@pytest.mark.parametrize("route", GATED, ids=url_for)
+def test_every_gated_route_refuses_an_unknown_token(server, robot, route):
+    assert call(server, route, "not-a-real-token")[0] == 401
+
+
+@pytest.mark.parametrize("route", GATED, ids=url_for)
+def test_every_gated_route_refuses_a_revoked_token(server, robot, route):
+    token = server.registry.new_operator(name="leaver")
+    server.registry.revoke_operator(token)
+    assert call(server, route, token)[0] == 401
+
+
+@pytest.mark.parametrize("route", OPEN, ids=url_for)
+def test_an_open_route_never_asks_for_an_operator_token(server, robot, route):
+    """The carve-outs, read off the table rather than out of prose: /healthz,
+    because a liveness probe that needs a secret is one nobody wires up, and the
+    three robot-facing routes, which carry their own credential (enrollment) or
+    none at all (M4's map exchange, until robots have one).
+
+    An open route may still refuse the request — enrollment without an
+    enrollment token does, and an upload with no bundle in it does — so what is
+    asserted is that it never refuses for want of an *operator*."""
+    status, body = call(server, route, "")
+    assert REFUSAL not in body, f"{route.template} is gated after all"
+    assert status != 403
+
+
+def test_the_table_names_which_routes_are_open(server):
+    """Restated here so that opening a route is a deliberate edit to a test and
+    not a line nobody reads."""
+    assert {(r.method, r.template) for r in OPEN} == {
+        ("GET", "/healthz"),
+        ("POST", "/v1/enroll"),
+        ("POST", "/v1/sites/{site}/floors/{floor}/revisions/{revision}"),
+        ("GET", "/v1/sites/{site}/floors/{floor}/revisions/{revision}/bundle.tar.gz"),
+    }
+
+
+def test_every_route_names_a_handler_that_exists(server):
+    for route in fleet_server.ROUTES:
+        assert callable(getattr(fleet_server.FleetHandler, route.handler))
+
+
+def test_authorization_is_checked_before_the_route_exists(server):
+    """A 404 for an anonymous caller would say which routes are real."""
+    expect_error(lambda: get(server, "/v1/nothing", token=""), 401)
+    expect_error(lambda: post(server, "/v1/nothing", {"schema": protocol.SCHEMA}), 401)
+
+
+def test_a_known_route_with_a_token_is_404_when_it_does_not_exist(server):
+    expect_error(lambda: get(server, "/v1/nothing"), 404)
+
+
+def test_the_static_ui_stays_open(server):
+    """The page has to load in order to ask for a token, and it carries no
+    fleet data until it has one."""
+    status, content_type, body = get_bytes(server, "/index.html", token="")
+    assert status == 200
+    assert content_type.startswith("text/html")
+    assert b"operator token" in body
+
+
+def test_healthz_stays_open(server):
+    status, body = get(server, "/healthz", token="")
+    assert (status, body["ok"]) == (200, True)
+
+
+def test_a_robot_pulls_a_bundle_without_a_credential(server, robot, tmp_path):
+    """The other half of M4's upload: an agent told which revision is canonical
+    has no operator token, and the alternative to this carve-out is a fleet whose
+    maps never reach its robots."""
+    from api_harness import packed_revision, post_bytes
+
+    revision = "20260727T101500"
+    post_bytes(
+        server,
+        f"/v1/sites/home/floors/ground/revisions/{revision}?robot_id={robot}",
+        packed_revision(tmp_path),
+    )
+    status, content_type, blob = get_bytes(
+        server,
+        f"/v1/sites/home/floors/ground/revisions/{revision}/bundle.tar.gz",
+        token="",
+    )
+    assert (status, content_type) == (200, "application/gzip")
+    assert blob
+
+
+# ---- what the route table matches ------------------------------------------
+
+
+def test_a_path_variable_never_swallows_a_separator():
+    """Matching is on the raw path, so an escaped separator stays inside one
+    segment and is refused by name validation rather than becoming two
+    components."""
+    route, variables = fleet_server.match_route("GET", "/v1/zones/..%2F..%2Fetc/ground")
+    assert route.handler == "_vocabulary"
+    assert variables["site"] == "..%2F..%2Fetc"
+
+
+def test_a_literal_segment_wins_over_a_variable_one():
+    """``bundle.tar.gz`` is the robot's route and the review leaves are the
+    operator's; they differ in one segment and in what they cost to reach."""
+    pull, _ = fleet_server.match_route(
+        "GET", "/v1/sites/home/floors/ground/revisions/r1/bundle.tar.gz"
+    )
+    review, _ = fleet_server.match_route(
+        "GET", "/v1/sites/home/floors/ground/revisions/r1/map.png"
+    )
+    assert (pull.handler, pull.auth) == ("_bundle", fleet_server.ROBOT)
+    assert (review.handler, review.auth) == ("_revision", fleet_server.OPERATOR)
+
+
+def test_a_method_is_part_of_the_match():
+    """The same path uploads under POST and is not readable under GET."""
+    path = "/v1/sites/home/floors/ground/revisions/r1"
+    assert fleet_server.match_route("POST", path)[0].handler == "_upload"
+    assert fleet_server.match_route("GET", path)[0] is None

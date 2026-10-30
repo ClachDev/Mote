@@ -194,10 +194,10 @@ export function provenanceRows(revision) {
 //
 // **The ordinary case says nothing.** Zones that belong to the revision they are
 // drawn on are what "zones" already means; a caption announcing it is a label
-// for the absence of a problem, in words ("taught in this revision's own
+// for the absence of a problem, in words ("bound in this revision's own
 // frame") that only mean anything to someone who knows the problem. What is
 // worth a word is the exception: a revision carrying no zones of its own is
-// drawn with the *floor's*, taught in a previous SLAM session's frame and so
+// drawn with the *floor's*, bound in a previous SLAM session's frame and so
 // out by however far the two origins differ. `null` is "nothing to say".
 export function zoneSource(source, count) {
   if (!count) return { tag: 'none', title: 'this revision carries no zones' };
@@ -206,7 +206,7 @@ export function zoneSource(source, count) {
       tag: 'inherited',
       title:
         'this revision carries no zones, so the floor’s are drawn: they were ' +
-        'taught on another map and line up only as far as the two frames do',
+        'bound against another map and line up only as far as the two frames do',
     };
   }
   return null;
@@ -227,8 +227,11 @@ function el(tag, attributes = {}, children = []) {
 }
 
 export class ReviewView {
-  constructor({ api, dom, onPromoted = () => {} }) {
+  constructor({ api, loadImage, dom, onPromoted = () => {} }) {
     this.api = api;
+    // Injected for the same reason `api` is: both carry the operator's token,
+    // and this pane must not hold a second idea of where that lives.
+    this.loadImage = loadImage;
     this.dom = dom;
     this.onPromoted = onPromoted;
     this.floors = [];
@@ -330,9 +333,7 @@ export class ReviewView {
     this.dom.mapLabel.textContent = `${this.key} · ${revision.revision}`;
     try {
       const meta = await this.api(revisionPath(site, floor, revision.revision, 'map.json'));
-      const image = new Image();
-      image.src = meta.image_url;
-      await image.decode();
+      const image = await this.loadImage(meta.image_url);
       if (epoch !== this.epoch) return;
       // Two revisions of one floor are compared by switching between them, so
       // the viewport is kept — unless the maps are different sizes, where
