@@ -73,10 +73,12 @@ def validator_for():
         (uri, Resource.from_contents(document)) for uri, document in store.items()
     )
 
-    def make(name: str):
-        return jsonschema.validators.Draft202012Validator(
-            store[prefix + name], registry=registry
-        )
+    def make(schema):
+        """A spec schema by its path under the prefix, or a schema of Mote's
+        own whose ``$ref``s point into the spec."""
+        if isinstance(schema, str):
+            schema = store[prefix + schema]
+        return jsonschema.validators.Draft202012Validator(schema, registry=registry)
 
     return make
 
@@ -181,6 +183,8 @@ def a_floor(directory: Path):
         "     display_name: Kitchen, aliases: [the kitchen, galley]}\n"
         "  ward_a: {polygon: [[4, 0], [9, 0], [9, 3], [4, 3]], kind: room}\n"
         "  server_room: {x: 1.0, y: 1.0, kind: keepout}\n"
+        "  Store room: {x: 3.0, y: 1.0, note: Stationery lives here.}\n"
+        "  Café: {x: 5.0, y: 2.0, description: Busy at lunch.}\n"
     )
     floor = bundle.read_floor(directory, "acme_hq", "ground")
     return (
@@ -205,17 +209,17 @@ def a_vocabulary(directory: Path) -> dict:
     return {key: value for key, value in document.items() if key != "problems"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="zone/v0's vocabulary schema requires `kind`, and Mote's vocabulary "
-    "is a name, a note and `navigable` — so this payload does not validate. A "
-    "successor revision of the spec is outstanding (mote #616); when it lands "
-    "this passes and the marker comes off.",
-)
 def test_a_vocabulary_conforms(validator_for, tmp_path):
-    validator_for("zone/v0/zone-vocabulary.schema.json").validate(
-        a_vocabulary(tmp_path)
-    )
+    """Read from a floor carrying retired fields, so the spec's read rule is
+    exercised as well as the shape: ``description`` becomes ``note``, a
+    ``keepout`` becomes ``navigable: false``, and nothing retired is written."""
+    document = a_vocabulary(tmp_path)
+    validator_for("zone/v0/zone-vocabulary.schema.json").validate(document)
+    terms = {term["name"]: term for term in document["zones"]}
+    assert terms["server_room"]["navigable"] is False
+    assert terms["Café"]["note"] == "Busy at lunch."
+    for term in document["zones"]:
+        assert set(term) <= {"name", "note", "navigable"}, term
 
 
 def test_a_vocabulary_carries_no_coordinates(validator_for, tmp_path):
@@ -263,7 +267,21 @@ def test_every_resolution_reason_conforms(validator_for):
 
 
 def test_a_zone_name_conforms_to_the_reference_schema(validator_for):
+    """Mote's name rule and the spec's reference pattern agree, both ways."""
     validator = validator_for("zone/v0/zone-ref.schema.json")
-    validator.validate("kitchen")
+    for name in ("kitchen", "Living Room", "Store room", "Café", "Ward 3B"):
+        assert zone.ZONE_NAME_RE.match(name)
+        validator.validate(name)
+    for name in ("kitchen ", " kitchen", "a\tb", ""):
+        assert not zone.ZONE_NAME_RE.match(name)
+        with pytest.raises(validator_library().ValidationError):
+            validator.validate(name)
+
+
+def test_a_goto_takes_a_place_name(validator_for):
+    """The input a live dispatch was refused over, against the capability's
+    own input schema with its ``$ref`` resolved to the spec's zone reference."""
+    validator = validator_for(a_goto()["input_schema"])
+    validator.validate({"target": "Living Room"})
     with pytest.raises(validator_library().ValidationError):
-        validator.validate("The Kitchen")
+        validator.validate({"target": "Living Room "})

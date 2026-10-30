@@ -32,6 +32,7 @@ import math
 import re
 
 from mote_bringup.spec import SpecError
+from mote_bringup.spec import zone
 
 SCHEMA = 1
 VERSION = "v0"
@@ -116,8 +117,12 @@ PRECONDITION_TYPES = {
 ZONE_REF = "https://spec.augereai.com/zone/v0/zone-ref.schema.json"
 
 #: The one ``$ref`` target this validator resolves, inlined because the spec's
-#: URIs are stable identifiers and not yet dereferenceable over HTTP.
-REFS = {ZONE_REF: {"type": "string", "pattern": r"^[a-z][a-z0-9_]*$", "maxLength": 64}}
+#: URIs are stable identifiers and not yet dereferenceable over HTTP. The
+#: pattern is the zone record's own, so a name a floor may hold is a name a
+#: mission may carry.
+REFS = {
+    ZONE_REF: {"type": "string", "pattern": zone.ZONE_NAME_RE.pattern, "maxLength": 64}
+}
 
 
 def zone_ref() -> dict:

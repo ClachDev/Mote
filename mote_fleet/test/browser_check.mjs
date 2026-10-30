@@ -231,6 +231,30 @@ try {
       (keys) => keys.includes('goto'),
     );
     check('the capability set reached the form', offered.includes('goto'), offered);
+
+    // A select that is rebuilt closes under the operator's pointer and forgets
+    // what was chosen, and poses arrive once a second. So the field an operator
+    // is halfway through must be the same element, with the same value, after
+    // several of them have been drawn.
+    await session.evaluate(`(() => {
+      const capability = document.getElementById('capability');
+      capability.value = 'goto';
+      capability.dispatchEvent(new Event('change'));
+      const field = document.querySelector('#mission-input [data-input="target"]');
+      field.value = 'dropoff';
+      window.__heldField = field;
+    })()`);
+    await sleep(3000);
+    const held = await session.evaluate(`(() => {
+      const field = document.querySelector('#mission-input [data-input="target"]');
+      return JSON.stringify({ same: field === window.__heldField, value: field.value });
+    })()`);
+    check(
+      'a half-filled dispatch field survives incoming telemetry',
+      JSON.parse(held).same && JSON.parse(held).value === 'dropoff',
+      held,
+    );
+
     await session.evaluate(`(() => {
       const capability = document.getElementById('capability');
       capability.value = 'goto';
