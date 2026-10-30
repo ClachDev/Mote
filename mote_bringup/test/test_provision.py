@@ -2,6 +2,7 @@
 unattended, with no one watching — so render it here and read it back."""
 
 import argparse
+import base64
 
 import pytest
 import yaml
@@ -33,7 +34,23 @@ def args(tmp_path):
         user="michael",
         repo="https://github.com/ClachDev/Mote.git",
         timezone="Europe/London",
+        camera_calibration=None,
     )
+
+
+CAMERA_INFO = """image_width: 640
+image_height: 480
+camera_name: mote_camera
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [600.0, 0.0, 320.0, 0.0, 600.0, 240.0, 0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.1, -0.2, 0.0, 0.0, 0.0]
+"""
 
 
 def test_renders_valid_cloud_config(args):
@@ -180,3 +197,36 @@ def test_bad_user_is_refused(args):
 def test_unsubstituted_placeholder_is_caught():
     with pytest.raises(ValueError, match="placeholders"):
         provision.check("#cloud-config\nhostname: @ROBOT_ID@\n")
+
+
+def test_a_bench_camera_calibration_rides_along_byte_for_byte(args, tmp_path):
+    cal = tmp_path / "camera_calibration.yaml"
+    cal.write_text(CAMERA_INFO)
+    args.camera_calibration = str(cal)
+    data = yaml.safe_load(provision.build(args))
+    staged = next(
+        f for f in data["write_files"] if f["path"].endswith("camera_calibration.yaml")
+    )
+    assert staged["encoding"] == "b64"
+    assert base64.b64decode(staged["content"]) == CAMERA_INFO.encode()
+    commands = [c[-1] for c in data["runcmd"]]
+    identity = next(i for i, c in enumerate(commands) if "/.mote/robot.yaml" in c)
+    camera = next(
+        i for i, c in enumerate(commands) if "/.mote/camera_calibration.yaml" in c
+    )
+    setup = next(i for i, c in enumerate(commands) if "pixi run setup" in c)
+    assert identity < camera < setup
+
+
+def test_no_camera_calibration_leaves_no_trace(args):
+    text = provision.build(args)
+    assert "camera_calibration" not in text
+    assert ">>>" not in text and "<<<" not in text
+
+
+def test_a_file_that_is_not_a_camera_info_is_refused(args, tmp_path):
+    bogus = tmp_path / "robot.yaml"
+    bogus.write_text("schema: 1\nid: mote-02\n")
+    args.camera_calibration = str(bogus)
+    with pytest.raises(ValueError, match="camera_info"):
+        provision.build(args)

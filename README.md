@@ -123,7 +123,21 @@ pixi run build
 If you run these on your developer machine, sync the code to the Pi with
 `pixi run sync`.
 
-### 3. Setup Pi
+### 3. Bench prep
+
+Two parts are configured on your workstation before the robot exists, over USB.
+Install the udev rules here once (`pixi run setup udev`) so the tools find
+`/dev/mote_servos` and `/dev/mote_camera`, then:
+
+- **Servo IDs.** The drive wheels are expected at IDs **7** (left) and **9**
+  (right) at 1 Mbaud; fresh STS3215 servos ship as ID 1. `pixi run setup-ids`
+  walks through them one servo at a time.
+- **Camera intrinsics** (optional; the default fits the UGREEN webcam).
+  `pixi run camera-calibrate` writes a `camera_calibration.yaml` for the card.
+
+Details: [getting started](docs/getting-started.md#3-bench-prep).
+
+### 4. Setup Pi
 
 There are a few setup tasks that must be run on the Pi before first use. These
 set up udev rules, systemd services, and other configuration. It should only
@@ -131,17 +145,6 @@ need to be run once.
 
 ```bash
 pixi run setup
-```
-
-### 4. Configure the servos
-
-The drive wheels are expected at servo IDs **7** (left) and **9** (right) at
-1 Mbaud. Fresh Feetech STS3215 servos ship as ID 1, so you'll need to assign
-IDs before first use. Run the guided setup and connect one servo at a time when
-prompted:
-
-```bash
-pixi run setup-ids
 ```
 
 ### 5. Map, then drive
@@ -153,7 +156,7 @@ To use SLAM to generate a map:
 
 ```bash
 pixi run mapping   # bringup + SLAM: drive around (teleop or nav goals) to build a map
-pixi run save-map  # save the map + posegraph into the active site
+pixi run site save-map  # save the map + posegraph into the active site
 ```
 
 With a map saved you can just run the robot stack (no slam):
@@ -181,13 +184,13 @@ site.
 
 A Gazebo simulation of Mote runs the same controllers, same scan pipeline, and
 crucially the *same launch files* as the real robot, so nothing can drift
-between sim and hardware. The sim dependencies live in a separate pixi
-environment so the robot install stays lean:
+between sim and hardware. The sim dependencies live in the `dev` pixi
+environment, so the robot install stays lean:
 
 ```bash
 pixi run sim            # headless gz + robot + controllers
 pixi run sim-test       # ~20 s headless smoke test (drive + odom + scan + map)
-pixi run -e sim -- gz sim -g   # optional: attach the Gazebo GUI
+pixi run -e dev -- gz sim -g   # optional: attach the Gazebo GUI
 ```
 
 The worlds in `mote_simulation/worlds/` form an easy-to-hard ladder, selectable

@@ -57,8 +57,8 @@ Suggested order:
    `Wheel Inner` onto the servo horn and fit the `Wheel Tyre` over it. Wheels
    are centred and inset so the footprint stays circular. It's easiest to set
    the servo ID's before going further. Left servo is **ID 7**, right is **ID
-   9** (assign with `pixi run setup-ids` — see the
-   [README](../README.md#4-configure-the-servos)).
+   9** (assign with `pixi run setup-ids` on your workstation, part of
+   [bench prep](../README.md#3-bench-prep)).
 2. **Lower plate.** Fasten the `Motor Support`/servos, the `Battery Mount`, the
    `Waveshare Mount`, and the `C1 Lidar Mount`, to the `Chassis Base`.
 3. **Caster.** Fit the front `Caster` to the underside of the base for the third
@@ -80,4 +80,4 @@ Suggested order:
     [SO-101 follower arm](https://github.com/TheRobotStudio/SO-ARM100) on the ORP
     grid.
 
-Then bring the software up per the [main README](../README.md#5-launch).
+Then bring the software up per the [main README](../README.md#5-map-then-drive).

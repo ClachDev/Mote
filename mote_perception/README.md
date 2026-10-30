@@ -67,7 +67,7 @@ A committed default calibration (`config/camera_info.default.yaml`) ships as a
 fallback, and a per-robot `~/.mote/camera_calibration.yaml` overrides it when
 present. Most robots need no calibration of their own — see
 [`config/README.md`](config/README.md) for when it's worth doing and the
-`camera_calibration cameracalibrator` procedure.
+`pixi run camera-calibrate` bench procedure.
 
 ## Compressed transport
 

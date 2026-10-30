@@ -6,7 +6,8 @@
 # auth key and a wifi passphrase.
 #
 # A clean Pi that boots this comes up on the tailnet under its robot_id, with its
-# identity written to $MOTE_HOME/robot.yaml, with no interactive steps.
+# identity written to $MOTE_HOME/robot.yaml (and the bench camera calibration
+# beside it, when one was given), with no interactive steps.
 
 hostname: @ROBOT_ID@
 manage_etc_hosts: true
@@ -35,6 +36,15 @@ write_files:
       id: @ROBOT_ID@
       name: "@ROBOT_NAME@"
       site: "@SITE@"
+
+# >>> camera
+  # Camera intrinsics from bench prep (pixi run camera-calibrate). Without one
+  # the robot uses the packaged default. b64 so the file lands byte for byte.
+  - path: /var/lib/mote/camera_calibration.yaml
+    permissions: "0644"
+    encoding: b64
+    content: "@CAMERA_CALIBRATION_B64@"
+# <<< camera
 
   # Single-use, pre-authorised, tagged Tailscale key: the provisioning-time
   # secret that lets the robot reach the tailnet before it can reach anything
@@ -79,6 +89,9 @@ runcmd:
   # 1. Identity first: everything downstream is keyed by robot_id.
   - [bash, -c, "install -d -o @USER@ -g @USER@ -m 0755 /home/@USER@/.mote"]
   - [bash, -c, "install -o @USER@ -g @USER@ -m 0644 /var/lib/mote/robot.yaml /home/@USER@/.mote/robot.yaml"]
+# >>> camera
+  - [bash, -c, "install -o @USER@ -g @USER@ -m 0644 /var/lib/mote/camera_calibration.yaml /home/@USER@/.mote/camera_calibration.yaml"]
+# <<< camera
 
   # 2. The overlay: join the tailnet, then destroy the key.
   - [bash, -c, "curl -fsSL https://tailscale.com/install.sh | sh"]

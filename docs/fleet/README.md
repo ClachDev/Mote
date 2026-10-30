@@ -24,9 +24,9 @@ site's maps (**M4**). The architecture and the milestones after these are in
 | `pixi run fleet-broker` | the MQTT control plane, with WebSockets (a container) |
 | `pixi run fleet-server` | fleet API + operator dashboard (fleet box) |
 | `pixi run fleetctl` | operator CLI: tokens, roster, dispatch, audit, watch |
-| `pixi run enroll` | ask the server for this robot's identity |
+| `pixi run fleet enroll` | ask the server for this robot's identity |
 | `pixi run agent` | the robot's bridge to the fleet |
-| `pixi run publish-map` | offer this robot's saved map to the registry |
+| `pixi run fleet publish-map` | offer this robot's saved map to the registry |
 | `pixi run foxglove` | the robot's remote view + teleop (Foxglove WebSocket) |
 
 **First time through**, in order: §1a (create the tailnet — browser, once, for
@@ -107,7 +107,7 @@ auth key**. For a robot:
 | Tags | **`tag:robot`** | this is what makes the key mint a *tagged* device |
 
 The key looks like `tskey-auth-…`; it goes into `pixi run provision --ts-authkey`
-(or `pixi run tailnet --auth-key` on a machine you are sitting at). Keep the key's
+(or `pixi run fleet join --auth-key` on a robot you are sitting at). Keep the key's
 tags and the `--role` you pass in agreement — a mismatch is rejected rather than
 merged. The workstation needs no key at all: `pixi run tailnet --role workstation`
 opens a browser to authenticate you.
@@ -121,8 +121,9 @@ ahead of anything the access policy does with it.
 ### 1b. Joining machines
 
 ```bash
-# on the robot (identity must exist first — its id becomes the MagicDNS name)
-pixi run tailnet --role robot --auth-key tskey-auth-...
+# on the robot: tailnet + enroll + enable the reporting units, in one command.
+# The node takes the robot id the server hands back as its MagicDNS name.
+pixi run fleet join --server http://fleet-box:8080 --token mt-… --auth-key tskey-auth-...
 
 # on the workstation (a user device, untagged)
 pixi run tailnet --role workstation
@@ -269,9 +270,9 @@ Where it applies, and where it does not:
   loaded through `CYCLONEDDS_URI` by `[activation.env]` and repeated by the
   units), because a radio-pinned profile let a wifi flap stall topic delivery
   between processes on the robot's own board. LAN bench flows (workstation
-  RViz, `pixi run teleop` from a laptop) are gone with it; camera calibration,
-  the one flow that needs a LAN DDS peer, unsets the profile explicitly
-  (`mote_perception/config/README.md`);
+  RViz, `pixi run teleop` from a laptop) are gone with it; camera calibration
+  is bench prep with the camera on the workstation's USB, so it needs no LAN
+  peer either (`mote_perception/config/README.md`);
 - **sims and benchmarks pin themselves** (`[feature.sim.activation.env]`), as
   before.
 
@@ -364,7 +365,10 @@ run on real hardware yet (see [m0-verification.md §5](m0-verification.md)).
 
    `--wifi-country` is required with wifi and is not guessed: the Pi's WLAN stays
    rfkill-blocked until the regulatory domain is set. Omit the three wifi flags
-   entirely if the robot is on ethernet.
+   entirely if the robot is on ethernet. `--camera-calibration FILE` adds the
+   bench camera calibration (`pixi run camera-calibrate`), installed as
+   `~/.mote/camera_calibration.yaml` at first boot; without it the robot uses the
+   packaged default.
 
    The output carries a live auth key and a wifi passphrase: it is written `0600`
    and must never be committed. Print it to stdout first (drop `--boot`) if you
@@ -402,7 +406,7 @@ not ship a robot package yet; when it does (M5), that step becomes a pinned
 that changes.
 
 The template still writes an **operator-set** identity, as it did at M0. Now
-that there is an enrollment endpoint, first boot should call `pixi run enroll`
+that there is an enrollment endpoint, first boot should call `pixi run fleet enroll`
 with a token instead — a template change that is deliberately left until the
 next real Pi provisioning, so the change and its verification land together
 ([`m1-verification.md` §5](m1-verification.md)). Nothing breaks meanwhile:
@@ -517,7 +521,7 @@ fingerprint and is told who it is and where its broker lives.
 pixi run fleetctl -- token new
 
 # [robot] exchange it for an identity
-pixi run enroll -- --server http://fleet-box:8080 --token tskey… --name Scout --site home
+pixi run fleet enroll --server http://fleet-box:8080 --token mt-… --name Scout --site home
 ```
 
 That writes both files the agent needs, and nothing else:
@@ -929,10 +933,10 @@ commands and one rule.
 ```bash
 # [robot] map the floor as always, then save it locally
 pixi run mapping                  # drive it; ...or `pixi run sim-mapping`
-pixi run save-map                 # -> ~/.mote/sites/home/floors/ground/maps/<rev>/
+pixi run site save-map                 # -> ~/.mote/sites/home/floors/ground/maps/<rev>/
 
 # [robot] offer it to the fleet
-pixi run publish-map
+pixi run fleet publish-map
 #   published home/ground/20260728T090412 to http://fleet-box:8080 (186349 bytes)
 #   it is a candidate; home/ground is still on 20260727T101500.
 #   an operator promotes it with: fleetctl promote home ground 20260728T090412
@@ -1019,7 +1023,7 @@ happened is the only evidence there is.
 
 ### Naming the rooms on it, before you promote it
 
-`pixi run segment-map` finds the rooms of a map but cannot know what they are
+`pixi run site segment` finds the rooms of a map but cannot know what they are
 called, so a fresh revision arrives with `zone_01`..`zone_07`. **`edit zones`**,
 beside the zone list, is where they get their names — on the candidate's own map,
 where you can see which room is which.
@@ -1233,9 +1237,9 @@ what the name cannot say. `save-zone` takes both, and quote a name with spaces
 in it:
 
 ```bash
-pixi run save-zone "the kitchen" --radius 1.5
-pixi run save-zone "store room" --note "stationery lives here, not the office"
-pixi run save-zone sluice --radius 0.8 --no-navigable
+pixi run site save-zone "the kitchen" --radius 1.5
+pixi run site save-zone "store room" --note "stationery lives here, not the office"
+pixi run site save-zone sluice --radius 0.8 --no-navigable
 ```
 
 `--no-navigable` marks a place a robot must not be sent to — `goto sluice` is
@@ -1247,7 +1251,7 @@ Other names a place answers to belong in the note. There is no alias list: the
 mission layer's resolver reads free text and already knows what a store room is,
 where a hand-maintained list of spellings was one more thing to keep in step.
 
-`pixi run segment-map` gives every candidate it proposes a footprint and nothing
+`pixi run site segment` gives every candidate it proposes a footprint and nothing
 else; the names it invents (`zone_01`…) are placeholders for you to replace, in
 the dashboard's zone editor or by hand in the floor's `zones.yaml`:
 
