@@ -1,7 +1,7 @@
 """Named arm poses — teach a safe pose, then return to it.
 
 The base layer captures a map position by driving there and running
-``pixi run save-zone`` (see ``mote_tasks``/Sites); this is the arm's analogue:
+``pixi run site save-zone`` (see ``mote_tasks``/Sites); this is the arm's analogue:
 pose the limp arm by hand, capture it, and later command that exact pose back.
 
 Poses live in ``~/.mote/arm_poses.yaml`` (``MOTE_HOME`` overrides ``~/.mote``,

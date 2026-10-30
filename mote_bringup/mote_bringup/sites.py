@@ -47,14 +47,21 @@ stdlib-only so the fleet server can validate an uploaded revision with the same
 code that wrote it (fleet.md Q4). This module keeps the layout; that one keeps
 the content.
 
-Console script ``site`` (pixi tasks: site, save-map):
+Console script ``site`` (pixi task: site):
     site create <name> [--floor ground]   new site (+ becomes active if none)
     site add-floor <name>                 add a floor to the active site
     site use <site> [floor]               select the active site/floor
     site list | site info                 inspect
+    site save-zone <name> [...]           teach a zone at the robot's pose
+                                          (mote_tasks save_zone, a subprocess)
+    site clean <map.png> [...]            FFT declutter (map_cleanup.cli)
+    site segment [map.yaml] [--write]     propose a zone per room (rooms_cli)
     site save-map                         save map + posegraph from a running
                                           mapping session into the active floor
     site use-map <rev>                    roll the active floor to a revision
+
+Offering a saved map to the fleet registry is ``fleet publish-map`` (mote_fleet),
+not a ``site`` subcommand: saving must work with no fleet reachable.
 """
 
 import argparse
@@ -249,7 +256,7 @@ def cmd_info():
         print("  zones        missing")
     current = current_revision(fdir)
     if not current:
-        print("  map          none (run: pixi run save-map during mapping)")
+        print("  map          none (run: pixi run site save-map during mapping)")
         return
     for rev in revisions(fdir):
         marker = " *" if rev == current else ""
@@ -570,9 +577,23 @@ def main(argv=None):
         "use-map", help="roll the active floor to a map revision"
     )
     p_use_map.add_argument("revision")
+    # Forwarded wholesale to CLIs with their own flags (`site clean --help`).
+    for name, help_ in (
+        ("save-zone", "teach a zone from the robot's current pose"),
+        ("clean", "declutter a map PNG (FFT cleaning pass)"),
+        ("segment", "propose a zone per room of a saved map"),
+    ):
+        # Listed for --help; dispatched on argv[0] below, before argparse, because
+        # REMAINDER would not capture a leading `--write` or `--help`.
+        sub.add_parser(name, help=help_, add_help=False)
+
+    argv = sys.argv[1:] if argv is None else list(argv)
+    forwarded = {"save-zone": save_zone, "clean": clean, "segment": segment}
+    if argv and argv[0] in forwarded:
+        return forwarded[argv[0]](_forwarded(argv[1:]))
 
     args = parser.parse_args(argv)
-    {
+    return {
         "create": lambda: create(args.name, args.floor),
         "add-floor": lambda: add_floor(args.name),
         "use": lambda: use(args.site, args.floor),
@@ -583,5 +604,29 @@ def main(argv=None):
     }[args.command]()
 
 
+def _forwarded(rest):
+    """A subcommand's own arguments. pixi passes a ``--`` through to us, and
+    argparse would read it as the end of options."""
+    return rest[1:] if rest[:1] == ["--"] else rest
+
+
+def clean(argv):
+    from mote_bringup.map_cleanup import cli
+
+    return cli.main(argv)
+
+
+def segment(argv):
+    from mote_bringup.map_cleanup import rooms_cli
+
+    return rooms_cli.main(argv)
+
+
+def save_zone(argv):
+    """mote_tasks owns zones and imports this module, never the reverse, so the
+    seam is a process, not an import."""
+    return subprocess.run(["ros2", "run", "mote_tasks", "save_zone", *argv]).returncode
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

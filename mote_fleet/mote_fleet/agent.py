@@ -228,7 +228,7 @@ class MoteAgent(Node):
         if not robot_id:
             self.get_logger().warning(
                 f"no identity at {identity.identity_path()} — enrol this robot "
-                "('pixi run enroll -- --server ... --token ...'); retrying",
+                "('pixi run fleet enroll --server ... --token ...'); retrying",
                 throttle_duration_sec=60.0,
             )
             return None

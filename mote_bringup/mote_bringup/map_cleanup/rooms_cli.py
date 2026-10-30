@@ -1,6 +1,6 @@
 """CLI: propose named zones for the rooms of a saved map.
 
-    pixi run segment-map [MAP.yaml] [--write] [--out DIR]
+    pixi run site segment [MAP.yaml] [--write] [--out DIR]
 
 With no argument it segments the active site floor's current map (see
 :mod:`mote_bringup.sites`); pass a ``map.yaml`` to segment any saved revision.
@@ -202,7 +202,7 @@ def _resolve_zones(argument: str | None) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     defaults = RoomParams()
-    parser = argparse.ArgumentParser(prog="segment-map", description=__doc__)
+    parser = argparse.ArgumentParser(prog="site segment", description=__doc__)
     parser.add_argument("map", nargs="?", help="map.yaml (default: active floor's map)")
     parser.add_argument("--out", help="output directory (default: beside the map)")
     parser.add_argument(

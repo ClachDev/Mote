@@ -542,7 +542,7 @@ can rot (a restore, a half-copied backup) and "promotable" is a claim about now.
 
 ### `POST /v1/sites/<site>/floors/<floor>/revisions/<rev>?robot_id=<id>`
 
-Body: the packed revision (`application/gzip`), ≤64 MB. `pixi run publish-map`
+Body: the packed revision (`application/gzip`), ≤64 MB. `pixi run fleet publish-map`
 is the robot-side caller.
 
 | Status | Meaning |

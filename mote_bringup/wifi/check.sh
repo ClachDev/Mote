@@ -29,7 +29,7 @@ elif iw phy "$PHY" info 2>/dev/null | grep -q 'Device supports roaming.'; then
 else
     bad "nobody does: $PHY does not advertise roaming support, so the firmware engine is off"
     info "and neither iwd nor wpa_supplicant will roam on this card in its place"
-    info "run: pixi run wifi-roaming, then reboot"
+    info "run: pixi run setup wifi --roaming-only, then reboot"
 fi
 
 echo
@@ -75,7 +75,7 @@ if systemctl is-active --quiet iwd 2>/dev/null; then
         info "iwd is running; with firmware roaming on it stands aside (station_cannot_roam)"
     fi
     info "iwd also hides real BSSIDs from nmcli, which makes a roam log harder to read"
-    info "run: pixi run wifi-roaming"
+    info "run: pixi run setup wifi --roaming-only"
 elif systemctl is-active --quiet wpa_supplicant 2>/dev/null; then
     ok "wpa_supplicant is NetworkManager's wifi backend"
 else

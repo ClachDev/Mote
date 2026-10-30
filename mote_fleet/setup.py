@@ -32,8 +32,7 @@ setup(
     entry_points={
         "console_scripts": [
             "agent = mote_fleet.agent:main",
-            "enroll = mote_fleet.enroll:main",
-            "publish-map = mote_fleet.publish:main",
+            "fleet = mote_fleet.cli:main",
         ],
     },
 )

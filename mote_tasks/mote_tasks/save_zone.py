@@ -1,8 +1,8 @@
 """Bind a zone by driving to it: capture the robot's current map-frame pose
 into the active site's floor (legacy ~/.mote/zones.yaml if no site).
 
-    ros2 run mote_tasks save_zone <name> [--radius R] [--note TEXT]
-                                        [--no-navigable] [base_frame]
+    pixi run site save-zone <name> [--radius R] [--note TEXT]
+                                  [--no-navigable] [base_frame]
 
 One of three ways geometry reaches a floor — ``segment-map`` reads outlines off
 a saved map, and the fleet dashboard's zone editor places them on a candidate

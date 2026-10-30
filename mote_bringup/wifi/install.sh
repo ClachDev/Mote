@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Install the robot's wifi configuration.
 #
-#   pixi run wifi-powersave   # NetworkManager power-save drop-in only
-#   pixi run wifi-roaming     # let the firmware roam (see README.md)
-#   pixi run setup            # both, plus udev and systemd
+#   pixi run setup wifi --powersave-only   # NetworkManager power-save drop-in only
+#   pixi run setup wifi --roaming-only     # let the firmware roam (see README.md)
+#   pixi run setup                         # both, plus udev and systemd
 #
 # The roaming half writes one modprobe option and takes effect at the next
 # reboot. It restarts NetworkManager only on a robot still carrying the iwd

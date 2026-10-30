@@ -10,7 +10,7 @@ state, because neither end lets partial state exist.
 
 Kept ROS-free so the whole flow can be exercised without a graph: the agent
 (:mod:`mote_fleet.agent`) calls into it from a worker thread, and
-``pixi run publish-map`` calls the same functions from a terminal.
+``pixi run fleet publish-map`` calls the same functions from a terminal.
 
 The one judgement call that lives here is :func:`wants` — *which* floors this
 robot acts on. The registry announces every floor in the fleet, and a robot has
