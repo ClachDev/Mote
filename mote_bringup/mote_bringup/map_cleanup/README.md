@@ -117,7 +117,7 @@ results and overlays in `docs/tuning/2026-07-27-room-segmentation/`.
 - **Done:** FFT declutter core + CLI + diagnostics, validated on a real noisy
   mote map (see `scratchpad_results/map_cleanup/`).
 - **Done:** wired into `save-map` as an automatic post-processing pass
-  (`sites._promote_cleaned`): every saved revision keeps the untouched
+  (`sites.promote_cleaned`): every saved revision keeps the untouched
   map_saver output as `map_raw.png` and promotes the decluttered image to the
   served `map.png`. The `map.yaml` frame is byte-identical, so zone coordinates
   and localization are unaffected; a cleaning failure falls back to serving the

@@ -20,8 +20,8 @@
 # file is expected to stay close to the live one. Today it is one key away.
 # What was measured and *not* adopted is recorded at the foot of the file.
 #
-# Nothing chains those steps yet: until the `map-build` orchestrator lands,
-# this file is what a hand-run `bag-replay --params` should point at.
+# `pixi run map-build` chains those steps and defaults to this file. A hand-run
+# `bag-replay --params` still points at it for a one-off solve.
 
 slam_toolbox:
   ros__parameters:

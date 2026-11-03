@@ -191,6 +191,7 @@ deploy-test = { cmd = "bash mote_perception/deploy/test/drill.sh", description =
 
 segment-eval = { cmd = "python mote_simulation/test/room_segmentation_eval.py", description = "Score room segmentation against ground-truth rooms" }
 bag-replay = { cmd = "python mote_simulation/tools/bag_replay/replay.py", description = "Replay a mapping bag through SLAM under N parameter sets" }
+map-build = { cmd = "python mote_simulation/tools/map_build/map_build.py", description = "Build a reviewable map candidate from a mapping bag (-- --bag DIR --site S --floor F)" }
 camera-decay-check = { cmd = "python mote_bringup/tools/camera_layer_decay.py", description = "Time a camera_layer mark expiring on a real costmap (~40 s)" }
 
 arm-mock = { cmd = "ros2 run mote_arm mock_arm", description = "The arm control stack's interface with no hardware" }

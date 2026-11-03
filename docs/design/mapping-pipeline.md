@@ -274,10 +274,17 @@ Sized so each is one dispatchable task; existing tasks noted.
    `slam_toolbox_build_params.yaml` beside the live file, one divergent key,
    held to it by `test_slam_build_params.py`. It also records what was measured
    and rejected, so the same sweep is not run twice.
-4. **`map-build` orchestrator** — the stage-2 chain as one command on the
-   fleet box, emitting a validated candidate + build report. Depends on the
-   lockstep harness landing (task 295 / PR 91), prominence picking (337), and
-   item 10 for the alignment step's gate.
+4. **`map-build` orchestrator** — landed, less its alignment step:
+   `mote_simulation/tools/map_build/`, `pixi run map-build`. Solve, assemble,
+   declutter, segment, validate, score against a baseline, package — one
+   command, and on the 2026-08-02 bag it reproduces the hand-built map's loop
+   drift to a millimetre in 21 s of solve
+   (`docs/tuning/2026-09-01-map-build.md`). **Step 2 is not in it**: with no
+   estimator that can say which of two solves is squarer, the step is
+   undecidable rather than merely ungated, so birth-alignment stays an
+   operator's `--frame X Y YAW` — recorded in the revision's meta — until item
+   10 lands. Steps 5 and 7's upload wait on items 6 and 5 respectively; both
+   gaps are reported on the candidate rather than left silent.
 5. **Build identity** — the registry accepts candidate uploads from a
    credentialed builder, not only enrolled robots; audit rows name it.
 6. **Vocabulary carry-forward** — same-frame rebinding by containment +

@@ -811,6 +811,10 @@ def main():
     if node.latest_map is not None:
         m = node.latest_map
         grid = np.array(m.data, dtype=np.int16).reshape(m.info.height, m.info.width)
+        q = m.info.origin.orientation
+        origin_yaw = math.atan2(
+            2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        )
         np.savez_compressed(
             out / "map.npz",
             grid=grid,
@@ -818,6 +822,12 @@ def main():
             origin=np.array(
                 [m.info.origin.position.x, m.info.origin.position.y], dtype=np.float64
             ),
+            # The third number ``map_saver`` writes into ``origin:``. It is zero
+            # for every grid slam_toolbox has ever published, and a consumer
+            # assembling a map revision from this file must not have to assume
+            # that: a dropped origin yaw puts every zone on the floor somewhere
+            # else, with the map still looking perfectly good.
+            origin_yaw=np.float64(origin_yaw),
         )
         result["map"] = {
             "width": int(m.info.width),
@@ -827,6 +837,7 @@ def main():
                 float(m.info.origin.position.x),
                 float(m.info.origin.position.y),
             ],
+            "origin_yaw": float(origin_yaw),
         }
     (out / "series.json").write_text(json.dumps(result))
     print(

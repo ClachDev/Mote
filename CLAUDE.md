@@ -158,6 +158,7 @@ Everything meaningful relative to one mapped place lives in a **site bundle** un
 - Map revisions are immutable under `maps/<rev>/`, published by atomically flipping the `map` symlink. `site use-map <rev>` rolls back.
 - `save-map` stores the posegraph for **continuation** — extend, don't remap; it is what keeps a new map in the floor's frame. It also stamps the session's bag into `meta.yaml`, runs `bundle.py`'s validation locally, and runs the FFT **cleaning pass**: `map_raw.png` is kept, the cleaned image is served as `map.png`. The posegraph belongs to the raw map.
 - `segment-map` (`map_cleanup/room_segmentation.py`) proposes one polygon per room; `--write` merges additively into the floor's zones. It assumes a doorway is narrow and walls are Manhattan after rotation; corridors are not proposed. Evidence: `docs/tuning/2026-07-27-room-segmentation.md`.
+- `map-build` (`mote_simulation/tools/map_build/`, dev env) turns a recorded mapping bag into a candidate revision with no robot: solve through `bag_replay`, declutter with `sites.promote_cleaned` itself, segment, `bundle.validate`, pack. A solve that serialized no posegraph fails the build. Both sides of the metric diff against `--baseline` are read from each revision's served `map.png`, never from the replay leg. Runbook in its README; evidence: `docs/tuning/2026-09-01-map-build.md`.
 
 ## Drive path
 
