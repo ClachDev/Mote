@@ -1,0 +1,18 @@
+// Installed to /etc/polkit-1/rules.d/ by mote_bringup/systemd/install.sh, which
+// fills in @USER@. Lets the robot's user start, stop and restart the mote-*
+// units and targets without sudo, so `pixi run wake`, `sleep` and `map-mode`
+// work from an ssh session or a script. Enabling, disabling and editing units
+// still need sudo.
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units" ||
+        subject.user !== "@USER@") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+    if (unit && /^mote-[A-Za-z0-9@_.-]+\.(service|target)$/.test(unit) &&
+        (verb === "start" || verb === "stop" || verb === "restart")) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

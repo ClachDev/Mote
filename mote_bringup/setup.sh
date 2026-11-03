@@ -3,7 +3,7 @@
 #
 #   pixi run setup                    # all of the below, in this order
 #   pixi run setup udev               # stable device names + dialout group
-#   pixi run setup systemd            # the mote-*.service units (installed, not enabled)
+#   pixi run setup systemd            # the mote-* units + polkit rule; enables agent + foxglove
 #   pixi run setup wifi [ARGS...]     # power-save drop-in + firmware roaming
 #
 # Extra arguments go to the subcommand: `setup wifi --roaming-only`,

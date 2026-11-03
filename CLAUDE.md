@@ -14,6 +14,7 @@ All tasks run via [pixi](https://pixi.sh). Never invoke `colcon` or `ros2` direc
 
 - The default env is the robot's stack plus the build toolchain (features `robot` + `build`); `dev` adds desktop, sim and the fleet server. A `robot`/`build` task runs in `default`; a task only in `dev`/`sim` runs there with no `-e`. Ad-hoc desktop or sim commands need `pixi run -e dev -- ...`.
 - Fleet-server tasks exist in both `fleet` and `dev`, so they need `-e`: `pixi run -e fleet fleet-server`, `pixi run -e dev test-fleet`.
+- systemd on the robot: `wake` (`mote-robot.target`), `map-mode` (`mote-mapping.target`), `sleep` (stop both, back to standby: agent + foxglove), `robot-status`. A polkit rule lets the robot user run them without sudo.
 - `arm-setup` opens the servo bus directly: stop the control stack first (`pixi run kill`).
 - `pixi run setup` is for the Pi (udev, systemd, wifi). On a workstation, `pixi run setup udev` alone gives the bench-prep tools (`setup-ids`, `camera-calibrate`) the same device names.
 
@@ -219,7 +220,9 @@ Launch files, config, udev rules, systemd units, `wifi/`, the fleet foundation (
 **Foxglove.** Bridge 3.3.0 accepts only the `foxglove.sdk.v1` subprotocol. `twist_relay` stamps the panel's `Twist` on the robot, with no timer.
 
 **On-robot reliability** (`mote_bringup/README.md`):
-- systemd units are installed by `pixi run setup` but **not enabled**. They restart with backoff and never give up.
+- systemd units are installed by `pixi run setup`; only `mote-agent` and `mote-foxglove` are enabled. They restart with backoff and never give up.
+- **Nothing may pull `mote-bringup`** (`Wants=`/`Requires=`/`BindsTo=`): a pulling dependent's restart loop bypasses bringup's backoff. Only `mote-base.target` starts it.
+- **Bringup and health are `PartOf=mote-base.target`, never of a mission target**: the targets `Conflicts=` each other, and a switch would stop them and drop their restart, leaving an active target with nothing running. `test_systemd_units.py` holds both rules.
 - `self_check.py` (`ExecStartPre`, `pixi run self-check`) gates bringup on servos, lidar, camera, disk, clock and config.
 - `slip_monitor.py` compares wheel odometry with ICP over 1 s and reports `slip`/`stuck`/`icp_fault` — always DEGRADED, never FAULT. Only translation is thresholded. A stale source yields no verdict. The maths in `odom_residual.py` is shared with `tools/slip_replay.py`, which set the thresholds; keep them shared. Evidence: `docs/tuning/2026-07-28-slip-detection.md`.
 - Battery is not measurable. `system_monitor` reads `get_throttled` via `vcgencmd` (no Pi 5 sysfs node) and the fan RPM.

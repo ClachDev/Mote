@@ -6,9 +6,12 @@ After=mote-bringup.service
 #
 # Deliberately NOT Wants=: that would make this unit pull bringup, and a restart
 # loop here then fires a start request for bringup every cycle, which bypasses
-# bringup's own RestartSec backoff (see mote-health.service). Boot start comes
-# from WantedBy below.
+# bringup's own RestartSec backoff (see mote-health.service).
+#
+# Only in mote-mapping.target, never mote-robot.target: the recorder's pruner
+# trims older bags whenever it runs.
 PartOf=mote-bringup.service
+PartOf=mote-mapping.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -16,7 +19,8 @@ Type=simple
 User=@USER@
 WorkingDirectory=@REPO@
 Environment=HOME=@HOME@
-ExecStart=@HOME@/.pixi/bin/pixi run record
+# The mapping streams only, as mapping_launch.py records them.
+ExecStart=@HOME@/.pixi/bin/pixi run record streams:=mapping
 Restart=always
 RestartSec=2
 RestartSteps=5
@@ -31,6 +35,3 @@ Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 # loopback-only anyway (cyclonedds.xml, above); the pin keeps discovery
 # consistent with it. docs/fleet/README.md §4.
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-
-[Install]
-WantedBy=multi-user.target

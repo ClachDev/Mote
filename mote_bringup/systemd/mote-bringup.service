@@ -12,6 +12,9 @@ Wants=dev-mote_servos.device dev-mote_lidar.device
 # reconnected hardware reappears, so disable the start-rate cutoff and lean on
 # RestartSec backoff (below) to avoid hammering the bus.
 StartLimitIntervalSec=0
+# Started by mote-base.target, which both mission targets want; stopped with it.
+# No [Install]: a standby robot runs no drive stack (pixi run wake / sleep).
+PartOf=mote-base.target
 
 [Service]
 Type=simple
@@ -45,6 +48,3 @@ Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 # loopback-only anyway (cyclonedds.xml, above); the pin keeps discovery
 # consistent with it. docs/fleet/README.md §4.
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-
-[Install]
-WantedBy=multi-user.target

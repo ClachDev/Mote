@@ -1,0 +1,15 @@
+[Unit]
+Description=Mote hardware base (shared by mote-robot.target and mote-mapping.target)
+# The members both mission targets share: bringup and the health monitor. They
+# are PartOf= this target, not of the mission targets, because the mission
+# targets Conflicts= each other: switching from one to the other stops the old
+# target, and a PartOf= on it would stop bringup and drop the new target's start
+# of it in the same transaction — an active target with nothing running.
+#
+# StopWhenUnneeded= stops this target once neither mission target wants it, and
+# that stop reaches bringup through its PartOf= even while bringup is looping in
+# auto-restart (on the charger), which StopWhenUnneeded= on bringup itself does
+# not. Starting this target on its own therefore stops it again at once; start a
+# mission target instead.
+Wants=mote-bringup.service mote-health.service
+StopWhenUnneeded=yes

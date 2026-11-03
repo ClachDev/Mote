@@ -98,13 +98,18 @@ pixi run setup
 
 That installs the udev rules that give the hardware stable names
 (`/dev/mote_servos`, `/dev/mote_lidar`, `/dev/mote_camera`), disables WiFi power
-save, and installs the systemd units. The units are installed but **not
-enabled** — autostart would flatten the battery on a desk. Opt in when the
-robot lives on the floor:
+save, and installs the systemd units. The robot then boots to standby — the
+fleet agent and the Foxglove bridge only — because autostarting the drive stack
+would flatten the battery on a desk. One command brings the stack up or down:
 
 ```bash
-sudo systemctl enable --now mote-bringup mote-health
+pixi run wake       # drive the active map and take missions
+pixi run map-mode   # SLAM + the mapping bag
+pixi run sleep      # back to standby
 ```
+
+A robot that lives on the floor can boot straight into the robot target:
+`sudo systemctl enable mote-robot.target`.
 
 See [Bringup & reliability](robot/bringup.md) for what those services do, and
 what the pre-flight self-check refuses to start without.
