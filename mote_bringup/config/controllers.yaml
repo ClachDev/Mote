@@ -61,7 +61,7 @@ arm_controller:
     # it shares with the wheels. Generating the trajectory from the last
     # commanded point rather than from that deliberately-lagging state is what
     # keeps the two consistent.
-    open_loop_control: true
+    interpolate_from_desired_state: true
 
     # Jog moves one joint at a time; the rest hold where they are.
     allow_partial_joints_goal: true

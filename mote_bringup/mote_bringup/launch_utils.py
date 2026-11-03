@@ -103,11 +103,13 @@ def arm_config_file(spec):
 def joint_params_file(cfg, arm=None):
     """Write the per-controller joint parameters out and return the path.
 
-    These have to be a params *file* keyed by node name: a plain dict gets
-    flattened to "diff_drive_controller.ros__parameters.wheel_separation" on
-    the controller_manager node and never reaches the controller itself. The
-    values come from robot.yaml so it stays the single source of truth for
-    wheel geometry and for which joints the arm has.
+    These have to be a params *file* keyed by node name, handed to each
+    controller's spawner (``spawn_controllers(param_files=...)``). ros2_control
+    6 does not pass the controller_manager's own parameter files on to the
+    controllers it loads, so a file given only to ros2_control_node leaves
+    wheel_separation at 0, which diff_drive_controller refuses. The values come
+    from robot.yaml so it stays the single source of truth for wheel geometry
+    and for which joints the arm has.
     """
     params = {
         "diff_drive_controller": {
@@ -132,26 +134,40 @@ def _temp_yaml(data, prefix):
     return handle.name
 
 
-def spawn_controllers(_context=None, *_args, active=CONTROLLERS, inactive=()):
+def spawn_controllers(
+    _context=None, *_args, active=CONTROLLERS, inactive=(), param_files=()
+):
     """Fresh ``spawner`` actions for every controller, built per call.
 
     Must return NEW action objects each time: a launch action may only be
     executed once, and this runs again on every controller_manager restart.
+
+    Each spawner loads every file in ``param_files`` into its controller before
+    configure; a file's sections for other node names are ignored. This is the
+    only route by which a controller receives its parameters (see
+    ``joint_params_file``).
     """
+    params = [arg for path in param_files for arg in ("--param-file", path)]
     return [
-        Node(package="controller_manager", executable="spawner", arguments=[name])
+        Node(
+            package="controller_manager",
+            executable="spawner",
+            arguments=[name, *params],
+        )
         for name in active
     ] + [
         Node(
             package="controller_manager",
             executable="spawner",
-            arguments=[name, "--inactive"],
+            arguments=[name, "--inactive", *params],
         )
         for name in inactive
     ]
 
 
-def controller_spawn_handler(controller_manager, active=CONTROLLERS, inactive=()):
+def controller_spawn_handler(
+    controller_manager, active=CONTROLLERS, inactive=(), param_files=()
+):
     """Spawn the controllers whenever ``controller_manager`` starts.
 
     Wrapping the spawners in an OpaqueFunction is what makes a
@@ -167,7 +183,11 @@ def controller_spawn_handler(controller_manager, active=CONTROLLERS, inactive=()
             on_start=[
                 OpaqueFunction(
                     function=spawn_controllers,
-                    kwargs={"active": active, "inactive": inactive},
+                    kwargs={
+                        "active": active,
+                        "inactive": inactive,
+                        "param_files": tuple(param_files),
+                    },
                 )
             ],
         )

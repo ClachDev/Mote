@@ -43,7 +43,9 @@ def generate_launch_description():
         cfg = yaml.safe_load(f)
 
     # gz_ros2_control runs its own controller_manager inside the gz process and
-    # loads parameters from a single file referenced in the URDF, so merge
+    # loads parameters from a single file referenced in the URDF; the spawners
+    # load the same file into each controller, which ros2_control 6 no longer
+    # does from the controller_manager's parameters. Merge
     # controllers.yaml + wheel geometry from robot.yaml + use_sim_time into one
     # temp file (same single-source-of-truth injection as mote_launch.py).
     controllers_file = param_overrides.override_path(
@@ -150,13 +152,25 @@ def generate_launch_description():
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["joint_state_broadcaster", "--controller-manager-timeout", "60"],
+        arguments=[
+            "joint_state_broadcaster",
+            "--controller-manager-timeout",
+            "60",
+            "--param-file",
+            sim_controllers_file.name,
+        ],
     )
 
     diff_drive_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["diff_drive_controller", "--controller-manager-timeout", "60"],
+        arguments=[
+            "diff_drive_controller",
+            "--controller-manager-timeout",
+            "60",
+            "--param-file",
+            sim_controllers_file.name,
+        ],
     )
 
     laser_filter = Node(

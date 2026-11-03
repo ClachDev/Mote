@@ -120,10 +120,14 @@ def generate_launch_description():
             "controller_server": {
                 "ros__parameters": {
                     "FollowPath": {
-                        "WheelSpeedLimit.wheel_separation": robot_cfg[
-                            "wheel_separation"
-                        ],
-                        "WheelSpeedLimit.max_wheel_speed": robot_cfg["max_wheel_speed"],
+                        "primary_controller": {
+                            "WheelSpeedLimit.wheel_separation": robot_cfg[
+                                "wheel_separation"
+                            ],
+                            "WheelSpeedLimit.max_wheel_speed": robot_cfg[
+                                "max_wheel_speed"
+                            ],
+                        }
                     }
                 }
             }

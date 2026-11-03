@@ -76,7 +76,7 @@ def generate_launch_description():
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, controller_config, joint_params_file(cfg, arm)],
+        parameters=[robot_description, controller_config],
         **respawn,
     )
 
@@ -89,6 +89,7 @@ def generate_launch_description():
                 controller_manager,
                 active=("joint_state_broadcaster",),
                 inactive=INACTIVE_CONTROLLERS,
+                param_files=(controller_config, joint_params_file(cfg, arm)),
             ),
         ]
     )

@@ -212,12 +212,12 @@ Launch files, config, udev rules, systemd units, `wifi/`, the fleet foundation (
 - `foxglove_launch.py` — bridge on 8765 + `twist_relay`.
 
 **Config** (`mote_bringup/config/`):
-- `controllers.yaml` — controller_manager, DiffDriveController (`cmd_vel_timeout: 0.5` pinned), the arm's `JointTrajectoryController`. Wheel geometry and arm joints are injected from `robot.yaml` via `launch_utils.joint_params_file`, keyed by node name.
+- `controllers.yaml` — controller_manager, DiffDriveController (`cmd_vel_timeout: 0.5` pinned), the arm's `JointTrajectoryController`. Wheel geometry and arm joints are injected from `robot.yaml` via `launch_utils.joint_params_file`, keyed by node name. **A controller gets its parameters only from its spawner's `--param-file`** (`spawn_controllers(param_files=...)`): ros2_control 6 does not forward the controller_manager's files, and a missing one leaves the controller on defaults (`test_launch_utils.py`).
 - `twist_mux.yaml`, `laser_filters.yaml`, `nav2_params.yaml`, `mote.rviz`, `cyclonedds.xml`, `slip.yaml`.
 - `slam_toolbox_params.yaml` — the live config: best-known-good values only, never deliberately hobbled.
 - `slam_toolbox_build_params.yaml` — the offline-build copy. Every value must match the live file unless the key carries a `# DIVERGENCE:` note; `test_slam_build_params.py` enforces both directions.
 
-**Foxglove.** Bridge 3.3.0 accepts only the `foxglove.sdk.v1` subprotocol. `twist_relay` stamps the panel's `Twist` on the robot, with no timer.
+**Foxglove.** Bridge 3.6.0 accepts only the `foxglove.sdk.v1` subprotocol. `twist_relay` stamps the panel's `Twist` on the robot, with no timer.
 
 **On-robot reliability** (`mote_bringup/README.md`):
 - systemd units are installed by `pixi run setup`; only `mote-agent` and `mote-foxglove` are enabled. They restart with backoff and never give up.

@@ -444,6 +444,9 @@
         <publish_sensor_pose>false</publish_sensor_pose>
         <publish_nested_model_pose>false</publish_nested_model_pose>
         <publish_model_pose>true</publish_model_pose>
+        <!-- Stated: the default is derived from the scoped name (/mote/pose),
+             and the benchmark bridges /model/<robot>/pose. -->
+        <topic>/model/mote/pose</topic>
         <use_pose_vector_msg>false</use_pose_vector_msg>
         <static_publisher>false</static_publisher>
         <update_frequency>50</update_frequency>

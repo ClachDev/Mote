@@ -82,6 +82,18 @@ done
 ros2 node list 2>/dev/null | grep -q slam_toolbox || fail "slam_toolbox never came up" "$SIM_LOG"
 echo "STEP2 OK: slam_toolbox up"
 
+# Nav2 rides in one container, so a parameter it refuses kills every server and
+# the container respawns into the same refusal; the steps above pass regardless.
+echo ">> waiting for Nav2's lifecycle manager to bring its servers up..."
+NAV2_UP="lifecycle_manager_navigation.*Managed nodes are active"
+for _ in $(seq 45); do
+    grep -q "$NAV2_UP" "$SIM_LOG" && break
+    grep -q "Failed to bring up all requested nodes" "$SIM_LOG" && fail "Nav2 bringup aborted" "$SIM_LOG"
+    sleep 2
+done
+grep -q "$NAV2_UP" "$SIM_LOG" || fail "Nav2 never became active" "$SIM_LOG"
+echo "STEP3 OK: Nav2 active"
+
 echo ">> driving + verifying..."
 timeout 120 python3 "$VERIFY" || fail "verify_sim.py assertions failed"
 echo "SMOKE TEST PASS"

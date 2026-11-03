@@ -31,7 +31,7 @@ Format (see ``sweep/README.md`` for the full reference)::
 
 Key paths may be given as a dotted string (``a.b.c``) or a list of keys. Use the
 list form when a key itself contains a dot (Nav2 writes some plugin params as
-literal dotted keys, e.g. ``FollowPath.max_vel_x`` is *nested* here but
+literal dotted keys, e.g. ``FollowPath.primary_controller.max_vel_x`` is *nested* here but
 ``WheelSpeedLimit.scale`` is a literal key).
 """
 

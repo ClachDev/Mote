@@ -63,7 +63,7 @@ def generate_launch_description():
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, controller_config, controller_joint_params],
+        parameters=[robot_description, controller_config],
         **respawn,
     )
 
@@ -209,6 +209,7 @@ def generate_launch_description():
             controller_spawn_handler(
                 controller_manager,
                 inactive=INACTIVE_CONTROLLERS if arm is not None else (),
+                param_files=(controller_config, controller_joint_params),
             ),
             rplidar,
             laser_filter,
