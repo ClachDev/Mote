@@ -575,6 +575,7 @@ pixi run fleetctl -- robots mote-01                     # one robot: health, pos
 pixi run fleetctl -- watch                              # live: presence, health, pose, status
 pixi run fleetctl -- dispatch mote-01 goto target=kitchen   # send a mission
 pixi run fleetctl -- dispatch mote-01 fetch target=lab destination=kitchen
+pixi run fleetctl -- cancel mote-01 --reason "wrong room"  # stop what it is doing
 pixi run fleetctl -- audit                              # who dispatched what
 ```
 
@@ -643,11 +644,32 @@ a dispatcher that restarted still learns the outcome. The full lifecycle, and
 which half of it the robot enforces and which the agent, is in
 [`control-plane.md`](control-plane.md#mission-lifecycle).
 
+**Stopping a mission is `fleetctl cancel <robot>`.** With no `--id` it cancels
+the mission the robot's retained `mission/status` names, if that mission has
+not ended. Like a dispatch it goes through the API, which checks the token and
+writes an audit row (`action: cancel`), and it follows the mission to its end:
+
+```console
+-> mote-01: cancel 3e99cf44d1294ab5
+2026-09-11T12:50:14.388Z  cancelled  (goto kitchen — cancelled by fleetctl: wrong room)
+```
+
+`cancelled` arrives once Nav2 has ended the goal, within about 0.1 s of the
+cancel; the robot's drive command is zero within one 50 ms controller period,
+and the wheels are at rest about 0.4 s later. From then the lane is free and the next mission is taken, not
+refused `busy`. `cancel` exits 0 only for `cancelled`. A mission that finished
+before the cancel landed ends as it would have, and a robot that could not
+confirm the stop within 5 s answers `failed [internal]`. A cancel for a mission
+that is not in flight does nothing at all, and `fleetctl` says so after
+`--wait` (30 s).
+
 A mission started **on the robot** (a bench script publishing to
 `task/command`) appears in `watch` too, tagged `source: local` — the fleet
-should see a robot that is busy, whoever asked it to be.
+should see a robot that is busy, whoever asked it to be. `fleetctl cancel`
+stops one of those too; on the robot itself, `ros2 run mote_tasks mission
+--cancel <id>` does the same.
 
-Everything except commands is **retained**, so `watch` shows you the current
+Everything except commands and cancels is **retained**, so `watch` shows you the current
 state of the fleet the instant it connects, with no polling and nothing replayed
 on request. A robot that loses power is marked offline by the broker itself,
 within the keepalive, via its Last Will — not after somebody notices the
@@ -730,6 +752,10 @@ state dot, robot id, `reported <age> ago`, and the link into Foxglove — with t
 capability with its state and how long it has been in it (or the word `idle`),
 and that mission's status log under the line it is about; then **dispatch**;
 then **subsystems**.
+A mission in flight has a **cancel** button at the end of its line. It reads
+`cancelling…` until the robot's own `cancelled` arrives and the line goes back
+to `idle`, and it is absent when the robot's health is not current, since a
+cancel is not retained and would be lost on a robot that has dropped off.
 Uptime and the battery are one dim line at the foot of the pane: neither is read
 until something else has already gone wrong, and `battery` reads `n/a` because
 nothing on this robot measures it ([`control-plane.md`](control-plane.md)). The
@@ -895,7 +921,9 @@ you use it on hardware:
   back a second later — after the robot has come to a stop, because the mux keeps
   navigation suppressed for longer than the controller's deadman.
 - **A takeover overrides the goal, it does not cancel it**, so the robot resumes
-  what it was doing. To stop that, use the layout's **Publish** panel to send
+  what it was doing. To end the mission, press **cancel** on the dashboard's
+  mission line or run `fleetctl cancel <robot>` (§8). To hold autonomy off
+  without ending anything, use the layout's **Publish** panel to send
   `{"data": true}` on `/pause_navigation`; `false` releases it. Held off the
   wheels while stationary, the goal fails Nav2's progress checker after ~10 s and
   the task reports failed on the dashboard.

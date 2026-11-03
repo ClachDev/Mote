@@ -269,6 +269,30 @@ try {
     );
     check('dispatch went through the fleet API', dispatched.startsWith('dispatched'), dispatched);
 
+    // The button is on the mission line, and appears when the robot's health
+    // names the mission in flight — which it does with the `accepted` status,
+    // not a health period later. Pressing it sends the cancel; the proof it
+    // landed is the robot's own `cancelled` in the log, over the broker.
+    const offeredCancel = await settle(
+      session,
+      `!!document.querySelector('#mission-line .mission-cancel')`,
+      (present) => present,
+    );
+    check('a mission in flight offers a cancel', offeredCancel, 'no .mission-cancel button');
+    await session.evaluate(`document.querySelector('#mission-line .mission-cancel')?.click()`);
+    const afterCancel = await settle(
+      session,
+      `[...document.querySelectorAll('#status-log .status-state')].map(n => n.textContent).join(',')`,
+      (states) => states.includes('cancelled'),
+    );
+    check('the cancel stopped the mission', afterCancel.includes('cancelled'), afterCancel);
+    const cleared = await settle(
+      session,
+      `!document.querySelector('#mission-line .mission-cancel')`,
+      (gone) => gone,
+    );
+    check('a cancelled mission offers no cancel', cleared, 'the button outlived its mission');
+
     const statuses = await settle(
       session,
       `[...document.querySelectorAll('#status-log .status-state')].map(n => n.textContent).join(',')`,

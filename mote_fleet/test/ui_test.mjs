@@ -39,6 +39,7 @@ import {
 import { NARROW_MAX_PX } from '../server/ui/layout.mjs';
 import { FALLBACK, TOKENS, readTokens, stateColour } from '../server/ui/theme.mjs';
 import {
+  cancelTarget,
   detailFooter,
   detailHeadline,
   detailSections,
@@ -511,6 +512,34 @@ test('a task with no status to age it from still names its state', () => {
   const record = idle();
   record.health.mission = { id: 'c9', state: 'accepted', capability: 'fetch' };
   assert.deepEqual(missionLine(record, NOW), { capability: 'fetch', meta: 'accepted' });
+});
+
+test('the cancel button stops the mission the line names, and only while it can', () => {
+  const record = idle();
+  assert.equal(cancelTarget(record, NOW), null); // idle: nothing to stop
+
+  record.health.mission = { id: 'c1', state: 'accepted', capability: 'goto' };
+  record.status = { id: 'c1', state: 'accepted', terminal: false };
+  assert.equal(cancelTarget(record, NOW), 'c1');
+
+  // Health names the mission until its next report; the status says first
+  // that it is over, and a button that can only be refused is not offered.
+  record.status = { id: 'c1', state: 'cancelled', terminal: true };
+  assert.equal(cancelTarget(record, NOW), null);
+  // Another mission's terminal status says nothing about this one.
+  record.status = { id: 'c0', state: 'succeeded', terminal: true };
+  assert.equal(cancelTarget(record, NOW), 'c1');
+
+  // A cancel is published once and not retained: to a robot that has dropped
+  // off it would be lost without a word.
+  record.presence = { online: false, reason: 'last will', stamp: stamp(40) };
+  assert.equal(cancelTarget(record, NOW), null);
+});
+
+test('a mission with no id has no cancel, because a cancel names one', () => {
+  const record = idle();
+  record.health.mission = { id: null, state: 'accepted', capability: 'goto' };
+  assert.equal(cancelTarget(record, NOW), null);
 });
 
 test('the footer is the two numbers not worth a row each', () => {

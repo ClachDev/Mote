@@ -154,6 +154,23 @@ def test_a_second_mission_is_refused_while_one_is_in_flight(robot):
     assert "lane" in rejection["failure"]["detail"]
 
 
+def test_a_cancel_ends_the_mission_it_names_and_nothing_else(robot):
+    command = a_command(payload_input={"target": "home"})
+    robot._handle(command)
+    robot._cancel(mission.cancel("mote-01", "some-other-id"))
+    assert states(robot) == [mission.DISPATCHED, mission.ACCEPTED]
+
+    robot._cancel(mission.cancel("mote-01", command["id"], issued_by="ui:tester"))
+    cancelled = of(robot, protocol.STATUS)[-1]
+    assert mission.check(cancelled, "status")["state"] == mission.CANCELLED
+    assert cancelled["detail"] == "cancelled by ui:tester"
+    # health.mission clears with it, which is what takes the button away.
+    assert of(robot, protocol.HEALTH)[-1]["mission"] is None
+    # And the lane is free: the next mission is taken, not refused busy.
+    robot._handle(a_command(payload_input={"target": "pickup"}))
+    assert states(robot)[-1] == mission.ACCEPTED
+
+
 def test_the_will_is_an_offline_presence(robot):
     # paho keeps the will it was handed; this is the payload the *broker*
     # publishes when the socket drops, which is the whole point of the offline

@@ -23,6 +23,8 @@ The contract is ``docs/fleet/fleet-api.md``::
     POST /v1/enroll                          allocate (or return) a robot id
     POST /v1/robots/<id>/dispatch            authorize, audit, then publish a
                                              mission (capability + typed input)
+    POST /v1/robots/<id>/cancel              authorize, audit, then publish a
+                                             cancel naming a mission id
     GET  /v1/audit                           what was dispatched, by whom
     GET  /v1/maps                            basemaps this server can serve
     GET  /v1/maps/<site>/<floor>/map.json    resolution + origin (the Q5 transform)
@@ -50,8 +52,10 @@ one costs: an operator token unless the entry says otherwise.
 **Dispatch is mediated here, and only here.** M1's ``fleetctl`` published
 straight to the broker; from M3 every write to ``mission/command`` goes through
 ``POST /v1/robots/<id>/dispatch``, which authorizes an operator token, writes an
-audit row, and only then publishes (fleet.md Q5/Q7). The topic tree does not
-change — only who may publish to it. The browser therefore never holds a broker
+audit row, and only then publishes (fleet.md Q5/Q7). ``mission/cancel`` is
+written the same way, through ``POST /v1/robots/<id>/cancel``, because
+stopping a robot is as much an operator's act as starting one. The topic tree
+does not change — only who may publish to it. The browser therefore never holds a broker
 credential that can publish, and the UI's MQTT client cannot publish at all
 (``ui/mqtt.mjs`` implements no PUBLISH packet).
 
@@ -273,6 +277,12 @@ ROUTES = (
         "POST",
         "/v1/robots/{robot_id}/dispatch",
         "_dispatch",
+        audits_refusal=True,
+    ),
+    Route(
+        "POST",
+        "/v1/robots/{robot_id}/cancel",
+        "_cancel",
         audits_refusal=True,
     ),
     Route(
@@ -961,6 +971,96 @@ class FleetHandler(BaseHTTPRequestHandler):
                 "capability": payload["capability"],
                 "input": payload["input"],
                 "lane": payload["lane"],
+                "issued_at": payload["issued_at"],
+                "issued_by": payload["issued_by"],
+                "audit_id": entry["id"],
+                "status_topic": protocol.topic(robot_id, protocol.STATUS),
+            },
+        )
+
+    def _cancel(self, robot_id: str):
+        """Authorize, record, publish a cancel — the same order as a dispatch.
+
+        The body names the mission by ``id``; nothing here checks that it is
+        in flight. This server holds no mission state, and the spec makes a
+        cancel for an id that is unknown or already over a no-op rather than
+        an error, so a 202 means "published" exactly as it does for a
+        dispatch. Whether the mission stopped is the robot's ``cancelled``
+        status, on the same topic every other outcome arrives on.
+        """
+        body = self.body
+        registry = self.server.registry
+        remote = self.address_string()
+        mission_id = str(body.get("id") or "").strip()
+        reason = str(body.get("reason") or "").strip()
+        described = f"cancel {mission_id}" + (f" ({reason})" if reason else "")
+        if self.operator is None:
+            self._refuse(
+                action="cancel",
+                robot_id=robot_id,
+                command=described[:MAX_COMMAND],
+                command_id=mission_id[:64],
+            )
+            return
+
+        actor = self.operator["name"]
+        if not mission_id:
+            self._error(400, "the id of the mission to cancel is required")
+            return
+        if not protocol.valid_id(robot_id):
+            self._error(400, f"invalid robot id {robot_id!r}")
+            return
+        if registry.robot(robot_id) is None:
+            registry.record(
+                actor=actor,
+                action="cancel",
+                robot_id=robot_id,
+                command=described[:MAX_COMMAND],
+                command_id=mission_id[:64],
+                result="rejected",
+                detail="no such robot",
+                remote=remote,
+            )
+            self._error(404, "no such robot")
+            return
+        try:
+            payload = mission.cancel(
+                robot_id,
+                mission_id,
+                issued_by=str(body.get("issued_by") or "").strip() or f"ui:{actor}",
+                reason=reason,
+            )
+        except SpecError as exc:
+            self._error(400, str(exc))
+            return
+        entry = registry.record(
+            actor=actor,
+            action="cancel",
+            robot_id=robot_id,
+            command=described[:MAX_COMMAND],
+            command_id=mission_id,
+            result="publishing",
+            remote=remote,
+        )
+        published, detail = self.server.publisher.publish(
+            protocol.topic(robot_id, protocol.CANCEL), protocol.encode(payload)
+        )
+        registry.finish(entry["id"], "published" if published else "error", detail)
+        print(
+            f"cancel {robot_id} {mission_id} by {actor} "
+            f"({'published' if published else detail})",
+            file=sys.stderr,
+        )
+        if not published:
+            self._error(503, detail)
+            return
+        self._send(
+            202,
+            {
+                "schema": mission.SCHEMA,
+                "robot_id": robot_id,
+                "id": payload["id"],
+                "reason": payload["reason"],
                 "issued_at": payload["issued_at"],
                 "issued_by": payload["issued_by"],
                 "audit_id": entry["id"],

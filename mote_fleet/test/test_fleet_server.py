@@ -464,6 +464,80 @@ def test_a_lane_and_a_deadline_travel_untouched(server, operator, robot):
     assert payload["deadline"] == "2026-08-22T12:00:00.000Z"
 
 
+# ---- cancel: the same three steps ----------------------------------------
+
+
+def cancel(server, robot_id, mission_id="abc123", token=None, **extra):
+    return post(
+        server,
+        f"/v1/robots/{robot_id}/cancel",
+        {"schema": protocol.SCHEMA, "id": mission_id, **extra},
+        token=token,
+    )
+
+
+def test_a_cancel_is_published_on_its_own_leaf(server, operator, robot):
+    status, body = cancel(server, robot, token=operator, reason="wrong room")
+    assert status == 202
+    assert (body["id"], body["reason"], body["issued_by"]) == (
+        "abc123",
+        "wrong room",
+        "ui:michael",
+    )
+    topic, payload, retain = server.publisher.published[0]
+    # Its own leaf, never retained: a cancel replayed on every reconnect would
+    # keep arriving long after the mission it named had ended.
+    assert (topic, retain) == ("mote/v2/mote-01/mission/cancel", False)
+    assert mission.check(payload, "cancel") is payload
+    assert (payload["platform_id"], payload["id"]) == ("mote-01", "abc123")
+
+
+def test_a_cancel_is_audited_under_its_own_action(server, operator, robot):
+    _, body = cancel(server, robot, token=operator, reason="wrong room")
+    entry = server.registry.audit()[0]
+    assert entry["id"] == body["audit_id"]
+    assert (entry["actor"], entry["action"], entry["result"]) == (
+        "michael",
+        "cancel",
+        "published",
+    )
+    assert entry["command_id"] == "abc123"
+    assert entry["command"] == "cancel abc123 (wrong room)"
+
+
+def test_a_cancel_without_a_token_is_refused_and_recorded(server, robot):
+    expect_error(lambda: cancel(server, robot), 401)
+    assert not server.publisher.published
+    entry = server.registry.audit()[0]
+    assert (entry["actor"], entry["action"], entry["result"]) == (
+        "anonymous",
+        "cancel",
+        "unauthorized",
+    )
+
+
+def test_a_cancel_must_name_a_mission(server, operator, robot):
+    """The spec's cancel is about one mission, and the server holds no mission
+    state to fill the id in from — the robot's retained status does."""
+    expect_error(lambda: cancel(server, robot, mission_id="", token=operator), 400)
+    expect_error(
+        lambda: cancel(server, robot, mission_id="not an id", token=operator), 400
+    )
+    assert not server.publisher.published
+
+
+def test_a_cancel_to_an_unknown_robot_is_404(server, operator):
+    expect_error(lambda: cancel(server, "mote-99", token=operator), 404)
+    assert not server.publisher.published
+    assert server.registry.audit()[0]["result"] == "rejected"
+
+
+def test_a_cancel_the_broker_did_not_take_is_503(server, operator, robot):
+    server.publisher.fail = "broker fleet-box:1883 unreachable"
+    expect_error(lambda: cancel(server, robot, token=operator), 503)
+    assert server.registry.audit()[0]["result"] == "error"
+
+
 def test_a_broker_that_is_down_is_reported_not_swallowed(server, operator, robot):
     server.publisher.fail = "broker fleet-box:1883 unreachable"
     body = expect_error(lambda: dispatch(server, robot, token=operator), 503)

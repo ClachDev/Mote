@@ -42,7 +42,7 @@ can be published at once while subscribers migrate, and a subscriber never has
 to guess which contract a message came from.
 
 **The mission payloads are not Mote's to version.** `mission/command`,
-`mission/status` and `capabilities` carry mission/v0 and capability/v0
+`mission/cancel`, `mission/status` and `capabilities` carry mission/v0 and capability/v0
 documents, and those specifications version independently of this tree: adding
 an optional field there does not move `mote/v2`, and a `mission/v1` would. Mote
 keeps no copy of their schemas, so there is nothing here to drift.
@@ -70,20 +70,23 @@ hostname, a topic level and a directory name.
 | `pose` | robot → fleet | **yes** | 1 | [pose](#pose) |
 | `capabilities` | robot → fleet | **yes** | 1 | [capability set](#capabilities) |
 | `mission/command` | fleet → robot | **no** | 1 | [mission command](#missioncommand) |
+| `mission/cancel` | fleet → robot | **no** | 1 | [mission cancel](#missioncancel) |
 | `mission/status` | robot → fleet | **yes** | 1 | [mission status](#missionstatus) |
 
 Two properties of that table are load-bearing:
 
-**Everything except commands is retained.** An operator UI connecting at any
+**Everything except commands and cancels is retained.** An operator UI connecting at any
 moment sees the current state of every robot immediately, with no polling and no
 waiting for the next heartbeat. `mote/v2/+/health` is the roster, and
 `mote/v2/+/capabilities` is what the whole fleet can be asked to do — which is
 the question a dispatcher asks first and, before v2, could only answer by
 sending something wrong and reading the refusal.
 
-**`mission/command` is never retained.** A retained command would be redelivered
-every time the robot reconnects, which turns a link flap into a re-dispatch. A
-publisher that sets the retain flag on a command is a bug in the publisher.
+**`mission/command` and `mission/cancel` are never retained.** A retained
+command would be redelivered every time the robot reconnects, which turns a link
+flap into a re-dispatch. A cancel is a request made at one moment; retained, it
+would keep arriving long after the mission it named had ended. A publisher that
+sets the retain flag on either is a bug in the publisher.
 
 QoS 1 (at-least-once) throughout: the broker may redeliver, and every consumer
 here is idempotent — the state topics are snapshots, and a command is keyed by
@@ -227,19 +230,19 @@ dispatcher that has never seen a Mote knows the input shapes:
 
 | Key | Input | Notes |
 |---|---|---|
-| `goto` | `{target: <zone name>}` | `cancellable: false`, `max_duration_s: 600`, `idempotency: natural` |
-| `fetch` | `{target: <zone name or object label>, destination: <zone name>}` | `cancellable: false`, `max_duration_s: 900`, `idempotency: none` |
+| `goto` | `{target: <zone name>}` | `cancellable: true`, `max_duration_s: 600`, `idempotency: natural` |
+| `fetch` | `{target: <zone name or object label>, destination: <zone name>}` | `cancellable: true`, `max_duration_s: 900`, `idempotency: none` |
 
 `target` on `goto` and `destination` on `fetch` `$ref` the zone reference
 schema, which is what makes the seam machine-readable: a tool reading the
 document can tell *which inputs are places* and pre-check them against the zone
 vocabulary at [`/v1/zones`](fleet-api.md) before sending anything.
 
-Both declare `cancellable: false` because the task layer has no cancel — there
-is a twist_mux pause lock an operator can assert, and that is a different thing.
-Saying `true` would promise a message nothing handles. `mission/cancel` is
-therefore a named topic with no publisher and no subscriber; it is reserved
-rather than left to be invented.
+Both declare `cancellable: true`, and the task server honours it: a
+[`mission/cancel`](#missioncancel) naming the mission in flight halts the tree,
+cancels the Nav2 goal, and ends the mission `cancelled`. `max_duration_s` stays
+set and enforced, because a cancel needs somebody to send it. The set's
+`revision` is 2 from this change.
 
 The authority for the shape is
 [`mote_tasks/mote_tasks/capabilities.py`](../../mote_tasks/mote_tasks/capabilities.py),
@@ -273,6 +276,49 @@ could only send another and hope.
  "issued_at":"2026-07-26T16:15:35.960Z","issued_by":"fleetctl"}
 ```
 
+### mission/cancel
+
+A **mission/v0 mission cancel**: a *request* to stop one mission, named by its
+correlation id. It is a leaf of its own rather than a kind of command because a
+command would meet the lane the mission holds and be refused `busy`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `schema` | int | `1` |
+| `id` | string | the mission to stop |
+| `platform_id` | string | the robot it is for; a robot ignores a cancel addressed elsewhere |
+| `issued_at` | string | RFC 3339, UTC, milliseconds |
+| `issued_by` | string | free text, for audit; the `cancelled` status's detail repeats it |
+| `reason` | string | ≤300 characters, for the audit row and the operator watching |
+
+```json
+{"schema":1,"id":"3e99cf44d1294ab5","platform_id":"mote-01",
+ "issued_at":"2026-09-11T12:50:14.201Z","issued_by":"ui:michael","reason":"wrong room"}
+```
+
+The mission is not cancelled until its status says `cancelled`, and until then
+it holds its lane. The robot publishes `cancelled` once the halted behaviours
+have stopped what they started: for a drive, once Nav2 has ended the goal. Nav2
+ends it when its controller has *accepted* the cancel, and the controller's
+zero velocity follows within one 50 ms period. Measured in the sim over five
+runs, cancelling at 0.22 m/s: the drive command was zero 16–48 ms after the
+cancel, `cancelled` arrived 28–84 ms after it (once 16 ms ahead of the zero
+command), and the wheels were at rest 0.36–0.43 s after it, under the drive
+controller's 1.0 m/s² limit
+(`mote_simulation/test/sim_cancel/run_sim_cancel.sh`). If Nav2 has not
+ended the goal within 5 s (`task_server`'s `cancel_timeout`), the mission ends
+`failed` with class `internal` instead, because `cancelled` means it stopped
+and the robot cannot say that it did. A cancel naming an id that is unknown or
+already terminal is a **no-op**, with no status at all: the caller's goal is
+already met.
+
+The agent forwards a cancel to ROS `task/cancel` byte for byte, including one
+for a mission somebody started at the robot itself. The only cancel it drops is
+one for a mission it already knows has ended. One ordering case is the agent's
+to close: a cancel can overtake the command it names on the way to the task
+server, which would then ignore it as unknown. So a cancel for a mission still
+`dispatched` is held and sent again, once, when `accepted` arrives.
+
 ### mission/status
 
 A **mission/v0 mission status**: one transition, and a snapshot rather than a
@@ -284,7 +330,7 @@ delta — the latest status for an id is the whole truth about that mission.
 | `id` | string, *nullable* | the command's correlation id; `null` for a mission the robot started itself |
 | `platform_id` | string | |
 | `capability` | string | |
-| `state` | enum | `dispatched` \| `accepted` \| `succeeded` \| `failed` \| `rejected`. `running`, `blocked` and `cancelled` are **optional in v0 and Mote does not emit them** — a consumer must not require them |
+| `state` | enum | `dispatched` \| `accepted` \| `succeeded` \| `failed` \| `rejected` \| `cancelled`. `running` and `blocked` are **optional in v0 and Mote does not emit them** — a consumer must not require them. `cancelled` appears only in answer to a [cancel](#missioncancel), and carries no `failure` |
 | `terminal` | bool | carried even though it is derivable, so a consumer stops watching without a table of final states |
 | `source` | enum | `fleet` (the agent dispatched it) \| `local` (someone on the robot did) |
 | `stamp` | string | |
@@ -366,6 +412,7 @@ is worse than no map.
                                 ▼                                             │
                          ┌─────────────┐ ── tree succeeds ──▶ succeeded ──────┤
                          │  accepted   │                                      │
+                         │             │ ── cancel, goal ended ─▶ cancelled ──┤
                          └─────────────┘ ── tree fails ─────▶ failed ─────────┘
                                             (obstructed, unreachable,
                                              timeout, internal — and the
@@ -373,10 +420,10 @@ is worse than no map.
 ```
 
 Exactly one terminal status per mission; nothing is published for that id
-afterwards. `running`, `blocked` and `cancelled` are legal in the specification
-and Mote emits none of them: the behaviour tree reports that it took a mission
-and then that the mission ended, which is what makes this contract
-implementable on an executor that reports a bare accept.
+afterwards. `running` and `blocked` are legal in the specification and Mote
+emits neither: the behaviour tree reports that it took a mission and then that
+the mission ended, which is what makes this contract implementable on an
+executor that reports a bare accept.
 
 ### Who enforces what
 
@@ -408,6 +455,10 @@ What the **agent** keeps is what is genuinely its own
   agent knows which ids it dispatched. A status for an id it does not know is
   republished as `source: "local"`, so an operator sees a robot that is busy
   whoever asked it to be.
+
+- **the cancel that overtakes its command** — held for a mission still
+  `dispatched`, and sent again once `accepted` arrives (see
+  [mission/cancel](#missioncancel)).
 
 Once `accepted` there is no agent-side timeout at all. The mission's own bound
 is its capability's `max_duration_s`, enforced by the executor, which fails it

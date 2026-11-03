@@ -27,7 +27,8 @@ What it does model, because the UI renders each of them differently:
   re-publishes the last status rather than re-running the mission. The
   rejection paths are the point: ``busy``, ``invalid_input`` and
   ``unresolved_zone`` all render differently, and a status log that has only
-  ever seen success is a status log nobody has read.
+  ever seen success is a status log nobody has read. A cancel naming the
+  mission in flight ends it ``cancelled``; any other cancel is ignored.
 
 Run it against a broker of your own while working on ``server/ui/``::
 
@@ -164,7 +165,8 @@ class FakeRobot:
             return
         # Subscribing here rather than after connect() is what keeps a
         # reconnect from coming back deaf.
-        client.subscribe(protocol.topic(self.id, protocol.COMMAND), qos=protocol.QOS)
+        for leaf in (protocol.COMMAND, protocol.CANCEL):
+            client.subscribe(protocol.topic(self.id, leaf), qos=protocol.QOS)
         self._publish(
             protocol.PRESENCE, protocol.presence(self.id, True, agent="fake_robots")
         )
@@ -256,12 +258,33 @@ class FakeRobot:
     # -- commands ---------------------------------------------------------
 
     def _on_message(self, _client, _userdata, message):
+        kind = "cancel" if message.topic.endswith(protocol.CANCEL) else "command"
         try:
-            payload = mission.check(json.loads(message.payload), "command")
+            payload = mission.check(json.loads(message.payload), kind)
         except (ValueError, SpecError) as exc:
-            print(f"{self.id}: refusing a malformed mission: {exc}")
+            print(f"{self.id}: refusing a malformed {kind}: {exc}")
             return
-        self._handle(payload)
+        if kind == "cancel":
+            self._cancel(payload)
+        else:
+            self._handle(payload)
+
+    def _cancel(self, payload: dict):
+        """Stop the mission it names, or do nothing: the spec makes a cancel
+        for any other id a no-op, and so does the real task server."""
+        with self._lock:
+            running = self._mission
+            if running is None or running["id"] != payload["id"]:
+                return
+            self._mission = None
+        by = f" by {payload['issued_by']}" if payload.get("issued_by") else ""
+        self._reply(
+            running["id"],
+            running["capability"],
+            mission.CANCELLED,
+            detail=f"cancelled{by}",
+        )
+        self._publish(protocol.HEALTH, self.health_payload())
 
     def _handle(self, payload: dict):
         mission_id, key = payload["id"], payload["capability"]
@@ -324,6 +347,8 @@ class FakeRobot:
                 },
             }
         self._reply(mission_id, key, mission.ACCEPTED, detail="running")
+        # As the agent does: health.mission changes with the status.
+        self._publish(protocol.HEALTH, self.health_payload())
 
     def _refuse(self, declared: dict, payload_input: dict):
         """The two refusals a wire fake can honour, typed as the robot types them.

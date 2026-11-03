@@ -29,6 +29,7 @@ import { setupPanes } from './layout.mjs';
 import {
   POSE_STALE_S,
   ageSeconds,
+  cancelTarget,
   detailFooter,
   detailHeadline,
   detailSections,
@@ -51,6 +52,9 @@ const state = {
   mapKey: null,
   floor: null, // the registry's view of the floor on screen: revisions, candidates
   zones: [], // the floor's bound places, for the map and the dispatch picker
+  // The cancel last pressed: { id, sending, error }. Kept here rather than on
+  // the button because the pane is re-rendered on every broker message.
+  cancel: null,
 };
 
 const dom = {};
@@ -516,11 +520,28 @@ function renderDetail(record) {
   dom.detailHealth.hidden = !banner;
 
   const mission = missionLine(record);
+  // The control sits on the line it acts on. `cancelled` comes back over the
+  // broker like every other outcome, so pressing it only sends the request;
+  // what the robot did about it is the status log's to say.
+  const target = cancelTarget(record);
+  const pressed = state.cancel && state.cancel.id === target ? state.cancel : null;
   dom.missionLine.replaceChildren(
     ...[
       mission.capability &&
         el('span', { class: 'mission-capability', text: mission.capability }),
       el('span', { class: 'mission-meta', text: mission.meta }),
+      target &&
+        el('button', {
+          type: 'button',
+          class: 'mission-cancel',
+          text: pressed && pressed.sending ? 'cancelling…' : 'cancel',
+          title: `stop mission ${target}`,
+          disabled: pressed && pressed.sending ? '' : null,
+          onclick: () => onCancel(record.id, target),
+        }),
+      pressed &&
+        pressed.error &&
+        el('p', { class: 'note error', text: pressed.error }),
     ].filter(Boolean),
   );
 
@@ -618,6 +639,25 @@ async function onDispatch(event) {
   } catch (error) {
     dom.dispatchNote.textContent = error.message;
     dom.dispatchNote.className = 'note error';
+  }
+}
+
+// A cancel names the mission, not the robot: pressing it after the mission has
+// ended and another begun must not stop the new one. The button stays
+// `cancelling…` until the robot's status or health says the mission is over
+// and the line re-renders without it.
+async function onCancel(robotId, missionId) {
+  state.cancel = { id: missionId, sending: true, error: '' };
+  scheduleRender();
+  try {
+    await api(`/v1/robots/${robotId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema: 1, id: missionId }),
+    });
+  } catch (error) {
+    state.cancel = { id: missionId, sending: false, error: error.message };
+    scheduleRender();
   }
 }
 

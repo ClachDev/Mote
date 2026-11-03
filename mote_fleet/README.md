@@ -99,8 +99,8 @@ a published wire format and a minified blob nobody can review is a worse
 dependency than 200 lines that are tested.
 
 **Dispatch is mediated by the server, and only by the server.** Every write to
-`mission/command` — from the dashboard or from `fleetctl` — is a POST that
-authorizes an operator token and writes an audit row first. The read path is
+`mission/command` or `mission/cancel` — from the dashboard or from `fleetctl` —
+is a POST that authorizes an operator token and writes an audit row first. The read path is
 unchanged and goes straight to the broker.
 
 **Every `/v1` route needs that token**, not only the writes, and one gate in

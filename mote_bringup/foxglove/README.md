@@ -62,9 +62,12 @@ last command while the controller halts the wheels at 0.5 s, so the robot always
 comes to a stop before it starts driving itself again. It then resumes the same
 goal — a takeover is an override, not a cancel.
 
-**To stop it resuming**, use the **Publish** panel: it sends `std_msgs/Bool` on
-`/pause_navigation`, and `{"data": true}` holds Nav2 off the wheels until you
-send `{"data": false}`. Teleop still works while it is set. A goal held off the
-wheels while the robot stands still fails Nav2's own progress checker after about
-10 s and the task reports failed, which is usually what you wanted when you
-reached for the pause.
+**To end the mission**, cancel it: the fleet dashboard's **cancel** button on
+the robot's mission line, or `fleetctl cancel <robot>`. The mission ends
+`cancelled` once Nav2 has ended the goal.
+
+**To hold it off without ending it**, use the **Publish** panel: it sends
+`std_msgs/Bool` on `/pause_navigation`, and `{"data": true}` holds Nav2 off the
+wheels until you send `{"data": false}`. Teleop still works while it is set. A
+goal held off the wheels while the robot stands still fails Nav2's own progress
+checker after about 10 s and the task reports failed.

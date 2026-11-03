@@ -11,6 +11,7 @@ this stays because a CLI composes, exits with a status, and needs no display.
                                               pose, capabilities, last mission
     fleetctl dispatch mote-01 goto target=kitchen
                                               send a mission, follow it to terminal
+    fleetctl cancel mote-01                   stop the mission it is running
     fleetctl audit                            who dispatched what
     fleetctl watch                            tail the whole fleet's topics
     fleetctl sites [site floor]               the map registry: floors, revisions
@@ -359,26 +360,27 @@ def _input(words) -> dict:
     return payload
 
 
-def cmd_dispatch(args):
-    """Dispatch through the API, then follow the robot's own status on the
-    broker. Two connections because they are two different things: the write is
-    authorized and recorded by the fleet server, the read is the live control
-    plane with nothing in the middle."""
-    received = []
-    seen = []
-    done = []
+class StatusFollower:
+    """The robot's ``mission/status`` leaf, read live off the broker.
 
-    def on_message(_client, _userdata, message):
-        # Collect, do not filter: the robot's first transitions can arrive
-        # before the HTTP response has told us which correlation id to look
-        # for, and a status discarded then is a status lost.
+    Collects every status rather than filtering: the robot's first transitions
+    can arrive before the HTTP response has said which correlation id to look
+    for, and a status discarded then is a status lost.
+    """
+
+    def __init__(self):
+        self.received = []
+        self.seen = []
+        self.done = []
+
+    def on_message(self, _client, _userdata, message):
         try:
-            received.append(mission.check(json.loads(message.payload), "status"))
+            self.received.append(mission.check(json.loads(message.payload), "status"))
         except (ValueError, SpecError) as exc:
             print(f"! malformed status: {exc}", file=sys.stderr)
 
-    def report(command_id):
-        for status in list(received):
+    def report(self, command_id):
+        for status in list(self.received):
             if status["id"] != command_id:
                 # Another mission on the same robot — most likely a local one.
                 continue
@@ -394,25 +396,57 @@ def cmd_dispatch(args):
                 line += f"  ({status['detail']})"
             for warning in status.get("warnings") or ():
                 line += f"\n{' ' * 26}! {warning}"
-            if line in seen:
+            if line in self.seen:
                 continue
-            seen.append(line)
+            self.seen.append(line)
             print(line, flush=True)
             if status.get("terminal"):
-                done.append(status["state"])
+                self.done.append(status["state"])
 
-    token = _token(args)
-    # Subscribe before dispatching: the first transition can arrive in
-    # milliseconds, and a status nobody was listening for is a status lost.
+    def wait(self, command_id, seconds: float):
+        deadline = time.monotonic() + seconds
+        while not self.done and time.monotonic() < deadline:
+            self.report(command_id)
+            time.sleep(0.1)
+        self.report(command_id)
+
+    def in_flight(self) -> dict | None:
+        """The mission the robot last reported, if that report was not final.
+
+        The leaf is retained, so a subscriber is handed the latest status the
+        moment it connects — for whatever mission, fleet or local, holds the
+        robot now.
+        """
+        latest = self.received[-1] if self.received else None
+        return latest if latest and not latest["terminal"] else None
+
+
+def _follow(args) -> tuple:
+    """A connected ``(client, follower)`` on this robot's status leaf.
+
+    Subscribe before writing anything: the first transition can arrive in
+    milliseconds, and a status nobody was listening for is a status lost.
+    """
+    follower = StatusFollower()
     client = _client(
         args.broker,
         args.port,
         f"fleetctl-{os.getpid()}",
         subscriptions=[protocol.topic(args.robot_id, protocol.STATUS)],
     )
-    client.on_message = on_message
+    client.on_message = follower.on_message
     client.loop_start()
     time.sleep(0.2)
+    return client, follower
+
+
+def cmd_dispatch(args):
+    """Dispatch through the API, then follow the robot's own status on the
+    broker. Two connections because they are two different things: the write is
+    authorized and recorded by the fleet server, the read is the live control
+    plane with nothing in the middle."""
+    token = _token(args)
+    client, follower = _follow(args)
     answer = _request(
         args.server,
         f"/v1/robots/{args.robot_id}/dispatch",
@@ -430,16 +464,58 @@ def cmd_dispatch(args):
         f"(id {command_id})"
     )
 
-    deadline = time.monotonic() + args.wait
-    while not done and time.monotonic() < deadline:
-        report(command_id)
-        time.sleep(0.1)
-    report(command_id)
+    follower.wait(command_id, args.wait)
     client.loop_stop()
     client.disconnect()
-    if not done:
+    if not follower.done:
         sys.exit(f"no terminal status within {args.wait:.0f}s")
-    sys.exit(0 if done[0] == mission.SUCCEEDED else 1)
+    sys.exit(0 if follower.done[0] == mission.SUCCEEDED else 1)
+
+
+def cmd_cancel(args):
+    """Cancel through the API, then follow the mission to its end.
+
+    Without ``--id`` the mission is the one the robot's retained status says it
+    is running, so the common case — stop whatever it is doing — needs no id
+    copied from anywhere. Exit 0 only for ``cancelled``: a mission that
+    finished first ended some other way, and the caller should know which.
+    """
+    token = _token(args)
+    client, follower = _follow(args)
+    mission_id = args.id
+    if not mission_id:
+        # The retained status is delivered on subscribe; allow it to arrive.
+        deadline = time.monotonic() + 2.0
+        while not follower.received and time.monotonic() < deadline:
+            time.sleep(0.05)
+        running = follower.in_flight()
+        if running is None or not running["id"]:
+            client.loop_stop()
+            client.disconnect()
+            print(f"{args.robot_id} reports no mission in flight; nothing to cancel")
+            sys.exit(0)
+        mission_id = running["id"]
+    answer = _request(
+        args.server,
+        f"/v1/robots/{args.robot_id}/cancel",
+        payload={
+            "schema": mission.SCHEMA,
+            "id": mission_id,
+            "reason": args.reason,
+            "issued_by": args.issued_by,
+        },
+        token=token,
+    )
+    print(f"-> {args.robot_id}: cancel {answer['id']}")
+    follower.wait(mission_id, args.wait)
+    client.loop_stop()
+    client.disconnect()
+    if not follower.done:
+        sys.exit(
+            f"no terminal status for {mission_id} within {args.wait:.0f}s: it "
+            f"was not in flight, or {args.robot_id} did not answer"
+        )
+    sys.exit(0 if follower.done[0] == mission.CANCELLED else 1)
 
 
 def cmd_watch(args):
@@ -573,6 +649,18 @@ def main(argv=None):
     )
     p_dispatch.add_argument("--issued-by", default="fleetctl")
     p_dispatch.set_defaults(func=cmd_dispatch)
+
+    p_cancel = sub.add_parser("cancel", help="stop a mission and follow it")
+    p_cancel.add_argument("robot_id")
+    p_cancel.add_argument(
+        "--id", default="", help="the mission (default: the one the robot is running)"
+    )
+    p_cancel.add_argument("--reason", default="", help="why, for the audit log")
+    p_cancel.add_argument(
+        "--wait", type=float, default=30.0, help="seconds to wait for a terminal state"
+    )
+    p_cancel.add_argument("--issued-by", default="fleetctl")
+    p_cancel.set_defaults(func=cmd_cancel)
 
     p_sites = sub.add_parser("sites", help="the map registry")
     p_sites.add_argument("site", nargs="?", default="")

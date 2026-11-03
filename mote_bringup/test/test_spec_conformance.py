@@ -121,6 +121,41 @@ def test_a_capability_conforms(validator_for):
     validator_for("capability/v0/capability.schema.json").validate(a_goto())
 
 
+def test_motes_own_capability_set_conforms_and_is_cancellable(validator_for):
+    """The document the robot actually advertises, not one written here.
+
+    Imported per test, and skipped where it is absent, because ``mote_tasks``
+    depends on this package and not the other way round. ``cancellable`` is
+    asserted as well as validated: the spec obliges a capability that declares
+    it to honour ``mission/cancel``, and ``task_server`` does, so a declaration
+    drifting back to ``false`` would be a promise withdrawn without anyone
+    deciding to.
+    """
+    try:
+        from mote_tasks import capabilities
+    except ImportError:
+        pytest.skip("mote_tasks is not importable here")
+    document = capabilities.capability_set("mote-01", max_speed_mps=0.218)
+    validator_for("capability/v0/capability-set.schema.json").validate(document)
+    for item in document["capabilities"]:
+        assert item["execution"]["cancellable"] is True, item["key"]
+
+
+def test_a_cancelled_status_carries_no_failure(validator_for):
+    """``cancelled`` is terminal and carries no failure: nothing went wrong.
+    Built with a detail as task_server builds it, since the schema's
+    conditional rules are keyed on the state."""
+    validator_for("mission/v0/mission-status.schema.json").validate(
+        mission.status(
+            "mote-01",
+            "abc",
+            "goto",
+            mission.CANCELLED,
+            detail="goto kitchen — cancelled by ui:michael: wrong room",
+        )
+    )
+
+
 def test_every_mission_state_conforms(validator_for):
     """Including the ones Mote does not emit: the module can build them, so a
     later milestone adopting ``running`` starts from a checked shape."""

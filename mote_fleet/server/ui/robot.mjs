@@ -152,6 +152,23 @@ export function missionLine(record, now = Date.now()) {
   };
 }
 
+// The mission the band's `cancel` button would stop, or null for no button. It
+// is the mission the line names, so the button stops what the operator is
+// reading. Three things take the button away. A mission with no id cannot be
+// named in a cancel. A robot whose health is no longer current would lose the
+// cancel without a word: it is published once, not retained, and the stale
+// banner already says why nothing here can be acted on. And a mission whose own
+// status is already terminal is over, even though `health.mission` still names
+// it until the next health report.
+export function cancelTarget(record, now = Date.now()) {
+  const mission = record && record.health && record.health.mission;
+  if (!mission || !mission.id) return null;
+  if (!healthIsCurrent(record, now)) return null;
+  const latest = record.status;
+  if (latest && latest.id === mission.id && latest.terminal) return null;
+  return mission.id;
+}
+
 // The footer: the two numbers that are worth keeping on screen and worth no
 // more room than one dim line at the bottom of the pane. Battery is a constant
 // — the power bank exposes no telemetry, so nothing on this robot measures it

@@ -36,6 +36,20 @@ message on the same topic. A status whose id is not one we dispatched is
 reported as ``local``, so an operator watching the fleet sees a robot that is
 busy whoever asked it to be.
 
+**A cancel ends work; it does not start any.** It never passes through
+:meth:`CommandTracker.submit`: it creates no mission, takes no lane and is not
+deduplicated, since sending the same cancel twice asks for the same thing
+twice and the executor ignores the second. :meth:`CommandTracker.cancel` only
+decides whether it is worth forwarding. It is not worth forwarding for a
+mission already known to be over, whose outcome is retained. Otherwise it is
+forwarded, including for an id this agent never dispatched: a mission somebody
+started at the robot's own keyboard is still one an operator watching the
+fleet may need to stop. One ordering case is the tracker's to close. A cancel
+for a mission still ``dispatched`` can overtake the command it names on the
+way to the executor, which then finds no such mission and ignores it. So the
+tracker keeps that cancel and hands it back, once, when ``accepted`` arrives
+(:meth:`CommandTracker.cancels_due`).
+
 It is deliberately free of ROS and MQTT, so every awkward case is a plain
 function call in ``test_dispatch.py``.
 """
@@ -47,6 +61,8 @@ from mote_bringup.spec import mission
 # What the agent should do with an inbound command.
 FORWARD = "forward"  # a mission we have not seen: publish it to ROS
 DUPLICATE = "duplicate"  # this id again: re-publish the status it already has
+# ... and with an inbound cancel.
+FINISHED = "finished"  # the mission is already over: nothing to stop
 
 #: How long a terminal status is remembered. The spec's floor is one hour and
 #: "at least the longest max_duration_s you offer"; Mote's longest is fetch's
@@ -71,6 +87,9 @@ class Mission:
     sent_at: float
     status: dict = field(default_factory=dict)
     finished_at: float | None = None
+    #: A cancel that arrived before the executor had taken the mission, held
+    #: to be sent again once it has.
+    early_cancel: dict | None = None
 
     @property
     def terminal(self) -> bool:
@@ -139,7 +158,42 @@ class CommandTracker:
         entry.status = payload
         if entry.terminal and entry.finished_at is None:
             entry.finished_at = now
+            entry.early_cancel = None
         return payload
+
+    def cancel(self, payload: dict, now: float) -> str:
+        """Decide what to do with an inbound cancel: forward it, or not.
+
+        :data:`FINISHED` for a mission this agent knows is over, since its
+        outcome is already retained and there is nothing left to stop.
+        :data:`FORWARD` otherwise, even for an id this agent did not dispatch.
+        The executor is the authority on what is in flight, and it treats a
+        cancel naming anything else as the no-op the spec says it is.
+        """
+        self._evict(now)
+        entry = self.missions.get(payload["id"])
+        if entry is None:
+            return FORWARD
+        if entry.terminal:
+            return FINISHED
+        if entry.state == mission.DISPATCHED:
+            entry.early_cancel = payload
+        return FORWARD
+
+    def cancels_due(self) -> list[dict]:
+        """Cancels to send again, because their mission has now been taken.
+
+        Each is handed back once. A mission that ends without ever being
+        accepted takes its held cancel with it.
+        """
+        due = []
+        for entry in self.missions.values():
+            if entry.early_cancel is None or entry.state == mission.DISPATCHED:
+                continue
+            if not entry.terminal:
+                due.append(entry.early_cancel)
+            entry.early_cancel = None
+        return due
 
     def tick(self, now: float) -> list[dict]:
         """Fail every mission the executor never answered, and forget old ones."""

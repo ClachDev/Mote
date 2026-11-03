@@ -37,6 +37,11 @@ terminal statuses for a dispatcher that restarts, failing a mission the
 executor never answered, and saying whether a status belongs to the fleet or
 to somebody at the robot's own keyboard (:mod:`mote_fleet.dispatch`).
 
+*Down* — cancels. A mission/v0 cancel on ``mission/cancel`` is handed to ROS
+``task/cancel`` byte for byte, like a command, unless the mission it names is
+one this agent already knows has ended. The executor decides what it stops;
+the agent decides only whether there is any point asking.
+
 *Down* — the canonical map. The registry announces each floor's canonical map
 revision on a retained topic, so this agent learns about a new map the instant
 it connects rather than by polling, and installs it by staging the revision and
@@ -180,6 +185,8 @@ class MoteAgent(Node):
         self.version = repo_version()
         self.tracker = dispatch.CommandTracker(accept_timeout=command_timeout)
         self.capabilities = None
+        #: The mission the last health payload named, to republish on change.
+        self._reported_mission = None
         self._inbound = queue.Queue()
         self._snapshot_due = False
         self._diagnostics = None
@@ -191,6 +198,7 @@ class MoteAgent(Node):
         self._pull_thread = None
 
         self.command_pub = self.create_publisher(String, "task/command", 1)
+        self.cancel_pub = self.create_publisher(String, "task/cancel", 10)
         self.create_subscription(String, "task/status", self._on_ros_status, 10)
         self.create_subscription(
             String, "task/capabilities", self._on_capabilities, LATCHED
@@ -288,9 +296,8 @@ class MoteAgent(Node):
         executor by asking _drain_inbound for a snapshot."""
         self.connected = True
         self.get_logger().info(f"connected to broker as {self.robot_id}")
-        client.subscribe(
-            protocol.topic(self.robot_id, protocol.COMMAND), qos=protocol.QOS
-        )
+        for leaf in (protocol.COMMAND, protocol.CANCEL):
+            client.subscribe(protocol.topic(self.robot_id, leaf), qos=protocol.QOS)
         if self.map_sync:
             # Retained, so this arrives immediately for every floor — including
             # the ones mapped while this robot was switched off.
@@ -340,6 +347,8 @@ class MoteAgent(Node):
                 return
             if protocol.parse_registry_topic(topic):
                 self._handle_announcement(topic, raw)
+            elif topic.endswith("/" + protocol.CANCEL):
+                self._handle_cancel(topic, raw)
             else:
                 self._handle_command(topic, raw)
 
@@ -371,6 +380,24 @@ class MoteAgent(Node):
             )
         self._publish_status(update)
 
+    def _handle_cancel(self, topic: str, raw: bytes):
+        try:
+            payload = spec_mission.check(json.loads(raw), "cancel")
+        except (ValueError, SpecError) as exc:
+            self.get_logger().warning(f"ignoring {topic}: {exc}")
+            return
+        if payload["platform_id"] != self.robot_id:
+            self.get_logger().warning(
+                f"ignoring a cancel addressed to {payload['platform_id']!r}"
+            )
+            return
+        action = self.tracker.cancel(payload, self.get_clock().now().nanoseconds / 1e9)
+        if action == dispatch.FINISHED:
+            self.get_logger().info(f"cancel for {payload['id']}: it has already ended")
+            return
+        self.get_logger().info(f"cancelling {payload['id']}")
+        self.cancel_pub.publish(String(data=json.dumps(payload)))
+
     def _on_ros_status(self, msg: String):
         try:
             payload = spec_mission.check(json.loads(msg.data), "status")
@@ -380,6 +407,10 @@ class MoteAgent(Node):
         self._publish_status(
             self.tracker.on_status(payload, self.get_clock().now().nanoseconds / 1e9)
         )
+        for cancel in self.tracker.cancels_due():
+            # It overtook its own command; the executor has the mission now.
+            self.get_logger().info(f"re-sending the cancel for {cancel['id']}")
+            self.cancel_pub.publish(String(data=json.dumps(cancel)))
 
     def _on_capabilities(self, msg: String):
         """Forward the task server's capability set, retained.
@@ -411,6 +442,12 @@ class MoteAgent(Node):
 
     def _publish_status(self, payload: dict):
         self._publish(protocol.STATUS, payload)
+        # health.mission is what a dashboard reads to know what the robot is
+        # busy with, and to offer to cancel it. It changes exactly when a
+        # status does, so it goes out now rather than up to a health period
+        # later.
+        if self.tracker.summary() != self._reported_mission:
+            self.publish_health()
 
     # ---- the map registry -----------------------------------------------
 
@@ -613,7 +650,9 @@ class MoteAgent(Node):
     def publish_health(self):
         if self.robot_id is None:
             return
-        self._publish(protocol.HEALTH, self.health_payload())
+        payload = self.health_payload()
+        self._reported_mission = payload["mission"]
+        self._publish(protocol.HEALTH, payload)
 
     def pose_payload(self) -> dict | None:
         try:
