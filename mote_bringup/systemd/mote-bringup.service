@@ -38,6 +38,15 @@ RestartSteps=5
 RestartMaxDelaySec=30
 # The self-check ExecStartPre runs under pixi and can take a few seconds.
 TimeoutStartSec=120
+# Stop with SIGINT to pixi alone; pixi forwards it to ros2 launch, which stops
+# each node in order, so sllidar_node reaches its stop-motor path. The default
+# (SIGTERM to every process in the cgroup) aborts sllidar_node inside rclcpp's
+# handler before that path and leaves the C1 scanning on USB power with no
+# service running. SIGINT to the whole group is no better: launch sees it twice
+# and can hang after its children exit. Anything left once pixi exits is
+# SIGKILLed (mixed).
+KillMode=mixed
+KillSignal=SIGINT
 
 # Loopback-only DDS transport (mote_bringup/config/cyclonedds.xml): the graph
 # never touches a radio, so wifi cannot stall topic delivery on the board.
