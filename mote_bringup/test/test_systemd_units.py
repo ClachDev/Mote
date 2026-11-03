@@ -163,6 +163,15 @@ def test_hardening_and_dds_block(name):
     assert "ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" in env
 
 
+def test_bringup_stops_with_sigint_to_pixi():
+    """SIGTERM to the cgroup aborts sllidar_node before its stop-motor path and
+    the C1 scans on with no service running; SIGINT to the whole group reaches
+    launch twice and can hang it after its children exit."""
+    service = load("mote-bringup.service")["Service"]
+    assert service["KillMode"] == ["mixed"]
+    assert service["KillSignal"] == ["SIGINT"]
+
+
 def test_health_keeps_its_watchdog():
     service = load("mote-health.service")["Service"]
     assert service["Type"] == ["notify"]

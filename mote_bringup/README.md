@@ -216,6 +216,19 @@ sleep` stops the retry loop.
   `dev-mote_lidar.device`. `mote-bringup` orders `After=` / `Wants=` them, so
   bringup waits for the hardware to enumerate but a mid-run flap does not
   force-kill the stack (the self-check and health monitor own that).
+- **Stop signal (bringup only)**: `KillMode=mixed` + `KillSignal=SIGINT`.
+  systemd's default, SIGTERM to every process in the cgroup, reaches
+  `sllidar_node` directly: rclcpp's handler invalidates the context, the scan
+  loop throws out of `spin_some()`, and the process aborts before `stop()` /
+  `setMotorSpeed(0)`. The C1 then keeps scanning, and spinning, on USB power
+  with no service running. SIGINT to pixi alone is forwarded to `ros2 launch`,
+  which stops each node in order; `sllidar_node` logs `Stop motor` and the
+  port goes quiet. Measured on mote-01, 2026-11-03: SIGINT to pixi, 12/12
+  nodes "finished cleanly", cgroup empty in 7 s. SIGINT to the whole group,
+  4 nodes "died" and one run left launch hung after its children had exited.
+  SIGTERM, driver aborted and the lidar still streaming afterwards. `mixed`
+  SIGKILLs anything left once pixi exits. To quiet a lidar left scanning:
+  write `A5 25` to `/dev/mote_lidar` at 460800 baud.
 - **journald sizing**: `systemd/journald-mote.conf` bounds the persistent
   journal (`SystemMaxUse=500M`, `SystemKeepFree=1G`, `MaxRetentionSec=2week`) so
   always-restarting services can never fill the SD card.
