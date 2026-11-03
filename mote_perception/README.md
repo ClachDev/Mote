@@ -9,9 +9,13 @@ robot** (it feeds Nav2), so unlike `mote_simulation` it is synced to the Pi.
 
 ## Nodes
 
-- `camera_monitor` — subscribes to `image` (remapped to `/image_raw`) and logs
-  the measured frame rate, resolution, and encoding every few seconds, warning
-  when no frames arrive. Dependency-light (rclpy + sensor_msgs, no OpenCV).
+- `camera_monitor` — subscribes to `image/compressed` (remapped to
+  `/image_raw/compressed`) and logs the measured frame rate, resolution, and
+  format every few seconds, warning when no frames arrive. The resolution is
+  read once from `camera_info` and re-read after a dropout. Dependency-light
+  (rclpy + sensor_msgs, no OpenCV). It never reads the raw stream: that cost
+  5.0% of a core to count frames, against 2.3% compressed
+  (`docs/tuning/2026-09-11-camera-monitor.md`).
 - `depth_obstacle_node` — L1, see below.
 - `object_detector_node` — L2, see below.
 

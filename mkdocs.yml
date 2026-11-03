@@ -169,3 +169,4 @@ nav:
       - Health monitor in C++: tuning/2026-09-01-health-monitor-cpp.md
       - map-build against a hand-built map: tuning/2026-09-01-map-build.md
       - "  ↳ build report": tuning/2026-09-01-map-build/build-report.md
+      - camera_monitor off the raw stream: tuning/2026-09-11-camera-monitor.md

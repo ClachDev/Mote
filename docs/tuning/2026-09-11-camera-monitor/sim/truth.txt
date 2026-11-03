@@ -1,0 +1,1 @@
+/image_raw: 1200 frames over 39.6 sim s = 30.31 frames per sim s; real-time factor 0.99

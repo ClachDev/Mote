@@ -1,0 +1,14 @@
+--- before perception: who publishes/subscribes /image_raw
+Type: sensor_msgs/msg/Image
+Publisher count: 1
+Subscription count: 0
+Type: sensor_msgs/msg/CompressedImage
+Publisher count: 1
+Subscription count: 0
+--- with perception up
+Type: sensor_msgs/msg/Image
+Publisher count: 1
+Subscription count: 1
+Type: sensor_msgs/msg/CompressedImage
+Publisher count: 1
+Subscription count: 2
