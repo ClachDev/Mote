@@ -50,7 +50,7 @@ Several exist and were reviewed (July 2026):
 - [`legalaspro/so101-ros-physical-ai`](https://github.com/legalaspro/so101-ros-physical-ai)
   — the fullest arm stack: Feetech ros2_control driver, MoveIt 2, episode
   recording with LeRobot dataset export, torch isolated off the control path.
-  Jazzy. But it is a **standalone arm on its own bus** and its teleop assumes a
+  ROS 2. But it is a **standalone arm on its own bus** and its teleop assumes a
   leader arm; we have neither.
 - [`brukg/so_arm_100_hardware`](https://github.com/brukg/so_arm_100_hardware)
   — SO-100 ros2_control hardware interface; same standalone-arm shape.
@@ -72,8 +72,8 @@ the same SDK LeRobot and the stacks above sit on. Arm control has since folded
 into `mote_hardware`'s ros2_control interface (below);
 [`adityakamath/sts_hardware_interface`](https://github.com/adityakamath/sts_hardware_interface)
 does the same job on the same SDK, with mixed position/velocity modes on one
-bus, and remains the upstream to converge on — but it targets Kilted (we run
-Jazzy), is not on rosdistro, and is a fast-moving single-maintainer WIP, so
+bus, and remains the upstream to converge on — but it targeted Kilted when we
+chose (we run Lyrical now), is not on rosdistro, and is a fast-moving single-maintainer WIP, so
 adopting it now would trade a working stack for a moving one.
 
 ## Wiring: the arm shares the drive-wheel bus

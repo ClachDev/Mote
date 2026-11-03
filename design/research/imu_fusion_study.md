@@ -93,12 +93,12 @@ keeping:
   what the EKF would fuse. I2C (`0x4A`/`0x4B` on GPIO2/3) gives the full
   quaternion but needs clock-stretch mitigation. Power is 3.3 V + GND from the
   header, no level shifting.
-- **Driver.** No `ros-jazzy-bno08x` exists on robostack/conda-forge. The BNO085's
+- **Driver.** No `ros-lyrical-bno08x` exists on robostack/conda-forge. The BNO085's
   on-chip fusion outputs an absolute-orientation quaternion, so no Madgwick
   filter is needed. Best fit is a first-party thin node — the RVC frame format is
   ~50 lines — matching the repo's existing small ROS glue.
 - **Config.** `robot.yaml` would need real `imu.link.xyz/rpy` extrinsics (REP-103
   axes; encode a rotated mount in `rpy`), an `imu_link` in the URDF outside the
-  `use_sim` guard, and `ros-jazzy-robot-localization` added explicitly to the
-  default environment (it is on robostack-jazzy for `linux-aarch64`, currently
+  `use_sim` guard, and `ros-lyrical-robot-localization` added explicitly to the
+  default environment (it is on robostack-lyrical for `linux-aarch64`, currently
   only present transitively).

@@ -132,7 +132,7 @@ class DepthObstacleNode(Node):
             self.get_parameter("server_host").value,
             int(self.get_parameter("server_port").value),
             float(self.get_parameter("socket_timeout").value),
-            warn=lambda m: self.get_logger().warn(m, throttle_duration_sec=2.0),
+            warn=lambda m: self.get_logger().warning(m, throttle_duration_sec=2.0),
         )
         self.cam_info = None
         self.proj = None
@@ -313,7 +313,7 @@ class DepthObstacleNode(Node):
         # image_transport sets format to e.g. "rgb8; jpeg compressed bgr8"
         fmt = (msg.format or "").lower()
         if fmt and not any(c in fmt for c in ("jpeg", "jpg", "png")):
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"unsupported compressed format {fmt!r}; skipping",
                 throttle_duration_sec=2.0,
             )
@@ -330,7 +330,7 @@ class DepthObstacleNode(Node):
 
         depth_corr, ab, source = self._rescale(depth, msg.header.stamp)
         if depth_corr is None:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 "no lidar scale this frame; skipping", throttle_duration_sec=2.0
             )
             return
@@ -338,7 +338,7 @@ class DepthObstacleNode(Node):
         if cor:
             self._publish_depth_image(depth_corr, msg.header.stamp, self.depth_pub)
         if frac < 0.4:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"low {source}-fit inliers ({frac:.0%}); skipping frame"
             )
             return
@@ -357,7 +357,7 @@ class DepthObstacleNode(Node):
 
         img = cv2.imdecode(np.frombuffer(blob, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
-            self.get_logger().warn("corrupt compressed frame; skipping")
+            self.get_logger().warning("corrupt compressed frame; skipping")
             return
         if img.shape[:2] != (self.proj.height, self.proj.width):
             img = cv2.resize(img, (self.proj.width, self.proj.height))

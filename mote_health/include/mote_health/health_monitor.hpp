@@ -12,8 +12,8 @@
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
-#include "tf2_ros/buffer.h"
-#include "tf2_ros/transform_listener.h"
+#include "tf2_ros/buffer.hpp"
+#include "tf2_ros/transform_listener.hpp"
 
 #include "mote_health/config.hpp"
 #include "mote_health/health_rollup.hpp"

@@ -3,7 +3,7 @@
 #include <string>
 
 #include "dwb_core/exceptions.hpp"
-#include "nav2_util/node_utils.hpp"
+#include "nav2_ros_common/node_utils.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/rclcpp.hpp"
 
@@ -19,11 +19,11 @@ void WheelSpeedLimitCritic::onInit()
 
   const std::string prefix = dwb_plugin_name_ + "." + name_ + ".";
 
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     node, prefix + "max_wheel_speed", rclcpp::ParameterValue(0.218));
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     node, prefix + "wheel_separation", rclcpp::ParameterValue(0.22));
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     node, prefix + "tolerance", rclcpp::ParameterValue(1.02));
 
   node->get_parameter(prefix + "max_wheel_speed", max_wheel_speed_);

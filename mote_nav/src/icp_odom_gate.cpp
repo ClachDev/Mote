@@ -6,7 +6,7 @@
 
 #include "mote_nav/wheel_speed.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
-#include "tf2/utils.h"
+#include "tf2/utils.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace mote_nav

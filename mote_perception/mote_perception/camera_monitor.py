@@ -56,7 +56,7 @@ class CameraMonitor(Node):
     def _report(self):
         fps = self.count / self.report_period
         if self.count == 0:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"No frames received in the last {self.report_period:.0f} s"
             )
             self.resolution = None

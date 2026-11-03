@@ -306,7 +306,7 @@ TEST_F(ArmBus, ReadsOneArmJointPerCycle)
 TEST_F(ArmBus, WritesNoArmGoalsWhileNoControllerHoldsTheArm)
 {
   activate();
-  command("shoulder_pan").set_value(PAN_MAX);
+  ASSERT_TRUE(command("shoulder_pan").set_value(PAN_MAX));
   bus->clear_events();
 
   hw.write(TIME, PERIOD);
@@ -362,8 +362,8 @@ TEST_F(ArmBus, ClampsCommandsToTheSoftLimits)
   bus->clear_events();
 
   // Far outside the band in both directions, on both joints.
-  command("shoulder_pan").set_value(10.0);
-  command("elbow_flex").set_value(-10.0);
+  ASSERT_TRUE(command("shoulder_pan").set_value(10.0));
+  ASSERT_TRUE(command("elbow_flex").set_value(-10.0));
   hw.write(TIME, PERIOD);
 
   const ArmJoint pan{"shoulder_pan", PAN_ID, PAN_MIN, PAN_MAX, PAN_ZERO, 1};
@@ -376,7 +376,7 @@ TEST_F(ArmBus, SendsNothingWhenTheGoalHasNotChanged)
 {
   activate();
   claim_arm();
-  command("elbow_flex").set_value(-1.0);
+  ASSERT_TRUE(command("elbow_flex").set_value(-1.0));
   hw.write(TIME, PERIOD);
   bus->clear_events();
 
@@ -394,8 +394,8 @@ TEST_F(ArmBus, SendsOnePacketForSeveralMovedJoints)
   claim_arm();
   bus->clear_events();
 
-  command("shoulder_pan").set_value(0.05);
-  command("elbow_flex").set_value(-1.0);
+  ASSERT_TRUE(command("shoulder_pan").set_value(0.05));
+  ASSERT_TRUE(command("elbow_flex").set_value(-1.0));
   hw.write(TIME, PERIOD);
 
   // One sync-write instruction carried both joints, rather than a packet each.
@@ -425,7 +425,7 @@ TEST_F(ArmBus, DeactivatingStopsTheWheelsAndLimpsTheArm)
 {
   activate();
   claim_arm();
-  command("left_wheel_joint").set_value(1.0);
+  ASSERT_TRUE(command("left_wheel_joint").set_value(1.0));
   hw.write(TIME, PERIOD);
   bus->clear_events();
 
@@ -445,7 +445,7 @@ TEST_F(ArmBus, AnAbsentArmServoIsExcludedFromControl)
   bus->clear_events();
 
   claim_arm();
-  command("elbow_flex").set_value(-1.0);
+  ASSERT_TRUE(command("elbow_flex").set_value(-1.0));
   hw.write(TIME, PERIOD);
 
   EXPECT_TRUE(bus->torque_enabled(ELBOW_ID));
@@ -498,8 +498,8 @@ TEST_F(ArmBus, AJointExcludedFromControlIsNeverCommanded)
   claim_arm();
   bus->clear_events();
 
-  command("shoulder_pan").set_value(0.2);
-  command("elbow_flex").set_value(-1.0);
+  ASSERT_TRUE(command("shoulder_pan").set_value(0.2));
+  ASSERT_TRUE(command("elbow_flex").set_value(-1.0));
   hw.write(TIME, PERIOD);
 
   // In wheel mode a position goal is obeyed as a speed, so this servo must get

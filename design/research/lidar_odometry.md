@@ -30,7 +30,7 @@ Avoids explicit point correspondences by treating scan-to-scan matching like den
 
 The original ROS1 standard for 2D scan matching. Uses the C Scan Matcher (CSM) library — an ICP-like method specifically for 2D laser. Powers gmapping and early Cartographer.
 
-**Status:** ROS2 port exists but shares the same maintenance problems as rf2o. Requires CSM as an external C library, complicating builds. Not in robostack-jazzy.
+**Status:** ROS2 port exists but shares the same maintenance problems as rf2o. Requires CSM as an external C library, complicating builds. Not in robostack-lyrical.
 
 **Verdict:** Historically significant but superseded.
 
@@ -76,7 +76,7 @@ From the same PRBonn group as KISS-ICP. Explicitly designed for wheeled robots o
 
 Runs at **100 Hz** vs robot_localization/fuse at ~10 Hz.
 
-**ROS2 support:** Humble, Iron, Jazzy. Not in robostack-jazzy yet (submodule required). v0.1.1 released January 2025. Actively maintained.
+**ROS2 support:** Humble onwards. Not in robostack-lyrical (submodule required). v0.1.1 released January 2025. Actively maintained.
 
 **Inputs required:**
 - `sensor_msgs/LaserScan` or `sensor_msgs/PointCloud2`
@@ -97,9 +97,9 @@ Runs at **100 Hz** vs robot_localization/fuse at ~10 Hz.
 ### MOLA — IJRR 2025
 **Paper:** *A flexible framework for accurate LiDAR odometry, map manipulation, and localization.* Blanco-Claraco.  
 **Repo:** https://github.com/MOLAorg/mola  
-**ROS Index (Jazzy):** https://docs.ros.org/en/ros2_packages/jazzy/api/mola_lidar_odometry/__README.html
+**ROS Index (Lyrical):** https://docs.ros.org/en/ros2_packages/lyrical/api/mola_lidar_odometry/__README.html
 
-A modular C++ framework for SLAM. Has both a lidar odometry node and a full 2D SLAM system (`mola_mapper_2d` with GTSAM pose graph). Already has Jazzy binaries on the ROS index (amd64 and arm64). Impressive engineering.
+A modular C++ framework for SLAM. Has both a lidar odometry node and a full 2D SLAM system (`mola_mapper_2d` with GTSAM pose graph). Has binaries on the ROS index (amd64 and arm64); not on robostack-lyrical. Impressive engineering.
 
 **Verdict:** Full SLAM framework — overkill as a drop-in odometry node. Worth revisiting if slam_toolbox is ever replaced.
 
@@ -133,7 +133,7 @@ The conda recipe structure would be similar to the rf2o plan, targeting `linux-6
 - [KISS-ICP arXiv](https://arxiv.org/abs/2209.15397)
 - [KISS-ICP GitHub](https://github.com/PRBonn/kiss-icp)
 - [LiDAR Odometry Survey arXiv:2312.17487](https://arxiv.org/abs/2312.17487)
-- [MOLA LiDAR Odometry ROS Index](https://docs.ros.org/en/ros2_packages/jazzy/api/mola_lidar_odometry/__README.html)
+- [MOLA LiDAR Odometry ROS Index](https://docs.ros.org/en/ros2_packages/lyrical/api/mola_lidar_odometry/__README.html)
 - [MOLA mapper 2D GitHub](https://github.com/MOLAorg/mola_mapper_2d)
 - [MOLA IJRR 2025](https://journals.sagepub.com/doi/abs/10.1177/02783649251316881)
 - [rf2o GitHub](https://github.com/MAPIRlab/rf2o_laser_odometry)

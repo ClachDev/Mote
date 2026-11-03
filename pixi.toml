@@ -1,6 +1,6 @@
 [workspace]
 authors = ["Michael Johnson <michael@clach.dev>"]
-channels = ["https://prefix.dev/mote", "robostack-jazzy", "conda-forge"]
+channels = ["https://prefix.dev/mote", "robostack-lyrical", "conda-forge"]
 name = "mote"
 platforms = ["linux-64", "linux-aarch64"]
 version = "0.1.0"
@@ -27,9 +27,12 @@ colcon-common-extensions = ">=0.3.0,<0.4"
 compilers = ">=1.11.0,<2"
 ninja = ">=1.13.2,<2"
 pkg-config = ">=0.29.2,<0.30"
-ros-jazzy-ament-cmake-auto = ">=2.5.5,<3"
-ros-jazzy-ament-cmake-gtest = ">=2.5"
-ros-jazzy-ament-lint-auto = ">=0.17.4,<0.18"
+ros-lyrical-ament-cmake-auto = ">=2.8.8,<3"
+ros-lyrical-ament-cmake-gtest = ">=2.8.8,<3"
+ros-lyrical-ament-lint-auto = ">=0.20.6,<0.21"
+# nav2_behavior_tree exports a CMake dependency on nav2_common that its package
+# does not carry, so mote_nav cannot configure without it.
+ros-lyrical-nav2-common = ">=1.5.2,<2"
 
 [feature.build.activation.env]
 CMAKE_GENERATOR = "Ninja"
@@ -52,48 +55,48 @@ libcap = ">=2.77,<3"
 lttng-ust = ">=2.13.9,<3"
 paho-mqtt = ">=2,<3"
 pillow = ">=10,<13"
-ros-jazzy-image-transport-plugins = ">=3.0.0"
-ros-jazzy-laser-filters = ">=2.0.0"
-ros-jazzy-nav2-amcl = ">=1.3.0"
-ros-jazzy-nav2-behaviors = ">=1.3.0"
-ros-jazzy-nav2-bt-navigator = ">=1.3.0"
-ros-jazzy-nav2-controller = ">=1.3.0"
-ros-jazzy-nav2-costmap-2d = ">=1.3.0"
-ros-jazzy-nav2-dwb-controller = ">=1.3.0"
-ros-jazzy-nav2-lifecycle-manager = ">=1.3.0"
-ros-jazzy-nav2-map-server = ">=1.3.0"
-ros-jazzy-nav2-mppi-controller = ">=1.3.0"
-ros-jazzy-nav2-navfn-planner = ">=1.3.0"
-ros-jazzy-nav2-planner = ">=1.3.0"
-ros-jazzy-nav2-regulated-pure-pursuit-controller = ">=1.3.0"
-ros-jazzy-nav2-rotation-shim-controller = ">=1.3.0"
-ros-jazzy-nav2-smac-planner = ">=1.3.0"
-ros-jazzy-nav2-smoother = ">=1.3.0"
-ros-jazzy-nav2-waypoint-follower = ">=1.3.0"
-ros-jazzy-rmw-cyclonedds-cpp = ">=1.3.0"
-ros-jazzy-robot-state-publisher = ">=3.0.0"
-ros-jazzy-ros2-control = ">=4.43.0,<5"
-ros-jazzy-ros2-controllers = ">=4.37.0,<5"
-ros-jazzy-ros2launch = ">=0.11.0"
-ros-jazzy-ros2lifecycle = ">=0.18.0"
-ros-jazzy-ros2run = ">=0.18.0"
-ros-jazzy-rosbag2-cpp = ">=0.26.0"
-ros-jazzy-rosbag2-storage = ">=0.26.0"
-ros-jazzy-ros2bag = ">=0.26.0"
-ros-jazzy-rosbag2-transport = ">=0.26.0"
-ros-jazzy-rosbag2-storage-mcap = ">=0.26.0"
-ros-jazzy-slam-toolbox = ">=2.8.4,<3"
+ros-lyrical-image-transport-plugins = ">=3.0.0"
+ros-lyrical-laser-filters = ">=2.0.0"
+ros-lyrical-nav2-amcl = ">=1.5.2,<2"
+ros-lyrical-nav2-behaviors = ">=1.5.2,<2"
+ros-lyrical-nav2-bt-navigator = ">=1.5.2,<2"
+ros-lyrical-nav2-controller = ">=1.5.2,<2"
+ros-lyrical-nav2-costmap-2d = ">=1.5.2,<2"
+ros-lyrical-nav2-dwb-controller = ">=1.5.2,<2"
+ros-lyrical-nav2-lifecycle-manager = ">=1.5.2,<2"
+ros-lyrical-nav2-map-server = ">=1.5.2,<2"
+ros-lyrical-nav2-mppi-controller = ">=1.5.2,<2"
+ros-lyrical-nav2-navfn-planner = ">=1.5.2,<2"
+ros-lyrical-nav2-planner = ">=1.5.2,<2"
+ros-lyrical-nav2-regulated-pure-pursuit-controller = ">=1.5.2,<2"
+ros-lyrical-nav2-rotation-shim-controller = ">=1.5.2,<2"
+ros-lyrical-nav2-smac-planner = ">=1.5.2,<2"
+ros-lyrical-nav2-smoother = ">=1.5.2,<2"
+ros-lyrical-nav2-waypoint-follower = ">=1.5.2,<2"
+ros-lyrical-rmw-cyclonedds-cpp = ">=4.1.5,<5"
+ros-lyrical-robot-state-publisher = ">=3.0.0"
+ros-lyrical-ros2-control = ">=6.10.1,<7"
+ros-lyrical-ros2-controllers = ">=6.9.0,<7"
+ros-lyrical-ros2launch = ">=0.11.0"
+ros-lyrical-ros2lifecycle = ">=0.18.0"
+ros-lyrical-ros2run = ">=0.18.0"
+ros-lyrical-rosbag2-cpp = ">=0.33.4"
+ros-lyrical-rosbag2-storage = ">=0.33.4"
+ros-lyrical-ros2bag = ">=0.33.4"
+ros-lyrical-rosbag2-transport = ">=0.33.4"
+ros-lyrical-rosbag2-storage-mcap = ">=0.33.4"
+ros-lyrical-slam-toolbox = ">=2.10.0,<3"
 # camera_layer. Not in the nav2 set above; without it the costmap loads silently without the layer.
-ros-jazzy-spatio-temporal-voxel-layer = ">=2.5.5,<3"
-ros-jazzy-teleop-twist-keyboard = ">=1.0.0"
+ros-lyrical-spatio-temporal-voxel-layer = ">=2.7.0,<3"
+ros-lyrical-teleop-twist-keyboard = ">=1.0.0"
 # >=4.5 for `use_stamped`.
-ros-jazzy-twist-mux = ">=4.5.0,<5"
-ros-jazzy-foxglove-bridge = ">=3.3.0,<4"
-ros-jazzy-v4l2-camera = ">=0.7.1,<0.8"
-ros-jazzy-vision-msgs = ">=4.1.0"
-ros-jazzy-xacro = ">=2.0.0"
+ros-lyrical-twist-mux = ">=4.5.0,<5"
+ros-lyrical-foxglove-bridge = ">=3.6.0,<4"
+ros-lyrical-v4l2-camera = ">=0.8.1,<0.9"
+ros-lyrical-vision-msgs = ">=4.1.0"
+ros-lyrical-xacro = ">=2.0.0"
 # mote_health builds against it; transitive today, so named rather than borrowed.
-ros-jazzy-yaml-cpp-vendor = ">=9.0.0"
+ros-lyrical-yaml-cpp-vendor = ">=9.0.0"
 urdfdom = ">=6"
 scservo-linux = "==1.0.0"
 
@@ -161,11 +164,11 @@ sweep = { cmd = "python -m mote_bringup.sweep_orphans", description = "Report RO
 # dev: the workstation. Desktop tools, and tasks that are typed at a
 # workstation even when they only need the robot's stack.
 [feature.dev.dependencies]
-ros-jazzy-desktop = ">=0.11.0"
-ros-jazzy-nav2-bringup = ">=1.3.11,<2"
+ros-lyrical-desktop = ">=0.11.0"
+ros-lyrical-nav2-bringup = ">=1.5.2,<2"
 # The /particle_cloud display; rviz_default_plugins mistypes that topic.
-ros-jazzy-nav2-rviz-plugins = ">=1.3.0"
-ros-jazzy-camera-calibration = "*"
+ros-lyrical-nav2-rviz-plugins = ">=1.5.2,<2"
+ros-lyrical-camera-calibration = "*"
 # Undeclared runtime dependency of camera_calibration.
 semver = ">=3,<4"
 watchexec = ">=2.5,<3"
@@ -173,9 +176,6 @@ watchexec = ">=2.5,<3"
 websockets = ">=12,<16"
 # test_spec_conformance.py; without it that file skips.
 jsonschema = ">=4.21,<5"
-
-[feature.dev.target.linux-64.dependencies]
-ros-jazzy-rviz-teleop-panel = ">=0.1.0"
 
 [feature.dev.tasks]
 rviz = { cmd = "ros2 launch mote_bringup rviz_launch.py", description = "RViz2 with the mote config" }
@@ -203,9 +203,9 @@ arm-teleop-test = { cmd = "bash mote_arm/test/teleop_loop/run_teleop_loop.sh", d
 
 # sim: Gazebo
 [feature.sim.dependencies]
-ros-jazzy-ros-gz-sim = "*"
-ros-jazzy-ros-gz-bridge = "*"
-ros-jazzy-gz-ros2-control = "*"
+ros-lyrical-ros-gz-sim = "*"
+ros-lyrical-ros-gz-bridge = "*"
+ros-lyrical-gz-ros2-control = "*"
 
 [feature.sim.activation.env]
 MOTE_HOME = "$PIXI_PROJECT_ROOT/mote_simulation/sim_home"

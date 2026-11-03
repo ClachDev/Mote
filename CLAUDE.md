@@ -173,7 +173,7 @@ Everything meaningful relative to one mapped place lives in a **site bundle** un
 
 ## Architecture
 
-Differential-drive robot on **ROS 2 Jazzy**.
+Differential-drive robot on **ROS 2 Lyrical**.
 
 ### `mote_hardware` (C++)
 `ros2_control` `SystemInterface` (`MoteHardware`) driving two Feetech STS3215 wheel servos over the SCServo SDK.

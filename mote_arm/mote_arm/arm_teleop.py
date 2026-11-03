@@ -119,7 +119,7 @@ class ArmTeleop(Node):
             self.keys[pair[1]] = (joint.name, -1.0)
 
         for problem in self.cfg.problems:
-            self.get_logger().warn(problem)
+            self.get_logger().warning(problem)
 
     def _on_states(self, msg: JointState) -> None:
         with self._lock:
@@ -223,7 +223,7 @@ class ArmTeleop(Node):
             return
         self.mirror.set_estop(self._estop_requested, self._now())
         if self._estop_requested:
-            self.get_logger().warn("PANIC: dropping torque and refusing goals")
+            self.get_logger().warning("PANIC: dropping torque and refusing goals")
             if not self.arm.set_holding(False):
                 self.get_logger().error(
                     "could not deactivate arm_controller — the arm may still be "
@@ -247,7 +247,7 @@ class ArmTeleop(Node):
         if self.mirror.stalled != self._stalled:
             self._stalled = list(self.mirror.stalled)
             if self._stalled:
-                self.get_logger().warn(
+                self.get_logger().warning(
                     f"not following: {', '.join(self._stalled)} is "
                     f"{self.mirror.limits.max_lag:.2f} rad behind and not moving — "
                     "holding the command there rather than driving further ahead"
@@ -262,7 +262,7 @@ class ArmTeleop(Node):
             elif self.mirror.state == TRACKING:
                 self.get_logger().info("following the keyboard")
             elif self.mirror.state == ESTOPPED:
-                self.get_logger().warn("e-stopped")
+                self.get_logger().warning("e-stopped")
 
     def run_mirror(self) -> None:
         """Tick until the context goes down; runs on its own thread."""

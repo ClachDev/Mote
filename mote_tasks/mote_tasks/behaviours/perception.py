@@ -126,7 +126,7 @@ class AcquireObject(py_trees.behaviour.Behaviour):
                 header.frame_id, self.base_frame, rclpy.time.Time()
             )
         except tf2_ros.TransformException as e:
-            self.node.get_logger().warn(
+            self.node.get_logger().warning(
                 f"{self.name}: no robot pose yet ({e})", throttle_duration_sec=2.0
             )
             return None

@@ -32,7 +32,7 @@ class Log:
     def info(self, msg):
         self.lines.append(("info", msg))
 
-    def warn(self, msg):
+    def warning(self, msg):
         self.lines.append(("warn", msg))
 
 

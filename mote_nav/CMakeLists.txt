@@ -12,11 +12,13 @@ find_package(dwb_msgs REQUIRED)
 find_package(nav_2d_msgs REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(nav2_core REQUIRED)
-find_package(nav2_util REQUIRED)
+find_package(nav2_ros_common REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 add_library(mote_nav SHARED
@@ -30,16 +32,16 @@ target_include_directories(mote_nav PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
-ament_target_dependencies(mote_nav
-  rclcpp
-  dwb_core
-  dwb_msgs
-  nav_2d_msgs
-  nav2_costmap_2d
-  nav2_core
-  nav2_util
-  pluginlib
-  geometry_msgs
+target_link_libraries(mote_nav
+  ${rclcpp_TARGETS}
+  ${dwb_core_TARGETS}
+  ${dwb_msgs_TARGETS}
+  ${nav_2d_msgs_TARGETS}
+  ${nav2_costmap_2d_TARGETS}
+  ${nav2_core_TARGETS}
+  ${nav2_ros_common_TARGETS}
+  ${pluginlib_TARGETS}
+  ${geometry_msgs_TARGETS}
 )
 
 pluginlib_export_plugin_description_file(dwb_core wheel_speed_critic_plugins.xml)
@@ -65,12 +67,12 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   target_compile_options(odom_tf_relay_component PRIVATE -ffp-contract=off)
 endif()
 
-ament_target_dependencies(odom_tf_relay_component
-  rclcpp
-  rclcpp_components
-  geometry_msgs
-  nav_msgs
-  tf2_ros
+target_link_libraries(odom_tf_relay_component
+  ${rclcpp_TARGETS}
+  ${rclcpp_components_TARGETS}
+  ${geometry_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
+  ${tf2_ros_TARGETS}
 )
 
 # Also builds a standalone `odom_tf_relay` executable, which is how the node is
@@ -95,14 +97,14 @@ target_include_directories(icp_odom_gate_component PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
-ament_target_dependencies(icp_odom_gate_component
-  rclcpp
-  rclcpp_components
-  geometry_msgs
-  nav_msgs
-  tf2
-  tf2_geometry_msgs
-  tf2_ros
+target_link_libraries(icp_odom_gate_component
+  ${rclcpp_TARGETS}
+  ${rclcpp_components_TARGETS}
+  ${geometry_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
+  ${tf2_TARGETS}
+  ${tf2_geometry_msgs_TARGETS}
+  ${tf2_ros_TARGETS}
 )
 
 rclcpp_components_register_node(icp_odom_gate_component
@@ -129,7 +131,7 @@ if(BUILD_TESTING)
   target_link_libraries(test_wheel_speed_limit mote_nav)
 
   ament_add_gtest(test_plugin_load test/test_plugin_load.cpp)
-  ament_target_dependencies(test_plugin_load dwb_core pluginlib)
+  target_link_libraries(test_plugin_load ${dwb_core_TARGETS} ${pluginlib_TARGETS})
 
   ament_add_gtest(test_odom_tf_relay test/test_odom_tf_relay.cpp)
   target_link_libraries(test_odom_tf_relay odom_tf_relay_component)

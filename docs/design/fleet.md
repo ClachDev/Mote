@@ -242,7 +242,7 @@ every other transport option otherwise has to solve individually:
 #### Layer 1 — rich live data + teleop: Foxglove (adopt, don't build)
 
 Run [`foxglove_bridge`](https://docs.foxglove.dev/docs/visualization/ros-foxglove-bridge)
-on each robot (`ros-jazzy-foxglove-bridge` 3.3.0 is on robostack-jazzy with a
+on each robot (`ros-lyrical-foxglove-bridge` 3.6.0 is on robostack-lyrical with a
 linux-aarch64 build, so the Pi is covered). It speaks the
 [Foxglove WebSocket protocol](https://foxglove.dev/robotics/rosbridge) — like
 rosbridge but with ROS 2 `.msg`/`.idl` schema support, parameters, and graph
@@ -374,10 +374,12 @@ inference node per site," which the per-robot `inference_host` already expresses
 
 #### Rejected / deferred: rmw_zenoh and the Zenoh bridge
 
-- **rmw_zenoh (swap the RMW).** *Not production-ready for Jazzy* — maintainers call
-  it "mostly feature-complete" but still changing, first supported release targeted
-  at **Kilted** (the distro after Jazzy)
-  ([rmw_zenoh binaries announcement](https://discourse.openrobotics.org/t/rmw-zenoh-binaries-for-rolling-jazzy-and-humble/41395)).
+- **rmw_zenoh (swap the RMW).** *Not production-ready on the distro this was written
+  against* — maintainers called it "mostly feature-complete" but still changing,
+  first supported release targeted at **Kilted**
+  ([rmw_zenoh binaries announcement](https://discourse.openrobotics.org/t/41395)).
+  Mote now runs Lyrical, where rmw_zenoh 0.10.x is Tier 1; the RMW swap is its
+  own task.
 - **What would Zenoh actually buy us, and would it simplify other decisions?**
   Zenoh is a mesh data-plane that natively routes across WAN/NAT and scales discovery
   far better than DDS, with per-robot namespace prefixing and TLS/ACLs at the Zenoh
@@ -419,10 +421,10 @@ site: acme-hq          # which site's bundles this robot is entitled to
 
 **DDS stays on the robot — which dissolves the domain-ID problem entirely.** The
 cleaner answer to "how do we isolate robots' DDS" is not to assign domains but to
-**stop DDS from leaving the machine at all**. ROS 2 Jazzy does this with one
+**stop DDS from leaving the machine at all**. ROS 2 (Iron onwards) does this with one
 environment variable — `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` — which confines
 discovery to the local host (it replaces the deprecated `ROS_LOCALHOST_ONLY`)
-([Improved Dynamic Discovery](https://docs.ros.org/en/jazzy/Tutorials/Advanced/Improved-Dynamic-Discovery.html)).
+([Improved Dynamic Discovery](https://docs.ros.org/en/lyrical/Developer-Tools/Launch/Improved-Dynamic-Discovery.html)).
 This is a natural fit here because the agent and `foxglove_bridge` run **on the same
 Pi** as the ROS graph (Q1: the agent is the sole egress), so nothing off-box ever
 needs to join the robot's DDS graph. With discovery pinned to localhost:
@@ -438,7 +440,7 @@ needs to join the robot's DDS graph. With discovery pinned to localhost:
   because Foxglove/MQTT/inference are the off-box paths.
 
 (This makes the `ROS_DOMAIN_ID` range limit — 0–232, safe 0–101, a per-machine
-concept, [docs](https://docs.ros.org/en/jazzy/Concepts/Intermediate/About-Domain-ID.html)
+concept, [docs](https://docs.ros.org/en/lyrical/ROS-Framework/nodes/About-Domain-ID.html)
 — a non-issue rather than something to engineer around.)
 
 > **(verify)** In localhost-peer mode rmw_cyclonedds defaults
@@ -1129,10 +1131,10 @@ Claims grounded in the repo (cited inline) are verified. External claims flagged
   (Q6/M5).
 - conda/pixi cross-env **hardlink dedup + per-package fetch** behaviour — the basis
   of the OTA disk/network minimisation (M5); confirm on the Pi's filesystem.
-- rmw_zenoh Jazzy production status — re-check at Kilted before reconsidering the
-  RMW swap.
+- rmw_zenoh production status — Tier 1 from Kilted; Mote is on Lyrical, so the
+  RMW swap is unblocked and tracked as its own task.
 
-Resolved during review (struck from the list above): `ros-jazzy-foxglove-bridge`
-3.3.0 exists on robostack-jazzy with a linux-aarch64 build; `ROS_AUTOMATIC_DISCOVERY_RANGE`
+Resolved during review (struck from the list above): `foxglove-bridge`
+3.3.0 existed on robostack with a linux-aarch64 build (Lyrical ships 3.6.0); `ROS_AUTOMATIC_DISCOVERY_RANGE`
 is supported by rmw_cyclonedds ([rmw_cyclonedds#429](https://github.com/ros2/rmw_cyclonedds/pull/429),
-in Iron/Jazzy).
+from Iron onwards).

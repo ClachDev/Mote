@@ -27,15 +27,13 @@ target_include_directories(mote_hardware PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
-ament_target_dependencies(mote_hardware
-  hardware_interface
-  pluginlib
-  rclcpp
-  rclcpp_lifecycle
+target_link_libraries(mote_hardware
+  ${hardware_interface_TARGETS}
+  ${pluginlib_TARGETS}
+  ${rclcpp_TARGETS}
+  ${rclcpp_lifecycle_TARGETS}
+  SCServo::SCServo
 )
-
-# Plain signature required here: ament_target_dependencies uses plain target_link_libraries.
-target_link_libraries(mote_hardware SCServo::SCServo)
 
 pluginlib_export_plugin_description_file(hardware_interface mote_hardware_plugin.xml)
 
@@ -101,8 +99,13 @@ if(BUILD_TESTING)
   # covered without a robot.
   ament_add_gtest(test_arm_bus test/test_arm_bus.cpp)
   target_include_directories(test_arm_bus PRIVATE include test)
-  target_link_libraries(test_arm_bus mote_hardware SCServo::SCServo)
-  ament_target_dependencies(test_arm_bus hardware_interface rclcpp rclcpp_lifecycle)
+  target_link_libraries(test_arm_bus
+    mote_hardware
+    SCServo::SCServo
+    ${hardware_interface_TARGETS}
+    ${rclcpp_TARGETS}
+    ${rclcpp_lifecycle_TARGETS}
+  )
 endif()
 
 ament_package()

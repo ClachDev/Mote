@@ -48,7 +48,7 @@ class FakeLogger:
     def __init__(self):
         self.warnings = []
 
-    def warn(self, message):
+    def warning(self, message):
         self.warnings.append(message)
 
 
