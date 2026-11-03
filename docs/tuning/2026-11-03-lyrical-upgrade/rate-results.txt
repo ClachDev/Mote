@@ -1,0 +1,17 @@
+# run.sh output, office_world, one NavigateToPose goal (pickup), 20 s of
+# /cmd_vel_nav timed in wall clock. controller_frequency is 20 Hz in every run.
+# J ran in a Jazzy checkout of e0ab311; the rest on Lyrical (this branch).
+J_jazzy_baseline: 387 msgs 19.3 Hz median 50 ms p95 101 ms
+  missed-rate warnings: 23
+A_baseline: 201 msgs 10.0 Hz median 97 ms p95 109 ms
+  missed-rate warnings: 202
+B_no_costmap_wait: 202 msgs 10.0 Hz median 97 ms p95 109 ms
+  missed-rate warnings: 204
+C_tf_tol_005: 379 msgs 18.9 Hz median 54 ms p95 94 ms
+  missed-rate warnings: 213
+D_no_dwb_debug: 202 msgs 10.0 Hz median 96 ms p95 109 ms
+  missed-rate warnings: 204
+E_heading_once: 201 msgs 10.0 Hz median 98 ms p95 109 ms
+  missed-rate warnings: 203
+F_path_orient: 401 msgs 20.0 Hz median 50 ms p95 54 ms
+  missed-rate warnings: 0

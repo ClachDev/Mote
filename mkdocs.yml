@@ -170,3 +170,7 @@ nav:
       - map-build against a hand-built map: tuning/2026-09-01-map-build.md
       - "  ↳ build report": tuning/2026-09-01-map-build/build-report.md
       - camera_monitor off the raw stream: tuning/2026-09-11-camera-monitor.md
+      - Jazzy to Lyrical: tuning/2026-11-03-lyrical-upgrade.md
+      - "  ↳ Jazzy benchmark": tuning/2026-11-03-lyrical-upgrade/bench-jazzy.md
+      - "  ↳ Lyrical benchmark": tuning/2026-11-03-lyrical-upgrade/bench-lyrical.md
+      - "  ↳ use_path_orientations benchmark": tuning/2026-11-03-lyrical-upgrade/bench-lyrical-path-orientations.md
