@@ -1,16 +1,18 @@
 [Unit]
 Description=Mote Health Monitor
-# Ordering only — deliberately no Wants= and no PartOf=:
+# Ordering only towards bringup — deliberately no Wants= and no PartOf= on it:
 #   * Wants= would make this unit *pull* bringup. A restart loop here then fires
 #     a start request for bringup on every cycle, and a requested start bypasses
 #     bringup's own RestartSec backoff ("Scheduled restart job immediately on
 #     client request"), so bringup restarts at this unit's rate rather than its
 #     own backoff.
-#   * PartOf= would restart the monitor whenever bringup restarts, losing
-#     observation exactly when something is going wrong.
-# The monitor's whole job is to keep watching and report a broken robot, so it
-# runs independently and is started at boot by its own WantedBy below.
+#   * PartOf= bringup would restart the monitor whenever bringup restarts,
+#     losing observation exactly when something is going wrong.
+# The monitor runs only while a mission target is up: mote-base.target starts it
+# and stops it. A standby robot (agent + foxglove) runs no monitor, so it does
+# not report FAULT on every subsystem it has deliberately not started.
 After=mote-bringup.service
+PartOf=mote-base.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -42,6 +44,3 @@ Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 # loopback-only anyway (cyclonedds.xml, above); the pin keeps discovery
 # consistent with it. docs/fleet/README.md §4.
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-
-[Install]
-WantedBy=multi-user.target

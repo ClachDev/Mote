@@ -1,12 +1,12 @@
 [Unit]
 Description=Mote SLAM
 After=mote-bringup.service
-# BindsTo so SLAM stops if bringup goes down and restarts with it (its map frame
-# is meaningless without live odom/scan), and PartOf so a bringup restart
-# propagates. Requires alone would not restart SLAM when bringup restarts.
-Requires=mote-bringup.service
-BindsTo=mote-bringup.service
+# PartOf so SLAM restarts with bringup: its map frame is meaningless against an
+# odom frame that restarted from the origin. Ordering only otherwise — no
+# Requires=/BindsTo=, which would pull bringup, and a SLAM restart loop would
+# then bypass bringup's own backoff (see mote-health.service).
 PartOf=mote-bringup.service
+PartOf=mote-mapping.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -29,6 +29,3 @@ Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 # loopback-only anyway (cyclonedds.xml, above); the pin keeps discovery
 # consistent with it. docs/fleet/README.md §4.
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-
-[Install]
-WantedBy=multi-user.target

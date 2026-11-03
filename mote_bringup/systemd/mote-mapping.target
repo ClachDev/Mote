@@ -1,0 +1,6 @@
+[Unit]
+Description=Mote mapping: SLAM, Nav2 without localisation, and the mapping bag
+# pixi run map-mode. Members: mote-base.target (bringup + health), mote-slam,
+# mote-nav@mapping (localisation:=false) and mote-record.
+Wants=mote-base.target mote-slam.service mote-nav@mapping.service mote-record.service
+Conflicts=mote-robot.target

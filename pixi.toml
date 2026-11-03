@@ -132,6 +132,10 @@ foxglove = { cmd = "ros2 launch mote_bringup foxglove_launch.py", description = 
 record = { cmd = "ros2 launch mote_bringup record_launch.py", description = "Record the mission's bag streams" }
 tasks = { cmd = "ros2 launch mote_tasks tasks_launch.py", description = "Behaviour-tree task server (missions)" }
 health = { cmd = "ros2 run mote_health health_monitor", description = "Health monitor on its own" }
+wake = { cmd = "systemctl start mote-robot.target", description = "systemd: start the robot target (bringup, health, nav, tasks)" }
+sleep = { cmd = "systemctl stop mote-robot.target mote-mapping.target", description = "systemd: stop both mission targets, back to standby (agent + foxglove)" }
+map-mode = { cmd = "systemctl start mote-mapping.target", description = "systemd: start the mapping target (bringup, health, slam, nav, record)" }
+robot-status = { cmd = "systemctl list-units --all 'mote-*'", description = "systemd: every mote-* unit and target, and its state" }
 self-check = { cmd = "ros2 run mote_bringup self_check", description = "Pre-flight check: servos, lidar, camera, disk, clock, config" }
 slip = { cmd = "ros2 run mote_bringup slip_monitor", description = "Wheel-vs-lidar slip monitor on its own" }
 slip-replay = { cmd = "python mote_bringup/tools/slip_replay.py", description = "Re-score recorded bags through the slip estimator" }

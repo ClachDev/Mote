@@ -1,0 +1,11 @@
+[Unit]
+Description=Mote robot: drive the active site's map and take missions
+# pixi run wake. Members: mote-base.target (bringup + health), mote-nav@robot
+# (localisation:=true) and mote-tasks. mote-record is deliberately absent: its
+# pruner trims bags whenever it runs.
+Wants=mote-base.target mote-nav@robot.service mote-tasks.service
+Conflicts=mote-mapping.target
+
+[Install]
+# Installed disabled. Enable only for a robot that should come up unattended.
+WantedBy=multi-user.target

@@ -1,9 +1,13 @@
 [Unit]
-Description=Mote Navigation
-After=mote-slam.service
-Requires=mote-slam.service
-BindsTo=mote-slam.service
-PartOf=mote-slam.service
+Description=Mote Task Server
+# The task server answers the fleet's missions with Nav2 goals, so it lives and
+# dies with the robot target's nav instance: BindsTo holds it stopped while nav
+# is down, PartOf restarts it with nav. It never runs in the mapping target,
+# where there is no map to hold a zone.
+After=mote-nav@robot.service
+BindsTo=mote-nav@robot.service
+PartOf=mote-nav@robot.service
+PartOf=mote-robot.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -11,7 +15,7 @@ Type=simple
 User=@USER@
 WorkingDirectory=@REPO@
 Environment=HOME=@HOME@
-ExecStart=@HOME@/.pixi/bin/pixi run nav
+ExecStart=@HOME@/.pixi/bin/pixi run tasks
 Restart=always
 RestartSec=2
 RestartSteps=5
@@ -26,6 +30,3 @@ Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
 # loopback-only anyway (cyclonedds.xml, above); the pin keeps discovery
 # consistent with it. docs/fleet/README.md §4.
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-
-[Install]
-WantedBy=multi-user.target

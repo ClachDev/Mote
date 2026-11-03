@@ -1,0 +1,42 @@
+[Unit]
+# One template, two instances, one per target: mote-nav@robot (localisation:=true,
+# map_server + AMCL on the active map) and mote-nav@mapping (localisation:=false,
+# beside slam_toolbox, which owns map→odom). A template rather than one unit
+# reading a shared environment file, because each instance must belong to its
+# own target: a single unit in both targets is stopped by the Conflicts= between
+# them on every switch, and its argument would have to be rewritten before each
+# start. The instance name selects the target (PartOf=mote-%i.target) and the
+# launch argument (nav-%i.env, beside this file).
+Description=Mote Navigation (%i)
+# Ordering only. BindsTo=/Requires= on bringup would pull it, and a restart loop
+# here would then bypass bringup's own backoff (see mote-health.service).
+# After=mote-slam.service orders nav behind SLAM's map in the mapping target and
+# is inert in the robot target, where slam is not started.
+After=mote-bringup.service mote-slam.service
+# Restart with bringup: odometry restarts from the origin with it, and AMCL's
+# map→odom estimate is meaningless against a reset odom frame.
+PartOf=mote-bringup.service
+PartOf=mote-%i.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+Environment=HOME=@HOME@
+EnvironmentFile=@REPO@/mote_bringup/systemd/nav-%i.env
+ExecStart=@HOME@/.pixi/bin/pixi run nav localisation:=${NAV_LOCALISATION}
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+
+# Loopback-only DDS transport (mote_bringup/config/cyclonedds.xml): the graph
+# never touches a radio, so wifi cannot stall topic delivery on the board.
+Environment=CYCLONEDDS_URI=file://@REPO@/mote_bringup/config/cyclonedds.xml
+# Keep the ROS graph on the robot: from M2 the off-box view is foxglove_bridge
+# (mote-foxglove.service), so nothing off-machine joins DDS and two robots on
+# one LAN cannot see each other whatever their ROS_DOMAIN_ID. Transport is
+# loopback-only anyway (cyclonedds.xml, above); the pin keeps discovery
+# consistent with it. docs/fleet/README.md §4.
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST

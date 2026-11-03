@@ -11,14 +11,16 @@ how the robot survives unattended operation.
 include the health monitor, so `/health` and `/diagnostics_agg` are published on
 any manual run — one command, nothing else to start.
 
-**Unattended:** the systemd units below. They are installed by `pixi run setup`
-but **not enabled**, because starting the drive stack and recorder on every boot
-drains the battery of a robot that is just sitting on a desk, and the recorder's
-pruner trims older bags whenever it runs. Opt in per robot:
+**Under systemd:** a robot set up with `pixi run setup` boots to *standby* —
+`mote-agent` and `mote-foxglove` only, so it reports to the fleet and can be
+watched but drives nothing and draws little. One verb brings the mission stack
+up or down (details in [systemd services](#systemd-services)):
 
 ```bash
-sudo systemctl enable --now mote-bringup mote-health   # autostart at boot
-sudo systemctl disable mote-bringup mote-health        # back to manual
+pixi run wake          # mote-robot.target: bringup, health, nav (AMCL), tasks
+pixi run map-mode      # mote-mapping.target: bringup, health, slam, nav, record
+pixi run sleep         # stop both, back to standby
+pixi run robot-status  # every mote-* unit and its state
 ```
 
 ## Mapping a space autonomously
@@ -141,31 +143,65 @@ of it, are in [`wifi/README.md`](wifi/README.md).
 ## systemd services
 
 Installed by `pixi run setup` (→ `systemd/install.sh`), which fills in the
-invoking user/home/repo. Boot order once enabled:
+invoking user/home/repo, installs the polkit rule `systemd/50-mote.rules` (the
+robot user may start, stop and restart `mote-*` units without sudo), and
+enables the two standby units. The mission stack is two targets, installed but
+not enabled:
 
 ```
-mote-bringup  →  mote-slam  →  mote-nav
-  │  (self-check runs here      ↘  mote-record
-  │   as ExecStartPre)          ↘  mote-health
+boot ─→ mote-agent, mote-foxglove                       (standby, always on)
+
+pixi run wake ─→ mote-robot.target ──┬─→ mote-base.target ─→ mote-bringup ─→ mote-health
+                                     ├─→ mote-nav@robot   (localisation:=true)
+                                     └─→ mote-tasks       (BindsTo nav@robot)
+
+pixi run map-mode ─→ mote-mapping.target ─┬─→ mote-base.target   (as above)
+                                          ├─→ mote-slam
+                                          ├─→ mote-nav@mapping (localisation:=false)
+                                          └─→ mote-record      (streams:=mapping)
+
+pixi run sleep ─→ stop both targets ─→ standby
 ```
 
+The two mission targets `Conflicts=` each other: `wake` from mapping mode stops
+slam, `nav@mapping` and record, keeps bringup and health running (same PID), and
+starts `nav@robot` and tasks; `map-mode` from the robot target does the reverse.
+Exactly one of AMCL and slam_toolbox publishes `map`→`odom` at any time.
 `mote-bringup` runs the self-check as its `ExecStartPre` gate — there is no
-separate self-check service; gating bringup gates everything downstream.
+separate self-check service.
 
-| Service          | Runs                | Notes |
-|------------------|---------------------|-------|
-| `mote-bringup`   | `pixi run launch health:=false foxglove:=false` | Hardware base. `ExecStartPre` runs the self-check gate first; the two `false`s are because `mote-health` and `mote-foxglove` run those separately here. |
-| `mote-slam`      | `pixi run slam`     | `BindsTo`/`PartOf` bringup — restarts with it. |
-| `mote-nav`       | `pixi run nav`      | `BindsTo`/`PartOf` slam. |
-| `mote-record`    | `pixi run record`   | `After`/`PartOf` bringup (no `Wants` — see below); a recorder crash never takes down the drive stack. |
-| `mote-health`    | `pixi run health`   | Health monitor; `Type=notify` + `WatchdogSec` watchdog. `After=` only, so it keeps observing across a bringup restart. |
-| `mote-foxglove`  | `pixi run foxglove` | The operator's remote view + teleop (`docs/fleet/README.md` §10). `After=` only, for the same reason as the monitor: a crash-looping mission is when someone needs to look at it. |
-| `mote-agent`     | `pixi run agent`    | Fleet bridge (`docs/fleet/README.md` §7). `After=` only. |
+| Unit | Runs | In | Relationships |
+|---|---|---|---|
+| `mote-robot.target` | — | `wake` | `Wants=` base, `nav@robot`, tasks. `Conflicts=` mapping. Disabled; `sudo systemctl enable mote-robot.target` boots straight into it. |
+| `mote-mapping.target` | — | `map-mode` | `Wants=` base, slam, `nav@mapping`, record. `Conflicts=` robot. |
+| `mote-base.target` | — | both | `Wants=` bringup and health. `StopWhenUnneeded=yes`: stops when neither mission target wants it. |
+| `mote-bringup` | `pixi run launch health:=false foxglove:=false` | both | `PartOf=` base. `ExecStartPre` runs the self-check; the two `false`s are because `mote-health` and `mote-foxglove` run those separately. |
+| `mote-health` | `pixi run health` | both | `PartOf=` base, `After=` bringup only. `Type=notify` + `WatchdogSec=15`. |
+| `mote-nav@robot` | `pixi run nav localisation:=true` | robot | Template `mote-nav@.service`; the argument comes from `systemd/nav-robot.env`. `PartOf=` bringup and `mote-robot.target`. |
+| `mote-nav@mapping` | `pixi run nav localisation:=false` | mapping | As above with `nav-mapping.env`, `PartOf=` bringup and `mote-mapping.target`. |
+| `mote-tasks` | `pixi run tasks` | robot | `BindsTo=`/`PartOf=` `nav@robot`: a mission needs Nav2 and a map. |
+| `mote-slam` | `pixi run slam` | mapping | `PartOf=` bringup and `mote-mapping.target`. |
+| `mote-record` | `pixi run record streams:=mapping` | mapping | `PartOf=` bringup and `mote-mapping.target`. Never in the robot target: its pruner trims older bags whenever it runs. |
+| `mote-foxglove` | `pixi run foxglove` | standby | Enabled. The operator's remote view + teleop (`docs/fleet/README.md` §10). `After=` bringup only: a crash-looping mission is when someone needs to look. |
+| `mote-agent` | `pixi run agent` | standby | Enabled when `~/.mote/robot.yaml` exists, otherwise by `pixi run fleet join` (`docs/fleet/README.md` §7). `After=` bringup only. |
+
+A standby robot runs no health monitor, so the agent reports health
+`state: unknown` rather than FAULT on every subsystem it has not started.
 
 All of these also pin DDS to the robot
 (`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`), so a robot running under systemd is
 not visible to a workstation's ROS graph — `mote-foxglove` is the replacement.
-An interactive `pixi run` keeps stock discovery.
+An interactive `pixi run` keeps stock discovery. The robot target adds one DDS
+participant (the task server) to the stack's ~27 of 33; check with
+`pixi run dds-check`.
+
+**Starting on the charger.** The servos share the battery bank's input port, so
+on the charger the servo bus is unpowered: `pixi run wake` returns, but the
+self-check fails on `servo_ping` and systemd retries bringup with its backoff
+(2 s stepping to 30 s) until the servos are replugged, then comes up on its own.
+Meanwhile health, nav and tasks run against no hardware; nav restarts with each
+bringup attempt (`PartOf=` bringup), and `/health` reports FAULT. `pixi run
+sleep` stops the retry loop.
 
 **Hardening** (all services):
 
@@ -183,16 +219,26 @@ An interactive `pixi run` keeps stock discovery.
 - **journald sizing**: `systemd/journald-mote.conf` bounds the persistent
   journal (`SystemMaxUse=500M`, `SystemKeepFree=1G`, `MaxRetentionSec=2week`) so
   always-restarting services can never fill the SD card.
-- **No `Wants=` on the dependents.** `mote-health` and `mote-record` order
-  `After=` bringup but never *pull* it. A `Wants=` dependent that is itself
-  restart-looping fires a start request for bringup every cycle, and such a
-  request **bypasses bringup's own `RestartSec` backoff** — systemd logs
-  "Scheduled restart job immediately on client request". Measured on the robot:
-  bringup then restarts at the dependent's rate rather than its own backoff.
-  Each unit is started at boot by its own `WantedBy=multi-user.target`.
-  `mote-slam`/`mote-nav` keep `Requires=`/`BindsTo=` because they are genuinely
-  meaningless without bringup, and `BindsTo` holds them stopped (rather than
-  looping) while it is down.
+- **No pull edge back to bringup.** Nothing has `Wants=`, `Requires=` or
+  `BindsTo=` on `mote-bringup`; only `mote-base.target` starts it. A pulling
+  dependent that is itself restart-looping fires a start request for bringup
+  every cycle, and such a request **bypasses bringup's own `RestartSec`
+  backoff** — systemd logs "Scheduled restart job immediately on client
+  request". Measured on the robot: bringup then restarts at the dependent's
+  rate rather than its own backoff. `test/test_systemd_units.py` holds this.
+- **Shared members belong to `mote-base.target`, not to the mission targets.**
+  Switching targets stops the old one; with bringup `PartOf=` it, the stop
+  reaches bringup and systemd drops the new target's start of it in the same
+  transaction — the new target goes active with nothing running (reproduced
+  with user units). `StopWhenUnneeded=` on bringup itself is not enough either:
+  it does not stop a unit looping in auto-restart, so `sleep` on the charger
+  would leave bringup retrying. The intermediate target takes both: it is
+  stopped when unneeded, and that stop reaches bringup through `PartOf=` in any
+  state. Starting `mote-base.target` or `mote-bringup` on its own therefore stops
+  again at once.
+- **One nav template, not one nav unit.** Each instance must be `PartOf=` its
+  own target (`PartOf=mote-%i.target`) for the reason above, and its
+  `localisation` argument is read from `nav-%i.env` in the checkout.
 - **Units run from the checkout they were installed from**, via `@REPO@`
   substituted by `install.sh` from its own location — not a hardcoded `~/Mote`.
   Installing from a second checkout otherwise yields units pointing at a tree
