@@ -20,7 +20,7 @@ files.
   *Raspberry Pi OS (other)* → *Raspberry Pi OS Lite*. To hand a clean Pi its
   identity, network and build in one shot instead, render a cloud-init image
   with `pixi run provision` (see the [fleet runbook](fleet/README.md)).
-- **[pixi](https://pixi.sh) installed.** Everything else — ROS 2 Jazzy, Nav2,
+- **[pixi](https://pixi.sh) installed.** Everything else — ROS 2 Lyrical, Nav2,
   the drivers — is pulled in by pixi. There is no system ROS install.
 
 ## 1. Clone

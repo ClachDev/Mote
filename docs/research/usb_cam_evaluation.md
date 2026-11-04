@@ -3,7 +3,7 @@
 **Recommendation: don't switch.** The one capability that motivated the swap —
 shipping the camera's native MJPEG straight to `/image_raw/compressed` with no
 per-frame conversion — is broken in every released version of `usb_cam`,
-including the 0.8.1 binary on robostack-jazzy. The working `usb_cam` configs
+including the 0.8.1 binary on robostack (Lyrical ships the same 0.8.1). The working `usb_cam` configs
 only beat the current setup by capping the frame rate, and the measured cost of
 the current setup is too small to justify the integration and re-validation
 work: the whole bringup (camera included, with a compressed consumer attached)
@@ -93,8 +93,8 @@ encode CPU at all) is locked behind the upstream breakage in Q2.
 
 ### 5. Integration cost (recorded for if this is ever revisited)
 
-Verified on-robot from a scratch pixi env (`ros-jazzy-usb-cam` 0.8.1 solves
-fine on linux-aarch64; pulls ffmpeg/libavcodec):
+Verified on-robot from a scratch pixi env, on the previous ROS distro
+(`usb-cam` 0.8.1 solves fine on linux-aarch64; pulls ffmpeg/libavcodec):
 
 - Params remap in `mote_launch.py`/`robot.yaml`: `video_device` (symlink
   resolved fine), `image_size: [w,h]` → `image_width`/`image_height`,
@@ -129,4 +129,4 @@ near-zero CPU and ~285 KB/s, which is worth having if it ever ships in a
 robostack binary.
 
 Scratch test env left on the Pi at `~/tmp/usbcam-eval` (pixi project with
-`ros-jazzy-usb-cam`; delete freely).
+`usb-cam`; delete freely).

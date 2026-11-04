@@ -10,7 +10,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include "tf2/exceptions.h"
+#include "tf2/exceptions.hpp"
 
 #include "mote_health/mote_home.hpp"
 

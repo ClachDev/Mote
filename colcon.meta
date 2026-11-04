@@ -1,0 +1,10 @@
+{
+    "names": {
+        "sllidar_ros2": {
+            "cmake-args": ["-DCMAKE_PROJECT_sllidar_ros2_INCLUDE=../lyrical_compat/lyrical_compat.cmake"]
+        },
+        "kinematic_icp": {
+            "cmake-args": ["-DCMAKE_PROJECT_kinematic_icp_INCLUDE=../../lyrical_compat/lyrical_compat.cmake"]
+        }
+    }
+}

@@ -32,6 +32,7 @@ from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
 from mote_bringup import param_overrides
+from mote_bringup.launch_utils import spawn_controllers
 
 
 def generate_launch_description():
@@ -43,7 +44,9 @@ def generate_launch_description():
         cfg = yaml.safe_load(f)
 
     # gz_ros2_control runs its own controller_manager inside the gz process and
-    # loads parameters from a single file referenced in the URDF, so merge
+    # loads parameters from a single file referenced in the URDF; the spawners
+    # load the same file into each controller, which ros2_control 6 no longer
+    # does from the controller_manager's parameters. Merge
     # controllers.yaml + wheel geometry from robot.yaml + use_sim_time into one
     # temp file (same single-source-of-truth injection as mote_launch.py).
     controllers_file = param_overrides.override_path(
@@ -147,16 +150,9 @@ def generate_launch_description():
         ],
     )
 
-    joint_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["joint_state_broadcaster", "--controller-manager-timeout", "60"],
-    )
-
-    diff_drive_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["diff_drive_controller", "--controller-manager-timeout", "60"],
+    controller_spawners = spawn_controllers(
+        param_files=(sim_controllers_file.name,),
+        extra_args=("--controller-manager-timeout", "60"),
     )
 
     laser_filter = Node(
@@ -307,7 +303,7 @@ def generate_launch_description():
             RegisterEventHandler(
                 event_handler=OnProcessExit(
                     target_action=spawn_robot,
-                    on_exit=[joint_state_broadcaster_spawner, diff_drive_spawner],
+                    on_exit=controller_spawners,
                 )
             ),
             laser_filter,

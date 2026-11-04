@@ -57,7 +57,7 @@ parameters:
 
   - name: dwb_acc_lim_x
     file: nav2
-    path: controller_server.ros__parameters.FollowPath.acc_lim_x
+    path: controller_server.ros__parameters.FollowPath.primary_controller.acc_lim_x
     range: {start: 1.0, stop: 2.0, step: 0.5}   # inclusive; or `values:`
 
 scoring:                    # optional; score.py documents the defaults
@@ -80,7 +80,7 @@ Append an entry under `parameters`:
   location of the leaf inside that YAML. A dotted string (`a.b.c`) is split on
   dots; use the **list form** (`[a, b, c]`) when a key itself contains a dot —
   Nav2 writes some plugin params as literal dotted keys (e.g. `WheelSpeedLimit.scale`
-  is a literal key, whereas `FollowPath.max_vel_x` is nested).
+  is a literal key, whereas `FollowPath.primary_controller.max_vel_x` is nested).
 - **`values`** (explicit list) or **`range`** (`{start, stop, step}`, inclusive).
 
 The path must already exist in the committed file (a typo raises, rather than

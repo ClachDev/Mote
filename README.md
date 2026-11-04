@@ -68,7 +68,7 @@ the ability to test and iterate on that right now.
 
 ## Software
 
-Built with ROS2 Jazzy, managed via [pixi](https://pixi.sh). This gives us a nice
+Built with ROS 2 Lyrical, managed via [pixi](https://pixi.sh). This gives us a nice
 way to package everything up without worrying about ecosystem concerns — no
 system ROS install needed, on the Pi or your workstation.
 
@@ -97,7 +97,7 @@ else belongs as a git submodule moving to either `conda-forge` or the
   Bookworm both work) - set up with [Raspberry Pi
   Imager](https://www.raspberrypi.com/software/) -> Raspberry Pi OS Other ->
   Raspberry Pi OS Lite.
-- [pixi](https://pixi.prefix.dev/) installed. Everything else (ROS 2 Jazzy,
+- [pixi](https://pixi.prefix.dev/) installed. Everything else (ROS 2 Lyrical,
   Nav2, drivers) is pulled in by pixi, so you don't need a system ROS install.
 - The robot assembled with the servos and sensors wired to the Pi.
 

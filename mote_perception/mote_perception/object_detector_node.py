@@ -71,7 +71,7 @@ class ObjectDetectorNode(Node):
             self.get_parameter("server_host").value,
             int(self.get_parameter("server_port").value),
             float(self.get_parameter("socket_timeout").value),
-            warn=lambda m: self.get_logger().warn(m, throttle_duration_sec=2.0),
+            warn=lambda m: self.get_logger().warning(m, throttle_duration_sec=2.0),
         )
         self.cam_info = None
         self.proj = None
@@ -141,7 +141,7 @@ class ObjectDetectorNode(Node):
         try:
             tf = self.tf_buffer.lookup_transform(self.map_frame, self.base_frame, stamp)
         except tf2_ros.TransformException as e:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"no {self.map_frame}<-{self.base_frame} at capture time ({e}); "
                 "skipping frame",
                 throttle_duration_sec=2.0,
@@ -155,7 +155,7 @@ class ObjectDetectorNode(Node):
         blob = bytes(msg.data)
         fmt = (msg.format or "").lower()
         if fmt and not any(c in fmt for c in ("jpeg", "jpg", "png")):
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"unsupported compressed format {fmt!r}; skipping",
                 throttle_duration_sec=2.0,
             )

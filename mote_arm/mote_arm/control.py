@@ -101,7 +101,7 @@ class ArmControl:
         if hold == self.holding:
             return True
         if not self._switch.wait_for_service(timeout_sec=timeout):
-            self._node.get_logger().warn(
+            self._node.get_logger().warning(
                 f"{SWITCH_SERVICE} unavailable — is a stack that owns the servo "
                 "bus running (`pixi run arm`, or `pixi run robot`)?"
             )
@@ -122,7 +122,7 @@ class ArmControl:
             if self.active(timeout) == hold:
                 self.holding = hold
                 return True
-            self._node.get_logger().warn(
+            self._node.get_logger().warning(
                 f"failed to {'activate' if hold else 'deactivate'} {ARM_CONTROLLER}"
             )
             return False

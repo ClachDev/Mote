@@ -33,20 +33,18 @@ target_include_directories(mote_health PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(mote_health yaml-cpp::yaml-cpp)
-
-ament_target_dependencies(mote_health
-  ament_index_cpp
-  diagnostic_msgs
-  rclcpp
-  std_msgs
-  tf2
-  tf2_ros
+target_link_libraries(mote_health
+  yaml-cpp::yaml-cpp
+  ${ament_index_cpp_TARGETS}
+  ${diagnostic_msgs_TARGETS}
+  ${rclcpp_TARGETS}
+  ${std_msgs_TARGETS}
+  ${tf2_TARGETS}
+  ${tf2_ros_TARGETS}
 )
 
 add_executable(health_monitor src/health_monitor_main.cpp)
-target_link_libraries(health_monitor mote_health)
-ament_target_dependencies(health_monitor rclcpp)
+target_link_libraries(health_monitor mote_health ${rclcpp_TARGETS})
 
 install(TARGETS mote_health
   ARCHIVE DESTINATION lib
@@ -85,8 +83,13 @@ if(BUILD_TESTING)
   # node which still runs, still publishes on time, and reports every subsystem
   # as missing — so a real publisher has to reach a real summary.
   ament_add_gtest(test_health_monitor_node test/test_health_monitor_node.cpp TIMEOUT 120)
-  target_link_libraries(test_health_monitor_node mote_health)
-  ament_target_dependencies(test_health_monitor_node rclcpp sensor_msgs std_msgs diagnostic_msgs)
+  target_link_libraries(test_health_monitor_node
+    mote_health
+    ${rclcpp_TARGETS}
+    ${sensor_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${diagnostic_msgs_TARGETS}
+  )
 endif()
 
 ament_package()

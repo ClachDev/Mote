@@ -65,7 +65,7 @@ from rclpy.node import Node  # noqa: E402
 TELEOP_TOPIC = "/cmd_vel_teleop"
 DRIVE_TOPIC = "/diff_drive_controller/cmd_vel"
 
-# Bridge 3.3.0 speaks this subprotocol; the older `foxglove.websocket.v1` is
+# Bridge 3.6.0 speaks this subprotocol; the older `foxglove.websocket.v1` is
 # refused with an HTTP 400 at the handshake.
 SUBPROTOCOL = "foxglove.sdk.v1"
 

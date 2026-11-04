@@ -75,7 +75,7 @@ present. Most robots need no calibration of their own — see
 
 ## Compressed transport
 
-`ros-jazzy-image-transport-plugins` is already a project dependency, so the
+`ros-lyrical-image-transport-plugins` is already a project dependency, so the
 camera node publishes `/image_raw/compressed` automatically alongside the raw
 stream. Off-board consumers (RViz on a workstation, remote viewers) should prefer
 the `compressed` transport — raw 640x480 @ 30 FPS is roughly 28 Mbps, which

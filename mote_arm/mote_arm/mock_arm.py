@@ -128,7 +128,7 @@ class MockArm(Node):
             try:
                 joint = self.cfg.joint(name)
             except KeyError:
-                self.get_logger().warn(f"ignoring goal for unknown joint '{name}'")
+                self.get_logger().warning(f"ignoring goal for unknown joint '{name}'")
                 continue
             target = joint.clamp_rad(value)
             self.goal[name] = target

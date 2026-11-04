@@ -15,6 +15,8 @@ import pytest
 from ament_index_python.packages import get_package_share_directory
 
 from mote_arm import calibrate, config as arm_config
+from node_arguments import node_arguments
+
 from mote_bringup.launch_utils import (
     CONTROLLERS,
     INACTIVE_CONTROLLERS,
@@ -39,32 +41,25 @@ def cfg():
         return yaml.safe_load(f)
 
 
-def _arguments(action):
-    return [
-        arg[0].text if isinstance(arg, list) else str(arg)
-        for arg in action.__dict__["_Node__arguments"]
-    ]
-
-
 def test_arm_is_spawned_inactive():
     # Activation claims the position command interfaces, which is what makes
     # MoteHardware enable torque. A robot that boots with the arm active would
     # be holding a pose nobody asked for.
     actions = spawn_controllers(inactive=INACTIVE_CONTROLLERS)
-    inactive = [a for a in actions if "--inactive" in _arguments(a)]
-    assert [_arguments(a)[0] for a in inactive] == list(INACTIVE_CONTROLLERS)
+    inactive = [a for a in actions if "--inactive" in node_arguments(a)]
+    assert [node_arguments(a)[0] for a in inactive] == list(INACTIVE_CONTROLLERS)
 
 
 def test_active_controllers_are_not_marked_inactive():
     for action in spawn_controllers(inactive=INACTIVE_CONTROLLERS):
-        args = _arguments(action)
+        args = node_arguments(action)
         if args[0] in CONTROLLERS:
             assert "--inactive" not in args
 
 
 def test_no_arm_spawner_when_the_arm_is_not_asked_for():
     # The sim, and any base built without the arm, go down this path.
-    assert all("--inactive" not in _arguments(a) for a in spawn_controllers())
+    assert all("--inactive" not in node_arguments(a) for a in spawn_controllers())
 
 
 def test_arm_shares_the_wheel_bus_in_the_shipped_config(cfg):

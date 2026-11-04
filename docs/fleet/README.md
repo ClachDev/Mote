@@ -931,7 +931,7 @@ you use it on hardware:
 ### If it will not connect
 
 - **HTTP 400 at the handshake** — the client is offering only the old
-  `foxglove.websocket.v1` subprotocol. Bridge 3.3.0 speaks `foxglove.sdk.v1`;
+  `foxglove.websocket.v1` subprotocol. Bridge 3.6.0 speaks `foxglove.sdk.v1`;
   current Foxglove negotiates it automatically, older builds and hand-rolled
   clients do not ([`m2-verification.md` §1](m2-verification.md)).
 - **Nothing on the topic list** — the bridge is up but the mission is not. The
