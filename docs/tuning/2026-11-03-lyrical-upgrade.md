@@ -41,6 +41,10 @@ Versions: Nav2 1.3.12 → 1.5.2, ros2_control 4.x → 6.10.1, ros2_controllers
 | arm trajectory start | `open_loop_control: true` | `interpolate_from_desired_state: true` | renamed; the description is the old one verbatim |
 | sim ground truth | PosePublisher default topic `/model/mote/pose` | `<topic>/model/mote/pose</topic>` stated | gz-sim 10 defaults to `/mote/pose` |
 
+The RViz teleop panel (`rviz_teleop_panel`, prefix.dev/mote) has no Lyrical
+build. It is removed from the `dev` environment and from `mote.rviz`; the
+human teleop inputs are `pixi run teleop` and the Foxglove panel.
+
 Keys deleted because nothing reads them any more:
 
 - DWB `transform_tolerance: 0.2`, `publish_global_plan`, `publish_transformed`.

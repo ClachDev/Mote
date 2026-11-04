@@ -147,14 +147,6 @@ def test_the_keyboard_teleop_task_publishes_the_teleop_input(mux):
     assert mux["topics"]["teleop"]["topic"] in line
 
 
-def test_the_rviz_teleop_panel_publishes_the_teleop_input(mux):
-    """The bench equivalent of the Foxglove panel, and the same seam."""
-    panel = yaml.safe_load(RVIZ.read_text())["Panels"]
-    teleop = next(p for p in panel if "TeleopPanel" in p.get("Class", ""))
-    assert teleop["Topic"] == mux["topics"]["teleop"]["topic"]
-    assert teleop["Stamped"] is True
-
-
 def test_the_mux_output_is_the_controllers_topic(context):
     description = twist_mux_launch.generate_launch_description()
     node = next(e for e in description.entities if isinstance(e, Node))

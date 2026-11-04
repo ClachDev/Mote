@@ -32,6 +32,7 @@ from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 
 from mote_bringup import param_overrides
+from mote_bringup.launch_utils import spawn_controllers
 
 
 def generate_launch_description():
@@ -149,28 +150,9 @@ def generate_launch_description():
         ],
     )
 
-    joint_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "joint_state_broadcaster",
-            "--controller-manager-timeout",
-            "60",
-            "--param-file",
-            sim_controllers_file.name,
-        ],
-    )
-
-    diff_drive_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "diff_drive_controller",
-            "--controller-manager-timeout",
-            "60",
-            "--param-file",
-            sim_controllers_file.name,
-        ],
+    controller_spawners = spawn_controllers(
+        param_files=(sim_controllers_file.name,),
+        extra_args=("--controller-manager-timeout", "60"),
     )
 
     laser_filter = Node(
@@ -321,7 +303,7 @@ def generate_launch_description():
             RegisterEventHandler(
                 event_handler=OnProcessExit(
                     target_action=spawn_robot,
-                    on_exit=[joint_state_broadcaster_spawner, diff_drive_spawner],
+                    on_exit=controller_spawners,
                 )
             ),
             laser_filter,

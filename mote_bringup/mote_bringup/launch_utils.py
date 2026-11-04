@@ -135,7 +135,12 @@ def _temp_yaml(data, prefix):
 
 
 def spawn_controllers(
-    _context=None, *_args, active=CONTROLLERS, inactive=(), param_files=()
+    _context=None,
+    *_args,
+    active=CONTROLLERS,
+    inactive=(),
+    param_files=(),
+    extra_args=(),
 ):
     """Fresh ``spawner`` actions for every controller, built per call.
 
@@ -145,9 +150,10 @@ def spawn_controllers(
     Each spawner loads every file in ``param_files`` into its controller before
     configure; a file's sections for other node names are ignored. This is the
     only route by which a controller receives its parameters (see
-    ``joint_params_file``).
+    ``joint_params_file``). ``extra_args`` go to every spawner as given.
     """
     params = [arg for path in param_files for arg in ("--param-file", path)]
+    params += list(extra_args)
     return [
         Node(
             package="controller_manager",

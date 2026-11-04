@@ -163,7 +163,7 @@ Everything meaningful relative to one mapped place lives in a **site bundle** un
 
 ## Drive path
 
-`DiffDriveController` has exactly one publisher: **`twist_mux`** (`twist_mux_launch.py`, included by `mote_launch.py` and `sim_launch.py`). Nav2 publishes `/cmd_vel_nav` (priority 10). Everything a human drives with publishes `/cmd_vel_teleop_stamped` (priority 100): `twist_relay`, `pixi run teleop`, the RViz teleop panel, and `explore`. The mux output keeps the name `/diff_drive_controller/cmd_vel`.
+`DiffDriveController` has exactly one publisher: **`twist_mux`** (`twist_mux_launch.py`, included by `mote_launch.py` and `sim_launch.py`). Nav2 publishes `/cmd_vel_nav` (priority 10). Everything a human drives with publishes `/cmd_vel_teleop_stamped` (priority 100): `twist_relay`, `pixi run teleop` and `explore`. The mux output keeps the name `/diff_drive_controller/cmd_vel`.
 - **Teleop overrides Nav2; it does not cancel it.**
 - **The teleop timeout (1.0 s) must stay longer than the controller's `cmd_vel_timeout` (0.5 s)**, so a takeover ends with a stopped robot. `test_twist_mux.py` holds the files together; `test_twist_mux_arbitration.py` measures a real mux.
 - Nothing may re-publish a stale command: `twist_relay` and the mux publish only from input callbacks, so every source stopping means the wheels stopping.
@@ -293,5 +293,5 @@ The `robot` feature activates `install/setup.sh` and sets `RMW_IMPLEMENTATION=rm
 ## Verification
 
 - xacro/URDF changes: `pixi run -- xacro install/mote_description/share/mote_description/urdf/mote.urdf.xacro`.
-- Controller param injection: run ros2_control_node on the xacro output with `mock_components/GenericSystem`, then `ros2 param get /diff_drive_controller wheel_separation`.
+- Controller param injection: run ros2_control_node on the xacro output with `mock_components/GenericSystem`, spawn the controller as `spawn_controllers` does (`spawner diff_drive_controller --param-file <controllers.yaml> --param-file <joint params file>`), then `ros2 param get /diff_drive_controller wheel_separation`.
 - Actual motion needs the Pi with hardware.

@@ -16,6 +16,7 @@ import yaml
 from launch.actions import OpaqueFunction, RegisterEventHandler
 from launch.event_handlers import OnProcessStart
 from launch_ros.actions import Node
+from node_arguments import node_arguments
 
 from mote_bringup.launch_utils import (
     CONTROLLERS,
@@ -38,10 +39,9 @@ def test_each_call_returns_new_action_objects():
 def test_spawns_every_controller():
     spawned = set()
     for action in spawn_controllers():
-        # Node stores its arguments as normalized substitutions; each spawner
-        # gets exactly one, the controller name.
-        for arg in action.__dict__["_Node__arguments"]:
-            spawned.add(arg[0].text if isinstance(arg, list) else str(arg))
+        # With no param files each spawner gets exactly one argument, the
+        # controller name.
+        spawned.update(node_arguments(action))
     assert spawned == set(CONTROLLERS)
 
 
@@ -77,11 +77,20 @@ def test_opaque_function_yields_fresh_spawners_on_repeated_execution():
         assert a is not b
 
 
-def _arguments(action):
-    return [
-        arg[0].text if isinstance(arg, list) else str(arg)
-        for arg in action.__dict__["_Node__arguments"]
-    ]
+def test_extra_args_reach_every_spawner_after_the_param_files():
+    actions = spawn_controllers(
+        inactive=("arm_controller",),
+        param_files=("/x/controllers.yaml",),
+        extra_args=("--controller-manager-timeout", "60"),
+    )
+    for action in actions:
+        args = node_arguments(action)
+        assert args[-4:] == [
+            "--param-file",
+            "/x/controllers.yaml",
+            "--controller-manager-timeout",
+            "60",
+        ]
 
 
 def test_every_spawner_loads_every_param_file():
@@ -96,7 +105,7 @@ def test_every_spawner_loads_every_param_file():
     actions = spawn_controllers(inactive=("arm_controller",), param_files=files)
     assert len(actions) == len(CONTROLLERS) + 1
     for action in actions:
-        args = _arguments(action)
+        args = node_arguments(action)
         loaded = [args[i + 1] for i, a in enumerate(args) if a == "--param-file"]
         assert loaded == list(files), args[0]
 
