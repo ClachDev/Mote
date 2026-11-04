@@ -6,7 +6,8 @@ On office_world `/cmd_vel_nav` falls from 19.3 Hz (Jazzy, same commit) to
 looks up a transform at `now()` on every cycle and waits for it; `odom→base`
 arrives at scan rate, 10 Hz. Upstream fixed it on `main` (navigation2#6436,
 2026-09-20); the `lyrical` branch does not carry it. Goals still succeed:
-6/6 on both distros, 85 s mean time-to-goal on both.
+6/6 on both distros, 85 s mean time-to-goal on both. On mote-01 the rate falls
+from 19.8 to 10.1 Hz in the same way.
 
 No other parameter was retuned. Every configuration change below either
 restores a value the upgrade stopped reading, or moves a key to its new name
@@ -126,7 +127,8 @@ wait. The cause is in `nav2_rotation_shim_controller.cpp` at 1.5.2:
 - `odom→base` comes from `IcpOdomGate` once per scan, 10 Hz, so the wait ends
   at the next scan.
 
-The robot's lidar also runs at 10 Hz, so the robot will see the same cap.
+The robot's lidar also runs at 10 Hz, and the robot shows the same cap (next
+section).
 
 Neither variant that restores the rate is a fix:
 
@@ -140,3 +142,36 @@ Neither variant that restores the rate is a fix:
 
 The fix is navigation2#6436, which stamps the sample with the control cycle's
 time. It needs a backport to `lyrical` and a robostack rebuild.
+
+## On the robot
+
+mote-01, 2026-11-04, one run per distro from the same spot at the map origin:
+the Lyrical branch, then the Pi restored to `ff59e09` (Jazzy) with its own env
+and build. [`run_probe.sh`](2026-11-03-lyrical-upgrade/robot/run_probe.sh)
+starts `mote-robot.target` and waits for Nav2;
+[`robot_probe.py`](2026-11-03-lyrical-upgrade/robot/robot_probe.py) samples 15 s
+at idle, turns in place through `/cmd_vel_teleop_stamped`, then sends a Nav2
+goal 1 m ahead and one back to the start. Raw output:
+[`probe-jazzy.txt`](2026-11-03-lyrical-upgrade/robot/probe-jazzy.txt),
+[`probe-lyrical.txt`](2026-11-03-lyrical-upgrade/robot/probe-lyrical.txt).
+
+| | Jazzy | Lyrical |
+| --- | --- | --- |
+| `/cmd_vel_nav`, goal out | 19.8 Hz, median 50 ms | 10.1 Hz, median 100 ms |
+| `/cmd_vel_nav`, goal back | 16.2 Hz, median 51 ms | 10.1 Hz, median 101 ms |
+| goal out / back | succeeded, 6.9 s / 12.3 s | succeeded, 7.8 s / 16.8 s |
+| "Control loop missed" lines | 54 | 245 |
+| controller_manager periodicity, mean | 50.01 Hz | 50.00 Hz |
+| periodicity std dev / min | 0.78 / 43.1 Hz | 1.23 / 26.8 Hz |
+| `/joint_states` idle, p95 / max gap | 22 / 31 ms | 22 / 28 ms |
+| hardware write cycle, mean | 4.53 ms | 4.42 ms |
+| teleop turn, 0.5 rad/s for 2 s | 71.8° | 71.8° |
+
+- The controller-rate cap is the same as in sim: 10 Hz on both legs.
+- controller_manager holds 50 Hz on both. Lyrical's slowest cycle is longer
+  (26.8 Hz, about 37 ms), and the standard deviation is higher. With one run per distro, that may be
+  noise; `/joint_states` gaps do not show it.
+- The teleop turn is 2.5 s at 0.5 rad/s (71.6°) on both: the 2 s of commands
+  plus the controller's 0.5 s `cmd_vel_timeout`.
+- The return leg includes a turn of about 180° and is 4.5 s slower on Lyrical. This is a single
+  run.

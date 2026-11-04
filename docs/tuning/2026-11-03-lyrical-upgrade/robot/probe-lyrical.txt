@@ -1,0 +1,17 @@
+idle /joint_states: 751 msgs 50.0 Hz median 20 ms p95 22 ms max 28 ms
+idle /diff_drive_controller/odom: 750 msgs 50.0 Hz median 20 ms p95 21 ms max 27 ms
+diag controller_manager: Controller Manager Activity | Controller Manager is running | {'update_rate': '50', 'periodicity.average': '50.003144', 'periodicity.standard_deviation': '1.227085', 'periodicity.min': '26.825315', 'periodicity.max': '65.163115'}
+diag controller_manager: Controllers Activity |
+High execution jitter or mean error : [ diff_drive_controller ] | {'joint_state_broadcaster.state': 'active', 'joint_state_broadcaster.execution_time': 'Avg: 23.74 [5.17 - 2094.47] us, StdDev: 81.05', 'diff_drive_controller.state': 'active', 'arm_controller.state': 'inactive'}
+diag controller_manager: Hardware Components Activity |
+High execution jitter or mean error : [ mote_hardware mote_hardware ] | {'mote_hardware.state': 'active', 'mote_hardware.read_cycle.execution_time': 'Avg: 4901.61 [4265.85 - 14901.59] us, StdDev: 558.91', 'mote_hardware.write_cycle.execution_time': 'Avg: 4419.76 [3308.83 - 10645.09] us, StdDev: 750.00'}
+teleop: 0.5 rad/s for 2.0 s, wheel odom turned 71.8 deg (open-loop expectation ~57)
+nav: start (0.10,0.05,2deg), 1.0 m out and back
+nav out: status 4 (4=succeeded) after 7.8 s
+nav out /cmd_vel_nav: 79 msgs 10.1 Hz median 100 ms p95 113 ms max 122 ms
+nav out /joint_states: 391 msgs 50.0 Hz median 20 ms p95 22 ms max 25 ms
+nav back: status 4 (4=succeeded) after 16.8 s
+nav back /cmd_vel_nav: 169 msgs 10.1 Hz median 101 ms p95 111 ms max 117 ms
+nav back /joint_states: 838 msgs 50.0 Hz median 20 ms p95 22 ms max 24 ms
+overrun lines: 2
+nav missed-rate lines: 245
