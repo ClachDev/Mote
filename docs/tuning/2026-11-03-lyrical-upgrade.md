@@ -4,10 +4,10 @@
 On office_world `/cmd_vel_nav` falls from 19.3 Hz (Jazzy, same commit) to
 10.0 Hz against a 20 Hz `controller_frequency`. Nav2 1.5.2's RotationShim
 looks up a transform at `now()` on every cycle and waits for it; `odom→base`
-arrives at scan rate, 10 Hz. Upstream fixed it on `main` (navigation2#6436,
-2026-09-20); the `lyrical` branch does not carry it. Goals still succeed:
-6/6 on both distros, 85 s mean time-to-goal on both. On mote-01 the rate falls
-from 19.8 to 10.1 Hz in the same way.
+arrives at scan rate, 10 Hz. Goals still succeed: 6/6 on both distros, 85 s
+mean time-to-goal on both. On mote-01 the rate falls from 19.8 to 10.1 Hz in
+the same way. The planned fix is ours: publish `odom→base` at wheel rate
+(task 715).
 
 No other parameter was retuned. Every configuration change below either
 restores a value the upgrade stopped reading, or moves a key to its new name
@@ -140,8 +140,14 @@ Neither variant that restores the rate is a fix:
   4 recoveries, 2 reversals):
   [`bench-lyrical-path-orientations.md`](2026-11-03-lyrical-upgrade/bench-lyrical-path-orientations.md).
 
-The fix is navigation2#6436, which stamps the sample with the control cycle's
-time. It needs a backport to `lyrical` and a robostack rebuild.
+navigation2#6436 (on `main` since 2026-09-20) stamps the sample with the
+robot pose's time instead of `now()`, which should remove the wait. That is a
+side effect of a staleness-check refactor: the PR does not mention the rate,
+carries no backport label, and was not tested here. The wait exists only
+because `odom→base` is slower than the controller. Publishing it at the 50 Hz
+wheel rate from `IcpOdomGate`, re-anchored on each gated ICP increment
+(task 715), removes the cap on any Nav2 version, and gives every TF reader a
+fresher pose.
 
 ## On the robot
 
