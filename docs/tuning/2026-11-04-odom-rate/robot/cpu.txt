@@ -1,0 +1,28 @@
+== main
+localization_container: 3.07% of a core over 60 s (pid 17723)
+nav2_container: 12.58% of a core over 60 s (pid 17652)
+loadavg 4.95 2.94 1.94 4/540 18029
+node-cpu mean %: {'health_monitor': 2.5, 'task_server': 15.2, 'slip_monitor': 13.9, 'system_monitor': 0.6} load1 4.5
+Control loop missed lines: 128
+gate rejections: 3
+== main2
+localization_container: 3.03% of a core over 60 s (pid 19914)
+nav2_container: 13.25% of a core over 60 s (pid 19848)
+loadavg 1.24 3.36 2.87 1/541 20227
+node-cpu mean %: {'health_monitor': 2.5, 'task_server': 14.9, 'slip_monitor': 14.0, 'system_monitor': 0.6} load1 1.7
+Control loop missed lines: 161
+gate rejections: 2
+== branch
+localization_container: 3.33% of a core over 60 s (pid 18481)
+nav2_container: 11.87% of a core over 60 s (pid 18403)
+loadavg 5.74 4.09 2.61 1/537 18780
+node-cpu mean %: {'health_monitor': 2.6, 'task_server': 18.9, 'slip_monitor': 16.0, 'system_monitor': 0.7} load1 4.3
+Control loop missed lines: 0
+gate rejections: 2
+== branch2
+localization_container: 3.33% of a core over 60 s (pid 19128)
+nav2_container: 12.17% of a core over 60 s (pid 19056)
+loadavg 4.84 4.22 2.88 1/536 19432
+node-cpu mean %: {'health_monitor': 2.6, 'task_server': 18.9, 'slip_monitor': 15.9, 'system_monitor': 0.6} load1 4.8
+Control loop missed lines: 0
+gate rejections: 1

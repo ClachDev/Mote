@@ -1,0 +1,11 @@
+max_wheel_speed = 0.218 m/s (robot.yaml), tolerance x1.15
+
+=== 20260706_133149-gated  (1218s, 12187 intervals) ===
+  path length   icp    0.56 m   wheel    0.54 m   (-3.8% wheel)
+  yaw travelled icp   359.1 deg wheel   386.3 deg   (+7.6% wheel)
+  residual |wheel-icp| while moving:
+      translation  p50 0.0021  p99 0.0140  max 0.0142 m/s
+      yaw          p50 3.01  p99 15.72  max 17.16 deg/s  (jitter-dominated)
+  ICP speed above 0.251 m/s (drive cannot produce it): 0 intervals (0.00%)
+  wheel speed above the same:                        0 intervals (0.00%)
+  speed p50/p99/max   icp 0.000/0.001/0.231   wheel 0.000/0.001/0.219 m/s

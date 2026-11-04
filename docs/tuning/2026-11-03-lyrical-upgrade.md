@@ -151,7 +151,8 @@ carries no backport label, and was not tested here. The wait exists only
 because `odom→base` is slower than the controller. Publishing it at the 50 Hz
 wheel rate from `IcpOdomGate`, re-anchored on each gated ICP increment
 (task 715), removes the cap on any Nav2 version, and gives every TF reader a
-fresher pose.
+fresher pose. Measured in `2026-11-04-odom-rate.md`: 20 Hz in sim and on
+mote-01.
 
 ## On the robot
 

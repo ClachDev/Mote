@@ -158,14 +158,23 @@ def test_the_gate_reads_the_topic_kinematic_icp_publishes(description, context):
     assert remaps["odom_in"] == f"/{namespace}/lidar_odometry"
 
 
-def test_the_gate_and_icp_read_the_same_wheel_leaf(description, context):
-    """Both take the wheel prior from TF; disagreeing costs the gate its fallback."""
+def test_the_gate_reads_the_wheel_odometry_the_relay_inverts(description, context):
+    """The gate propagates odom->base on the same wheel poses ICP's prior carries.
+
+    Pointed anywhere else it receives nothing, and odom->base silently falls
+    back to the scan rate.
+    """
     loaded = _loaded(description, context)
-    assert (
-        _params(loaded[GATE], context)["wheel_odom_frame"]
-        == _params(loaded[ICP], context)["wheel_odom_frame"]
-        == launch_utils.WHEEL_ODOM_FRAME
-    )
+
+    def remaps(node):
+        return {
+            perform_substitutions(context, list(src)): perform_substitutions(
+                context, list(dst)
+            )
+            for src, dst in node.remappings
+        }
+
+    assert remaps(loaded[GATE])["wheel_odom_in"] == remaps(loaded[RELAY])["odom_in"]
 
 
 def test_the_gate_bounds_itself_by_the_measured_hardware_envelope(description, context):
@@ -215,9 +224,9 @@ def test_nothing_is_launched_as_its_own_process_but_the_container(description):
 def test_the_container_is_isolated_not_shared(description):
     """Each component needs the executor it had as a process of its own.
 
-    kinematic_icp blocks in its scan callback while it registers a frame, and
-    the gate blocks waiting on TF for the wheel prior of a rejected increment;
-    on a shared-executor container either would stall the relay behind it.
+    kinematic_icp blocks in its scan callback while it registers a frame; on a
+    shared-executor container it would stall the relay and the gate behind it,
+    and with them the wheel-rate odom->base.
     """
     container = next(e for e in description.entities if isinstance(e, Node))
     assert "component_container_isolated" in str(container._Node__node_executable)
