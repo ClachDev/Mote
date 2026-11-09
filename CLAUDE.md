@@ -198,6 +198,7 @@ C++ that runs inside other processes. Shared numbers (`max_wheel_speed`, `wheel_
 - `WheelSpeedLimitCritic` (DWB plugin) rejects samples needing a wheel faster than `max_wheel_speed`. `nav2_launch.py` overlays both numbers from `robot.yaml`.
 - `OdomTfRelay` (component) writes the `odom_wheel` leaf kinematic_icp uses as its motion prior. Built `-ffp-contract=off` to stay bit-identical with the Python it replaced.
 - `IcpOdomGate` (component) **owns `odom`→`base`**: it accumulates kinematic_icp's increments and substitutes the wheel increment for any the drive could not produce. Translation and yaw are bounded separately at `robot.yaml` limits × 1.15. Evidence and tools (`icp_excursions.py`, `icp_gate_replay.py`): `docs/tuning/2026-07-28-icp-velocity-gate.md`.
+  - It publishes at the **wheel rate (50 Hz)**: between scans it carries the gated pose forward on `/diff_drive_controller/odom` (`wheel_odom_in`), and each scan re-anchors it. Nav2's controller waits for an `odom→base` newer than `now()`, so it runs at this edge's rate: lose the wheel input and it drops to 10 Hz without an error. Stamps only increase; propagation stops 0.5 s after the last scan. Evidence and `odom_steps.py`: `docs/tuning/2026-11-04-odom-rate.md`.
 
 ### `mote_health` (C++)
 The health monitor, its own process because `mote-health.service` is `Type=notify` with a watchdog. Publishes the `mote` roll-up and per-subsystem statuses on `/diagnostics_agg`, and one line on `/health`. Config: `config/health.yaml` (override `$MOTE_HOME/health.yaml`).

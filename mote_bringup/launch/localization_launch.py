@@ -17,6 +17,12 @@ gate accumulates those increments into odom->base, substituting the wheel
 increment for any that the drive could not have produced. The measurements
 behind the threshold are in `docs/tuning/2026-07-28-icp-velocity-gate.md`.
 
+The gate publishes odom->base at the wheel odometry's 50 Hz, not the lidar's
+10 Hz: between scans it carries the last gated pose forward on the wheel
+increments, read from the same topic the relay inverts, and each scan
+re-anchors it. Nav2's controller waits for an odom->base newer than `now()`, so
+it runs at whatever rate this edge has (`docs/tuning/2026-11-04-odom-rate.md`).
+
 All three ship as `rclcpp_components`, so they are loaded into one
 `localization_container` rather than run as three processes. The relay is the
 original reason: it is woken at the controller's 50 Hz update rate to do twenty
@@ -52,6 +58,7 @@ CONTAINER = "localization_container"
 
 ODOM_FRAME = "odom"
 BASE_FRAME = "base_footprint"
+WHEEL_ODOM_TOPIC = "/diff_drive_controller/odom"
 
 # Slack over the drive envelope for ordinary scan-match noise. Measured across
 # three mapping bags: legitimate intervals reach x1.13 of `max_wheel_speed` and
@@ -79,7 +86,7 @@ def generate_launch_description():
         plugin="mote_nav::OdomTfRelay",
         name="odom_tf_relay",
         parameters=[{"child_frame": WHEEL_ODOM_FRAME}],
-        remappings=[("odom_in", "/diff_drive_controller/odom")],
+        remappings=[("odom_in", WHEEL_ODOM_TOPIC)],
     )
 
     kinematic_icp = ComposableNode(
@@ -115,16 +122,17 @@ def generate_launch_description():
             {
                 "odom_frame": ODOM_FRAME,
                 "base_frame": BASE_FRAME,
-                "wheel_odom_frame": WHEEL_ODOM_FRAME,
                 # The same two measurements the Nav2 wheel-speed critic bounds
                 # trajectories with, so one envelope describes the hardware.
                 "max_wheel_speed": float(robot["max_wheel_speed"]),
                 "wheel_separation": float(robot["wheel_separation"]),
                 "tolerance": GATE_TOLERANCE,
-                "tf_timeout": 0.05,
             }
         ],
-        remappings=[("odom_in", "/kinematic_icp/lidar_odometry")],
+        remappings=[
+            ("odom_in", "/kinematic_icp/lidar_odometry"),
+            ("wheel_odom_in", WHEEL_ODOM_TOPIC),
+        ],
     )
 
     return LaunchDescription(
