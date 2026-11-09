@@ -174,3 +174,5 @@ nav:
       - "  ↳ Jazzy benchmark": tuning/2026-11-03-lyrical-upgrade/bench-jazzy.md
       - "  ↳ Lyrical benchmark": tuning/2026-11-03-lyrical-upgrade/bench-lyrical.md
       - "  ↳ use_path_orientations benchmark": tuning/2026-11-03-lyrical-upgrade/bench-lyrical-path-orientations.md
+      - odom→base at the wheel rate: tuning/2026-11-04-odom-rate.md
+      - "  ↳ benchmark": tuning/2026-11-04-odom-rate/bench-odom-rate.md
